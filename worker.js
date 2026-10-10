@@ -250,19 +250,25 @@ async function handleGetLive(url, workerOrigin) {
         // comme l'app : l'européen renvoie des listes au format des serveurs
         // IVS, où le choix « Source » donnait un écran noir chez des
         // utilisateurs. Il reste en secours (variantName lit les deux formats).
-        let resLuminous = null;
-        for (const host of ['as.luminous.dev', 'eu.luminous.dev']) {
+        // Entre les deux, le proxy albanais (TTV.LOL), sans pub lui aussi.
+        const candidates = [
+            { url: `https://as.luminous.dev/live/${login}?allow_source=true&allow_audio_only=true&fast_bread=true`, headers: getRequestHeaders(login) },
+            ...TTVLOL_HOSTS.map((h) => ({ url: ttvlolUrl(h, login), headers: { 'X-Donate-To': 'https://ttv.lol/donate' } })),
+            { url: `https://eu.luminous.dev/live/${login}?allow_source=true&allow_audio_only=true&fast_bread=true`, headers: getRequestHeaders(login) },
+        ];
+        for (const c of candidates) {
             try {
-                const r = await fetch(`https://${host}/live/${login}?allow_source=true&allow_audio_only=true&fast_bread=true`, { headers: getRequestHeaders(login) });
-                if (r.ok) { resLuminous = r; break; }
-            } catch (err) { /* miroir suivant */ }
+                const r = await fetch(c.url, { headers: c.headers });
+                if (!r.ok) continue;
+                const text = await r.text();
+                // Chaîne hors ligne ou page d'erreur : source suivante.
+                if (!text.includes('#EXT-X-STREAM-INF')) continue;
+                m3u8Content = text;
+                masterUrl = r.url;
+                break;
+            } catch (err) { /* source suivante */ }
         }
-        if (resLuminous) {
-            m3u8Content = await resLuminous.text();
-            masterUrl = resLuminous.url;
-        } else {
-            throw new Error("Luminous down");
-        }
+        if (!m3u8Content) throw new Error("Luminous down");
     } catch(e) {
         // --- TENTATIVE 2 : Plan de Secours Officiel Twitch ---
         try {
@@ -438,7 +444,15 @@ async function handleRecoverResolve(url, workerOrigin) {
 // Hôtes que le proxy accepte de relayer : Twitch (playlists, segments,
 // VODs) et Luminous. Sans cette liste, /api/proxy relayait n'importe quelle
 // adresse — un proxy ouvert à tout Internet, aux frais du Worker.
-const PROXY_HOSTS = ['ttvnw.net', 'jtvnw.net', 'twitch.tv', 'cloudfront.net', 'luminous.dev', 'twitchcdn.net'];
+const PROXY_HOSTS = ['ttvnw.net', 'jtvnw.net', 'twitch.tv', 'cloudfront.net', 'luminous.dev', 'twitchcdn.net', 'twitch-al.nadeko.net'];
+
+// Proxys sans pub au format TTV.LOL v1 : la requête usher, encodée, après
+// /playlist/<chaîne>.m3u8 (« %3F » compris). Celui-ci est en Albanie, où
+// Twitch ne diffuse pas de pub ; ses variantes se lisent de n'importe quelle
+// adresse et annoncent leurs segments d'avance, comme celles de Luminous.
+const TTVLOL_HOSTS = ['twitch-al.nadeko.net'];
+const ttvlolUrl = (host, login) =>
+    `https://${host}/playlist/${login}.m3u8%3F${encodeURIComponent('allow_source=true&allow_audio_only=true&fast_bread=true')}`;
 function proxyAllowed(target) {
     try {
         const u = new URL(target);
@@ -515,16 +529,29 @@ async function handleProxy(url, request) {
 // EXT-X-MEDIA). Seul le premier était reconnu : le site n'affichait plus que
 // « Auto ». La version d'origine garde le nom « Source » dans les deux cas,
 // pour que la qualité retenue par chacun reste valable.
-function variantName(streamInf) {
+function variantName(streamInf, sourceGroups = new Set()) {
     const attr = (name) => (streamInf.match(new RegExp(`[:,]${name}="([^"]+)"`)) || [])[1];
     const name = attr('VIDEO') || attr('STABLE-VARIANT-ID') || attr('IVS-NAME') || '';
-    return name === 'chunked' || attr('IVS-VARIANT-SOURCE') === 'source' ? 'Source' : name;
+    return name === 'chunked' || sourceGroups.has(name) || attr('IVS-VARIANT-SOURCE') === 'source' ? 'Source' : name;
+}
+
+/** Groupes vidéo marqués « (source) » dans leur nom (EXT-X-MEDIA) : certains
+ *  proxys, comme celui de l'Albanie, nomment la version d'origine « 1080p60 »
+ *  au lieu de « chunked ». */
+function sourceGroupsOf(content) {
+    const groups = new Set();
+    for (const l of content.split('\n')) {
+        if (!l.startsWith('#EXT-X-MEDIA') || !/\(source\)/i.test(l)) continue;
+        const g = (l.match(/GROUP-ID="([^"]+)"/) || [])[1];
+        if (g) groups.add(g);
+    }
+    return groups;
 }
 
 function parseAndProxyM3U8(content, master, workerOrigin, isVod, useProxy = true) { 
-    const lines = content.split('\n'); const proxyBase = `${workerOrigin}/api/proxy?url=`; let unsorted = {}, last = ""; 
+    const lines = content.split('\n'); const proxyBase = `${workerOrigin}/api/proxy?url=`; let unsorted = {}, last = ""; const sources = sourceGroupsOf(content); 
     lines.forEach(l => { 
-        if (l.startsWith('#EXT-X-STREAM-INF')) { last = variantName(l); }
+        if (l.startsWith('#EXT-X-STREAM-INF')) { last = variantName(l, sources); }
         else if (l.startsWith('http') && last) { unsorted[last] = useProxy ? `${proxyBase}${encodeURIComponent(l)}&isVod=${isVod}` : l; last = ""; } 
     }); 
     let sorted = {}; sorted["Auto"] = useProxy ? `${proxyBase}${encodeURIComponent(master)}&isVod=${isVod}` : master; 
