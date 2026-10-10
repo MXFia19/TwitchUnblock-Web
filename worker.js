@@ -507,10 +507,23 @@ async function handleProxy(url, request) {
 }
 
 // --- FONCTIONS UTILITAIRES ---
+// Nom de chaque qualité, dans les deux formats de playlist maîtresse :
+// l'ancien (VIDEO="chunked", repris des lignes EXT-X-MEDIA) et celui des
+// serveurs IVS que renvoie maintenant le miroir européen de Luminous
+// (STABLE-VARIANT-ID="1080p60", IVS-VARIANT-SOURCE="source", sans
+// EXT-X-MEDIA). Seul le premier était reconnu : le site n'affichait plus que
+// « Auto ». La version d'origine garde le nom « Source » dans les deux cas,
+// pour que la qualité retenue par chacun reste valable.
+function variantName(streamInf) {
+    const attr = (name) => (streamInf.match(new RegExp(`[:,]${name}="([^"]+)"`)) || [])[1];
+    const name = attr('VIDEO') || attr('STABLE-VARIANT-ID') || attr('IVS-NAME') || '';
+    return name === 'chunked' || attr('IVS-VARIANT-SOURCE') === 'source' ? 'Source' : name;
+}
+
 function parseAndProxyM3U8(content, master, workerOrigin, isVod, useProxy = true) { 
     const lines = content.split('\n'); const proxyBase = `${workerOrigin}/api/proxy?url=`; let unsorted = {}, last = ""; 
     lines.forEach(l => { 
-        if (l.includes('VIDEO="')) { try { let n = l.split('VIDEO="')[1].split('"')[0]; if (n === 'chunked') n = 'Source'; last = n; } catch(e) {} } 
+        if (l.startsWith('#EXT-X-STREAM-INF')) { last = variantName(l); }
         else if (l.startsWith('http') && last) { unsorted[last] = useProxy ? `${proxyBase}${encodeURIComponent(l)}&isVod=${isVod}` : l; last = ""; } 
     }); 
     let sorted = {}; sorted["Auto"] = useProxy ? `${proxyBase}${encodeURIComponent(master)}&isVod=${isVod}` : master; 
