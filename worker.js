@@ -572,7 +572,7 @@ const USAGE_RETENTION_DAYS = 35;
 const PLATFORMS = ['ios', 'web'];
 // Le site officiel : un ping « web » venu d'ailleurs (copie locale, tests,
 // préversions) n'est pas compté. L'app iOS n'envoie pas d'en-tête Origin.
-let USAGE_ORIGINS = ['https://test2-fawn-eta.vercel.app'];
+let USAGE_ORIGINS = ['https://twitchunblock.vercel.app', 'https://test2-fawn-eta.vercel.app'];
 // Navigateurs automatisés et robots qui exécutent le JavaScript.
 const BOT_UA = /headless|bot\b|crawler|spider|slurp|playwright|puppeteer|selenium|phantomjs|lighthouse|preview/i;
 

@@ -25,8 +25,9 @@ services:
     environment:
       PUBLIC_ORIGIN: "https://${RELAY_DOMAIN}"
       # Sites qui peuvent s'en servir (les autres sont refusés) : le site
-      # officiel et ses aperçus de test sur Vercel.
-      ALLOWED_ORIGINS: "https://test2-fawn-eta.vercel.app,https://test2-*-mxfia19s-projects.vercel.app"
+      # officiel (nouvelle et ancienne adresse) et ses aperçus de test sur
+      # Vercel. Remplaçable par ALLOWED_ORIGINS=… dans le fichier .env.
+      ALLOWED_ORIGINS: "${ALLOWED_ORIGINS:-https://twitchunblock.vercel.app,https://test2-fawn-eta.vercel.app,https://twitchunblock-*-mxfia19s-projects.vercel.app,https://test2-*-mxfia19s-projects.vercel.app}"
     logging:
       driver: json-file
       options: { max-size: "10m", max-file: "3" }

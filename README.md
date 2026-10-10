@@ -2,7 +2,7 @@
 
 Watch Twitch lives and VODs in your browser, no subscription needed, with the real chat.
 
-**Website: https://test2-fawn-eta.vercel.app**
+**Website: https://twitchunblock.vercel.app**
 
 > 🤖 **Vibe-coded project.** Built with AI coding assistants (prompted, reviewed and tested by a human). Expect rough edges: bug reports on [Discord](https://discord.gg/cEsMRdxsVq) help a lot.
 
@@ -117,7 +117,7 @@ The iOS app uses the same Worker.
 
 ## Usage count
 
-To know whether people actually use the website and the app, each browser (and each app install) sends a small signal to the Worker at most once an hour. Numbers are public at **[/stats](https://test2-fawn-eta.vercel.app/stats)**: distinct people today, over 7 and 30 days, website vs iOS app, logged-in accounts vs anonymous, new people per day and how many came back.
+To know whether people actually use the website and the app, each browser (and each app install) sends a small signal to the Worker at most once an hour. Numbers are public at **[/stats](https://twitchunblock.vercel.app/stats)**: distinct people today, over 7 and 30 days, website vs iOS app, logged-in accounts vs anonymous, new people per day and how many came back.
 
 | Sent | Never sent |
 |---|---|
