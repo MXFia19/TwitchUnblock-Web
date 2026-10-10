@@ -246,11 +246,12 @@ async function handleGetLive(url, workerOrigin) {
         // --- TENTATIVE 1 : Luminous API (Filtre Anti-Pub) ---
         // fast_bread : chaque playlist annonce en plus les deux prochains
         // segments (« EXT-X-TWITCH-PREFETCH »), dont le lecteur du site se
-        // sert pour coller au direct. Miroir européen d'abord — il désigne des
-        // serveurs de playlists proches de la plupart des utilisateurs —,
-        // l'asiatique en secours.
+        // sert pour coller au direct. Miroir asiatique d'abord, comme avant et
+        // comme l'app : l'européen renvoie des listes au format des serveurs
+        // IVS, où le choix « Source » donnait un écran noir chez des
+        // utilisateurs. Il reste en secours (variantName lit les deux formats).
         let resLuminous = null;
-        for (const host of ['eu.luminous.dev', 'as.luminous.dev']) {
+        for (const host of ['as.luminous.dev', 'eu.luminous.dev']) {
             try {
                 const r = await fetch(`https://${host}/live/${login}?allow_source=true&allow_audio_only=true&fast_bread=true`, { headers: getRequestHeaders(login) });
                 if (r.ok) { resLuminous = r; break; }
