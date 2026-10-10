@@ -6,6 +6,43 @@
 
 export const CHANGELOG = [
   {
+    version: '2026.10.10a',
+    items: {
+      fr: [
+        'Retours : joins jusqu’à 3 captures (ou colle-les avec Ctrl+V). Dans « Mes signalements », suis où en est ton retour (reçu, accepté, en cours, fait, refusé), lis la réponse et réponds à ton tour ; une pastille signale les nouvelles réponses.',
+        'VODs : les passages dont Twitch a coupé le son (musique protégée) apparaissent en orange sur la barre, avec un bouton « Passer ». Un jour ou deux après le live, Twitch garde encore le son d’origine : le site le remet alors tout seul.',
+        'Clic molette (ou Ctrl/Cmd + clic) sur un live, une VOD, un clip, une catégorie ou une chaîne : ouverture dans un nouvel onglet.',
+        'Compte : « Changer de compte » dans les réglages. Après une déconnexion, Twitch demande quel compte utiliser au lieu de reconnecter l’ancien.',
+        'Nouvelle langue : russe, traduit avec l’IA — les corrections sont les bienvenues (« Signaler une erreur de traduction » dans les réglages).',
+        'Le site a une nouvelle adresse : twitchunblock.vercel.app (l’ancienne y renvoie).',
+      ],
+      en: [
+        'Feedback: attach up to 3 screenshots (or paste them with Ctrl+V). In “My reports”, see where your report stands (received, accepted, in progress, done, declined), read the reply and answer back; a badge flags new replies.',
+        'VODs: parts Twitch muted (copyrighted music) show in orange on the seek bar, with a “Skip” button. For a day or two after the stream, Twitch still keeps the original sound: the site then puts it back on its own.',
+        'Middle-click (or Ctrl/Cmd + click) on a stream, VOD, clip, category or channel opens it in a new tab.',
+        'Account: “Switch account” in the settings. After logging out, Twitch asks which account to use instead of signing the old one back in.',
+        'New language: Russian, translated with AI — corrections are welcome (“Report a translation mistake” in the settings).',
+        'The site has a new address: twitchunblock.vercel.app (the old one redirects there).',
+      ],
+      es: [
+        'Comentarios: adjunta hasta 3 capturas (o pégalas con Ctrl+V). En «Mis reportes», mira en qué punto está tu reporte (recibido, aceptado, en curso, hecho, rechazado), lee la respuesta y contesta; un indicador avisa de las respuestas nuevas.',
+        'VODs: las partes que Twitch silenció (música protegida) aparecen en naranja en la barra, con un botón «Saltar». Uno o dos días después del directo, Twitch aún guarda el sonido original: el sitio lo restaura solo.',
+        'Clic con la rueda (o Ctrl/Cmd + clic) en un directo, VOD, clip, categoría o canal: se abre en una pestaña nueva.',
+        'Cuenta: «Cambiar de cuenta» en los ajustes. Tras cerrar sesión, Twitch pregunta qué cuenta usar en lugar de reconectar la anterior.',
+        'Nuevo idioma: ruso, traducido con IA; las correcciones son bienvenidas («Reportar un error de traducción» en los ajustes).',
+        'El sitio tiene una nueva dirección: twitchunblock.vercel.app (la anterior redirige allí).',
+      ],
+      ru: [
+        'Обратная связь: прикрепляйте до 3 скриншотов (или вставляйте их через Ctrl+V). В разделе «Мои обращения» видно, на каком этапе ваше обращение (получено, принято, в работе, готово, отклонено), можно прочитать ответ и ответить; значок сообщает о новых ответах.',
+        'VOD: фрагменты, где Twitch отключил звук (защищённая музыка), отмечены оранжевым на шкале, есть кнопка «Пропустить». В течение дня-двух после трансляции Twitch ещё хранит исходный звук — сайт сам его возвращает.',
+        'Средняя кнопка мыши (или Ctrl/Cmd + клик) по трансляции, VOD, клипу, категории или каналу открывает их в новой вкладке.',
+        'Аккаунт: «Сменить аккаунт» в настройках. После выхода Twitch спрашивает, какой аккаунт использовать, а не входит снова в прежний.',
+        'Новый язык: русский, переведён с помощью ИИ — исправления приветствуются («Сообщить об ошибке перевода» в настройках).',
+        'У сайта новый адрес: twitchunblock.vercel.app (старый перенаправляет на него).',
+      ],
+    },
+  },
+  {
     version: '2026.10.07c',
     items: {
       fr: [

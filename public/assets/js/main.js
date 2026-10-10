@@ -245,8 +245,8 @@ async function adoptToken(token, { silent = false } = {}) {
   chat?.sessionChanged()
 }
 
-function login() {
-  const url = api.loginUrl()
+function login(opts) {
+  const url = api.loginUrl(opts)
   const w = 500
   const h = 720
   const left = (screen.width - w) / 2
@@ -268,6 +268,9 @@ function logout() {
   }
   store.token = null
   Object.assign(session, { token: null, userId: null, login: null, avatar: null, scopes: [] })
+  // La prochaine connexion passera par la page d'autorisation de Twitch :
+  // sans elle, il reconnectait aussitôt le compte dont il se souvient.
+  try { localStorage.setItem(api.FORCE_VERIFY_KEY, '1') } catch {}
   renderAccount()
   state.loaded.followed = 0
   loadFollowed()
@@ -355,7 +358,15 @@ function flushSync({ force = false } = {}) {
 
 setInterval(() => flushSync(), 60_000)
 // Fermeture d'onglet, changement d'appli sur mobile : dernier envoi.
-document.addEventListener('visibilitychange', () => { if (document.hidden) flushSync({ force: true }); else loadAnnouncement() })
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) flushSync({ force: true })
+  else { loadAnnouncement(); refreshFeedbackInbox() }
+})
+// Réponses aux retours envoyés d'ici : pastille sur les boutons de retour.
+// Après l'évaluation du module : ces fonctions lisent des constantes
+// déclarées plus bas.
+setTimeout(() => updateFeedbackBadges(), 0)
+setTimeout(() => refreshFeedbackInbox(), 4000)
 window.addEventListener('pagehide', () => flushSync({ force: true }))
 
 // ── Navigation ─────────────────────────────────────────────────────────────
@@ -377,6 +388,14 @@ function setTab(tab, { url = true } = {}) {
 
 function bindGlobal() {
   document.addEventListener('click', (e) => {
+    // Cartes et chaînes sont de vrais liens (/xqc, /videos/…) : Ctrl, Cmd ou
+    // Maj + clic ouvrent un nouvel onglet ou une fenêtre, comme partout — le
+    // clic molette aussi, sans passer par ici. Un clic simple reste dans la
+    // page, sans la recharger.
+    const link = e.target.closest('a[href]')
+    if (link && (e.ctrlKey || e.metaKey || e.shiftKey || e.altKey || e.button !== 0)) return
+    if (link?.matches('[data-live], [data-vod], [data-clip], [data-cat], [data-channel]')) e.preventDefault()
+
     const tab = e.target.closest('[data-tab]')
     if (tab) return setTab(tab.dataset.tab)
 
@@ -541,7 +560,7 @@ function gameLink(id, name) {
 
 function streamCard(s) {
   return `
-    <article class="card stream-card" data-live="${esc(s.login)}" tabindex="0">
+    <a class="card stream-card" href="/${esc(s.login)}" data-live="${esc(s.login)}">
       <div class="thumb">
         <img src="${esc(thumb(s.thumb, 440, 248))}" alt="" loading="lazy" decoding="async">
         <span class="pill live">${esc(t('live_now'))}</span>
@@ -556,7 +575,7 @@ function streamCard(s) {
           ${s.game ? `<p class="meta">${gameLink(s.gameId, s.game)}</p>` : ''}
         </div>
       </div>
-    </article>`
+    </a>`
 }
 
 function vodCard(v, streamer) {
@@ -568,7 +587,7 @@ function vodCard(v, streamer) {
     ? date.toLocaleDateString(lang(), { day: 'numeric', month: 'short', year: 'numeric' })
     : ''
   return `
-    <article class="card vod-card" data-vod="${esc(v.id)}" tabindex="0">
+    <a class="card vod-card" href="/videos/${esc(v.id)}" data-vod="${esc(v.id)}">
       <div class="thumb">
         <img src="${esc(thumb(v.previewThumbnailURL, 320, 180))}" alt="" loading="lazy" decoding="async"
              onerror="this.src='https://vod-secure.twitch.tv/_404/404_processing_320x180.png'">
@@ -581,7 +600,7 @@ function vodCard(v, streamer) {
           <p class="meta">${esc(dateStr)}</p>
         </div>
       </div>
-    </article>`
+    </a>`
 }
 
 function skeleton(n, kind = 'stream') {
@@ -604,7 +623,7 @@ function renderContinue() {
     const len = store.getLength(h.term)
     const ratio = len ? Math.min(1, p / len) : 0
     return `
-      <article class="card rail-card" data-vod="${esc(h.term)}" tabindex="0">
+      <a class="card rail-card" href="/videos/${esc(h.term)}" data-vod="${esc(h.term)}">
         <div class="thumb">
           <img src="${esc(h.thumb || 'https://vod-secure.twitch.tv/_404/404_processing_320x180.png')}" alt="" loading="lazy">
           ${p > 5 ? `<span class="pill duration">${esc(formatClock(p))}</span>` : ''}
@@ -615,7 +634,7 @@ function renderContinue() {
           <h3 title="${esc(h.display)}">${esc(h.display)}</h3>
           <p class="name">${esc(h.streamer || 'VOD')}</p>
         </div></div>
-      </article>`
+      </a>`
   }).join('')
 }
 
@@ -732,10 +751,10 @@ function renderOffline(list, anyLive = false) {
   $('#offline-count').textContent = list.length ? String(list.length) : ''
   box.innerHTML = list.length ? `
     <div class="offline-list">${list.map((c) => `
-      <button type="button" class="offline-row" data-channel="${esc(c.login)}">
+      <a class="offline-row" href="/${esc(c.login)}" data-channel="${esc(c.login)}">
         ${c.avatar ? `<img class="avatar sm" src="${esc(c.avatar)}" alt="" loading="lazy">` : `<span class="avatar sm placeholder">${esc((c.name || '?')[0])}</span>`}
         <span class="offline-text"><span>${esc(c.name)}</span>${c.lastEnd ? `<small class="muted">${esc(offlineFor(null, 0, c.lastEnd))} · ${esc(offlineDate(null, 0, c.lastEnd))}</small>` : ''}</span>
-      </button>`).join('')}</div>`
+      </a>`).join('')}</div>`
     : emptyState(t(anyLive ? 'offline_all_live' : 'offline_none'), anyLive ? 'radio' : 'heart')
 }
 
@@ -761,11 +780,11 @@ const followedCats = () => store.prefs.followedCategories ?? []
 const isCatFollowed = (id) => followedCats().some((c) => c.id === id)
 
 function catCard(c) {
-  return `<article class="cat-card" data-cat="${esc(c.id)}" data-cat-name="${esc(c.name)}" data-cat-slug="${esc(c.slug ?? '')}" data-cat-box="${esc(c.box)}" tabindex="0">
+  return `<a class="cat-card" href="/directory/category/${esc(encodeURIComponent(c.slug || c.id))}" data-cat="${esc(c.id)}" data-cat-name="${esc(c.name)}" data-cat-slug="${esc(c.slug ?? '')}" data-cat-box="${esc(c.box)}">
     <div class="cat-box"><img src="${esc(c.box)}" alt="" loading="lazy" decoding="async"></div>
     <h3 title="${esc(c.name)}">${esc(c.name)}</h3>
     ${c.viewers != null ? `<p class="meta">${icon('eye', 12)} ${esc(formatViewers(c.viewers))}</p>` : ''}
-  </article>`
+  </a>`
 }
 
 async function loadCategories({ more = false } = {}) {
@@ -876,6 +895,7 @@ function setupCategories() {
     if (b && b.dataset.catTab !== cat.tab) { cat.tab = b.dataset.catTab; loadCategories() }
   })
   $('#cat-grid').addEventListener('click', (e) => {
+    if (e.ctrlKey || e.metaKey || e.shiftKey || e.altKey || e.button !== 0) return
     const c = e.target.closest('[data-cat]')
     if (c) openCategory({ id: c.dataset.cat, name: c.dataset.catName, slug: c.dataset.catSlug, box: c.dataset.catBox })
   })
@@ -1190,11 +1210,11 @@ function renderRecentChannels() {
   // Masquables dans les réglages (« Chaînes récentes »).
   box.hidden = chans.length === 0 || store.prefs.showRecent === false
   $('#recent-list').innerHTML = chans.map((h) => `
-    <span class="chip" data-channel="${esc(h.term)}" tabindex="0">
+    <a class="chip" href="/${esc(h.term)}" data-channel="${esc(h.term)}">
       ${h.avatar ? `<img src="${esc(h.avatar)}" alt="">` : icon('user', 14)}
       <span>${esc(h.display)}</span>
       <button type="button" data-del="${esc(h.term)}" aria-label="${esc(t('close'))}">${icon('x', 12)}</button>
-    </span>`).join('')
+    </a>`).join('')
 }
 
 let suggestions = []
@@ -1973,7 +1993,7 @@ function clipCard(c) {
   const date = new Date(c.createdAt)
   const dateStr = Number.isFinite(date.getTime()) ? date.toLocaleDateString(lang(), { day: 'numeric', month: 'short' }) : ''
   return `
-    <article class="card vod-card" data-clip="${esc(c.slug)}" tabindex="0">
+    <a class="card vod-card" href="/clip/${esc(encodeURIComponent(c.slug))}" data-clip="${esc(c.slug)}">
       <div class="thumb">
         <img src="${esc(c.thumbnailURL)}" alt="" loading="lazy" decoding="async">
         <span class="pill duration">${esc(formatClock(c.durationSeconds ?? 0))}</span>
@@ -1985,7 +2005,7 @@ function clipCard(c) {
           <p class="meta">${esc([dateStr, c.curator?.displayName ? t('clipped_by', { u: c.curator.displayName }) : ''].filter(Boolean).join(' · '))}</p>
         </div>
       </div>
-    </article>`
+    </a>`
 }
 
 /** Section Clips de la page chaîne, chargée à part (période au choix), avec
@@ -2097,7 +2117,11 @@ async function openVod(id, preset, { keepPlaylist = false, at = null } = {}) {
 
   $('#watch-loading').hidden = true
   player.load({ links: links.links, kind: 'vod', startAt })
-  api.getVodChapters(vodId).then((ch) => { if (state.watch === token) player.setChapters(ch) }).catch(() => {})
+  api.getVodMarkers(vodId).then((m) => {
+    if (state.watch !== token) return
+    player.setChapters(m.chapters)
+    player.setMuted(m.muted)
+  }).catch(() => {})
   chat.openVod({ videoId: vodId, channelId: meta?.owner?.id ?? null, channelLogin: meta?.owner?.login ?? null, startAt })
   if (startAt && !at) toast(t('resume_at', { t: formatClock(startAt) }))
 
@@ -2202,9 +2226,14 @@ function closeWatch({ url = true } = {}) {
 }
 
 // ── Retours : bug, idée ────────────────────────────────────────────────────
-// Depuis les réglages, ou l'écran d'erreur du lecteur. Le Worker range le
-// message et le transmet sur Discord ; ce qui part est montré avant l'envoi.
+// Depuis l'en-tête, les réglages ou le lecteur. Le Worker range le message
+// (captures comprises) et le transmet sur Discord ; ce qui part est montré
+// avant l'envoi. Il rend un jeton que ce navigateur garde : avec lui, on
+// relit la discussion (« Mes signalements »), on voit où en est le retour
+// (accepté, en cours, fait…) et on répond.
 const FEEDBACK_KINDS = ['bug', 'idea', 'other']
+const MY_FB_KEY = 'tu_my_feedback'
+const MAX_FB_PHOTOS = 3
 
 /** Infos techniques jointes : de quoi reproduire un bug, rien de plus. */
 function feedbackInfo() {
@@ -2222,24 +2251,126 @@ function feedbackInfo() {
   }
 }
 
-function openFeedback(kind = 'bug') {
+/** Retours envoyés d'ici : id, jeton, et le dernier état connu. */
+function myFeedback() {
+  try {
+    const list = JSON.parse(localStorage.getItem(MY_FB_KEY) || '[]')
+    return Array.isArray(list) ? list.filter((r) => r?.id && r?.token) : []
+  } catch { return [] }
+}
+function saveMyFeedback(list) {
+  try { localStorage.setItem(MY_FB_KEY, JSON.stringify(list.slice(0, 50))) } catch {}
+  updateFeedbackBadges()
+}
+const fbUnread = (r) => r.lastFrom === 'a' && (r.updatedAt || 0) > (r.seen || 0)
+
+/** Pastille « nouvelle réponse » sur chaque bouton de retour. */
+function updateFeedbackBadges() {
+  const n = myFeedback().filter(fbUnread).length
+  for (const b of $$('[data-action="feedback"], [data-fb-mine]')) {
+    let dot = b.querySelector('.fb-dot')
+    if (!n) { dot?.remove(); continue }
+    if (!dot) { dot = document.createElement('span'); dot.className = 'fb-dot'; b.appendChild(dot) }
+    dot.textContent = n > 9 ? '9+' : String(n)
+    dot.title = t('fb_unread', { n })
+  }
+}
+
+/** État de toutes les discussions, en une requête (au plus toutes les 10 min
+ *  sans `force`). Un retour effacé ou expiré disparaît de la liste. */
+let fbCheckedAt = 0
+async function refreshFeedbackInbox(force = false) {
+  const list = myFeedback()
+  if (!list.length || (!force && Date.now() - fbCheckedAt < 10 * 60 * 1000)) return list
+  fbCheckedAt = Date.now()
+  try {
+    const { items } = await api.feedbackThreads(list.map(({ id, token }) => ({ id, token })))
+    const byId = new Map((items ?? []).map((i) => [i.id, i]))
+    const next = list.filter((r) => !byId.get(r.id)?.gone).map((r) => {
+      const it = byId.get(r.id)
+      return it ? { ...r, status: it.status, updatedAt: it.updatedAt, lastFrom: it.lastFrom, thread: it.thread } : r
+    })
+    saveMyFeedback(next)
+    return next
+  } catch { return list }
+}
+
+/** Image choisie ou collée → JPEG réduit (1600 px, ~500 Ko au plus), base64. */
+async function shrinkImage(file) {
+  const bmp = await createImageBitmap(file)
+  let side = 1600
+  let quality = 0.8
+  let out = ''
+  for (let i = 0; i < 6; i++) {
+    const scale = Math.min(1, side / Math.max(bmp.width, bmp.height))
+    const c = document.createElement('canvas')
+    c.width = Math.max(1, Math.round(bmp.width * scale))
+    c.height = Math.max(1, Math.round(bmp.height * scale))
+    c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height)
+    out = c.toDataURL('image/jpeg', quality)
+    if (out.length < 660000) break
+    side = Math.round(side * 0.8)
+    quality = Math.max(0.5, quality - 0.1)
+  }
+  bmp.close?.()
+  return out
+}
+
+/** Pièces jointes d'un formulaire : vignettes, retrait, collage d'une capture. */
+function photoPicker(box, input, attach, textarea) {
+  const photos = []
+  const draw = () => {
+    box.innerHTML = photos.map((p, i) => `<span class="fb-thumb"><img src="${p}" alt=""><button type="button" data-unphoto="${i}" aria-label="${esc(t('close'))}">${icon('x', 12)}</button></span>`).join('')
+    attach.hidden = photos.length >= MAX_FB_PHOTOS
+  }
+  const add = async (files) => {
+    for (const f of [...files].filter((x) => x.type?.startsWith('image/'))) {
+      if (photos.length >= MAX_FB_PHOTOS) { toast(t('fb_photos_max')); break }
+      try { photos.push(await shrinkImage(f)) } catch {}
+    }
+    draw()
+  }
+  input.onchange = () => { add(input.files); input.value = '' }
+  // Capture d'écran collée (Ctrl+V) directement dans le message.
+  textarea.addEventListener('paste', (e) => {
+    const files = [...(e.clipboardData?.files ?? [])]
+    if (files.some((f) => f.type.startsWith('image/'))) add(files)
+  })
+  box.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-unphoto]')
+    if (!b) return
+    photos.splice(Number(b.dataset.unphoto), 1)
+    draw()
+  })
+  return { photos, reset: () => { photos.length = 0; draw() } }
+}
+
+function openFeedback(kind = 'bug', { prefill = '' } = {}) {
   const info = feedbackInfo()
   const summary = [info.browser, info.os, `v${usage.SITE_VERSION}`, info.page, info.watching].filter(Boolean).join(' · ')
   let current = FEEDBACK_KINDS.includes(kind) ? kind : 'bug'
+  const mine = myFeedback()
   openSheet(`
-    <div class="sheet-head"><h2>${esc(t('feedback'))}</h2><button class="icon-btn" type="button" data-sheet-close>${icon('x', 20)}</button></div>
+    <div class="sheet-head"><h2>${esc(t('feedback'))}</h2>
+      ${mine.length ? `<button class="btn sm ghost fb-mine-btn" type="button" data-fb-mine>${icon('inbox', 15)}<span>${esc(t('fb_mine'))}</span></button>` : ''}
+      <button class="icon-btn" type="button" data-sheet-close>${icon('x', 20)}</button></div>
     <form class="sheet-section feedback-form" id="feedback-form">
       <div class="segmented full" id="fb-kind">
         ${FEEDBACK_KINDS.map((k) => `<button type="button" data-fb="${k}" class="${k === current ? 'active' : ''}">${esc(t(`fb_${k}`))}</button>`).join('')}
       </div>
-      <textarea class="text-input" id="fb-message" rows="6" maxlength="2000" placeholder="${esc(t(`fb_ph_${current}`))}"></textarea>
+      <textarea class="text-input" id="fb-message" rows="6" maxlength="2000" placeholder="${esc(t(`fb_ph_${current}`))}">${esc(prefill)}</textarea>
+      <div class="fb-photos" id="fb-photos"></div>
+      <label class="btn sm ghost fb-attach" id="fb-attach">${icon('image', 15)}<span>${esc(t('fb_add_photos'))}</span><input type="file" id="fb-file" accept="image/*" multiple hidden></label>
       <input class="text-input" id="fb-contact" type="text" maxlength="100" autocomplete="off" placeholder="${esc(t('fb_contact_ph'))}">
       <p class="muted small">${esc(t('fb_info'))}<br><span class="fb-info">${esc(summary)}</span></p>
       <button class="btn primary" type="submit" id="fb-send">${icon('send', 16)}<span>${esc(t('fb_send'))}</span></button>
     </form>`)
+  updateFeedbackBadges()
+  const picker = photoPicker($('#fb-photos'), $('#fb-file'), $('#fb-attach'), $('#fb-message'))
   const sheet = $('#sheet')
   sheet.onclick = (e) => {
     if (e.target.closest('[data-sheet-close]')) return closeSheet()
+    if (e.target.closest('[data-fb-mine]')) return openMyFeedback()
     const b = e.target.closest('[data-fb]')
     if (!b) return
     current = b.dataset.fb
@@ -2256,18 +2387,116 @@ function openFeedback(kind = 'bug') {
     const btn = $('#fb-send')
     btn.disabled = true
     try {
-      await api.sendFeedback({
+      const r = await api.sendFeedback({
         kind: current, message, contact: $('#fb-contact').value.trim(),
-        platform: 'web', version: usage.SITE_VERSION, info,
+        platform: 'web', version: usage.SITE_VERSION, info, photos: picker.photos,
       })
+      if (r?.id && r?.token) {
+        const now = Date.now()
+        saveMyFeedback([{ id: r.id, token: r.token, at: now, kind: current, text: message.slice(0, 200), status: 'new', updatedAt: now, lastFrom: 'u', seen: now }, ...myFeedback()])
+      }
       closeSheet()
-      toast(t('fb_thanks'), 'success')
+      toast(t(r?.token ? 'fb_thanks_follow' : 'fb_thanks'), 'success')
     } catch (err) {
       btn.disabled = false
       toast(t(err?.status === 429 ? 'fb_too_many' : 'fb_failed'), 'error')
     }
   }
-  setTimeout(() => $('#fb-message')?.focus(), 250)
+  if (!prefill) setTimeout(() => $('#fb-message')?.focus(), 250)
+}
+actions['report-translation'] = () => openFeedback('other', { prefill: `[${lang()}] ` })
+
+const fbDate = (at) => new Date(at).toLocaleString(lang(), { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
+const fbStatus = (s) => `<span class="fb-status ${esc(s || 'new')}">${esc(t(`fb_status_${s || 'new'}`))}</span>`
+
+/** « Mes signalements » : les retours envoyés d'ici, réponses en tête. */
+function openMyFeedback() {
+  const listHtml = (list) => list.length ? `<div class="fb-mine">${list
+    .slice().sort((a, b) => (b.updatedAt || b.at) - (a.updatedAt || a.at))
+    .map((r) => `<button class="fb-mine-row ${fbUnread(r) ? 'unread' : ''}" type="button" data-fb-open="${esc(r.id)}">
+      <span class="fb-mine-top"><span class="fb-kind ${esc(r.kind)}">${esc(t(`fb_${r.kind || 'other'}`))}</span>${fbStatus(r.status)}
+        ${fbUnread(r) ? '<span class="fb-dot">1</span>' : ''}<span class="muted small">${esc(fbDate(r.updatedAt || r.at))}</span></span>
+      <span class="fb-mine-text">${esc(r.text || '')}</span>
+    </button>`).join('')}</div>` : `<p class="muted small">${esc(t('fb_mine_empty'))}</p>`
+  openSheet(`
+    <div class="sheet-head"><button class="icon-btn" type="button" data-fb-back>${icon('chevronLeft', 20)}</button><h2>${esc(t('fb_mine'))}</h2><button class="icon-btn" type="button" data-sheet-close>${icon('x', 20)}</button></div>
+    <div class="sheet-section" id="fb-mine-list">${listHtml(myFeedback())}</div>`)
+  refreshFeedbackInbox(true).then((list) => { const box = $('#fb-mine-list'); if (box) box.innerHTML = listHtml(list) })
+  $('#sheet').onclick = (e) => {
+    if (e.target.closest('[data-sheet-close]')) return closeSheet()
+    if (e.target.closest('[data-fb-back]')) return openFeedback()
+    const row = e.target.closest('[data-fb-open]')
+    if (row) openFeedbackThread(row.dataset.fbOpen)
+  }
+}
+
+/** Une discussion : messages, état, photos, et la réponse. */
+function openFeedbackThread(id) {
+  const rec = myFeedback().find((r) => r.id === id)
+  if (!rec) return openMyFeedback()
+  const chatHtml = (r) => (r.thread?.length ? r.thread : [{ f: 'u', m: r.text, at: r.at }]).map((m) => {
+    if (m.s) return `<div class="fb-event">${esc(t('fb_status_line', { s: t(`fb_status_${m.s}`) }))} · ${esc(fbDate(m.at))}</div>`
+    const pics = (m.ph ?? []).map((n) => {
+      const src = api.feedbackPhotoUrl(r.id, n, r.token)
+      return `<a href="${esc(src)}" target="_blank" rel="noopener"><img src="${esc(src)}" alt="" loading="lazy"></a>`
+    }).join('')
+    const mineMsg = m.f !== 'a'
+    return `<div class="fb-bubble ${mineMsg ? 'mine' : ''}">${m.m ? esc(m.m) : ''}${pics ? `<div class="fb-pics">${pics}</div>` : ''}<small>${esc(mineMsg ? t('fb_you') : t('fb_team'))} · ${esc(fbDate(m.at))}</small></div>`
+  }).join('')
+  const markSeen = () => saveMyFeedback(myFeedback().map((r) => (r.id === id ? { ...r, seen: Date.now() } : r)))
+  openSheet(`
+    <div class="sheet-head"><button class="icon-btn" type="button" data-fb-back>${icon('chevronLeft', 20)}</button>
+      <h2><span class="fb-kind ${esc(rec.kind)}">${esc(t(`fb_${rec.kind || 'other'}`))}</span> <span id="fb-thread-status">${fbStatus(rec.status)}</span></h2>
+      <button class="icon-btn" type="button" data-sheet-close>${icon('x', 20)}</button></div>
+    <div class="sheet-section">
+      <div class="fb-chat" id="fb-chat">${chatHtml(rec)}</div>
+      <form class="feedback-form fb-reply-form" id="fb-reply-form">
+        <textarea class="text-input" id="fb-reply" rows="2" maxlength="2000" placeholder="${esc(t('fb_reply_ph'))}"></textarea>
+        <div class="fb-photos" id="fb-reply-photos"></div>
+        <div class="fb-reply-actions">
+          <label class="btn sm ghost fb-attach" id="fb-reply-attach">${icon('image', 15)}<span>${esc(t('fb_add_photos'))}</span><input type="file" id="fb-reply-file" accept="image/*" multiple hidden></label>
+          <button class="btn primary sm" type="submit" id="fb-reply-send">${icon('send', 15)}<span>${esc(t('fb_reply_send'))}</span></button>
+        </div>
+      </form>
+    </div>`)
+  const scrollEnd = () => { const c = $('#fb-chat'); if (c) c.scrollTop = c.scrollHeight }
+  scrollEnd()
+  markSeen()
+  const picker = photoPicker($('#fb-reply-photos'), $('#fb-reply-file'), $('#fb-reply-attach'), $('#fb-reply'))
+  const apply = (item) => {
+    const list = myFeedback().map((r) => (r.id === id ? { ...r, status: item.status, updatedAt: item.updatedAt, lastFrom: item.lastFrom, thread: item.thread, seen: Date.now() } : r))
+    saveMyFeedback(list)
+    const r = list.find((x) => x.id === id)
+    if (!r || !$('#fb-chat')) return
+    $('#fb-chat').innerHTML = chatHtml(r)
+    $('#fb-thread-status').innerHTML = fbStatus(r.status)
+    scrollEnd()
+  }
+  // Version à jour (réponse arrivée depuis la dernière vérification).
+  api.feedbackThreads([{ id, token: rec.token }]).then(({ items }) => {
+    const it = items?.[0]
+    if (it?.gone) { toast(t('fb_gone')); saveMyFeedback(myFeedback().filter((r) => r.id !== id)); return openMyFeedback() }
+    if (it) apply(it)
+  }).catch(() => {})
+  $('#sheet').onclick = (e) => {
+    if (e.target.closest('[data-sheet-close]')) return closeSheet()
+    if (e.target.closest('[data-fb-back]')) return openMyFeedback()
+  }
+  $('#fb-reply-form').onsubmit = async (e) => {
+    e.preventDefault()
+    const message = $('#fb-reply').value.trim()
+    if (!message && !picker.photos.length) return $('#fb-reply').focus()
+    const btn = $('#fb-reply-send')
+    btn.disabled = true
+    try {
+      const r = await api.replyFeedback({ id, token: rec.token, message, photos: picker.photos })
+      $('#fb-reply').value = ''
+      picker.reset()
+      if (r?.item) apply(r.item)
+    } catch (err) {
+      toast(t(err?.status === 429 ? 'fb_too_many' : 'fb_reply_failed'), 'error')
+    } finally { btn.disabled = false }
+  }
 }
 
 // ── Feuilles : ouvrir dans…, réglages ─────────────────────────────────────
@@ -2355,6 +2584,8 @@ function openSettings() {
         ${LANGS.map((l) => `<button type="button" data-l="${l.id}" class="${p.lang === l.id ? 'active' : ''}">${esc(l.label)}</button>`).join('')}
       </div>
       <p class="muted small lang-hint">${esc(t('lang_auto_sub', { l: LANGS.find((x) => x.id === deviceLang())?.label ?? 'English' }))}</p>
+      ${LANGS.find((x) => x.id === lang())?.ai ? `<div class="lang-ai">${icon('sparkles', 15)}<span>${esc(t('lang_ai_note'))}</span>
+        <button class="btn sm ghost" type="button" data-action="report-translation">${esc(t('lang_ai_report'))}</button></div>` : ''}
       <label class="setting setting-col">
         <span class="setting-text"><span>${esc(t('top_lang'))}</span><small>${esc(t('top_lang_sub', { l: topLangName(deviceTopLang()) }))}</small></span>
         <select class="text-input" id="set-toplang">
@@ -2693,7 +2924,8 @@ function renderSettingsAccount() {
         <small class="muted">${esc(session.canChat ? t('connected_as', { u: session.login }) : t('chat_rescope'))}</small></div>
       ${session.canChat ? '' : `<button class="btn sm primary" type="button" data-action="login-again">${esc(t('login'))}</button>`}
       <button class="btn sm danger" type="button" data-action="logout">${icon('logout', 16)}<span>${esc(t('logout'))}</span></button>
-    </div>` : `
+    </div>
+    <button class="sheet-row switch-account" type="button" data-action="switch-account">${icon('users', 18)}<span class="setting-text"><span>${esc(t('switch_account'))}</span><small>${esc(t('switch_account_sub'))}</small></span></button>` : `
     <h3>${esc(t('account'))}</h3>
     <div class="account-row">
       <span class="avatar placeholder">${icon('user', 18)}</span>
@@ -2702,6 +2934,8 @@ function renderSettingsAccount() {
     <button class="btn primary full" type="button" data-action="login">${icon('twitch', 18)}<span>${esc(t('login'))}</span></button>`
 }
 actions['login-again'] = () => login()
+// Le compte actuel reste en place tant que le nouveau n'est pas connecté.
+actions['switch-account'] = () => login({ chooseAccount: true })
 
 /** Après un changement de langue : ce qui a été rendu en JS est refait. */
 function refreshTexts() {

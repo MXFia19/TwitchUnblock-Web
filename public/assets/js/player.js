@@ -44,6 +44,55 @@ function isDirectSegment(u) {
   } catch { return false }
 }
 
+// ── Son des passages coupés ─────────────────────────────────────────────
+// Twitch coupe le son des passages avec de la musique protégée : la playlist
+// pointe alors vers « N-muted.ts ». Un jour ou deux après la diffusion,
+// l'original « N.ts », avec le son, est pourtant encore servi par le CDN.
+// Ce chargeur le demande d'abord et ne retombe sur la version muette que
+// s'il est refusé. Après trois refus sans un seul succès dans une qualité
+// (VOD trop ancienne : originaux effacés), il n'essaie plus dans celle-là —
+// le CDN garde parfois l'original en « source » mais plus en 160p.
+function unmuteLoader(Hls, player) {
+  const Base = Hls.DefaultConfig.loader
+  return class UnmuteLoader extends Base {
+    constructor(config) {
+      super(config)
+      this.hlsConfig = config
+    }
+
+    load(context, config, callbacks) {
+      const all = player.unmute
+      const level = context.frag?.level ?? -1
+      const u = all ? (all[level] ??= { ok: 0, fails: 0, off: false }) : null
+      if (!u || u.off || !/-muted\.ts/.test(context.url)) return super.load(context, config, callbacks)
+      const inner = new Base(this.hlsConfig)
+      this.inner = inner
+      const fallback = () => {
+        inner.destroy()
+        this.inner = null
+        if (++u.fails >= 3 && !u.ok) u.off = true
+        super.load(context, config, callbacks)
+      }
+      inner.load({ ...context, url: context.url.replace('-muted.ts', '.ts') }, config, {
+        ...callbacks,
+        onSuccess: (response, stats, ctx, details) => {
+          // Mesures de débit du segment réellement chargé : hls.js les lit
+          // sur ce chargeur-ci.
+          Object.assign(this.stats, stats)
+          u.ok++
+          player.markUnmuted(context.frag)
+          callbacks.onSuccess(response, this.stats, context, details)
+        },
+        onError: () => fallback(),
+        onTimeout: () => fallback(),
+      })
+    }
+
+    abort() { this.inner?.abort(); super.abort() }
+    destroy() { this.inner?.destroy(); this.inner = null; super.destroy() }
+  }
+}
+
 let hlsPromise = null
 /** Charge hls.js, avec un second CDN si le premier ne répond pas : sans lui,
  *  rien ne se lit hors de Safari. Appelé au démarrage pour être prêt au
@@ -121,6 +170,7 @@ export class Player {
       <div class="p-spinner" hidden><span></span></div>
       <div class="p-flash" aria-hidden="true"></div>
       <button class="p-unmute" type="button" hidden>${icon('mute', 16)}<span></span></button>
+      <div class="p-mutednote" hidden>${icon('mute', 15)}<span class="p-mutednote-text"></span><button type="button" class="p-mutednote-skip">${icon('skipForward', 13)}<span></span></button></div>
       <div class="p-ui">
         <div class="p-shade"></div>
         <button class="p-big" type="button" aria-label="play">${icon('play', 30)}</button>
@@ -162,7 +212,7 @@ export class Player {
       play: q('.p-play'), back: q('.p-back'), fwd: q('.p-fwd'), mute: q('.p-mute'), vol: q('.p-vol'),
       time: q('.p-time'), live: q('.p-live'), liveText: q('.p-live-text'), latency: q('.p-latency'),
       quality: q('.p-quality'), qLabel: q('.p-q-label'), chat: q('.p-chat'), pip: q('.p-pip'), fs: q('.p-fs'), theatre: q('.p-theatre'), chapBtn: q('.p-chapters'), chapLabel: q('.p-chap-label'),
-      menu: q('.p-menu'),
+      menu: q('.p-menu'), mutedNote: q('.p-mutednote'), mutedText: q('.p-mutednote-text'), mutedSkip: q('.p-mutednote-skip'),
     }
 
     const v = this.video
@@ -203,6 +253,11 @@ export class Player {
     on(this.el.fs, () => this.toggleFullscreen())
     on(this.el.theatre, () => this.o.onTheatre?.())
     on(this.el.unmute, () => { this.video.muted = false; this.el.unmute.hidden = true })
+    on(this.el.mutedSkip, () => {
+      const r = this.mutedAt(this.video.currentTime)
+      if (r) this.video.currentTime = Math.min(r.end + 0.5, Number.isFinite(this.video.duration) ? this.video.duration - 1 : r.end + 0.5)
+    })
+    this.el.mutedNote.addEventListener('click', (e) => e.stopPropagation())
     this.el.vol.addEventListener('input', (e) => {
       e.stopPropagation()
       v.volume = Number(this.el.vol.value)
@@ -274,6 +329,7 @@ export class Player {
     this.root.dataset.kind = kind
     this.el.progress.hidden = kind !== 'vod'
     this.setChapters([])
+    this.setMuted([])
     // Rempli tout de suite : sinon la pastille du direct restait vide tant
     // que la vidéo n'avait pas démarré.
     this.el.liveText.textContent = t('live_now')
@@ -294,6 +350,9 @@ export class Player {
     this.el.spinner.hidden = false
     if (!url) return
     const token = (this.attachToken = (this.attachToken ?? 0) + 1)
+    // Essais de son d'origine sur les passages coupés : remis à zéro à chaque
+    // source (une VOD récente peut suivre une ancienne).
+    this.unmute = this.kind === 'vod' ? {} : null
 
     const start = () => {
       if (token !== this.attachToken) return   // vidéo remplacée entre-temps
@@ -346,6 +405,8 @@ export class Player {
         // pas de fin déclarée : sinon hls.js la prend pour un direct et part
         // du bord (VOD reconstruite encore en cours d'écriture, par exemple).
         startPosition: this.kind === 'vod' ? (startAt > 1 ? startAt : 0) : -1,
+        // VOD : passages coupés rétablis quand le CDN a encore l'original.
+        ...(this.kind === 'vod' ? { fLoader: unmuteLoader(Hls, this) } : {}),
       })
       this.hls = hls
       hls.loadSource(url)
@@ -589,7 +650,80 @@ export class Player {
       const lat = this.liveDelay()
       this.el.latency.textContent = lat > 0 ? `${lat.toFixed(1)} s` : ''
     }
+    if (this.kind === 'vod') this.updateMutedNote(cur)
     this.o.onTime?.(cur, v.duration)
+  }
+
+  // ── Passages coupés ────────────────────────────────────────────────────
+  /** Passages au son coupé par Twitch : en orange sur la barre, et un avis
+   *  (avec « Passer ») pendant qu'on les regarde. Ceux dont le son a pu être
+   *  rétabli (unmuteLoader) sont retirés. */
+  setMuted(list) {
+    this.muted = (list ?? []).map((r) => ({ start: r.start, end: r.end }))
+    this.unmutedSpans = []
+    this.unmutedToldAt = 0
+    this.drawMuted()
+    this.updateMutedNote(this.video.currentTime)
+    if (!this.mutedDurHooked) {
+      this.mutedDurHooked = true
+      this.video.addEventListener('durationchange', () => this.drawMuted())
+    }
+  }
+
+  /** Passages encore muets : les coupés, moins ce qui a été rétabli. */
+  remainingMuted() {
+    let out = this.muted ?? []
+    for (const s of this.unmutedSpans ?? []) {
+      out = out.flatMap((r) => {
+        if (s.end <= r.start || s.start >= r.end) return [r]
+        const parts = []
+        if (s.start > r.start + 0.5) parts.push({ start: r.start, end: s.start })
+        if (s.end < r.end - 0.5) parts.push({ start: s.end, end: r.end })
+        return parts
+      })
+    }
+    return out
+  }
+
+  mutedAt(t0) {
+    return this.remainingMuted().find((r) => t0 >= r.start && t0 < r.end) ?? null
+  }
+
+  markUnmuted(frag) {
+    if (!frag || !Number.isFinite(frag.start)) return
+    this.unmutedSpans ??= []
+    this.unmutedSpans.push({ start: frag.start, end: frag.start + (frag.duration || 0) })
+    this.drawMuted()
+    // Dit une fois (par minute au plus) que le son est revenu.
+    if (Date.now() - (this.unmutedToldAt || 0) > 60000) {
+      this.unmutedToldAt = Date.now()
+      this.flash(t('vod_unmuted'))
+    }
+  }
+
+  drawMuted() {
+    const track = this.el.progress.querySelector('.p-track')
+    for (const n of track.querySelectorAll('.p-mutedseg')) n.remove()
+    const d = this.video.duration
+    if (!Number.isFinite(d) || d <= 0) return
+    for (const r of this.remainingMuted()) {
+      const seg = document.createElement('i')
+      seg.className = 'p-mutedseg'
+      seg.style.left = `${(r.start / d) * 100}%`
+      seg.style.width = `${Math.max(0.2, ((Math.min(r.end, d) - r.start) / d) * 100)}%`
+      track.appendChild(seg)
+    }
+  }
+
+  updateMutedNote(cur) {
+    const r = this.kind === 'vod' ? this.mutedAt(cur) : null
+    const note = this.el.mutedNote
+    if (!r) { note.hidden = true; return }
+    if (note.hidden) {
+      this.el.mutedText.textContent = t('vod_muted_here')
+      $('span', this.el.mutedSkip).textContent = t('vod_muted_skip')
+      note.hidden = false
+    }
   }
 
   drawPosition(ratio) {

@@ -64,6 +64,9 @@ export default {
                 case '/api/announcement/react': return await handleAnnouncementReact(request, env);
                 // Retours (bug, idée) du site et de l'app
                 case '/api/feedback': return await handleFeedback(request, env, ctx);
+                case '/api/feedback/thread': return await handleFeedbackThread(request, env);
+                case '/api/feedback/reply': return await handleFeedbackReply(request, env, ctx);
+                case '/api/feedback/photo': return await handleFeedbackPhoto(url, request, env);
                 case '/api/admin/feedback': return await handleAdminFeedback(request, env);
 
                 // Commandes Moobot pour le site (son API refuse les navigateurs)
@@ -912,36 +915,132 @@ async function handleAdminAnnouncement(request, env) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-//  Retours (bug, idée, autre) envoyés depuis le site et l'app.
+//  Retours (bug, idée, autre) envoyés depuis le site et l'app, et la
+//  discussion qui suit avec la personne.
 //
-//  POST /api/feedback { kind, message, contact?, platform, version, info? }
-//  Rangés dans D1 (clé `fb_<date>_<hasard>`, tout dans les métadonnées : la
-//  liste admin se lit en une requête), gardés 180 jours. Si le secret
-//  FEEDBACK_WEBHOOK (adresse d'un webhook Discord) est posé sur le Worker,
-//  chacun est aussi publié dans le salon de ce webhook. Ni adresse IP ni
-//  compte Twitch stockés : ce que la personne écrit, et les infos techniques
-//  affichées avant l'envoi.
+//  POST /api/feedback        { kind, message, contact?, platform, version, info?, photos? }
+//                            → { ok, id, token }
+//  POST /api/feedback/thread { items: [{ id, token }] } → état et messages
+//  POST /api/feedback/reply  { id, token, message, photos? }
+//  GET  /api/feedback/photo?id=…&n=…&token=…   (ou jeton Twitch admin)
+//
+//  Pas de compte : à l'envoi, le Worker rend un jeton secret que l'appareil
+//  garde ; lui seul permet de relire la discussion et d'y répondre. Seule son
+//  empreinte (SHA-256) est stockée.
+//
+//  Rangés dans D1 : la clé `fb_<date>_<hasard>` porte le résumé dans ses
+//  métadonnées (la liste admin se lit en une requête) et la discussion dans sa
+//  valeur ; chaque photo a sa propre clé `fbimg_<clé>_<n>` (image en base64,
+//  déjà réduite par l'appareil). Gardés 180 jours après le dernier message.
+//  Si le secret FEEDBACK_WEBHOOK (adresse d'un webhook Discord) est posé sur
+//  le Worker, chaque retour et chaque réponse de la personne y sont publiés,
+//  photos jointes. Ni adresse IP ni compte Twitch stockés : ce que la personne
+//  écrit, et les infos techniques affichées avant l'envoi.
 // ═══════════════════════════════════════════════════════════════════════════
 const FEEDBACK_PREFIX = 'fb_';
+const FEEDBACK_PHOTO_PREFIX = 'fbimg_';
 const FEEDBACK_KINDS = ['bug', 'idea', 'other'];
+// nouveau → accepté → en cours → fait, ou refusé.
+const FEEDBACK_STATUSES = ['new', 'accepted', 'progress', 'done', 'refused'];
 const FEEDBACK_TTL = 180 * 86400;
-const feedbackHits = new Map();   // adresse → { n, until } (mémoire de l'instance)
+const FEEDBACK_MAX_PHOTOS = 3;
+const FEEDBACK_MAX_PHOTO_B64 = 700000;   // ~500 Ko d'image
+const FEEDBACK_MAX_MESSAGES = 100;
+const FEEDBACK_KEY_RE = /^fb_[a-z0-9]{6,12}_[0-9a-f]{8}$/;
+const FEEDBACK_TOKEN_RE = /^[0-9a-f]{48}$/;
+// Compteurs par adresse (mémoire de l'instance, jamais stockés).
+const feedbackHits = new Map();
+const replyHits = new Map();
+const threadHits = new Map();
+
+/** Plus de `max` requêtes dans l'heure pour cette adresse ? */
+function overLimit(map, ip, max) {
+    const now = Date.now();
+    const hit = map.get(ip);
+    if (!hit || hit.until < now) {
+        if (map.size > 5000) map.clear();
+        map.set(ip, { n: 1, until: now + 60 * 60 * 1000 });
+        return false;
+    }
+    return ++hit.n > max;
+}
 
 /** Texte libre : sans caractères de contrôle (sauf retours à la ligne), borné. */
 const cleanText = (v, max) => String(v ?? '').replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '').trim().slice(0, max);
+
+async function sha256hex(text) {
+    const d = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+    return [...new Uint8Array(d)].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+/**
+ * Photos reçues (base64, préfixe `data:` accepté). Le type vient des premiers
+ * octets, pas de ce qu'annonce l'appareil : seules de vraies images JPEG, PNG
+ * ou WebP passent, et elles seront resservies avec ce type-là.
+ */
+function cleanPhotos(list) {
+    if (!Array.isArray(list)) return [];
+    const out = [];
+    for (const raw of list.slice(0, FEEDBACK_MAX_PHOTOS)) {
+        const s = String(raw || '').replace(/^data:image\/[a-z]+;base64,/, '');
+        if (!s || s.length > FEEDBACK_MAX_PHOTO_B64 || !/^[A-Za-z0-9+/]+={0,2}$/.test(s)) continue;
+        const type = s.startsWith('/9j/') ? 'image/jpeg'
+            : s.startsWith('iVBORw0KGgo') ? 'image/png'
+            : s.startsWith('UklGR') ? 'image/webp' : null;
+        if (type) out.push({ type, b64: s });
+    }
+    return out;
+}
+
+function b64Bytes(b64) {
+    const bin = atob(b64);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return bytes;
+}
+
+/** Range les photos d'un message ; rend leurs numéros. */
+async function saveFeedbackPhotos(env, key, photos, first) {
+    const ids = [];
+    for (let i = 0; i < photos.length; i++) {
+        const n = first + i;
+        await store(env).put(`${FEEDBACK_PHOTO_PREFIX}${key}_${n}`, photos[i].b64,
+            { metadata: { t: photos[i].type }, expirationTtl: FEEDBACK_TTL });
+        ids.push(n);
+    }
+    return ids;
+}
+
+/** Discussion stockée ; un retour d'avant les discussions n'a que son message. */
+function feedbackThread(value, meta) {
+    try {
+        const t = JSON.parse(value || '');
+        if (Array.isArray(t) && t.length) return t;
+    } catch (e) { /* ancien format */ }
+    return [{ f: 'u', m: meta?.m || '', at: meta?.at || 0 }];
+}
+
+/** Retour d'un appareil : clé et jeton valides, sinon null. */
+async function ownedFeedback(env, id, token) {
+    if (!FEEDBACK_KEY_RE.test(String(id || '')) || !FEEDBACK_TOKEN_RE.test(String(token || ''))) return null;
+    const { value, metadata } = await store(env).getWithMetadata(id);
+    if (!metadata?.h || metadata.h !== await sha256hex(token)) return null;
+    return { meta: metadata, thread: feedbackThread(value, metadata) };
+}
+
+/** Ce que l'appareil voit d'un retour : état et messages, sans les infos techniques. */
+function publicFeedback(id, meta, thread) {
+    return { id, kind: meta.k || 'other', status: meta.s || 'new', updatedAt: meta.u || meta.at || 0, lastFrom: meta.r || 'u', thread };
+}
 
 async function handleFeedback(request, env, ctx) {
     if (request.method !== 'POST') return jsonError('Method Not Allowed', 405);
     if (!env.DB) return jsonError("Base D1 'DB' non liée au Worker.", 500);
     if (BOT_UA.test(request.headers.get('User-Agent') || '')) return jsonResponse({ ok: true, ignored: true });
     // 5 retours par heure et par adresse : de quoi tout dire, pas de quoi inonder.
-    const ip = request.headers.get('CF-Connecting-IP') || '';
-    const now = Date.now();
-    const hit = feedbackHits.get(ip);
-    if (!hit || hit.until < now) {
-        if (feedbackHits.size > 5000) feedbackHits.clear();
-        feedbackHits.set(ip, { n: 1, until: now + 60 * 60 * 1000 });
-    } else if (++hit.n > 5) return jsonError('Trop de messages, réessaie dans une heure', 429);
+    if (overLimit(feedbackHits, request.headers.get('CF-Connecting-IP') || '', 5)) {
+        return jsonError('Trop de messages, réessaie dans une heure', 429);
+    }
 
     let body;
     try { body = await request.json(); } catch (e) { return jsonError('JSON invalide', 400); }
@@ -949,6 +1048,12 @@ async function handleFeedback(request, env, ctx) {
     if (message.length < 5) return jsonError('Message trop court', 400);
     let info = body.info;
     if (info && typeof info === 'object') { try { info = JSON.stringify(info); } catch (e) { info = ''; } }
+    const photos = cleanPhotos(body.photos);
+
+    const now = Date.now();
+    const key = `${FEEDBACK_PREFIX}${now.toString(36)}_${crypto.randomUUID().slice(0, 8)}`;
+    const token = (crypto.randomUUID() + crypto.randomUUID()).replace(/-/g, '').slice(0, 48);
+    const ph = await saveFeedbackPhotos(env, key, photos, 0);
     const entry = {
         k: FEEDBACK_KINDS.includes(body.kind) ? body.kind : 'other',
         m: message,
@@ -957,14 +1062,88 @@ async function handleFeedback(request, env, ctx) {
         v: cleanText(body.version, 32) || '?',
         i: cleanText(info, 600) || null,
         at: now,
+        s: 'new', u: now, r: 'u', n: 1, ph: ph.length,
+        h: await sha256hex(token),
     };
-    const key = `${FEEDBACK_PREFIX}${now.toString(36)}_${crypto.randomUUID().slice(0, 8)}`;
-    await store(env).put(key, '', { metadata: entry, expirationTtl: FEEDBACK_TTL });
+    const thread = [{ f: 'u', m: message, at: now, ...(ph.length ? { ph } : {}) }];
+    await store(env).put(key, JSON.stringify(thread), { metadata: entry, expirationTtl: FEEDBACK_TTL });
     if (env.FEEDBACK_WEBHOOK) {
-        const post = postFeedbackToDiscord(String(env.FEEDBACK_WEBHOOK), entry);
+        const post = postFeedbackToDiscord(String(env.FEEDBACK_WEBHOOK), entry, photos);
         if (ctx?.waitUntil) ctx.waitUntil(post); else await post;
     }
-    return jsonResponse({ ok: true });
+    return jsonResponse({ ok: true, id: key, token });
+}
+
+// POST /api/feedback/thread — les retours de l'appareil (30 au plus).
+async function handleFeedbackThread(request, env) {
+    if (request.method !== 'POST') return jsonError('Method Not Allowed', 405);
+    if (!env.DB) return jsonError("Base D1 'DB' non liée au Worker.", 500);
+    if (overLimit(threadHits, request.headers.get('CF-Connecting-IP') || '', 120)) return jsonError('Trop de requêtes', 429);
+    let body;
+    try { body = await request.json(); } catch (e) { return jsonError('JSON invalide', 400); }
+    const list = Array.isArray(body.items) ? body.items.slice(0, 30) : [];
+    const items = [];
+    for (const it of list) {
+        const id = String(it?.id || '');
+        const found = await ownedFeedback(env, id, it?.token);
+        items.push(found ? publicFeedback(id, found.meta, found.thread) : { id, gone: true });
+    }
+    return new Response(JSON.stringify({ items }), { headers: { ...RESPONSE_HEADERS, 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } });
+}
+
+// POST /api/feedback/reply — la personne répond dans sa discussion.
+async function handleFeedbackReply(request, env, ctx) {
+    if (request.method !== 'POST') return jsonError('Method Not Allowed', 405);
+    if (!env.DB) return jsonError("Base D1 'DB' non liée au Worker.", 500);
+    if (BOT_UA.test(request.headers.get('User-Agent') || '')) return jsonResponse({ ok: true, ignored: true });
+    if (overLimit(replyHits, request.headers.get('CF-Connecting-IP') || '', 20)) {
+        return jsonError('Trop de messages, réessaie dans une heure', 429);
+    }
+    let body;
+    try { body = await request.json(); } catch (e) { return jsonError('JSON invalide', 400); }
+    const id = String(body.id || '');
+    const found = await ownedFeedback(env, id, body.token);
+    if (!found) return jsonError('Retour introuvable', 404);
+    const message = cleanText(body.message, 2000);
+    const photos = cleanPhotos(body.photos);
+    if (!message && !photos.length) return jsonError('Message vide', 400);
+    const { meta, thread } = found;
+    if (thread.length >= FEEDBACK_MAX_MESSAGES) return jsonError('Discussion trop longue', 409);
+
+    const now = Date.now();
+    const ph = await saveFeedbackPhotos(env, id, photos, meta.ph || 0);
+    thread.push({ f: 'u', m: message, at: now, ...(ph.length ? { ph } : {}) });
+    const next = { ...meta, u: now, r: 'u', n: (meta.n || 1) + 1, ph: (meta.ph || 0) + ph.length };
+    await store(env).put(id, JSON.stringify(thread), { metadata: next, expirationTtl: FEEDBACK_TTL });
+    if (env.FEEDBACK_WEBHOOK) {
+        const post = postFeedbackToDiscord(String(env.FEEDBACK_WEBHOOK), { ...next, m: message }, photos, meta.m);
+        if (ctx?.waitUntil) ctx.waitUntil(post); else await post;
+    }
+    return jsonResponse({ ok: true, item: publicFeedback(id, next, thread) });
+}
+
+// GET /api/feedback/photo?id=…&n=…&token=… — une photo d'une discussion, pour
+// la personne (jeton du retour) ou l'admin (jeton Twitch).
+async function handleFeedbackPhoto(url, request, env) {
+    if (!env.DB) return jsonError("Base D1 'DB' non liée au Worker.", 500);
+    const id = String(url.searchParams.get('id') || '');
+    const n = Number(url.searchParams.get('n'));
+    if (!FEEDBACK_KEY_RE.test(id) || !Number.isInteger(n) || n < 0 || n > 999) return jsonError('Paramètres invalides', 400);
+    const token = url.searchParams.get('token');
+    let allowed = Boolean(token && await ownedFeedback(env, id, token));
+    if (!allowed) allowed = !(await requireAdmin(request)).denied;
+    if (!allowed) return jsonError('Accès refusé', 403);
+    const { value, metadata } = await store(env).getWithMetadata(`${FEEDBACK_PHOTO_PREFIX}${id}_${n}`);
+    if (!value) return jsonError('Photo introuvable', 404);
+    return new Response(b64Bytes(value), {
+        headers: {
+            ...RESPONSE_HEADERS,
+            'Content-Type': ['image/jpeg', 'image/png', 'image/webp'].includes(metadata?.t) ? metadata.t : 'image/jpeg',
+            'Cache-Control': 'private, max-age=86400',
+            'X-Content-Type-Options': 'nosniff',
+            'Content-Security-Policy': "default-src 'none'",
+        },
+    });
 }
 
 /** Infos techniques (JSON envoyé par le client) en lignes « clé : valeur ». */
@@ -979,62 +1158,127 @@ function readableInfo(text) {
     return text;
 }
 
-/** Publie un retour dans le salon Discord du webhook (sans mention possible). */
-async function postFeedbackToDiscord(webhook, e) {
+/**
+ * Publie un retour — ou, avec `inReplyTo`, la réponse de la personne — dans
+ * le salon Discord du webhook (sans mention possible), photos jointes.
+ */
+async function postFeedbackToDiscord(webhook, e, photos = [], inReplyTo = null) {
     if (!/^https:\/\/(?:ptb\.|canary\.)?discord(?:app)?\.com\/api\/webhooks\//.test(webhook)) return;
     const KINDS = { bug: '🐞 Bug', idea: '💡 Idée', other: '💬 Autre' };
     const COLORS = { bug: 0xeb0400, idea: 0x9147ff, other: 0x6b7280 };
     const fields = [{ name: 'Plateforme', value: `${e.p === 'ios' ? 'App iOS' : 'Site'} · ${e.v}`, inline: true }];
     if (e.c) fields.push({ name: 'Contact', value: e.c, inline: true });
-    if (e.i) fields.push({ name: 'Infos', value: readableInfo(e.i).slice(0, 1000) });
+    if (inReplyTo) fields.push({ name: 'En réponse à', value: inReplyTo.slice(0, 300) });
+    else if (e.i) fields.push({ name: 'Infos', value: readableInfo(e.i).slice(0, 1000) });
+    const payload = {
+        username: 'TwitchUnblock',
+        allowed_mentions: { parse: [] },
+        embeds: [{
+            title: inReplyTo ? `↩️ Réponse · ${KINDS[e.k] || KINDS.other}` : (KINDS[e.k] || KINDS.other),
+            description: (e.m || '📷').slice(0, 4000),
+            color: COLORS[e.k] ?? COLORS.other,
+            fields,
+            footer: { text: 'Répondre depuis /stats' },
+            timestamp: new Date(e.u || e.at).toISOString(),
+        }],
+    };
     try {
-        await fetch(webhook, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                username: 'TwitchUnblock',
-                allowed_mentions: { parse: [] },
-                embeds: [{ title: KINDS[e.k] || KINDS.other, description: e.m.slice(0, 4000), color: COLORS[e.k] ?? COLORS.other, fields, timestamp: new Date(e.at).toISOString() }],
-            }),
-        });
+        if (photos.length) {
+            const ext = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' };
+            const form = new FormData();
+            form.append('payload_json', JSON.stringify(payload));
+            photos.forEach((p, i) => form.append(`files[${i}]`, new Blob([b64Bytes(p.b64)], { type: p.type }), `photo${i + 1}.${ext[p.type] || 'jpg'}`));
+            await fetch(webhook, { method: 'POST', body: form });
+        } else {
+            await fetch(webhook, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+        }
     } catch (err) { /* Discord indisponible : le retour reste dans D1 */ }
 }
 
-// GET /api/admin/feedback — les retours, du plus récent au plus ancien.
-// POST /api/admin/feedback — { delete: '<clé>' } ou { clear: true }.
+// GET  /api/admin/feedback          — les retours, du plus récent au plus ancien.
+// GET  /api/admin/feedback?key=fb_… — un retour et sa discussion.
+// POST /api/admin/feedback — { reply: { key, message, photos? } },
+//      { status: { key, status } }, { delete: '<clé>' } ou { clear: true }.
 async function handleAdminFeedback(request, env) {
     const { denied } = await requireAdmin(request);
     if (denied) return denied;
-    const all = async () => {
+    const listAll = async (prefix) => {
         const out = [];
         let cursor;
         do {
-            const page = await store(env).list({ prefix: FEEDBACK_PREFIX, limit: 1000, cursor });
+            const page = await store(env).list({ prefix, limit: 1000, cursor });
             out.push(...page.keys);
             cursor = page.list_complete ? undefined : page.cursor;
         } while (cursor && out.length < 5000);
         return out;
     };
+    const summary = (key, m) => ({
+        key, kind: m.k || 'other', message: m.m || '', contact: m.c || null, platform: m.p || '?',
+        version: m.v || '?', info: m.i || null, at: m.at || 0,
+        status: m.s || 'new', updatedAt: m.u || m.at || 0, lastFrom: m.r || 'u', count: m.n || 1, photos: m.ph || 0,
+    });
+    const noStore = { ...RESPONSE_HEADERS, 'Content-Type': 'application/json', 'Cache-Control': 'no-store' };
+
     if (request.method === 'POST') {
         let body;
         try { body = await request.json(); } catch (e) { return jsonError('JSON invalide', 400); }
-        if (typeof body.delete === 'string' && body.delete.startsWith(FEEDBACK_PREFIX)) {
+
+        // Réponse ou nouvel état : ajoutés à la discussion, que la personne lit
+        // dans l'app ou sur le site.
+        const target = body.reply?.key ?? body.status?.key;
+        if (typeof target === 'string') {
+            if (!FEEDBACK_KEY_RE.test(target)) return jsonError('Clé invalide', 400);
+            const { value, metadata } = await store(env).getWithMetadata(target);
+            if (!metadata) return jsonError('Retour introuvable', 404);
+            const thread = feedbackThread(value, metadata);
+            if (thread.length >= FEEDBACK_MAX_MESSAGES) return jsonError('Discussion trop longue', 409);
+            const now = Date.now();
+            const next = { ...metadata, u: now, r: 'a' };
+            if (body.reply) {
+                const message = cleanText(body.reply.message, 2000);
+                const photos = cleanPhotos(body.reply.photos);
+                if (!message && !photos.length) return jsonError('Message vide', 400);
+                const ph = await saveFeedbackPhotos(env, target, photos, metadata.ph || 0);
+                thread.push({ f: 'a', m: message, at: now, ...(ph.length ? { ph } : {}) });
+                next.n = (metadata.n || 1) + 1;
+                next.ph = (metadata.ph || 0) + ph.length;
+            } else {
+                const status = String(body.status.status || '');
+                if (!FEEDBACK_STATUSES.includes(status)) return jsonError('État inconnu', 400);
+                if (status === (metadata.s || 'new')) return jsonResponse({ ok: true, item: summary(target, metadata), thread });
+                thread.push({ f: 'a', s: status, at: now });
+                next.s = status;
+            }
+            await store(env).put(target, JSON.stringify(thread), { metadata: next, expirationTtl: FEEDBACK_TTL });
+            return jsonResponse({ ok: true, item: summary(target, next), thread });
+        }
+
+        if (typeof body.delete === 'string' && FEEDBACK_KEY_RE.test(body.delete)) {
             await store(env).delete(body.delete);
+            for (const k of (await listAll(`${FEEDBACK_PHOTO_PREFIX}${body.delete}_`)).slice(0, 200)) await store(env).delete(k.name);
             return jsonResponse({ ok: true, deleted: 1 });
         }
         if (body.clear === true) {
-            // Une écriture D1 par retour : 500 au plus par action.
-            const keys = (await all()).slice(0, 500);
+            // Une écriture D1 par entrée : 500 retours et 500 photos au plus par action.
+            const keys = (await listAll(FEEDBACK_PREFIX)).slice(0, 500);
             for (const k of keys) await store(env).delete(k.name);
+            const pics = (await listAll(FEEDBACK_PHOTO_PREFIX)).slice(0, 500);
+            for (const k of pics) await store(env).delete(k.name);
             return jsonResponse({ ok: true, deleted: keys.length });
         }
         return jsonError('Action inconnue', 400);
     }
-    const items = (await all()).map(({ name, metadata }) => {
-        const m = metadata || {};
-        return { key: name, kind: m.k || 'other', message: m.m || '', contact: m.c || null, platform: m.p || '?', version: m.v || '?', info: m.i || null, at: m.at || 0 };
-    }).sort((a, b) => b.at - a.at);
-    return new Response(JSON.stringify({ items }), { headers: { ...RESPONSE_HEADERS, 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } });
+
+    const one = new URL(request.url).searchParams.get('key');
+    if (one) {
+        if (!FEEDBACK_KEY_RE.test(one)) return jsonError('Clé invalide', 400);
+        const { value, metadata } = await store(env).getWithMetadata(one);
+        if (!metadata) return jsonError('Retour introuvable', 404);
+        return new Response(JSON.stringify({ item: summary(one, metadata), thread: feedbackThread(value, metadata) }), { headers: noStore });
+    }
+    const items = (await listAll(FEEDBACK_PREFIX)).map(({ name, metadata }) => summary(name, metadata || {}))
+        .sort((a, b) => b.updatedAt - a.updatedAt);
+    return new Response(JSON.stringify({ items }), { headers: noStore });
 }
 
 // ── Réactions aux annonces ───────────────────────────────────────────────

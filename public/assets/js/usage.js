@@ -16,7 +16,7 @@
 import { API_URL } from './api.js'
 import { uid } from './util.js'
 
-export const SITE_VERSION = '2026.10.07c'
+export const SITE_VERSION = '2026.10.10a'
 const ID_KEY = 'tu_install_id'
 const LAST_KEY = 'tu_last_ping'
 /** Un signal par heure au plus : le Worker ne compte qu'une fois par jour,

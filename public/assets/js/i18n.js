@@ -1,7 +1,9 @@
 // ═══════════════════════════════════════════════════════════════════════════
 //  Traductions. Une clé absente d'une langue retombe sur l'anglais, puis sur
 //  la clé elle-même : un oubli se voit sans rien casser.
+//  Le russe, traduit avec l'IA, est dans son propre fichier.
 // ═══════════════════════════════════════════════════════════════════════════
+import { RU } from './i18n-ru.js'
 
 const STRINGS = {
   fr: {
@@ -54,6 +56,13 @@ const STRINGS = {
     source_site: 'Code source du site', source_app: 'Code source de l’app iOS', credits: 'Crédits', made_by: 'Créé par', thanks: 'Merci à', not_affiliated: 'Projet indépendant, sans lien avec Twitch.',
     usage: 'Utilisation', usage_today: 'Aujourd’hui', usage_week: '7 jours', usage_month: '30 jours', usage_note: 'Personnes distinctes sur le site (globe) et l’app iOS : un compte Twitch connecté compte une fois, sinon un identifiant aléatoire par navigateur.', usage_unavailable: 'Le serveur n’a pas encore les routes de comptage.', share_usage: 'Partager mon utilisation', share_usage_sub: 'Sans compte : un identifiant aléatoire. Connecté : ton compte Twitch (pour te compter une seule fois sur tous tes appareils). Coupé, tout est effacé du serveur.',
     about: 'À propos', about_text: 'Aucune donnée n’est revendue. L’historique reste dans ton navigateur et, si tu es connecté, dans une sauvegarde liée à ton compte.',
+    fb_add_photos: 'Ajouter des captures', fb_photos_max: '3 photos au plus', fb_mine: 'Mes signalements', fb_mine_empty: 'Les retours envoyés depuis ce navigateur apparaîtront ici, avec les réponses.',
+    fb_unread: '{n} nouvelle(s) réponse(s)', fb_thanks_follow: 'Merci ! Tu suivras la réponse dans « Mes signalements ».', fb_reply_ph: 'Répondre…', fb_reply_send: 'Envoyer', fb_reply_failed: 'Réponse non envoyée, réessaie.',
+    fb_team: 'TwitchUnblock', fb_you: 'Toi', fb_status_line: 'État : {s}', fb_gone: 'Ce retour n’est plus disponible.',
+    fb_status_new: 'Reçu', fb_status_accepted: 'Accepté', fb_status_progress: 'En cours', fb_status_done: 'Fait', fb_status_refused: 'Refusé',
+    lang_ai_note: 'Traduction faite avec l’IA, pas encore relue : si une phrase sonne faux, dis-le-nous.', lang_ai_report: 'Signaler une erreur de traduction',
+    switch_account: 'Changer de compte', switch_account_sub: 'Sur la page Twitch, choisis « Ce n’est pas vous ? » pour te connecter avec un autre compte.',
+    vod_muted_here: 'Son coupé par Twitch (musique protégée)', vod_muted_skip: 'Passer', vod_unmuted: 'Son d’origine rétabli sur les passages coupés',
   },
   en: {
     nav_discover: 'Discover', nav_channel: 'Streamer', nav_link: 'Link / ID',
@@ -103,6 +112,13 @@ const STRINGS = {
     source_site: 'Website source code', source_app: 'iOS app source code', credits: 'Credits', made_by: 'Made by', thanks: 'Thanks to', not_affiliated: 'Independent project, not affiliated with Twitch.',
     usage: 'Usage', usage_today: 'Today', usage_week: '7 days', usage_month: '30 days', usage_note: 'Distinct people on the website (globe) and the iOS app: a logged-in Twitch account counts once, otherwise a random ID per browser.', usage_unavailable: 'The server doesn’t have the usage routes yet.', share_usage: 'Share my usage', share_usage_sub: 'Logged out: a random ID. Logged in: your Twitch account (so you count once across all your devices). Off, it is all deleted from the server.',
     about: 'About', about_text: 'No data is sold. Your history stays in your browser and, if you log in, in a backup tied to your account.',
+    fb_add_photos: 'Add screenshots', fb_photos_max: '3 photos at most', fb_mine: 'My reports', fb_mine_empty: 'Reports sent from this browser will show up here, with the replies.',
+    fb_unread: '{n} new reply(ies)', fb_thanks_follow: 'Thanks! Follow the reply in “My reports”.', fb_reply_ph: 'Reply…', fb_reply_send: 'Send', fb_reply_failed: 'Reply not sent, try again.',
+    fb_team: 'TwitchUnblock', fb_you: 'You', fb_status_line: 'Status: {s}', fb_gone: 'This report is no longer available.',
+    fb_status_new: 'Received', fb_status_accepted: 'Accepted', fb_status_progress: 'In progress', fb_status_done: 'Done', fb_status_refused: 'Declined',
+    lang_ai_note: 'Translated with AI, not yet reviewed: if something sounds off, let us know.', lang_ai_report: 'Report a translation mistake',
+    switch_account: 'Switch account', switch_account_sub: 'On the Twitch page, pick “Not you?” to sign in with another account.',
+    vod_muted_here: 'Sound muted by Twitch (copyrighted music)', vod_muted_skip: 'Skip', vod_unmuted: 'Original sound restored on muted parts',
   },
   es: {
     nav_discover: 'Descubrir', nav_channel: 'Streamer', nav_link: 'Enlace / ID',
@@ -152,13 +168,24 @@ const STRINGS = {
     source_site: 'Código fuente del sitio', source_app: 'Código fuente de la app iOS', credits: 'Créditos', made_by: 'Creado por', thanks: 'Gracias a', not_affiliated: 'Proyecto independiente, sin relación con Twitch.',
     usage: 'Uso', usage_today: 'Hoy', usage_week: '7 días', usage_month: '30 días', usage_note: 'Personas distintas en el sitio (globo) y la app iOS: una cuenta de Twitch conectada cuenta una vez; si no, un ID aleatorio por navegador.', usage_unavailable: 'El servidor aún no tiene las rutas de conteo.', share_usage: 'Compartir mi uso', share_usage_sub: 'Sin sesión: un ID aleatorio. Con sesión: tu cuenta de Twitch (para contarte una sola vez en todos tus dispositivos). Desactivado, todo se borra del servidor.',
     about: 'Acerca de', about_text: 'No se vende ningún dato. Tu historial se queda en tu navegador y, si inicias sesión, en una copia ligada a tu cuenta.',
+    fb_add_photos: 'Añadir capturas', fb_photos_max: '3 fotos como máximo', fb_mine: 'Mis reportes', fb_mine_empty: 'Los reportes enviados desde este navegador aparecerán aquí, con las respuestas.',
+    fb_unread: '{n} respuesta(s) nueva(s)', fb_thanks_follow: '¡Gracias! Sigue la respuesta en «Mis reportes».', fb_reply_ph: 'Responder…', fb_reply_send: 'Enviar', fb_reply_failed: 'Respuesta no enviada, inténtalo de nuevo.',
+    fb_team: 'TwitchUnblock', fb_you: 'Tú', fb_status_line: 'Estado: {s}', fb_gone: 'Este reporte ya no está disponible.',
+    fb_status_new: 'Recibido', fb_status_accepted: 'Aceptado', fb_status_progress: 'En curso', fb_status_done: 'Hecho', fb_status_refused: 'Rechazado',
+    lang_ai_note: 'Traducido con IA, aún sin revisar: si algo suena raro, avísanos.', lang_ai_report: 'Reportar un error de traducción',
+    switch_account: 'Cambiar de cuenta', switch_account_sub: 'En la página de Twitch, elige «¿No eres tú?» para iniciar sesión con otra cuenta.',
+    vod_muted_here: 'Sonido silenciado por Twitch (música protegida)', vod_muted_skip: 'Saltar', vod_unmuted: 'Sonido original restaurado en las partes silenciadas',
   },
 }
 
+STRINGS.ru = RU
+
+/** `ai` : traduite avec l'IA, sans relecture — dit dans les réglages. */
 export const LANGS = [
   { id: 'fr', label: 'Français' },
   { id: 'en', label: 'English' },
   { id: 'es', label: 'Español' },
+  { id: 'ru', label: 'Русский', ai: true },
 ]
 
 let current = 'en'

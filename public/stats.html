@@ -130,7 +130,28 @@
     .fb-info { font-size: 12px; color: var(--faint); overflow-wrap: anywhere; }
     .tag.bug { background: rgba(248, 113, 113, 0.14); color: #fca5a5; }
     .tag.idea { background: rgba(191, 148, 255, 0.16); color: var(--purple); }
-    #fb-list { max-height: 520px; overflow-y: auto; margin-top: 8px; }
+    #fb-list { max-height: 720px; overflow-y: auto; margin-top: 8px; }
+    .fb-filter { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 4px 0 6px; }
+    .fb-filter select { height: 30px; padding: 0 8px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--text); font: inherit; font-size: 13px; }
+    .st { display: inline-block; padding: 1px 7px; border-radius: 999px; font-size: 11px; font-weight: 700; background: var(--card-hi); color: var(--muted); }
+    .st.accepted { background: rgba(57, 135, 229, 0.18); color: #93c5fd; }
+    .st.progress { background: rgba(230, 230, 25, 0.14); color: #fde68a; }
+    .st.done { background: rgba(74, 222, 128, 0.16); color: #86efac; }
+    .st.refused { background: rgba(248, 113, 113, 0.14); color: #fca5a5; }
+    .fb-await { color: #fde68a; font-weight: 700; }
+    .fb-thread { margin-top: 10px; padding: 10px 12px; border-radius: 10px; background: var(--card); border: 1px solid var(--line); }
+    .fb-bubbles { display: flex; flex-direction: column; gap: 8px; }
+    .fb-bubble { max-width: 85%; padding: 8px 11px; border-radius: 12px; background: var(--card-hi); font-size: 14px; white-space: pre-wrap; overflow-wrap: anywhere; }
+    .fb-bubble.admin { align-self: flex-end; background: rgba(145, 70, 255, 0.22); }
+    .fb-bubble small { display: block; margin-top: 3px; font-size: 11px; color: var(--faint); }
+    .fb-event { align-self: center; font-size: 12px; color: var(--muted); }
+    .fb-pics { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+    .fb-pics img { width: 96px; height: 96px; object-fit: cover; border-radius: 8px; cursor: zoom-in; background: var(--bg); }
+    .fb-states { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 8px; }
+    .fb-states .btn.on { border-color: var(--purple); color: var(--purple); }
+    .fb-reply { display: flex; flex-direction: column; gap: 6px; }
+    .fb-reply textarea { padding: 8px 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg); color: var(--text); font: inherit; font-size: 14px; resize: vertical; min-height: 60px; }
+    .fb-reply .ann-row input[type=file] { font-size: 12px; color: var(--muted); max-width: 260px; }
     .ann h3 { margin: 0 0 2px; font-size: 14px; }
     .ann-form { display: flex; flex-direction: column; gap: 8px; }
     .ann-form input, .ann-form textarea, .ann-form select { padding: 8px 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--card); color: var(--text); font: inherit; font-size: 14px; }
@@ -218,6 +239,17 @@
         <button class="btn sm danger" type="button" id="fb-clear" data-t="fbClear"></button>
       </div>
       <p class="sub" data-t="fbSub"></p>
+      <div class="fb-filter">
+        <select id="fb-status">
+          <option value="" data-t="fbAllStatus"></option>
+          <option value="await" data-t="fbToAnswer"></option>
+          <option value="new" data-t="fbStatus_new"></option>
+          <option value="accepted" data-t="fbStatus_accepted"></option>
+          <option value="progress" data-t="fbStatus_progress"></option>
+          <option value="done" data-t="fbStatus_done"></option>
+          <option value="refused" data-t="fbStatus_refused"></option>
+        </select>
+      </div>
       <div id="fb-list"></div>
     </div>
     <div class="dev-actions">
@@ -313,7 +345,10 @@
       syncConfirm: 'Effacer la sauvegarde (historique et progression) de {u} ?', syncDone: 'Sauvegarde de {u} effacée.', syncNone: '{u} n’avait pas de sauvegarde.',
       annTitle: 'Annonce (app et site)', annSub: 'Affichée en haut de l’accueil de l’app iOS et du site jusqu’à expiration. Une seule à la fois ; en publier une remplace la précédente.', annTitlePh: 'Titre', annMsgPh: 'Message', annLinkPh: 'Lien (facultatif, https://…)', annFor: 'Durée', annPublish: 'Publier', annCustom: 'Personnalisée…', unitMin: 'minutes', unitHour: 'heures', unitDay: 'jours', annBadDuration: 'Durée : entre 1 minute et 30 jours.', annClear: 'Retirer', annEdit: 'Modifier', annReactions: 'Réactions', annReactTotal: '{n} réaction(s) · une par appareil', annSave: 'Enregistrer', annCancel: 'Annuler', annKeep: 'Garder l’échéance actuelle', annRenotify: 'Réafficher à ceux qui l’avaient fermée', annSaved: 'Annonce modifiée.', annEdited: 'modifiée', annNone: 'Aucune annonce en cours.', annLive: 'En cours jusqu’au {d} :', annPublished: 'Annonce publiée.', annCleared: 'Annonce retirée.', annConfirmClear: 'Retirer l’annonce en cours ?',
       fAllKinds: 'Tous les types', fAccounts: 'Comptes', fAnon: 'Anonymes', fAllPlats: 'Toutes plateformes', fIosOnly: 'iOS seulement', fWebOnly: 'Web seulement', fBoth: 'iOS + Web', fAllVersions: 'Toutes versions',
-      fbTitle: 'Retours (bugs, idées)', fbSub: 'Envoyés depuis le site et l’app (Réglages, ou l’écran d’erreur du lecteur). Gardés 180 jours. Avec le secret FEEDBACK_WEBHOOK posé sur le Worker, chacun arrive aussi sur Discord.', fbNone: 'Aucun retour pour l’instant.', fbCount: '{n} retour(s)', fbClear: 'Tout effacer', fbConfirmClear: 'Effacer tous les retours ?', fbConfirmDel: 'Supprimer ce retour ?', fbBug: 'Bug', fbIdea: 'Idée', fbOther: 'Autre', fbContact: 'Contact :', fbWeb: 'Site', fbIos: 'App iOS',
+      fbTitle: 'Retours (bugs, idées)', fbSub: 'Envoyés depuis le site et l’app. Ta réponse et l’état choisi s’affichent chez la personne (« Mes signalements »), qui peut répondre à son tour, photos comprises. Gardés 180 jours après le dernier message. Avec le secret FEEDBACK_WEBHOOK posé sur le Worker, chaque retour et chaque réponse arrivent aussi sur Discord.',
+      fbStatus_new: 'Nouveau', fbStatus_accepted: 'Accepté', fbStatus_progress: 'En cours', fbStatus_done: 'Fait', fbStatus_refused: 'Refusé',
+      fbAllStatus: 'Tous les états', fbToAnswer: 'À répondre', fbAwait: 'réponse de la personne', fbThread: 'Conversation', fbHide: 'Masquer',
+      fbReplyPh: 'Répondre (visible par la personne dans l’app ou sur le site)…', fbSend: 'Envoyer', fbPhotosPick: 'Photos (3 max)', fbYou: 'Toi', fbThem: 'La personne', fbStatusNow: 'État : {s}', fbSent: 'Réponse envoyée.', fbNoMatch: 'Aucun retour dans cet état.', fbNone: 'Aucun retour pour l’instant.', fbCount: '{n} retour(s)', fbClear: 'Tout effacer', fbConfirmClear: 'Effacer tous les retours ?', fbConfirmDel: 'Supprimer ce retour ?', fbBug: 'Bug', fbIdea: 'Idée', fbOther: 'Autre', fbContact: 'Contact :', fbWeb: 'Site', fbIos: 'App iOS',
       updated: 'Mis à jour à {t}', unavailable: 'Statistiques indisponibles ({e})',
     },
     en: {
@@ -343,7 +378,10 @@
       syncConfirm: 'Erase the backup (history and progress) of {u}?', syncDone: 'Backup of {u} erased.', syncNone: '{u} had no backup.',
       annTitle: 'Announcement (app and site)', annSub: 'Shown at the top of the iOS app and website home until it expires. One at a time; publishing replaces the previous one.', annTitlePh: 'Title', annMsgPh: 'Message', annLinkPh: 'Link (optional, https://…)', annFor: 'Duration', annPublish: 'Publish', annCustom: 'Custom…', unitMin: 'minutes', unitHour: 'hours', unitDay: 'days', annBadDuration: 'Duration: between 1 minute and 30 days.', annClear: 'Remove', annEdit: 'Edit', annReactions: 'Reactions', annReactTotal: '{n} reaction(s) · one per device', annSave: 'Save', annCancel: 'Cancel', annKeep: 'Keep current end time', annRenotify: 'Show again to people who closed it', annSaved: 'Announcement updated.', annEdited: 'edited', annNone: 'No announcement running.', annLive: 'Running until {d}:', annPublished: 'Announcement published.', annCleared: 'Announcement removed.', annConfirmClear: 'Remove the current announcement?',
       fAllKinds: 'All types', fAccounts: 'Accounts', fAnon: 'Anonymous', fAllPlats: 'All platforms', fIosOnly: 'iOS only', fWebOnly: 'Web only', fBoth: 'iOS + Web', fAllVersions: 'All versions',
-      fbTitle: 'Feedback (bugs, ideas)', fbSub: 'Sent from the website and the app (Settings, or the player error screen). Kept 180 days. With the FEEDBACK_WEBHOOK secret set on the Worker, each one also lands on Discord.', fbNone: 'No feedback yet.', fbCount: '{n} message(s)', fbClear: 'Clear all', fbConfirmClear: 'Delete all feedback?', fbConfirmDel: 'Delete this message?', fbBug: 'Bug', fbIdea: 'Idea', fbOther: 'Other', fbContact: 'Contact:', fbWeb: 'Website', fbIos: 'iOS app',
+      fbTitle: 'Feedback (bugs, ideas)', fbSub: 'Sent from the website and the app. Your reply and the status you pick show up for the person (“My reports”), who can answer back, photos included. Kept 180 days after the last message. With the FEEDBACK_WEBHOOK secret set on the Worker, each report and each reply also lands on Discord.',
+      fbStatus_new: 'New', fbStatus_accepted: 'Accepted', fbStatus_progress: 'In progress', fbStatus_done: 'Done', fbStatus_refused: 'Declined',
+      fbAllStatus: 'All statuses', fbToAnswer: 'Awaiting reply', fbAwait: 'reply from the person', fbThread: 'Conversation', fbHide: 'Hide',
+      fbReplyPh: 'Reply (the person sees it in the app or on the website)…', fbSend: 'Send', fbPhotosPick: 'Photos (3 max)', fbYou: 'You', fbThem: 'The person', fbStatusNow: 'Status: {s}', fbSent: 'Reply sent.', fbNoMatch: 'No feedback with this status.', fbNone: 'No feedback yet.', fbCount: '{n} message(s)', fbClear: 'Clear all', fbConfirmClear: 'Delete all feedback?', fbConfirmDel: 'Delete this message?', fbBug: 'Bug', fbIdea: 'Idea', fbOther: 'Other', fbContact: 'Contact:', fbWeb: 'Website', fbIos: 'iOS app',
       updated: 'Updated at {t}', unavailable: 'Stats unavailable ({e})',
     },
     es: {
@@ -373,7 +411,10 @@
       syncConfirm: '¿Borrar la copia (historial y progreso) de {u}?', syncDone: 'Copia de {u} borrada.', syncNone: '{u} no tenía copia.',
       annTitle: 'Anuncio (app y sitio)', annSub: 'Se muestra arriba del inicio de la app iOS y del sitio hasta que caduca. Uno a la vez; publicar uno reemplaza al anterior.', annTitlePh: 'Título', annMsgPh: 'Mensaje', annLinkPh: 'Enlace (opcional, https://…)', annFor: 'Duración', annPublish: 'Publicar', annCustom: 'Personalizada…', unitMin: 'minutos', unitHour: 'horas', unitDay: 'días', annBadDuration: 'Duración: entre 1 minuto y 30 días.', annClear: 'Retirar', annEdit: 'Editar', annReactions: 'Reacciones', annReactTotal: '{n} reacción(es) · una por dispositivo', annSave: 'Guardar', annCancel: 'Cancelar', annKeep: 'Mantener el fin actual', annRenotify: 'Volver a mostrar a quien lo cerró', annSaved: 'Anuncio modificado.', annEdited: 'editado', annNone: 'Ningún anuncio activo.', annLive: 'Activo hasta el {d}:', annPublished: 'Anuncio publicado.', annCleared: 'Anuncio retirado.', annConfirmClear: '¿Retirar el anuncio activo?',
       fAllKinds: 'Todos los tipos', fAccounts: 'Cuentas', fAnon: 'Anónimos', fAllPlats: 'Todas las plataformas', fIosOnly: 'Solo iOS', fWebOnly: 'Solo web', fBoth: 'iOS + Web', fAllVersions: 'Todas las versiones',
-      fbTitle: 'Comentarios (errores, ideas)', fbSub: 'Enviados desde la web y la app (Ajustes, o la pantalla de error del reproductor). Se guardan 180 días. Con el secreto FEEDBACK_WEBHOOK en el Worker, cada uno llega también a Discord.', fbNone: 'Aún no hay comentarios.', fbCount: '{n} mensaje(s)', fbClear: 'Borrar todo', fbConfirmClear: '¿Borrar todos los comentarios?', fbConfirmDel: '¿Borrar este mensaje?', fbBug: 'Error', fbIdea: 'Idea', fbOther: 'Otro', fbContact: 'Contacto:', fbWeb: 'Web', fbIos: 'App iOS',
+      fbTitle: 'Comentarios (errores, ideas)', fbSub: 'Enviados desde la web y la app. Tu respuesta y el estado elegido le aparecen a la persona («Mis reportes»), que puede contestar, fotos incluidas. Se guardan 180 días tras el último mensaje. Con el secreto FEEDBACK_WEBHOOK en el Worker, cada comentario y cada respuesta llegan también a Discord.',
+      fbStatus_new: 'Nuevo', fbStatus_accepted: 'Aceptado', fbStatus_progress: 'En curso', fbStatus_done: 'Hecho', fbStatus_refused: 'Rechazado',
+      fbAllStatus: 'Todos los estados', fbToAnswer: 'Por responder', fbAwait: 'respuesta de la persona', fbThread: 'Conversación', fbHide: 'Ocultar',
+      fbReplyPh: 'Responder (la persona lo ve en la app o en la web)…', fbSend: 'Enviar', fbPhotosPick: 'Fotos (3 máx.)', fbYou: 'Tú', fbThem: 'La persona', fbStatusNow: 'Estado: {s}', fbSent: 'Respuesta enviada.', fbNoMatch: 'Ningún comentario con este estado.', fbNone: 'Aún no hay comentarios.', fbCount: '{n} mensaje(s)', fbClear: 'Borrar todo', fbConfirmClear: '¿Borrar todos los comentarios?', fbConfirmDel: '¿Borrar este mensaje?', fbBug: 'Error', fbIdea: 'Idea', fbOther: 'Otro', fbContact: 'Contacto:', fbWeb: 'Web', fbIos: 'App iOS',
       updated: 'Actualizado a las {t}', unavailable: 'Estadísticas no disponibles ({e})',
     },
   }
@@ -672,43 +713,171 @@
     } catch {}
     return text
   }
+  const FB_STATES = ['new', 'accepted', 'progress', 'done', 'refused']
+  let fbItems = []
+  const fbOpen = new Set()         // conversations dépliées
+  const fbThreads = new Map()      // clé → discussion chargée
+  const fbPics = new Map()         // « clé/n » → adresse locale de l'image
   async function loadFeedback() {
     try {
       const res = await authed('/feedback')
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      renderFeedback((await res.json()).items ?? [])
+      fbItems = (await res.json()).items ?? []
+      renderFeedback()
+      for (const key of fbOpen) loadThread(key)
     } catch (e) { $('#fb-list').innerHTML = `<p class="sub err">${esc(t('listErr', { e: e.message }))}</p>` }
   }
-  function renderFeedback(items) {
-    $('#fb-count').textContent = items.length ? t('fbCount', { n: fmt(items.length) }) : ''
+  const awaiting = (f) => f.lastFrom === 'u' && f.count > 1
+  function renderFeedback() {
+    const items = fbItems
+    const filter = $('#fb-status').value
+    const list = items.filter((f) => !filter || (filter === 'await' ? awaiting(f) : f.status === filter))
+    const waiting = items.filter(awaiting).length
+    $('#fb-count').textContent = items.length ? t('fbCount', { n: fmt(items.length) }) + (waiting ? ` · ${waiting} ${t('fbToAnswer').toLowerCase()}` : '') : ''
     $('#fb-clear').hidden = !items.length
     if (!items.length) { $('#fb-list').innerHTML = `<p class="sub">${esc(t('fbNone'))}</p>`; return }
-    $('#fb-list').innerHTML = items.map((f) => `
-      <div class="fb-item">
+    if (!list.length) { $('#fb-list').innerHTML = `<p class="sub">${esc(t('fbNoMatch'))}</p>`; return }
+    $('#fb-list').innerHTML = list.map((f) => `
+      <div class="fb-item" data-fb="${esc(f.key)}">
         <div class="fb-meta">
           <span class="tag ${esc(f.kind)}">${esc(t(FB_KINDS[f.kind] || 'fbOther'))}</span>
+          <span class="st ${esc(f.status)}">${esc(t('fbStatus_' + f.status))}</span>
           <span>${esc(f.platform === 'ios' ? t('fbIos') : t('fbWeb'))} · ${esc(f.version)}</span>
           <span>${esc(new Date(f.at).toLocaleString(LOCALE, { dateStyle: 'medium', timeStyle: 'short' }))}</span>
           ${f.contact ? `<span>${esc(t('fbContact'))} <b>${esc(f.contact)}</b></span>` : ''}
+          ${f.count > 1 ? `<span>💬 ${fmt(f.count)}</span>` : ''}
+          ${f.photos ? `<span>📷 ${fmt(f.photos)}</span>` : ''}
+          ${awaiting(f) ? `<span class="fb-await">● ${esc(t('fbAwait'))}</span>` : ''}
           <span class="spacer"></span>
+          <button class="btn sm" type="button" data-fb-open="${esc(f.key)}">${esc(t(fbOpen.has(f.key) ? 'fbHide' : 'fbThread'))}</button>
           <button class="btn sm" type="button" data-fb-del="${esc(f.key)}">${esc(t('del'))}</button>
         </div>
         <p class="fb-msg">${esc(f.message)}</p>
         ${f.info ? `<div class="fb-info">${esc(readableInfo(f.info))}</div>` : ''}
+        <div class="fb-thread" ${fbOpen.has(f.key) ? '' : 'hidden'}>${fbThreads.has(f.key) ? threadHtml(f, fbThreads.get(f.key)) : `<p class="sub">…</p>`}</div>
       </div>`).join('')
+    for (const img of document.querySelectorAll('#fb-list img[data-pic]')) showPic(img)
+  }
+  function threadHtml(f, thread) {
+    const when = (at) => new Date(at).toLocaleString(LOCALE, { dateStyle: 'short', timeStyle: 'short' })
+    const bubbles = thread.map((m) => {
+      if (m.s) return `<div class="fb-event">${esc(t('fbStatusNow', { s: t('fbStatus_' + m.s) }))} · ${esc(when(m.at))}</div>`
+      const pics = (m.ph || []).map((n) => `<img data-pic="${esc(f.key)}/${n}" alt="">`).join('')
+      return `<div class="fb-bubble ${m.f === 'a' ? 'admin' : ''}">${esc(m.m || '')}${pics ? `<div class="fb-pics">${pics}</div>` : ''}<small>${esc(t(m.f === 'a' ? 'fbYou' : 'fbThem'))} · ${esc(when(m.at))}</small></div>`
+    }).join('')
+    const states = FB_STATES.map((st) => `<button class="btn sm ${f.status === st ? 'on' : ''}" type="button" data-fb-state="${st}">${esc(t('fbStatus_' + st))}</button>`).join('')
+    return `<div class="fb-bubbles">${bubbles}</div>
+      <div class="fb-states">${states}</div>
+      <form class="fb-reply" data-fb-reply="${esc(f.key)}">
+        <textarea maxlength="2000" rows="2" placeholder="${esc(t('fbReplyPh'))}"></textarea>
+        <div class="ann-row">
+          <label>${esc(t('fbPhotosPick'))} <input type="file" accept="image/*" multiple></label>
+          <span class="spacer"></span>
+          <button class="btn sm" type="submit">${esc(t('fbSend'))}</button>
+        </div>
+      </form>`
+  }
+  /** Photo d'une discussion : demandée avec le jeton admin, puis affichée. */
+  async function showPic(img) {
+    const ref = img.dataset.pic
+    let url = fbPics.get(ref)
+    if (!url) {
+      const [key, n] = ref.split('/')
+      try {
+        const res = await fetch(`${BASE}/api/feedback/photo?id=${encodeURIComponent(key)}&n=${n}`, { headers: { Authorization: `Bearer ${token}` } })
+        if (!res.ok) return
+        url = URL.createObjectURL(await res.blob())
+        fbPics.set(ref, url)
+      } catch { return }
+    }
+    img.src = url
+    img.onclick = () => open(url, '_blank')
+  }
+  async function loadThread(key) {
+    try {
+      const res = await authed(`/feedback?key=${encodeURIComponent(key)}`)
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const r = await res.json()
+      fbThreads.set(key, r.thread)
+      const i = fbItems.findIndex((f) => f.key === key)
+      if (i >= 0) fbItems[i] = r.item
+      renderFeedback()
+    } catch (e) { devMsg(t('fail', { e: e.message }), 'err') }
+  }
+  /** Image choisie → JPEG réduit (1600 px, ~500 Ko au plus), en base64. */
+  async function shrinkImage(file) {
+    const bmp = await createImageBitmap(file)
+    let side = 1600, quality = 0.8, out = ''
+    for (let tries = 0; tries < 6; tries++) {
+      const scale = Math.min(1, side / Math.max(bmp.width, bmp.height))
+      const c = document.createElement('canvas')
+      c.width = Math.round(bmp.width * scale); c.height = Math.round(bmp.height * scale)
+      c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height)
+      out = c.toDataURL('image/jpeg', quality)
+      if (out.length < 660000) return out
+      side = Math.round(side * 0.8); quality = Math.max(0.5, quality - 0.1)
+    }
+    return out
+  }
+  async function postFeedback(body) {
+    const res = await authed('/feedback', { method: 'POST', body: JSON.stringify(body) })
+    const r = await res.json()
+    if (!res.ok) throw new Error(r.error || `HTTP ${res.status}`)
+    return r
   }
   async function deleteFeedback(body) {
     try {
-      const res = await authed('/feedback', { method: 'POST', body: JSON.stringify(body) })
-      const r = await res.json()
-      if (!res.ok) throw new Error(r.error || `HTTP ${res.status}`)
+      await postFeedback(body)
       await loadFeedback()
     } catch (e) { devMsg(t('fail', { e: e.message }), 'err') }
   }
-  $('#fb-list').addEventListener('click', (e) => {
-    const b = e.target.closest('[data-fb-del]')
-    if (b && confirm(t('fbConfirmDel'))) deleteFeedback({ delete: b.dataset.fbDel })
+  $('#fb-list').addEventListener('click', async (e) => {
+    const del = e.target.closest('[data-fb-del]')
+    if (del) {
+      const key = del.dataset.fbDel
+      if (confirm(t('fbConfirmDel'))) { fbOpen.delete(key); fbThreads.delete(key); deleteFeedback({ delete: key }) }
+      return
+    }
+    const openBtn = e.target.closest('[data-fb-open]')
+    if (openBtn) {
+      const key = openBtn.dataset.fbOpen
+      if (fbOpen.has(key)) fbOpen.delete(key); else { fbOpen.add(key); loadThread(key) }
+      renderFeedback()
+      return
+    }
+    const st = e.target.closest('[data-fb-state]')
+    if (st) {
+      const key = st.closest('[data-fb]').dataset.fb
+      try {
+        const r = await postFeedback({ status: { key, status: st.dataset.fbState } })
+        fbThreads.set(key, r.thread)
+        const i = fbItems.findIndex((f) => f.key === key)
+        if (i >= 0) fbItems[i] = r.item
+        renderFeedback()
+      } catch (err) { devMsg(t('fail', { e: err.message }), 'err') }
+    }
   })
+  $('#fb-list').addEventListener('submit', async (e) => {
+    const form = e.target.closest('[data-fb-reply]')
+    if (!form) return
+    e.preventDefault()
+    const key = form.dataset.fbReply
+    const message = form.querySelector('textarea').value.trim()
+    const files = [...form.querySelector('input[type=file]').files].slice(0, 3)
+    if (!message && !files.length) return
+    const btn = form.querySelector('button[type=submit]')
+    btn.disabled = true
+    try {
+      const photos = await Promise.all(files.map(shrinkImage))
+      const r = await postFeedback({ reply: { key, message, photos } })
+      fbThreads.set(key, r.thread)
+      const i = fbItems.findIndex((f) => f.key === key)
+      if (i >= 0) fbItems[i] = r.item
+      renderFeedback()
+      devMsg(t('fbSent'), 'ok')
+    } catch (err) { devMsg(t('fail', { e: err.message }), 'err'); btn.disabled = false }
+  })
+  $('#fb-status').addEventListener('change', renderFeedback)
   $('#fb-clear').addEventListener('click', () => { if (confirm(t('fbConfirmClear'))) deleteFeedback({ clear: true }) })
 
   function devMsg(text, kind = '') { const m = $('#dev-msg'); m.textContent = text; m.className = `dev-msg ${kind}` }

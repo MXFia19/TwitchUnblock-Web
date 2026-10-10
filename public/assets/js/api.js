@@ -500,12 +500,33 @@ export function fixProxiedUrl(url, playlistUrl) {
 }
 
 /** Retour (bug, idée) : rangé par le Worker principal (base D1), qui le
- *  transmet aussi sur Discord. Lève avec `status` en cas de refus. */
+ *  transmet aussi sur Discord. Rend `{ id, token }` : le jeton permet de
+ *  suivre la discussion. Lève avec `status` en cas de refus. */
 export async function sendFeedback(body) {
-  const res = await fetch(`${API_URL}/api/feedback`, {
+  return feedbackPost('/api/feedback', body)
+}
+
+/** État et messages des retours envoyés depuis ce navigateur. */
+export async function feedbackThreads(items) {
+  return feedbackPost('/api/feedback/thread', { items })
+}
+
+/** Réponse de la personne dans sa discussion. */
+export async function replyFeedback(body) {
+  return feedbackPost('/api/feedback/reply', body)
+}
+
+/** Photo d'une discussion (le jeton du retour en donne l'accès). */
+export function feedbackPhotoUrl(id, n, token) {
+  return `${API_URL}/api/feedback/photo?id=${encodeURIComponent(id)}&n=${Number(n)}&token=${encodeURIComponent(token)}`
+}
+
+async function feedbackPost(path, body) {
+  const res = await fetch(`${API_URL}${path}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
+    cache: 'no-store',
   })
   if (!res.ok) {
     const err = new Error(`HTTP ${res.status}`)
@@ -591,10 +612,18 @@ export async function getFollowedStreams(userId) {
   return streams
 }
 
-export function loginUrl() {
+/** Posé à la déconnexion, jamais retiré : dès lors, Twitch montre sa page
+ *  d'autorisation (avec « Ce n'est pas vous ? ») au lieu de reconnecter en
+ *  silence le compte dont il se souvient — impossible, sinon, de passer sur
+ *  un autre compte. */
+export const FORCE_VERIFY_KEY = 'tu_force_verify'
+
+export function loginUrl({ chooseAccount = false } = {}) {
   // Valeur aléatoire vérifiée au retour (index.html et main.js).
   const state = crypto.randomUUID?.() ?? String(Math.random()).slice(2) + Date.now()
   try { localStorage.setItem('tu_oauth_state', state) } catch {}
+  let verify = chooseAccount
+  try { verify ||= localStorage.getItem(FORCE_VERIFY_KEY) === '1' } catch {}
   const params = new URLSearchParams({
     state,
     client_id: HELIX_CLIENT_ID,
@@ -602,6 +631,7 @@ export function loginUrl() {
     response_type: 'token',
     scope: SCOPES.join(' '),
   })
+  if (verify) params.set('force_verify', 'true')
   return `https://id.twitch.tv/oauth2/authorize?${params}`
 }
 
@@ -713,14 +743,31 @@ export function clipSlugFrom(url) {
   return m ? m[1] : null
 }
 
-/** Chapitres d'une VOD (changements de jeu). */
-export async function getVodChapters(id) {
-  const data = await gql(`query($id: ID!) { video(id: $id) { moments(first: 50, momentRequestType: VIDEO_CHAPTER_MARKERS) {
-    edges { node { positionMilliseconds durationMilliseconds description } }
-  } } }`, { id })
-  return (data?.video?.moments?.edges ?? [])
+/**
+ * Repères d'une VOD : chapitres (changements de jeu) et passages dont Twitch a
+ * coupé le son (musique protégée) — publiés par blocs de 3 min, fusionnés ici.
+ */
+export async function getVodMarkers(id) {
+  const data = await gql(`query($id: ID!) { video(id: $id) {
+    moments(first: 50, momentRequestType: VIDEO_CHAPTER_MARKERS) {
+      edges { node { positionMilliseconds durationMilliseconds description } }
+    }
+    muteInfo { mutedSegmentConnection { nodes { offset duration } } }
+  } }`, { id })
+  const chapters = (data?.video?.moments?.edges ?? [])
     .map((e) => e.node)
     .filter(Boolean)
     .map((n) => ({ start: (n.positionMilliseconds ?? 0) / 1000, duration: (n.durationMilliseconds ?? 0) / 1000, title: n.description ?? '' }))
     .sort((a, b) => a.start - b.start)
+  const muted = []
+  const raw = (data?.video?.muteInfo?.mutedSegmentConnection?.nodes ?? [])
+    .filter((n) => Number(n?.duration) > 0)
+    .map((n) => ({ start: Number(n.offset) || 0, end: (Number(n.offset) || 0) + Number(n.duration) }))
+    .sort((a, b) => a.start - b.start)
+  for (const r of raw) {
+    const last = muted[muted.length - 1]
+    if (last && r.start <= last.end + 1) last.end = Math.max(last.end, r.end)
+    else muted.push({ ...r })
+  }
+  return { chapters, muted }
 }
