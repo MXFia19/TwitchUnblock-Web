@@ -952,6 +952,19 @@ const FEEDBACK_TOKEN_RE = /^[0-9a-f]{48}$/;
 const feedbackHits = new Map();
 const replyHits = new Map();
 const threadHits = new Map();
+// Résultat du dernier envoi vers Discord (réussi ou non, et pourquoi — jamais
+// l'adresse du webhook), affiché dans /stats. Clé hors du préfixe des retours.
+const FEEDBACK_HOOK_KEY = 'fbmeta_webhook';
+
+/** Envoie vers Discord si le secret est posé, et note le résultat. */
+function notifyDiscord(env, ctx, ...args) {
+    const hook = env.FEEDBACK_WEBHOOK ? String(env.FEEDBACK_WEBHOOK) : '';
+    const job = (hook ? postFeedbackToDiscord(hook, ...args) : Promise.resolve({ ok: false, status: 0, detail: 'missing' }))
+        .then((r) => store(env).put(FEEDBACK_HOOK_KEY, '', { metadata: { ...r, at: Date.now() } }))
+        .catch(() => {});
+    if (ctx?.waitUntil) ctx.waitUntil(job);
+    return job;
+}
 
 /** Plus de `max` requêtes dans l'heure pour cette adresse ? */
 function overLimit(map, ip, max) {
@@ -1067,10 +1080,8 @@ async function handleFeedback(request, env, ctx) {
     };
     const thread = [{ f: 'u', m: message, at: now, ...(ph.length ? { ph } : {}) }];
     await store(env).put(key, JSON.stringify(thread), { metadata: entry, expirationTtl: FEEDBACK_TTL });
-    if (env.FEEDBACK_WEBHOOK) {
-        const post = postFeedbackToDiscord(String(env.FEEDBACK_WEBHOOK), entry, photos);
-        if (ctx?.waitUntil) ctx.waitUntil(post); else await post;
-    }
+    const hook = notifyDiscord(env, ctx, entry, photos);
+    if (!ctx?.waitUntil) await hook;
     return jsonResponse({ ok: true, id: key, token });
 }
 
@@ -1115,10 +1126,8 @@ async function handleFeedbackReply(request, env, ctx) {
     thread.push({ f: 'u', m: message, at: now, ...(ph.length ? { ph } : {}) });
     const next = { ...meta, u: now, r: 'u', n: (meta.n || 1) + 1, ph: (meta.ph || 0) + ph.length };
     await store(env).put(id, JSON.stringify(thread), { metadata: next, expirationTtl: FEEDBACK_TTL });
-    if (env.FEEDBACK_WEBHOOK) {
-        const post = postFeedbackToDiscord(String(env.FEEDBACK_WEBHOOK), { ...next, m: message }, photos, meta.m);
-        if (ctx?.waitUntil) ctx.waitUntil(post); else await post;
-    }
+    const hook = notifyDiscord(env, ctx, { ...next, m: message }, photos, meta.m);
+    if (!ctx?.waitUntil) await hook;
     return jsonResponse({ ok: true, item: publicFeedback(id, next, thread) });
 }
 
@@ -1161,9 +1170,11 @@ function readableInfo(text) {
 /**
  * Publie un retour — ou, avec `inReplyTo`, la réponse de la personne — dans
  * le salon Discord du webhook (sans mention possible), photos jointes.
+ * Rend { ok, status, detail } : un refus de Discord n'est plus silencieux.
  */
 async function postFeedbackToDiscord(webhook, e, photos = [], inReplyTo = null) {
-    if (!/^https:\/\/(?:ptb\.|canary\.)?discord(?:app)?\.com\/api\/webhooks\//.test(webhook)) return;
+    const hook = String(webhook).trim();
+    if (!/^https:\/\/(?:ptb\.|canary\.)?discord(?:app)?\.com\/api\/webhooks\//.test(hook)) return { ok: false, status: 0, detail: 'invalid' };
     const KINDS = { bug: '🐞 Bug', idea: '💡 Idée', other: '💬 Autre' };
     const COLORS = { bug: 0xeb0400, idea: 0x9147ff, other: 0x6b7280 };
     const fields = [{ name: 'Plateforme', value: `${e.p === 'ios' ? 'App iOS' : 'Site'} · ${e.v}`, inline: true }];
@@ -1183,16 +1194,25 @@ async function postFeedbackToDiscord(webhook, e, photos = [], inReplyTo = null) 
         }],
     };
     try {
+        let res;
         if (photos.length) {
             const ext = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' };
             const form = new FormData();
             form.append('payload_json', JSON.stringify(payload));
             photos.forEach((p, i) => form.append(`files[${i}]`, new Blob([b64Bytes(p.b64)], { type: p.type }), `photo${i + 1}.${ext[p.type] || 'jpg'}`));
-            await fetch(webhook, { method: 'POST', body: form });
+            res = await fetch(hook, { method: 'POST', body: form });
         } else {
-            await fetch(webhook, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+            res = await fetch(hook, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
         }
-    } catch (err) { /* Discord indisponible : le retour reste dans D1 */ }
+        if (res.ok) return { ok: true, status: res.status };
+        // Réponse de Discord (« Unknown Webhook », limite…), sans balises HTML.
+        let detail = '';
+        try { detail = (await res.text()).replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 200); } catch (err) {}
+        return { ok: false, status: res.status, detail };
+    } catch (err) {
+        // Discord injoignable : le retour reste dans D1.
+        return { ok: false, status: 0, detail: String(err?.message || err).slice(0, 200) };
+    }
 }
 
 // GET  /api/admin/feedback          — les retours, du plus récent au plus ancien.
@@ -1253,6 +1273,12 @@ async function handleAdminFeedback(request, env) {
             return jsonResponse({ ok: true, item: summary(target, next), thread });
         }
 
+        // Test de l'envoi vers Discord depuis /stats.
+        if (body.testWebhook === true) {
+            const r = await notifyDiscord(env, null, { k: 'other', m: '✅ Test du webhook depuis /stats : les retours arrivent bien ici.', p: 'web', v: 'test', at: Date.now() });
+            const { metadata } = await store(env).getWithMetadata(FEEDBACK_HOOK_KEY);
+            return jsonResponse({ ok: Boolean(metadata?.ok), webhook: { configured: Boolean(env.FEEDBACK_WEBHOOK), last: metadata || null } });
+        }
         if (typeof body.delete === 'string' && FEEDBACK_KEY_RE.test(body.delete)) {
             await store(env).delete(body.delete);
             for (const k of (await listAll(`${FEEDBACK_PHOTO_PREFIX}${body.delete}_`)).slice(0, 200)) await store(env).delete(k.name);
@@ -1278,7 +1304,8 @@ async function handleAdminFeedback(request, env) {
     }
     const items = (await listAll(FEEDBACK_PREFIX)).map(({ name, metadata }) => summary(name, metadata || {}))
         .sort((a, b) => b.updatedAt - a.updatedAt);
-    return new Response(JSON.stringify({ items }), { headers: noStore });
+    const { metadata: hook } = await store(env).getWithMetadata(FEEDBACK_HOOK_KEY);
+    return new Response(JSON.stringify({ items, webhook: { configured: Boolean(env.FEEDBACK_WEBHOOK), last: hook || null } }), { headers: noStore });
 }
 
 // ── Réactions aux annonces ───────────────────────────────────────────────

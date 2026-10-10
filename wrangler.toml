@@ -1,6 +1,10 @@
 name = "test2"
 main = "worker.js"
 compatibility_date = "2024-01-01"
+# Variables posées dans le tableau de bord Cloudflare (FEEDBACK_WEBHOOK,
+# SITE_ORIGINS, ADMIN_TWITCH_IDS…) : sans ceci, chaque déploiement depuis
+# `main` effaçait celles de type « Texte » (les « Secrets », eux, restent).
+keep_vars = true
 
 [observability]
 enabled = false

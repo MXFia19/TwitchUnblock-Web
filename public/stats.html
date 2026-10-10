@@ -139,6 +139,9 @@
     .st.done { background: rgba(74, 222, 128, 0.16); color: #86efac; }
     .st.refused { background: rgba(248, 113, 113, 0.14); color: #fca5a5; }
     .fb-await { color: #fde68a; font-weight: 700; }
+    .fb-hook { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 2px 0 10px; font-size: 13px; color: var(--muted); }
+    .fb-hook .ok { color: #4ade80; font-weight: 700; }
+    .fb-hook .bad { color: #f87171; font-weight: 700; }
     .fb-thread { margin-top: 10px; padding: 10px 12px; border-radius: 10px; background: var(--card); border: 1px solid var(--line); }
     .fb-bubbles { display: flex; flex-direction: column; gap: 8px; }
     .fb-bubble { max-width: 85%; padding: 8px 11px; border-radius: 12px; background: var(--card-hi); font-size: 14px; white-space: pre-wrap; overflow-wrap: anywhere; }
@@ -239,6 +242,7 @@
         <button class="btn sm danger" type="button" id="fb-clear" data-t="fbClear"></button>
       </div>
       <p class="sub" data-t="fbSub"></p>
+      <div class="fb-hook" id="fb-hook"></div>
       <div class="fb-filter">
         <select id="fb-status">
           <option value="" data-t="fbAllStatus"></option>
@@ -347,6 +351,7 @@
       fAllKinds: 'Tous les types', fAccounts: 'Comptes', fAnon: 'Anonymes', fAllPlats: 'Toutes plateformes', fIosOnly: 'iOS seulement', fWebOnly: 'Web seulement', fBoth: 'iOS + Web', fAllVersions: 'Toutes versions',
       fbTitle: 'Retours (bugs, idées)', fbSub: 'Envoyés depuis le site et l’app. Ta réponse et l’état choisi s’affichent chez la personne (« Mes signalements »), qui peut répondre à son tour, photos comprises. Gardés 180 jours après le dernier message. Avec le secret FEEDBACK_WEBHOOK posé sur le Worker, chaque retour et chaque réponse arrivent aussi sur Discord.',
       fbStatus_new: 'Nouveau', fbStatus_accepted: 'Accepté', fbStatus_progress: 'En cours', fbStatus_done: 'Fait', fbStatus_refused: 'Refusé',
+      fbHookOk: 'Discord : dernier envoi réussi ({d})', fbHookFail: 'Discord : dernier envoi refusé ({d}) — {e}', fbHookMissing: 'Discord : secret FEEDBACK_WEBHOOK absent du Worker. À poser comme « Secret » (pas « Texte ») dans Cloudflare → Workers → test2 → Paramètres → Variables et secrets.', fbHookInvalid: 'Discord : FEEDBACK_WEBHOOK ne ressemble pas à une adresse de webhook (https://discord.com/api/webhooks/…).', fbHookNever: 'Discord : aucun envoi depuis la mise à jour.', fbHookTest: 'Tester l’envoi Discord', fbHookTestOk: 'Message de test envoyé : regarde le salon Discord.', fbHookTestFail: 'Échec du test : {e}',
       fbAllStatus: 'Tous les états', fbToAnswer: 'À répondre', fbAwait: 'réponse de la personne', fbThread: 'Conversation', fbHide: 'Masquer',
       fbReplyPh: 'Répondre (visible par la personne dans l’app ou sur le site)…', fbSend: 'Envoyer', fbPhotosPick: 'Photos (3 max)', fbYou: 'Toi', fbThem: 'La personne', fbStatusNow: 'État : {s}', fbSent: 'Réponse envoyée.', fbNoMatch: 'Aucun retour dans cet état.', fbNone: 'Aucun retour pour l’instant.', fbCount: '{n} retour(s)', fbClear: 'Tout effacer', fbConfirmClear: 'Effacer tous les retours ?', fbConfirmDel: 'Supprimer ce retour ?', fbBug: 'Bug', fbIdea: 'Idée', fbOther: 'Autre', fbContact: 'Contact :', fbWeb: 'Site', fbIos: 'App iOS',
       updated: 'Mis à jour à {t}', unavailable: 'Statistiques indisponibles ({e})',
@@ -380,6 +385,7 @@
       fAllKinds: 'All types', fAccounts: 'Accounts', fAnon: 'Anonymous', fAllPlats: 'All platforms', fIosOnly: 'iOS only', fWebOnly: 'Web only', fBoth: 'iOS + Web', fAllVersions: 'All versions',
       fbTitle: 'Feedback (bugs, ideas)', fbSub: 'Sent from the website and the app. Your reply and the status you pick show up for the person (“My reports”), who can answer back, photos included. Kept 180 days after the last message. With the FEEDBACK_WEBHOOK secret set on the Worker, each report and each reply also lands on Discord.',
       fbStatus_new: 'New', fbStatus_accepted: 'Accepted', fbStatus_progress: 'In progress', fbStatus_done: 'Done', fbStatus_refused: 'Declined',
+      fbHookOk: 'Discord: last delivery succeeded ({d})', fbHookFail: 'Discord: last delivery refused ({d}) — {e}', fbHookMissing: 'Discord: the FEEDBACK_WEBHOOK secret is missing from the Worker. Add it as a “Secret” (not “Text”) in Cloudflare → Workers → test2 → Settings → Variables and Secrets.', fbHookInvalid: 'Discord: FEEDBACK_WEBHOOK doesn’t look like a webhook address (https://discord.com/api/webhooks/…).', fbHookNever: 'Discord: nothing sent since the update.', fbHookTest: 'Test Discord delivery', fbHookTestOk: 'Test message sent: check the Discord channel.', fbHookTestFail: 'Test failed: {e}',
       fbAllStatus: 'All statuses', fbToAnswer: 'Awaiting reply', fbAwait: 'reply from the person', fbThread: 'Conversation', fbHide: 'Hide',
       fbReplyPh: 'Reply (the person sees it in the app or on the website)…', fbSend: 'Send', fbPhotosPick: 'Photos (3 max)', fbYou: 'You', fbThem: 'The person', fbStatusNow: 'Status: {s}', fbSent: 'Reply sent.', fbNoMatch: 'No feedback with this status.', fbNone: 'No feedback yet.', fbCount: '{n} message(s)', fbClear: 'Clear all', fbConfirmClear: 'Delete all feedback?', fbConfirmDel: 'Delete this message?', fbBug: 'Bug', fbIdea: 'Idea', fbOther: 'Other', fbContact: 'Contact:', fbWeb: 'Website', fbIos: 'iOS app',
       updated: 'Updated at {t}', unavailable: 'Stats unavailable ({e})',
@@ -413,6 +419,7 @@
       fAllKinds: 'Todos los tipos', fAccounts: 'Cuentas', fAnon: 'Anónimos', fAllPlats: 'Todas las plataformas', fIosOnly: 'Solo iOS', fWebOnly: 'Solo web', fBoth: 'iOS + Web', fAllVersions: 'Todas las versiones',
       fbTitle: 'Comentarios (errores, ideas)', fbSub: 'Enviados desde la web y la app. Tu respuesta y el estado elegido le aparecen a la persona («Mis reportes»), que puede contestar, fotos incluidas. Se guardan 180 días tras el último mensaje. Con el secreto FEEDBACK_WEBHOOK en el Worker, cada comentario y cada respuesta llegan también a Discord.',
       fbStatus_new: 'Nuevo', fbStatus_accepted: 'Aceptado', fbStatus_progress: 'En curso', fbStatus_done: 'Hecho', fbStatus_refused: 'Rechazado',
+      fbHookOk: 'Discord: último envío correcto ({d})', fbHookFail: 'Discord: último envío rechazado ({d}) — {e}', fbHookMissing: 'Discord: falta el secreto FEEDBACK_WEBHOOK en el Worker. Añádelo como «Secret» (no «Text») en Cloudflare → Workers → test2 → Settings → Variables and Secrets.', fbHookInvalid: 'Discord: FEEDBACK_WEBHOOK no parece una dirección de webhook (https://discord.com/api/webhooks/…).', fbHookNever: 'Discord: nada enviado desde la actualización.', fbHookTest: 'Probar el envío a Discord', fbHookTestOk: 'Mensaje de prueba enviado: mira el canal de Discord.', fbHookTestFail: 'La prueba falló: {e}',
       fbAllStatus: 'Todos los estados', fbToAnswer: 'Por responder', fbAwait: 'respuesta de la persona', fbThread: 'Conversación', fbHide: 'Ocultar',
       fbReplyPh: 'Responder (la persona lo ve en la app o en la web)…', fbSend: 'Enviar', fbPhotosPick: 'Fotos (3 máx.)', fbYou: 'Tú', fbThem: 'La persona', fbStatusNow: 'Estado: {s}', fbSent: 'Respuesta enviada.', fbNoMatch: 'Ningún comentario con este estado.', fbNone: 'Aún no hay comentarios.', fbCount: '{n} mensaje(s)', fbClear: 'Borrar todo', fbConfirmClear: '¿Borrar todos los comentarios?', fbConfirmDel: '¿Borrar este mensaje?', fbBug: 'Error', fbIdea: 'Idea', fbOther: 'Otro', fbContact: 'Contacto:', fbWeb: 'Web', fbIos: 'App iOS',
       updated: 'Actualizado a las {t}', unavailable: 'Estadísticas no disponibles ({e})',
@@ -722,10 +729,34 @@
     try {
       const res = await authed('/feedback')
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      fbItems = (await res.json()).items ?? []
+      const r = await res.json()
+      fbItems = r.items ?? []
+      renderHook(r.webhook)
       renderFeedback()
       for (const key of fbOpen) loadThread(key)
     } catch (e) { $('#fb-list').innerHTML = `<p class="sub err">${esc(t('listErr', { e: e.message }))}</p>` }
+  }
+  /** État du webhook Discord : réussi, refusé (et pourquoi), ou absent. */
+  function renderHook(w) {
+    const box = $('#fb-hook')
+    if (!w) { box.innerHTML = ''; return }
+    const last = w.last
+    const when = last?.at ? new Date(last.at).toLocaleString(LOCALE, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : ''
+    let text
+    if (!w.configured) text = `<span class="bad">✗</span> ${esc(t('fbHookMissing'))}`
+    else if (!last || last.detail === 'missing') text = esc(t('fbHookNever'))
+    else if (last.detail === 'invalid') text = `<span class="bad">✗</span> ${esc(t('fbHookInvalid'))}`
+    else if (last.ok) text = `<span class="ok">✓</span> ${esc(t('fbHookOk', { d: when }))}`
+    else text = `<span class="bad">✗</span> ${esc(t('fbHookFail', { d: when, e: `HTTP ${last.status || '—'}${last.detail ? ` · ${last.detail}` : ''}` }))}`
+    box.innerHTML = `<span>${text}</span><button class="btn sm" type="button" id="fb-hook-test">${esc(t('fbHookTest'))}</button>`
+    $('#fb-hook-test').onclick = async (e) => {
+      e.target.disabled = true
+      try {
+        const r = await postFeedback({ testWebhook: true })
+        renderHook(r.webhook)
+        devMsg(r.ok ? t('fbHookTestOk') : t('fbHookTestFail', { e: `HTTP ${r.webhook?.last?.status || '—'} ${r.webhook?.last?.detail || ''}` }), r.ok ? 'ok' : 'err')
+      } catch (err) { devMsg(t('fail', { e: err.message }), 'err'); e.target.disabled = false }
+    }
   }
   const awaiting = (f) => f.lastFrom === 'u' && f.count > 1
   function renderFeedback() {
