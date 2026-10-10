@@ -93,6 +93,34 @@ function unmuteLoader(Hls, player) {
   }
 }
 
+// ── Direct au plus près ─────────────────────────────────────────────────
+// Twitch ajoute à chaque playlist de direct les deux prochains segments
+// (« EXT-X-TWITCH-PREFETCH ») : celui qui est en train d'être produit et le
+// suivant. Son lecteur s'en sert ; hls.js ne les connaît pas, et n'apprenait
+// l'existence d'un segment qu'à la relecture suivante de la liste. Changés en
+// segments ordinaires, ils sont demandés aussitôt : la réponse arrive dès que
+// le segment est fini. On peut alors se tenir juste derrière le dernier
+// segment complet (LIVE_BEHIND_COMPLETE) au lieu de 4 s.
+const LIVE_BEHIND_COMPLETE = 2.5
+const PREFETCH_TAG = '#EXT-X-TWITCH-PREFETCH:'
+
+function prefetchPlaylistLoader(Hls, player) {
+  const Base = Hls.DefaultConfig.loader
+  return class PrefetchLoader extends Base {
+    load(context, config, callbacks) {
+      super.load(context, config, {
+        ...callbacks,
+        onSuccess: (response, stats, ctx, details) => {
+          if (typeof response?.data === 'string' && response.data.includes(PREFETCH_TAG)) {
+            response.data = player.withPrefetch(response.data)
+          }
+          callbacks.onSuccess(response, stats, ctx, details)
+        },
+      })
+    }
+  }
+}
+
 let hlsPromise = null
 /** Charge hls.js, avec un second CDN si le premier ne répond pas : sans lui,
  *  rien ne se lit hors de Safari. Appelé au démarrage pour être prêt au
@@ -353,6 +381,8 @@ export class Player {
     // Essais de son d'origine sur les passages coupés : remis à zéro à chaque
     // source (une VOD récente peut suivre une ancienne).
     this.unmute = this.kind === 'vod' ? {} : null
+    // Durée des segments annoncés d'avance dans la dernière playlist lue.
+    this.prefetchAhead = 0
 
     const start = () => {
       if (token !== this.attachToken) return   // vidéo remplacée entre-temps
@@ -400,6 +430,9 @@ export class Player {
         // segments (liveSyncDurationCount: 3), le lecteur se tenait à 18 s du
         // bord — environ 20 s de retard, contre 3 à 4 s une fois avancé à la
         // main. 4 s, c'est deux vrais segments d'avance : bas sans caler.
+        // Quand Twitch annonce ses prochains segments (fast_bread), la cible
+        // passe à LIVE_BEHIND_COMPLETE derrière le dernier segment complet
+        // (withPrefetch).
         liveSyncDuration: 4,
         // Une VOD part du début (ou de la reprise) même si sa playlist n'a
         // pas de fin déclarée : sinon hls.js la prend pour un direct et part
@@ -407,6 +440,9 @@ export class Player {
         startPosition: this.kind === 'vod' ? (startAt > 1 ? startAt : 0) : -1,
         // VOD : passages coupés rétablis quand le CDN a encore l'original.
         ...(this.kind === 'vod' ? { fLoader: unmuteLoader(Hls, this) } : {}),
+        // Direct : segments annoncés d'avance par Twitch (voir plus haut), et
+        // rattrapage en douceur (×1,1) quand on a pris du retard.
+        ...(this.kind === 'live' ? { pLoader: prefetchPlaylistLoader(Hls, this), maxLiveSyncPlaybackRate: 1.1 } : {}),
       })
       this.hls = hls
       hls.loadSource(url)
@@ -530,7 +566,8 @@ export class Player {
       // lecteur incrusté (PiP) — avancer rapproche du direct.
       if (!v.seekable.length) return
       const start = v.seekable.start(0)
-      const end = v.seekable.end(v.seekable.length - 1)
+      // Bord sans les segments annoncés d'avance : ils ne sont pas encore là.
+      const end = v.seekable.end(v.seekable.length - 1) - (this.prefetchAhead || 0)
       v.currentTime = Math.max(start, Math.min(end - 1.5, v.currentTime + delta))
     } else {
       const d = Number.isFinite(v.duration) ? v.duration : Infinity
@@ -572,8 +609,10 @@ export class Player {
   chatDelay() {
     if (this.kind !== 'live') return 0
     const v = this.video
-    let behind = this.hls ? this.hls.latency : NaN
-    if (!(behind > 0) && v.seekable.length) behind = v.seekable.end(v.seekable.length - 1) - v.currentTime
+    // Distance au bord de la playlist, sans les segments annoncés d'avance
+    // (pas encore finis : les autres spectateurs ne les voient pas encore).
+    let behind = this.hls ? this.hls.latency - (this.prefetchAhead || 0) : NaN
+    if (!(behind > 0) && v.seekable.length) behind = v.seekable.end(v.seekable.length - 1) - (this.prefetchAhead || 0) - v.currentTime
     if (!Number.isFinite(behind) || behind < 0) return 0
     return Math.min(behind, 60)
   }
@@ -652,6 +691,27 @@ export class Player {
     }
     if (this.kind === 'vod') this.updateMutedNote(cur)
     this.o.onTime?.(cur, v.duration)
+  }
+
+  /** Playlist de direct : segments annoncés d'avance changés en segments
+   *  ordinaires, et cible de retard ajustée à ce qu'ils ajoutent au bord. */
+  withPrefetch(text) {
+    const lines = text.split('\n')
+    const durs = lines.filter((l) => l.startsWith('#EXTINF:')).map((l) => parseFloat(l.slice(8))).filter((d) => d > 0)
+    const dur = durs.length ? durs[durs.length - 1] : 2
+    let added = 0
+    const out = lines.map((l) => {
+      if (!l.startsWith(PREFETCH_TAG)) return l
+      added++
+      return `#EXTINF:${dur.toFixed(3)},live\n${l.slice(PREFETCH_TAG.length).trim()}`
+    })
+    const ahead = added * dur
+    if (ahead !== this.prefetchAhead && this.hls) {
+      this.prefetchAhead = ahead
+      // Cible comptée depuis le bord annoncé, segments d'avance compris.
+      this.hls.config.liveSyncDuration = ahead + LIVE_BEHIND_COMPLETE
+    }
+    return out.join('\n')
   }
 
   // ── Passages coupés ────────────────────────────────────────────────────

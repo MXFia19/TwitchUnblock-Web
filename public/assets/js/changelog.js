@@ -6,6 +6,15 @@
 
 export const CHANGELOG = [
   {
+    version: '2026.10.10c',
+    items: {
+      fr: ['Direct : environ 4 s de retard au lieu d’une dizaine. Le lecteur se sert maintenant des segments que Twitch annonce d’avance, comme son propre lecteur, et rattrape tout seul le retard pris après une coupure.'],
+      en: ['Live: about 4 s of delay instead of ten or so. The player now uses the segments Twitch announces ahead of time, like its own player, and catches up by itself after a hiccup.'],
+      es: ['Directo: unos 4 s de retraso en lugar de unos diez. El reproductor usa ahora los segmentos que Twitch anuncia por adelantado, como su propio reproductor, y recupera solo el retraso tras un corte.'],
+      ru: ['Трансляции: задержка около 4 с вместо примерно десяти. Плеер теперь использует сегменты, которые Twitch объявляет заранее, как и его собственный плеер, и сам догоняет эфир после сбоя.'],
+    },
+  },
+  {
     version: '2026.10.10b',
     items: {
       fr: ['« Mes signalements » se met à jour tout seul : la réponse et le nouvel état apparaissent sans recharger la page.'],

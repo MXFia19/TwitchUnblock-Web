@@ -244,8 +244,19 @@ async function handleGetLive(url, workerOrigin) {
 
     try {
         // --- TENTATIVE 1 : Luminous API (Filtre Anti-Pub) ---
-        const resLuminous = await fetch(`https://as.luminous.dev/live/${login}?allow_source=true`, { headers: getRequestHeaders(login) });
-        if (resLuminous.ok) {
+        // fast_bread : chaque playlist annonce en plus les deux prochains
+        // segments (« EXT-X-TWITCH-PREFETCH »), dont le lecteur du site se
+        // sert pour coller au direct. Miroir européen d'abord — il désigne des
+        // serveurs de playlists proches de la plupart des utilisateurs —,
+        // l'asiatique en secours.
+        let resLuminous = null;
+        for (const host of ['eu.luminous.dev', 'as.luminous.dev']) {
+            try {
+                const r = await fetch(`https://${host}/live/${login}?allow_source=true&allow_audio_only=true&fast_bread=true`, { headers: getRequestHeaders(login) });
+                if (r.ok) { resLuminous = r; break; }
+            } catch (err) { /* miroir suivant */ }
+        }
+        if (resLuminous) {
             m3u8Content = await resLuminous.text();
             masterUrl = resLuminous.url;
         } else {
@@ -255,7 +266,7 @@ async function handleGetLive(url, workerOrigin) {
         // --- TENTATIVE 2 : Plan de Secours Officiel Twitch ---
         try {
             const token = await getAccessToken(login, true); if (!token) return jsonError("Offline", 404);
-            const resUsher = await fetch(`https://usher.ttvnw.net/api/channel/hls/${login}.m3u8?allow_source=true&allow_audio_only=true&allow_spectre=true&player=twitchweb&playlist_include_framerate=true&segment_preference=4&sig=${encodeURIComponent(token.signature)}&token=${encodeURIComponent(token.value)}`, { headers: REQUEST_HEADERS });
+            const resUsher = await fetch(`https://usher.ttvnw.net/api/channel/hls/${login}.m3u8?allow_source=true&allow_audio_only=true&allow_spectre=true&fast_bread=true&player=twitchweb&playlist_include_framerate=true&segment_preference=4&sig=${encodeURIComponent(token.signature)}&token=${encodeURIComponent(token.value)}`, { headers: REQUEST_HEADERS });
             if (!resUsher.ok) throw new Error("Stream introuvable");
             m3u8Content = await resUsher.text();
             masterUrl = resUsher.url;
