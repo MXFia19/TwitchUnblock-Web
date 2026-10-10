@@ -22,7 +22,9 @@ Watch Twitch lives and VODs in your browser, no subscription needed, with the re
 - Search with suggestions as you type
 - Live status (title, game, viewers, uptime), or how long the channel has been offline
 - Every past broadcast, filterable by keyword or date
+- **Unlisted & deleted broadcasts**: streams whose VOD is hidden or was deleted show up among the VODs as “Unlisted VOD”, rebuilt from Twitch's CDN as long as it still has them (stream IDs from `vodvod.top`, third party)
 - **Clips**: the most viewed over 24 h, 7 days, 30 days or all time — played in the site, with the original chat replayed
+- **About** tab: description, followers, social links and the streamer's panels
 - Recent streamers
 
 ### Player
@@ -32,6 +34,7 @@ Watch Twitch lives and VODs in your browser, no subscription needed, with the re
 - Picture in picture, “back to live” button, live latency
 - **Theatre mode** (T), keyboard shortcuts anywhere on the page (? lists them)
 - **VOD chapters**: game changes marked on the progress bar
+- **Muted parts**: passages Twitch muted for copyrighted music show in orange on the progress bar, with a notice and a **Skip** button. For a day or two after a stream, Twitch's CDN still serves the original sound: the site loads it instead, automatically
 - **Live ended** screen, and **raids followed** automatically to the target channel (can be turned off)
 - VODs resume where you left off
 - Mini player: playback keeps going while you browse
@@ -51,7 +54,11 @@ Watch Twitch lives and VODs in your browser, no subscription needed, with the re
 - **VOD chat**, replayed in sync with the video
 
 ### Everything else
-- French, English, Spanish — follows your device language by default
+- French, English, Spanish and Russian — follows your device language by default. The Russian translation was made with AI: the settings say so, with a button to report a mistake
+- **Twitch-style links**: replace `twitch.tv` with the site's address — `/xqc`, `/xqc/clips`, `/xqc/about`, `/videos/123?t=1h2m3s`, `/directory/category/just-chatting` — and the browser's back/forward buttons move between pages
+- Streams, VODs, clips, categories and channels are real links: middle-click or Ctrl/Cmd + click opens them in a new tab
+- **Bug reports & ideas** from the top bar, the settings or the player, screenshots included (pick them or paste with Ctrl+V). **My reports** shows where each one stands (received, accepted, in progress, done, declined) and the developer's reply, and lets you answer back — updated on its own
+- **Switch account** in the settings; after logging out, Twitch asks which account to use instead of signing the old one back in
 - History and progress synced across devices when logged in
 - Anonymous usage count, shown in the settings (see below)
 - Mobile-first layout: bottom tab bar, settings sheet, landscape view
@@ -157,7 +164,17 @@ Every push to `main` is deployed automatically. `vercel.json` serves the `public
 ```bash
 npx wrangler deploy
 ```
-The `DB` D1 database (history backups, usage count, announcements) is declared in `wrangler.toml`; the Worker creates its table on first use.
+The `DB` D1 database (history backups, usage count, announcements, feedback) is declared in `wrangler.toml`; the Worker creates its table on first use.
+
+Optional settings, in the Cloudflare dashboard under *Workers & Pages → your Worker → Settings → **Variables and Secrets*** — the block near the top of Settings, **not** the one inside the *Build* section (build variables are never visible to the running Worker):
+
+| Name | Type | What it does |
+|---|---|---|
+| `FEEDBACK_WEBHOOK` | Secret | Discord webhook address: each bug report, idea and reply is posted there, screenshots attached. `/stats` shows whether the last delivery worked and has a **Test Discord delivery** button. |
+| `ADMIN_TWITCH_IDS` | Text | Twitch user ID(s) of the site owner, comma-separated, for the developer tools on `/stats`. |
+| `SITE_ORIGINS` | Text | Website address(es) whose usage pings are counted, comma-separated. |
+
+`wrangler.toml` sets `keep_vars = true`, so deploying again doesn't wipe the ones set in the dashboard.
 
 ### Fallback Worker (daily limit)
 
