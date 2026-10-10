@@ -367,6 +367,9 @@ document.addEventListener('visibilitychange', () => {
 // déclarées plus bas.
 setTimeout(() => updateFeedbackBadges(), 0)
 setTimeout(() => refreshFeedbackInbox(), 4000)
+// Page laissée ouverte : la pastille suit sans recharger (au plus toutes
+// les 3 min, et seulement onglet visible).
+setInterval(() => { if (!document.hidden) refreshFeedbackInbox() }, 3 * 60 * 1000)
 window.addEventListener('pagehide', () => flushSync({ force: true }))
 
 // ── Navigation ─────────────────────────────────────────────────────────────
@@ -2276,12 +2279,12 @@ function updateFeedbackBadges() {
   }
 }
 
-/** État de toutes les discussions, en une requête (au plus toutes les 10 min
+/** État de toutes les discussions, en une requête (au plus toutes les 3 min
  *  sans `force`). Un retour effacé ou expiré disparaît de la liste. */
 let fbCheckedAt = 0
 async function refreshFeedbackInbox(force = false) {
   const list = myFeedback()
-  if (!list.length || (!force && Date.now() - fbCheckedAt < 10 * 60 * 1000)) return list
+  if (!list.length || (!force && Date.now() - fbCheckedAt < 3 * 60 * 1000)) return list
   fbCheckedAt = Date.now()
   try {
     const { items } = await api.feedbackThreads(list.map(({ id, token }) => ({ id, token })))
@@ -2407,6 +2410,7 @@ function openFeedback(kind = 'bug', { prefill = '' } = {}) {
 actions['report-translation'] = () => openFeedback('other', { prefill: `[${lang()}] ` })
 
 const fbDate = (at) => new Date(at).toLocaleString(lang(), { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
+let fbThreadTimer = null
 const fbStatus = (s) => `<span class="fb-status ${esc(s || 'new')}">${esc(t(`fb_status_${s || 'new'}`))}</span>`
 
 /** « Mes signalements » : les retours envoyés d'ici, réponses en tête. */
@@ -2482,6 +2486,21 @@ function openFeedbackThread(id) {
     if (e.target.closest('[data-sheet-close]')) return closeSheet()
     if (e.target.closest('[data-fb-back]')) return openMyFeedback()
   }
+  // Relue toutes les 20 s tant qu'elle est affichée : la réponse et le
+  // nouvel état apparaissent sans recharger. Seuls les messages sont
+  // redessinés, la réponse en cours d'écriture ne bouge pas.
+  const chat = $('#fb-chat')
+  clearInterval(fbThreadTimer)
+  fbThreadTimer = setInterval(async () => {
+    if (!chat.isConnected) return clearInterval(fbThreadTimer)
+    if (document.hidden) return
+    try {
+      const { items } = await api.feedbackThreads([{ id, token: rec.token }])
+      const it = items?.[0]
+      const known = myFeedback().find((r) => r.id === id)
+      if (it && !it.gone && it.updatedAt !== known?.updatedAt) apply(it)
+    } catch {}
+  }, 20000)
   $('#fb-reply-form').onsubmit = async (e) => {
     e.preventDefault()
     const message = $('#fb-reply').value.trim()

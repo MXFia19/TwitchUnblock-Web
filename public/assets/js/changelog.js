@@ -6,6 +6,15 @@
 
 export const CHANGELOG = [
   {
+    version: '2026.10.10b',
+    items: {
+      fr: ['« Mes signalements » se met à jour tout seul : la réponse et le nouvel état apparaissent sans recharger la page.'],
+      en: ['“My reports” updates on its own: the reply and the new status show up without reloading the page.'],
+      es: ['«Mis reportes» se actualiza solo: la respuesta y el nuevo estado aparecen sin recargar la página.'],
+      ru: ['«Мои обращения» обновляются сами: ответ и новый статус появляются без перезагрузки страницы.'],
+    },
+  },
+  {
     version: '2026.10.10a',
     items: {
       fr: [

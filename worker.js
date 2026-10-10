@@ -1089,7 +1089,9 @@ async function handleFeedback(request, env, ctx) {
 async function handleFeedbackThread(request, env) {
     if (request.method !== 'POST') return jsonError('Method Not Allowed', 405);
     if (!env.DB) return jsonError("Base D1 'DB' non liée au Worker.", 500);
-    if (overLimit(threadHits, request.headers.get('CF-Connecting-IP') || '', 120)) return jsonError('Trop de requêtes', 429);
+    // Une discussion ouverte est relue toutes les 20 s (site et app) : 600
+    // par heure et par adresse laissent de la marge à plusieurs appareils.
+    if (overLimit(threadHits, request.headers.get('CF-Connecting-IP') || '', 600)) return jsonError('Trop de requêtes', 429);
     let body;
     try { body = await request.json(); } catch (e) { return jsonError('JSON invalide', 400); }
     const list = Array.isArray(body.items) ? body.items.slice(0, 30) : [];

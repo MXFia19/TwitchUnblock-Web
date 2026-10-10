@@ -725,17 +725,29 @@
   const fbOpen = new Set()         // conversations dépliées
   const fbThreads = new Map()      // clé → discussion chargée
   const fbPics = new Map()         // « clé/n » → adresse locale de l'image
-  async function loadFeedback() {
+  async function loadFeedback({ quiet = false } = {}) {
     try {
       const res = await authed('/feedback')
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const r = await res.json()
+      const before = new Map(fbItems.map((f) => [f.key, f.updatedAt]))
+      const changed = !quiet || r.items?.length !== fbItems.length || (r.items ?? []).some((f) => before.get(f.key) !== f.updatedAt)
       fbItems = r.items ?? []
       renderHook(r.webhook)
+      if (!changed) return
       renderFeedback()
-      for (const key of fbOpen) loadThread(key)
-    } catch (e) { $('#fb-list').innerHTML = `<p class="sub err">${esc(t('listErr', { e: e.message }))}</p>` }
+      // Discussions dépliées : relues seulement si elles ont bougé.
+      for (const key of fbOpen) if (!quiet || before.get(key) !== fbItems.find((f) => f.key === key)?.updatedAt) loadThread(key)
+    } catch (e) { if (!quiet) $('#fb-list').innerHTML = `<p class="sub err">${esc(t('listErr', { e: e.message }))}</p>` }
   }
+  /** Une réponse est en cours d'écriture (texte ou photos choisies) : on ne
+   *  redessine pas la liste sous les doigts. */
+  function fbTyping() {
+    return [...document.querySelectorAll('#fb-list form[data-fb-reply]')].some((f) =>
+      f.querySelector('textarea')?.value.trim() || f.querySelector('input[type=file]')?.files?.length || f.contains(document.activeElement))
+  }
+  // Retours et réponses arrivent tout seuls (toutes les 30 s, onglet visible).
+  setInterval(() => { if (!document.hidden && !$('#dev').hidden && !fbTyping()) loadFeedback({ quiet: true }) }, 30000)
   /** État du webhook Discord : réussi, refusé (et pourquoi), ou absent. */
   function renderHook(w) {
     const box = $('#fb-hook')
