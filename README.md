@@ -129,6 +129,8 @@ The iOS app uses the same Worker.
 
 **Live notifications** (Web Push): the browser subscribes with its push service (Apple, Google, Mozilla, Microsoft) and hands the Worker its delivery address, its keys and the followed channels. Every 2 minutes (Cron Trigger, every minute with the check every other one), the Worker asks Twitch which of them are live — 100 channels per GQL request — and a channel that just went live queues a notification for each of its followers, sent encrypted (RFC 8291) and signed (VAPID, keys created on first use and kept in D1). The number of runs doesn't depend on the number of subscribers. On the free plan a run gets about 10 ms of CPU and a notification costs about 0.7 ms, so they leave from a queue, about 480 an hour; the $5 plan lifts that. Expired subscriptions are forgotten.
 
+The iOS app can't use Apple's push service (it needs a paid developer account), so it goes through [ntfy](https://ntfy.sh): the app creates a secret topic, the user subscribes to it in the free ntfy app, and the same scheduled check publishes a plain message there (`twitchunblock://live/<channel>` opens the stream in the app). ntfy.sh's free tier allows 250 messages a day per sender — see `NTFY_TOKEN` below. Topics the app hasn't refreshed for 60 days are dropped.
+
 ### Security
 - **History backups are private**: every read or write must carry the owner's Twitch token. The Worker has Twitch confirm it and checks it belongs to that account — knowing someone's (public) Twitch ID is no longer enough.
 - **The proxy only relays Twitch and the ad-free sources** (`ttvnw.net`, `jtvnw.net`, `twitch.tv`, `cloudfront.net`, `luminous.dev`, and exactly `twitch-al.nadeko.net`), over HTTPS — it is not an open proxy.
@@ -189,6 +191,7 @@ Optional settings, in the Cloudflare dashboard under *Workers & Pages → your W
 | `FEEDBACK_WEBHOOK` | Secret | Discord webhook address: each bug report, idea and reply is posted there, screenshots attached. `/stats` shows whether the last delivery worked and has a **Test Discord delivery** button. |
 | `ADMIN_TWITCH_IDS` | Text | Twitch user ID(s) of the site owner, comma-separated, for the developer tools on `/stats`. |
 | `SITE_ORIGINS` | Text | Website address(es) whose usage pings are counted, comma-separated. |
+| `NTFY_TOKEN` | Secret | Optional. Access token of an [ntfy](https://ntfy.sh) account, for the iOS app's live notifications: the free ntfy.sh tier allows 250 messages a day per sender (the Worker sends for every app user), a paid account raises that (2,500 a day for 5 $/month). |
 
 `wrangler.toml` sets `keep_vars = true`, so deploying again doesn't wipe the ones set in the dashboard. It also declares the Cron Trigger (every minute) behind the live notifications — nothing to set up.
 

@@ -1619,6 +1619,7 @@ const SCHEMA = [
     // chacun, dernier live vu par chaîne (« ? » : pas encore lu), file d'envoi.
     `CREATE TABLE IF NOT EXISTS push_subs (
         id       TEXT PRIMARY KEY,
+        kind     TEXT NOT NULL DEFAULT 'web',
         endpoint TEXT NOT NULL,
         p256dh   TEXT NOT NULL,
         auth     TEXT NOT NULL,
@@ -1749,6 +1750,13 @@ function applyEnvConfig(env) {
 //  (~10 ms de calcul, 50 requêtes sortantes) et un envoi coûte ~0,7 ms : la
 //  file étale les envois (~480 par heure), le reste part aux suivantes.
 //  Les clés VAPID sont créées au premier besoin et gardées en D1.
+//
+//  App iOS : pas de push Apple sans compte développeur payant ; elle passe par
+//  ntfy (app gratuite). Un abonné peut donc aussi être un sujet ntfy secret,
+//  créé par l'app : message en clair publié sur ntfy.sh (presque rien à
+//  calculer), qui ouvre le direct dans l'app (twitchunblock://live/<chaîne>).
+//  ntfy.sh gratuit : 250 messages par jour pour un même expéditeur — le
+//  secret facultatif NTFY_TOKEN (compte ntfy) donne les limites de son offre.
 // ═══════════════════════════════════════════════════════════════════════════
 const PUSH_HOSTS = /(^|\.)(push\.apple\.com|fcm\.googleapis\.com|android\.googleapis\.com|push\.services\.mozilla\.com|notify\.windows\.com)$/;
 const PUSH_MAX_CHANNELS = 500;
@@ -1758,6 +1766,12 @@ const PUSH_GQL_PER_RUN = 12;      // 1 200 chaînes vérifiées par passage
 // même exécution a déjà lu les lives.
 const PUSH_SENDS_PER_RUN = 12;
 const PUSH_SENDS_WITH_CHECK = 4;
+// ntfy : un message en clair, en plus des envois web (requêtes sortantes :
+// 12 lectures GQL + 4 web + 25 ntfy au plus, sous les 50 de l'offre gratuite).
+const PUSH_NTFY_PER_RUN = 25;
+const NTFY_URL = 'https://ntfy.sh';
+/** Sujet ntfy sans nouvelles de l'app depuis 60 jours (désinstallée…) : oublié. */
+const NTFY_IDLE = 60 * 86400000;
 const PUSH_QUEUE_TTL = 30 * 60 * 1000;
 const PUSH_TEXT = {
     fr: { live: (n) => `${n} est en live`, test: 'Les notifications de live fonctionnent.' },
@@ -1899,6 +1913,28 @@ function readPushSubscription(body) {
     return { endpoint, p256dh, auth };
 }
 
+/** Abonnement de l'app iOS : sujet ntfy secret créé par elle. */
+function readNtfySubscription(body) {
+    const topic = String(body?.ntfy || '');
+    if (!/^tu-[a-z0-9]{20,40}$/.test(topic)) return null;
+    return { kind: 'ntfy', endpoint: `${NTFY_URL}/${topic}`, p256dh: '', auth: '' };
+}
+
+/** Publication sur ntfy.sh (JSON : titres en UTF-8 sans souci d'en-têtes). */
+async function sendNtfy(env, sub, msg) {
+    try {
+        const res = await fetch(NTFY_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json',
+                       ...(env.NTFY_TOKEN ? { Authorization: `Bearer ${env.NTFY_TOKEN}` } : {}) },
+            body: JSON.stringify({ topic: sub.endpoint.slice(NTFY_URL.length + 1), priority: 4, ...msg }),
+        });
+        return res.status;
+    } catch (e) {
+        return 0;
+    }
+}
+
 const pushLang = (l) => (PUSH_TEXT[l] ? l : 'en');
 
 async function handlePushKey(env) {
@@ -1913,7 +1949,7 @@ async function handlePushSubscribe(request, env) {
     if (request.method !== 'POST' || !env.DB) return jsonError('Méthode non autorisée', 405);
     if (overLimit(pushHits, request.headers.get('CF-Connecting-IP') || '', 60)) return jsonError('Trop de requêtes', 429);
     const body = await request.json().catch(() => null);
-    const sub = readPushSubscription(body);
+    const sub = readPushSubscription(body) ?? readNtfySubscription(body);
     if (!sub) return jsonError('Abonnement invalide', 400);
     const channels = [...new Set((Array.isArray(body.channels) ? body.channels : [])
         .map((c) => String(c).toLowerCase()).filter((c) => LOGIN_RE.test(c)))].slice(0, PUSH_MAX_CHANNELS);
@@ -1924,11 +1960,11 @@ async function handlePushSubscribe(request, env) {
     const old = await env.DB.prepare('SELECT hash FROM push_subs WHERE id = ?1').bind(id).first('hash');
     const now = Date.now();
     const ops = [env.DB.prepare(
-        `INSERT INTO push_subs (id, endpoint, p256dh, auth, lang, hash, created, updated)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)
+        `INSERT INTO push_subs (id, kind, endpoint, p256dh, auth, lang, hash, created, updated)
+         VALUES (?1, ?8, ?2, ?3, ?4, ?5, ?6, ?7, ?7)
          ON CONFLICT(id) DO UPDATE SET endpoint = excluded.endpoint, p256dh = excluded.p256dh,
            auth = excluded.auth, lang = excluded.lang, hash = excluded.hash, updated = excluded.updated`)
-        .bind(id, sub.endpoint, sub.p256dh, sub.auth, lang, hash, now)];
+        .bind(id, sub.endpoint, sub.p256dh, sub.auth, lang, hash, now, sub.kind || 'web')];
     if (old !== hash) {
         const list = JSON.stringify(channels);
         ops.push(env.DB.prepare('DELETE FROM push_follow WHERE sub = ?1').bind(id));
@@ -1942,7 +1978,7 @@ async function handlePushSubscribe(request, env) {
 async function handlePushUnsubscribe(request, env) {
     if (request.method !== 'POST' || !env.DB) return jsonError('Méthode non autorisée', 405);
     const body = await request.json().catch(() => null);
-    const endpoint = String(body?.subscription?.endpoint || '');
+    const endpoint = String(body?.subscription?.endpoint || readNtfySubscription(body)?.endpoint || '');
     if (!endpoint) return jsonError('Abonnement invalide', 400);
     await ensureSchema(env);
     const id = await pushIdOf(endpoint);
@@ -1959,10 +1995,12 @@ async function handlePushTest(request, env) {
     if (request.method !== 'POST' || !env.DB) return jsonError('Méthode non autorisée', 405);
     if (overLimit(pushHits, request.headers.get('CF-Connecting-IP') || '', 60)) return jsonError('Trop de requêtes', 429);
     const body = await request.json().catch(() => null);
-    const sub = readPushSubscription(body);
+    const sub = readPushSubscription(body) ?? readNtfySubscription(body);
     if (!sub) return jsonError('Abonnement invalide', 400);
     const text = PUSH_TEXT[pushLang(body.lang)];
-    const status = await sendPush(env, sub, { title: 'TwitchUnblock', body: text.test, tag: 'test', url: '/' });
+    const status = sub.kind === 'ntfy'
+        ? await sendNtfy(env, sub, { title: 'TwitchUnblock', message: text.test, click: 'twitchunblock://', tags: ['white_check_mark'] })
+        : await sendPush(env, sub, { title: 'TwitchUnblock', body: text.test, tag: 'test', url: '/' });
     return status >= 200 && status < 300 ? jsonResponse({ ok: true }) : jsonError(`Service de push : ${status}`, 502);
 }
 
@@ -2030,11 +2068,22 @@ async function pushCheckLives(env, now) {
 /** Envois en attente, `room` au plus. */
 async function pushSend(env, room) {
     const db = env.DB;
-    const queue = (await db.prepare(`SELECT q.id, q.body, s.id AS sid, s.endpoint, s.p256dh, s.auth, s.lang
-        FROM push_queue q JOIN push_subs s ON s.id = q.sub ORDER BY q.id LIMIT ?1`).bind(room).all()).results || [];
+    const rows = (await db.prepare(`SELECT q.id, q.body, s.id AS sid, s.kind, s.endpoint, s.p256dh, s.auth, s.lang
+        FROM push_queue q JOIN push_subs s ON s.id = q.sub ORDER BY q.id LIMIT ?1`).bind(room + PUSH_NTFY_PER_RUN).all()).results || [];
+    // Au plus `room` notifications web (chiffrées) ; les ntfy en plus.
+    let webLeft = room;
+    const queue = rows.filter((q) => q.kind === 'ntfy' || webLeft-- > 0);
     if (!queue.length) {
-        // De temps en temps : chaînes que plus personne ne suit.
-        if (Math.random() < 0.02) await db.prepare('DELETE FROM push_live WHERE login NOT IN (SELECT login FROM push_follow)').run();
+        // De temps en temps : chaînes que plus personne ne suit, sujets ntfy
+        // dont l'app ne donne plus de nouvelles.
+        if (Math.random() < 0.02) {
+            const idle = Date.now() - NTFY_IDLE;
+            await db.batch([
+                db.prepare(`DELETE FROM push_follow WHERE sub IN (SELECT id FROM push_subs WHERE kind = 'ntfy' AND updated < ?1)`).bind(idle),
+                db.prepare(`DELETE FROM push_subs WHERE kind = 'ntfy' AND updated < ?1`).bind(idle),
+                db.prepare('DELETE FROM push_live WHERE login NOT IN (SELECT login FROM push_follow)'),
+            ]);
+        }
         return;
     }
     const done = [];
@@ -2043,13 +2092,11 @@ async function pushSend(env, room) {
         let live = {};
         try { live = JSON.parse(q.body); } catch (e) {}
         const text = PUSH_TEXT[pushLang(q.lang)];
-        const status = await sendPush(env, q, {
-            title: text.live(live.name || live.login),
-            body: [live.title, live.game].filter(Boolean).join(' · '),
-            icon: live.icon || '',
-            tag: `live-${live.login}`,
-            url: `/${live.login}`,
-        });
+        const title = text.live(live.name || live.login);
+        const body = [live.title, live.game].filter(Boolean).join(' · ');
+        const status = q.kind === 'ntfy'
+            ? await sendNtfy(env, q, { title, message: body || title, click: `twitchunblock://live/${live.login}`, tags: ['red_circle'] })
+            : await sendPush(env, q, { title, body, icon: live.icon || '', tag: `live-${live.login}`, url: `/${live.login}` });
         // Abonnement expiré ou retiré par le navigateur : oublié.
         if (status === 404 || status === 410) gone.push(q.sid);
         // Envoyé, refusé pour de bon, ou injoignable : retiré de la file
