@@ -555,10 +555,26 @@ async function handleProxy(url, request) {
 // EXT-X-MEDIA). Seul le premier était reconnu : le site n'affichait plus que
 // « Auto ». La version d'origine garde le nom « Source » dans les deux cas,
 // pour que la qualité retenue par chacun reste valable.
-function variantName(streamInf, sourceGroups = new Set()) {
+// En multi-encodage (Enhanced Broadcasting : le streamer envoie lui-même
+// chaque qualité), le format IVS marque TOUTES les variantes « source »,
+// audio seul compris : toutes s'appelaient « Source » et la dernière,
+// l'audio seul, l'emportait — écran noir en « Source » (gotaga, miroir
+// européen). « Source » n'est donc retenu que pour une variante vidéo seule
+// de son espèce (`ivsSource`) ; sinon chaque qualité garde son nom, comme
+// chez Luminous Asie.
+function variantName(streamInf, sourceGroups = new Set(), ivsSource = true) {
     const attr = (name) => (streamInf.match(new RegExp(`[:,]${name}="([^"]+)"`)) || [])[1];
     const name = attr('VIDEO') || attr('STABLE-VARIANT-ID') || attr('IVS-NAME') || '';
-    return name === 'chunked' || sourceGroups.has(name) || attr('IVS-VARIANT-SOURCE') === 'source' ? 'Source' : name;
+    const ivs = ivsSource && attr('IVS-VARIANT-SOURCE') === 'source' && /[:,]RESOLUTION=/.test(streamInf);
+    return name === 'chunked' || sourceGroups.has(name) || ivs ? 'Source' : name;
+}
+
+/** Une seule variante vidéo marquée « source » (format IVS) : c'est la
+ *  version d'origine. Plusieurs : multi-encodage, aucune ne l'est plus
+ *  qu'une autre. */
+function singleIvsSource(content) {
+    return content.split('\n').filter((l) => l.startsWith('#EXT-X-STREAM-INF')
+        && /[:,]IVS-VARIANT-SOURCE="source"/.test(l) && /[:,]RESOLUTION=/.test(l)).length <= 1;
 }
 
 /** Groupes vidéo marqués « (source) » dans leur nom (EXT-X-MEDIA) : certains
@@ -575,9 +591,9 @@ function sourceGroupsOf(content) {
 }
 
 function parseAndProxyM3U8(content, master, workerOrigin, isVod, useProxy = true) { 
-    const lines = content.split('\n'); const proxyBase = `${workerOrigin}/api/proxy?url=`; let unsorted = {}, last = ""; const sources = sourceGroupsOf(content); 
+    const lines = content.split('\n'); const proxyBase = `${workerOrigin}/api/proxy?url=`; let unsorted = {}, last = ""; const sources = sourceGroupsOf(content), single = singleIvsSource(content); 
     lines.forEach(l => { 
-        if (l.startsWith('#EXT-X-STREAM-INF')) { last = variantName(l, sources); }
+        if (l.startsWith('#EXT-X-STREAM-INF')) { last = variantName(l, sources, single); }
         else if (l.startsWith('http') && last) { unsorted[last] = useProxy ? `${proxyBase}${encodeURIComponent(l)}&isVod=${isVod}` : l; last = ""; } 
     }); 
     let sorted = {}; sorted["Auto"] = useProxy ? `${proxyBase}${encodeURIComponent(master)}&isVod=${isVod}` : master; 
