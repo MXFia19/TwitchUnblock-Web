@@ -59,8 +59,9 @@ export function liveRequestUrl(reqUrl, playlistUrl) {
 
 // ── Son des passages coupés ─────────────────────────────────────────────
 // Twitch coupe le son des passages avec de la musique protégée : la playlist
-// pointe alors vers « N-muted.ts ». Un jour ou deux après la diffusion,
-// l'original « N.ts », avec le son, est pourtant encore servi par le CDN.
+// pointe alors vers « N-muted.ts » (« N-muted.mp4 » pour les VODs en fMP4).
+// Un jour ou deux après la diffusion, l'original « N.ts », avec le son, est
+// pourtant encore servi par le CDN.
 // Ce chargeur le demande d'abord et ne retombe sur la version muette que
 // s'il est refusé. Après trois refus sans un seul succès dans une qualité
 // (VOD trop ancienne : originaux effacés), il n'essaie plus dans celle-là —
@@ -77,7 +78,7 @@ function unmuteLoader(Hls, player) {
       const all = player.unmute
       const level = context.frag?.level ?? -1
       const u = all ? (all[level] ??= { ok: 0, fails: 0, off: false }) : null
-      if (!u || u.off || !/-muted\.ts/.test(context.url)) return super.load(context, config, callbacks)
+      if (!u || u.off || !/-muted\.(ts|mp4)/.test(context.url)) return super.load(context, config, callbacks)
       const inner = new Base(this.hlsConfig)
       this.inner = inner
       const fallback = () => {
@@ -86,7 +87,7 @@ function unmuteLoader(Hls, player) {
         if (++u.fails >= 3 && !u.ok) u.off = true
         super.load(context, config, callbacks)
       }
-      inner.load({ ...context, url: context.url.replace('-muted.ts', '.ts') }, config, {
+      inner.load({ ...context, url: context.url.replace(/-muted\.(ts|mp4)/, '.$1') }, config, {
         ...callbacks,
         onSuccess: (response, stats, ctx, details) => {
           // Mesures de débit du segment réellement chargé : hls.js les lit
