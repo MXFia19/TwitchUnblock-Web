@@ -2034,6 +2034,29 @@ function sourceOrderHtml() {
     </li>`).join('')
 }
 
+/** Les adresses des Workers sont lues au chargement : la page repart. */
+function reloadForWorker() {
+  toast(t('expert_reload'), 'success')
+  setTimeout(() => location.reload(), 900)
+}
+
+actions['worker-check'] = async () => {
+  const status = $('#worker-status')
+  const base = api.normalizeWorker($('#set-worker')?.value)
+  if (!base) { status.textContent = t('expert_bad'); return }
+  status.textContent = t('expert_checking')
+  if (!(await api.checkWorker(base))) { status.textContent = t('expert_bad'); return }
+  store.prefs.customWorker = base
+  store.savePrefs()
+  reloadForWorker()
+}
+actions['worker-reset'] = () => {
+  store.prefs.customWorker = null
+  store.prefs.customWorkerAll = false
+  store.savePrefs()
+  reloadForWorker()
+}
+
 actions['src-up'] = (e) => moveLiveSource(e.target.closest('[data-src]')?.dataset.src, -1)
 actions['src-down'] = (e) => moveLiveSource(e.target.closest('[data-src]')?.dataset.src, 1)
 actions['src-reset'] = () => setLiveSourceOrder([...api.LIVE_SOURCES])
@@ -2971,6 +2994,20 @@ function openSettings() {
       ${toggle('set-usage', t('share_usage'), p.shareUsage, t('share_usage_sub'))}
     </div>
     <div class="sheet-section">
+      <h3>${esc(t('expert'))}</h3>
+      <div class="setting setting-col">
+        <span class="setting-text"><span>${esc(t('expert_worker'))}</span><small>${esc(t('expert_worker_sub'))}</small></span>
+        <div class="expert-row">
+          <input class="text-input" id="set-worker" type="url" inputmode="url" autocomplete="off" spellcheck="false"
+            placeholder="${esc(t('expert_worker_ph'))}" value="${esc(api.CUSTOM_WORKER || '')}">
+          <button class="btn sm" type="button" data-action="worker-check">${esc(t('expert_check'))}</button>
+        </div>
+        <small class="muted" id="worker-status">${api.CUSTOM_WORKER ? esc(t('expert_using', { u: api.CUSTOM_WORKER })) : ''}</small>
+        ${api.CUSTOM_WORKER ? `<button class="btn ghost sm expert-reset" type="button" data-action="worker-reset">${esc(t('expert_reset'))}</button>` : ''}
+      </div>
+      ${api.CUSTOM_WORKER ? toggle('set-worker-all', t('expert_all'), Boolean(p.customWorkerAll), t('expert_all_sub')) : ''}
+    </div>
+    <div class="sheet-section">
       <h3>${esc(t('about'))}</h3>
       <p class="muted small">${esc(t('about_text'))}</p>
       <div class="sheet-group">
@@ -3024,6 +3061,12 @@ function openSettings() {
     }
     if (id === 'import-file') { importData(e.target.files?.[0]); e.target.value = ''; return }
     if (id === 'set-clickpause') p.clickPause = e.target.checked
+    if (id === 'set-worker-all') {
+      p.customWorkerAll = e.target.checked
+      store.savePrefs()
+      reloadForWorker()
+      return
+    }
     if (id === 'set-homelist') { p.homeList = e.target.checked; store.savePrefs(); applyLayout(); return }
     if (id === 'set-recent') { p.showRecent = e.target.checked; store.savePrefs(); renderRecentChannels(); return }
     if (id === 'set-toplang') {

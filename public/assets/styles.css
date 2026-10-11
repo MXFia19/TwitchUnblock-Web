@@ -1241,3 +1241,9 @@ html.touring { overflow: hidden; }
 .src-order .src-name { flex: 1; min-width: 0; font-size: 14px; }
 .src-order .icon-btn[disabled] { opacity: 0.3; cursor: default; }
 .src-reset { align-self: flex-start; margin-top: 8px; }
+
+/* Réglages experts : Worker personnel */
+.expert-row { display: flex; gap: 8px; margin-top: 8px; }
+.expert-row .text-input { flex: 1; min-width: 0; }
+.expert-reset { align-self: flex-start; margin-top: 6px; }
+#worker-status:empty { display: none; }

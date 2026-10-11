@@ -9,7 +9,45 @@ import { store } from './store.js'
 // (« same-origin » = le site et le Worker servis ensemble, comme sous Docker)
 // et l'application Twitch utilisée pour la connexion.
 const CFG = window.TU_CONFIG ?? {}
-export const API_URL = CFG.apiUrl === 'same-origin' ? location.origin : (CFG.apiUrl || 'https://test2.kurzmathis4.workers.dev')
+
+// ── Worker personnel (réglages experts) ───────────────────────────────────
+// Si les Workers officiels tombent, ou si le projet disparaît, chacun peut
+// déployer le sien (ce dépôt : Cloudflare ou Docker) et le donner dans les
+// réglages. Il passe alors en premier pour la lecture (lives, VODs,
+// playlists) ; les officiels restent en secours. « Tout passer par lui » y
+// envoie aussi la sauvegarde (avec le jeton Twitch), les retours, les
+// annonces, les notifications et le comptage. Lu au chargement : la page se
+// recharge quand il change.
+/** Adresse nettoyée (« https:// » ajouté, « / » et « /api » finaux ôtés) ; null si invalide. */
+export function normalizeWorker(raw) {
+  let s = String(raw || '').trim()
+  if (!s) return null
+  if (!/^https?:\/\//i.test(s)) s = `https://${s}`
+  try {
+    const u = new URL(s)
+    if (!/^https?:$/.test(u.protocol) || !u.hostname || u.search) return null
+    return `${u.origin}${u.pathname.replace(/\/+$/, '').replace(/\/api$/i, '')}`
+  } catch { return null }
+}
+
+/** Un Worker TwitchUnblock répond à un nom de chaîne vide par une erreur
+ *  JSON (400 « Nom invalide ») : c'est ce qu'on vérifie avant de s'en servir. */
+export async function checkWorker(base) {
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), 10_000)
+  try {
+    const res = await fetch(`${base}/api/get-live?name=`, { cache: 'no-store', signal: ctrl.signal })
+    const data = await res.json()
+    return (res.status === 400 || res.ok) && Boolean(data && (data.error || data.links))
+  } catch { return false } finally { clearTimeout(timer) }
+}
+
+const CUSTOM = normalizeWorker(store.prefs.customWorker)
+const CUSTOM_ALL = Boolean(CUSTOM && store.prefs.customWorkerAll)
+export const CUSTOM_WORKER = CUSTOM
+
+const OFFICIAL_URL = CFG.apiUrl === 'same-origin' ? location.origin : (CFG.apiUrl || 'https://test2.kurzmathis4.workers.dev')
+export const API_URL = CUSTOM_ALL ? CUSTOM : OFFICIAL_URL
 
 // ── Workers de secours ─────────────────────────────────────────────────────
 // Le Worker gratuit est limité à 100 000 requêtes par jour et par compte
@@ -23,8 +61,8 @@ export const API_URL = CFG.apiUrl === 'same-origin' ? location.origin : (CFG.api
 const DEFAULT_FALLBACK_URLS = ['https://test2-fallback.vxcraftmanpetit.workers.dev']
 const FALLBACK_URLS = CFG.fallbackApiUrls ?? (CFG.apiUrl ? [] : DEFAULT_FALLBACK_URLS)
 const originOf = (u) => { try { return new URL(u).origin } catch { return null } }
-/** Le principal d'abord, puis les secours, dans l'ordre. */
-export const WORKER_BASES = [...new Set([API_URL, ...FALLBACK_URLS.map(originOf).filter(Boolean)])]
+/** Le principal d'abord, puis les secours (et le Worker personnel), dans l'ordre. */
+export const WORKER_BASES = [...new Set([API_URL, OFFICIAL_URL, ...FALLBACK_URLS.map(originOf).filter(Boolean), ...(CUSTOM ? [CUSTOM] : [])])]
 /**
  * Ordre pour tout ce qui ne dépend pas de D1 (lives, VODs, relais vidéo,
  * Moobot) : les secours d'abord, le principal en dernier recours. Son quota
@@ -32,7 +70,10 @@ export const WORKER_BASES = [...new Set([API_URL, ...FALLBACK_URLS.map(originOf)
  * comptage, annonces, retours — qui tombaient avec lui quand la lecture
  * l'avait épuisé.
  */
-const LOOKUP_BASES = [...WORKER_BASES.slice(1), WORKER_BASES[0]]
+// Un Worker personnel passe avant tous les autres.
+const LOOKUP_BASES = CUSTOM
+  ? [CUSTOM, ...WORKER_BASES.filter((b) => b !== CUSTOM)]
+  : [...WORKER_BASES.slice(1), WORKER_BASES[0]]
 
 // ── Relais vidéo (serveur à soi) ───────────────────────────────────────────
 // La lecture fait presque tout le quota de requêtes du Worker : chaque
@@ -44,7 +85,9 @@ const LOOKUP_BASES = [...WORKER_BASES.slice(1), WORKER_BASES[0]]
 // (config.js) n'hérite pas du relais officiel : elle donne le sien dans
 // `relayUrl`, ou aucun.
 const DEFAULT_RELAY_URL = 'https://relais.mxfia19.duckdns.org'
-export const RELAY_BASE = originOf(CFG.relayUrl ?? (CFG.apiUrl ? '' : DEFAULT_RELAY_URL))
+// Avec un Worker personnel, pas de relais officiel : la vidéo ne repasse
+// pas par l'infrastructure du projet.
+export const RELAY_BASE = CUSTOM ? null : originOf(CFG.relayUrl ?? (CFG.apiUrl ? '' : DEFAULT_RELAY_URL))
 
 // Worker mis de côté sur cet appareil, pour ne pas le retenter à chaque
 // requête. La page d'erreur de Cloudflare n'a pas d'en-tête CORS : le

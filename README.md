@@ -218,6 +218,20 @@ already playing switches over by itself and resumes where it was.
 A copy of the site with its own Worker lists its fallbacks in
 `public/config.js`: `window.TU_CONFIG = { apiUrl: '…', fallbackApiUrls: ['…'] }`.
 
+### Your own Worker, from the settings (no rebuild)
+
+If the official Workers go down — or the project disappears — anyone can
+deploy this repository's Worker (Cloudflare as above, or the Docker image
+below, over HTTPS) and enter its address in **Settings → Expert settings →
+Personal Worker**, on the website or in the iOS app. The address is checked
+first (a TwitchUnblock Worker answers an empty channel name with a JSON
+error). It is then tried **first for playback** — lives, VODs, playlists —
+with the official Workers as a fallback; the official video relay is not
+used. **Send everything through this Worker** also moves history backups,
+feedback, announcements, notifications and the usage count there: your
+Twitch token is then sent to it (backups), so only turn it on for a Worker
+you host yourself. The website reloads when the Worker changes.
+
 ### Video relay on your own server (VPS)
 
 Almost all of the Worker's requests come from video playback on the website:
