@@ -1800,8 +1800,12 @@ function applyEnvConfig(env) {
 //  ntfy (app gratuite). Un abonné peut donc aussi être un sujet ntfy secret,
 //  créé par l'app : message en clair publié sur ntfy.sh (presque rien à
 //  calculer), qui ouvre le direct dans l'app (twitchunblock://live/<chaîne>).
-//  ntfy.sh gratuit : 250 messages par jour pour un même expéditeur — le
-//  secret facultatif NTFY_TOKEN (compte ntfy) donne les limites de son offre.
+//  ntfy.sh gratuit : 250 messages par jour et par adresse IP. Or les Workers
+//  sortent tous par les mêmes adresses, déjà à court : ntfy.sh leur répond
+//  429. Avec la variable NTFY_RELAY, les messages partent donc du relais du
+//  VPS (docker/relay.mjs), en un lot signé par la clé VAPID de ce Worker. Le
+//  secret facultatif NTFY_TOKEN (offre payante de ntfy, comptée par compte et
+//  non par adresse) fait publier en direct, comme l'image Docker.
 // ═══════════════════════════════════════════════════════════════════════════
 const PUSH_HOSTS = /(^|\.)(push\.apple\.com|fcm\.googleapis\.com|android\.googleapis\.com|push\.services\.mozilla\.com|notify\.windows\.com)$/;
 const PUSH_MAX_CHANNELS = 500;
@@ -1811,10 +1815,17 @@ const PUSH_GQL_PER_RUN = 12;      // 1 200 chaînes vérifiées par passage
 // même exécution a déjà lu les lives.
 const PUSH_SENDS_PER_RUN = 12;
 const PUSH_SENDS_WITH_CHECK = 4;
-// ntfy : un message en clair, en plus des envois web (requêtes sortantes :
-// 12 lectures GQL + 4 web + 25 ntfy au plus, sous les 50 de l'offre gratuite).
-const PUSH_NTFY_PER_RUN = 25;
+// ntfy : un message en clair, en plus des envois web. ntfy.sh accepte une
+// requête toutes les 5 s par adresse (60 d'avance) : 12 par passage. En
+// direct, 12 requêtes sortantes (+ 12 lectures GQL + 4 web, sous les 50 de
+// l'offre gratuite) ; par le relais, une seule.
+const PUSH_NTFY_PER_RUN = 12;
 const NTFY_URL = 'https://ntfy.sh';
+/** Après un refus de ntfy.sh (429), plus d'envoi ntfy pendant 5 minutes —
+ *  ou jusqu'à minuit UTC, sa remise à zéro, quand le quota du jour est
+ *  atteint (code d'erreur 42908). */
+const NTFY_PAUSE = 5 * 60 * 1000;
+const NTFY_DAILY_QUOTA = 42908;
 /** Sujet ntfy sans nouvelles de l'app depuis 60 jours (désinstallée…) : oublié. */
 const NTFY_IDLE = 60 * 86400000;
 const PUSH_QUEUE_TTL = 30 * 60 * 1000;
@@ -1875,18 +1886,25 @@ async function vapidAuthorization(endpoint, keys) {
     const aud = new URL(endpoint).origin;
     const hit = vapidJwts.get(aud);
     if (hit && hit.until > Date.now() && hit.pub === keys.pub) return hit.value;
-    const enc = new TextEncoder();
-    const header = b64u.enc(enc.encode(JSON.stringify({ typ: 'JWT', alg: 'ES256' })));
-    const claims = b64u.enc(enc.encode(JSON.stringify({
+    const jwt = await vapidJwt(keys, {
         aud,
         exp: Math.floor(Date.now() / 1000) + 12 * 3600,
         sub: 'https://twitchunblock.vercel.app',
-    })));
-    const key = await crypto.subtle.importKey('jwk', keys.jwk, { name: 'ECDSA', namedCurve: 'P-256' }, false, ['sign']);
-    const sig = await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, key, enc.encode(`${header}.${claims}`));
-    const value = `vapid t=${header}.${claims}.${b64u.enc(sig)}, k=${keys.pub}`;
+    });
+    const value = `vapid t=${jwt}, k=${keys.pub}`;
     vapidJwts.set(aud, { value, pub: keys.pub, until: Date.now() + 11 * 3600 * 1000 });
     return value;
+}
+
+/** Jeton JWT signé par la clé VAPID (ES256) : pour les services de push, et
+ *  pour les lots ntfy confiés au relais. */
+async function vapidJwt(keys, claims) {
+    const enc = new TextEncoder();
+    const header = b64u.enc(enc.encode(JSON.stringify({ typ: 'JWT', alg: 'ES256' })));
+    const body = b64u.enc(enc.encode(JSON.stringify(claims)));
+    const key = await crypto.subtle.importKey('jwk', keys.jwk, { name: 'ECDSA', namedCurve: 'P-256' }, false, ['sign']);
+    const sig = await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, key, enc.encode(`${header}.${body}`));
+    return `${header}.${body}.${b64u.enc(sig)}`;
 }
 
 async function hkdf(salt, ikm, info, length) {
@@ -1965,20 +1983,72 @@ function readNtfySubscription(body) {
     return { kind: 'ntfy', endpoint: `${NTFY_URL}/${topic}`, p256dh: '', auth: '' };
 }
 
-/** Publication sur ntfy.sh (JSON : titres en UTF-8 sans souci d'en-têtes). */
-async function sendNtfy(env, sub, msg) {
+const ntfyTopic = (sub) => sub.endpoint.slice(NTFY_URL.length + 1);
+
+/** Messages ntfy ({ topic, title, message, click, tags }) : par le relais
+ *  (NTFY_RELAY, sans NTFY_TOKEN), sinon en direct. Pour chacun, dans
+ *  l'ordre : { status } de ntfy.sh (0 : injoignable) et, pour un 429, son
+ *  code d'erreur (`code`). */
+async function sendNtfy(env, msgs) {
+    msgs = msgs.map((m) => ({ priority: 4, ...m }));
+    if (env.NTFY_RELAY && !env.NTFY_TOKEN) {
+        const relayed = await ntfyViaRelay(env, msgs);
+        if (relayed) return relayed;
+        // Relais injoignable ou pas encore à jour : envoi direct.
+    }
+    const out = [];
+    for (const msg of msgs) {
+        // À la suite, pas en rafale ; après un refus, le reste attend.
+        if (out.at(-1)?.status === 429) { out.push(out.at(-1)); continue; }
+        try {
+            // JSON : titres en UTF-8 sans souci d'en-têtes.
+            const res = await fetch(NTFY_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json',
+                           ...(env.NTFY_TOKEN ? { Authorization: `Bearer ${env.NTFY_TOKEN}` } : {}) },
+                body: JSON.stringify(msg),
+            });
+            const err = res.status === 429 ? await res.json().catch(() => null) : null;
+            out.push({ status: res.status, code: Number(err?.code) || 0 });
+        } catch (e) {
+            out.push({ status: 0, code: 0 });
+        }
+    }
+    return out;
+}
+
+/** Lot confié au relais (POST NTFY_RELAY/ntfy), qui le publie depuis sa
+ *  propre adresse. Jeton signé par la clé VAPID : empreinte du corps,
+ *  5 minutes de validité ; le relais le vérifie avec la clé publique de ce
+ *  Worker (/api/push/key). null si le relais ne répond pas comme prévu. */
+async function ntfyViaRelay(env, msgs) {
     try {
-        const res = await fetch(NTFY_URL, {
+        const body = JSON.stringify({ messages: msgs });
+        const sha = b64u.enc(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(body)));
+        const jwt = await vapidJwt(await vapidKeys(env), { exp: Math.floor(Date.now() / 1000) + 300, sha });
+        const res = await fetch(`${String(env.NTFY_RELAY).trim().replace(/\/+$/, '')}/ntfy`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json',
-                       ...(env.NTFY_TOKEN ? { Authorization: `Bearer ${env.NTFY_TOKEN}` } : {}) },
-            body: JSON.stringify({ topic: sub.endpoint.slice(NTFY_URL.length + 1), priority: 4, ...msg }),
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${jwt}` },
+            body,
         });
-        return res.status;
+        const out = res.ok ? (await res.json().catch(() => null))?.results : null;
+        return Array.isArray(out) && out.length === msgs.length && out.every((r) => Number.isInteger(r?.status))
+            ? out : null;
     } catch (e) {
-        return 0;
+        return null;
     }
 }
+
+/** Refus de ntfy.sh (429) : envois ntfy en pause (voir NTFY_PAUSE). */
+async function ntfyPause(env, code) {
+    const now = Date.now();
+    const until = code === NTFY_DAILY_QUOTA ? (Math.floor(now / 86400000) + 1) * 86400000 + 60000 : now + NTFY_PAUSE;
+    await env.DB.prepare(`INSERT INTO kv (key, value) VALUES ('push_ntfy_pause', ?1)
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value`).bind(String(until)).run();
+}
+
+const ntfyPaused = async (env) =>
+    (Number(await env.DB.prepare(`SELECT value FROM kv WHERE key = 'push_ntfy_pause'`).first('value')) || 0) > Date.now();
 
 const pushLang = (l) => (PUSH_TEXT[l] ? l : 'en');
 
@@ -2043,9 +2113,21 @@ async function handlePushTest(request, env) {
     const sub = readPushSubscription(body) ?? readNtfySubscription(body);
     if (!sub) return jsonError('Abonnement invalide', 400);
     const text = PUSH_TEXT[pushLang(body.lang)];
-    const status = sub.kind === 'ntfy'
-        ? await sendNtfy(env, sub, { title: 'TwitchUnblock', message: text.test, click: 'twitchunblock://', tags: ['white_check_mark'] })
-        : await sendPush(env, sub, { title: 'TwitchUnblock', body: text.test, tag: 'test', url: '/' });
+    if (sub.kind === 'ntfy') {
+        // `limit` : ntfy.sh refuse les messages pour l'instant (l'app le dit
+        // autrement qu'un serveur injoignable).
+        const refused = (detail) => new Response(JSON.stringify({ error: `ntfy.sh : ${detail}`, limit: true }),
+            { status: 502, headers: { ...RESPONSE_HEADERS, 'Content-Type': 'application/json' } });
+        await ensureSchema(env);
+        if (await ntfyPaused(env)) return refused('pause après un refus (429)');
+        const [r] = await sendNtfy(env, [{ topic: ntfyTopic(sub), title: 'TwitchUnblock', message: text.test,
+                                           click: 'twitchunblock://', tags: ['white_check_mark'] }]);
+        if (r.status >= 200 && r.status < 300) return jsonResponse({ ok: true });
+        if (r.status !== 429) return jsonError(`ntfy.sh : ${r.status}`, 502);
+        await ntfyPause(env, r.code);
+        return refused(`429${r.code ? ` (${r.code})` : ''}`);
+    }
+    const status = await sendPush(env, sub, { title: 'TwitchUnblock', body: text.test, tag: 'test', url: '/' });
     return status >= 200 && status < 300 ? jsonResponse({ ok: true }) : jsonError(`Service de push : ${status}`, 502);
 }
 
@@ -2113,11 +2195,16 @@ async function pushCheckLives(env, now) {
 /** Envois en attente, `room` au plus. */
 async function pushSend(env, room) {
     const db = env.DB;
+    // ntfy en pause après un refus : ses messages attendent, sans retenir
+    // ceux du site qui les suivent dans la file.
+    const ntfyOn = !(await ntfyPaused(env));
     const rows = (await db.prepare(`SELECT q.id, q.body, s.id AS sid, s.kind, s.endpoint, s.p256dh, s.auth, s.lang
-        FROM push_queue q JOIN push_subs s ON s.id = q.sub ORDER BY q.id LIMIT ?1`).bind(room + PUSH_NTFY_PER_RUN).all()).results || [];
+        FROM push_queue q JOIN push_subs s ON s.id = q.sub ${ntfyOn ? '' : `WHERE s.kind IS NOT 'ntfy'`}
+        ORDER BY q.id LIMIT ?1`).bind(room + (ntfyOn ? PUSH_NTFY_PER_RUN : 0)).all()).results || [];
     // Au plus `room` notifications web (chiffrées) ; les ntfy en plus.
     let webLeft = room;
-    const queue = rows.filter((q) => q.kind === 'ntfy' || webLeft-- > 0);
+    let ntfyLeft = PUSH_NTFY_PER_RUN;
+    const queue = rows.filter((q) => (q.kind === 'ntfy' ? ntfyLeft-- > 0 : webLeft-- > 0));
     if (!queue.length) {
         // De temps en temps : chaînes que plus personne ne suit, sujets ntfy
         // dont l'app ne donne plus de nouvelles.
@@ -2133,21 +2220,35 @@ async function pushSend(env, room) {
     }
     const done = [];
     const gone = [];
-    await Promise.all(queue.map(async (q) => {
+    const notice = (q) => {
         let live = {};
         try { live = JSON.parse(q.body); } catch (e) {}
-        const text = PUSH_TEXT[pushLang(q.lang)];
-        const title = text.live(live.name || live.login);
-        const body = [live.title, live.game].filter(Boolean).join(' · ');
-        const status = q.kind === 'ntfy'
-            ? await sendNtfy(env, q, { title, message: body || title, click: `twitchunblock://live/${live.login}`, tags: ['red_circle'] })
-            : await sendPush(env, q, { title, body, icon: live.icon || '', tag: `live-${live.login}`, url: `/${live.login}` });
+        const title = PUSH_TEXT[pushLang(q.lang)].live(live.name || live.login);
+        return { live, title, body: [live.title, live.game].filter(Boolean).join(' · ') };
+    };
+    // Envoyé, refusé pour de bon, ou injoignable : retiré de la file (un live
+    // en retard de 30 minutes n'a plus d'intérêt). Refusé pour l'instant
+    // (429) : il attend le passage suivant.
+    const ntfyRows = queue.filter((q) => q.kind === 'ntfy');
+    const sendNtfyRows = async () => {
+        if (!ntfyRows.length) return;
+        const results = await sendNtfy(env, ntfyRows.map((q) => {
+            const n = notice(q);
+            return { topic: ntfyTopic(q), title: n.title, message: n.body || n.title,
+                     click: `twitchunblock://live/${n.live.login}`, tags: ['red_circle'] };
+        }));
+        results.forEach((r, i) => { if (r.status !== 429) done.push(ntfyRows[i].id); });
+        const refused = results.find((r) => r.status === 429);
+        if (refused) await ntfyPause(env, refused.code);
+    };
+    await Promise.all([sendNtfyRows(), ...queue.filter((q) => q.kind !== 'ntfy').map(async (q) => {
+        const n = notice(q);
+        const status = await sendPush(env, q, { title: n.title, body: n.body, icon: n.live.icon || '',
+                                                tag: `live-${n.live.login}`, url: `/${n.live.login}` });
         // Abonnement expiré ou retiré par le navigateur : oublié.
         if (status === 404 || status === 410) gone.push(q.sid);
-        // Envoyé, refusé pour de bon, ou injoignable : retiré de la file
-        // (un live en retard de 30 minutes n'a plus d'intérêt).
         if (status !== 429) done.push(q.id);
-    }));
+    })]);
     const cleanup = [db.prepare('DELETE FROM push_queue WHERE id IN (SELECT value FROM json_each(?1))').bind(JSON.stringify(done))];
     if (gone.length) {
         const list = JSON.stringify(gone);

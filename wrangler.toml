@@ -11,6 +11,12 @@ keep_vars = true
 [triggers]
 crons = ["* * * * *"]
 
+# Notifications ntfy de l'app iOS : publiées par le relais du VPS, ntfy.sh
+# refusant les adresses partagées des Workers (worker.js, NTFY_RELAY). Le
+# relais n'accepte que les lots signés par la clé push de ce Worker.
+[vars]
+NTFY_RELAY = "https://relais.mxfia19.duckdns.org"
+
 [observability]
 enabled = false
 head_sampling_rate = 1

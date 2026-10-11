@@ -131,7 +131,9 @@ The iOS app uses the same Worker.
 
 **Live notifications** (Web Push): the browser subscribes with its push service (Apple, Google, Mozilla, Microsoft) and hands the Worker its delivery address, its keys and the followed channels. Every 2 minutes (Cron Trigger, every minute with the check every other one), the Worker asks Twitch which of them are live — 100 channels per GQL request — and a channel that just went live queues a notification for each of its followers, sent encrypted (RFC 8291) and signed (VAPID, keys created on first use and kept in D1). The number of runs doesn't depend on the number of subscribers. On the free plan a run gets about 10 ms of CPU and a notification costs about 0.7 ms, so they leave from a queue, about 480 an hour; the $5 plan lifts that. Expired subscriptions are forgotten.
 
-The iOS app can't use Apple's push service (it needs a paid developer account), so it goes through [ntfy](https://ntfy.sh): the app creates a secret topic, the user subscribes to it in the free ntfy app, and the same scheduled check publishes a plain message there (`twitchunblock://live/<channel>` opens the stream in the app). ntfy.sh's free tier allows 250 messages a day per sender — see `NTFY_TOKEN` below. Topics the app hasn't refreshed for 60 days are dropped.
+The iOS app can't use Apple's push service (it needs a paid developer account), so it goes through [ntfy](https://ntfy.sh): the app creates a secret topic, the user subscribes to it in the free ntfy app, and the same scheduled check publishes a plain message there (`twitchunblock://live/<channel>` opens the stream in the app). Topics the app hasn't refreshed for 60 days are dropped.
+
+ntfy.sh's free tier counts messages per IP address (250 a day). Every Cloudflare Worker sends from the same shared addresses, so ntfy.sh answers them `429 Too Many Requests`. The Worker therefore hands its ntfy messages to the [video relay](#video-relay-on-your-own-server-vps) (`NTFY_RELAY` in `wrangler.toml`), which publishes them from its own address. Messages leave in one batch per run (12 at most, ntfy.sh's pace of one request every 5 seconds), signed with the Worker's VAPID key: the relay checks the signature against the Worker's public key (`/api/push/key`) and refuses anything else, so no secret needs to be shared. After a `429` the Worker stops sending to ntfy for 5 minutes, or until midnight UTC (when ntfy.sh resets its counters) once the daily quota is reached; the app's **Test** button says so. With `NTFY_TOKEN` (a paid ntfy account, counted per account rather than per address) the Worker publishes directly, like the Docker image does from your own server.
 
 ### Security
 - **History backups are private**: every read or write must carry the owner's Twitch token. The Worker has Twitch confirm it and checks it belongs to that account — knowing someone's (public) Twitch ID is no longer enough.
@@ -193,7 +195,8 @@ Optional settings, in the Cloudflare dashboard under *Workers & Pages → your W
 | `FEEDBACK_WEBHOOK` | Secret | Discord webhook address: each bug report, idea and reply is posted there, screenshots attached. `/stats` shows whether the last delivery worked and has a **Test Discord delivery** button. |
 | `ADMIN_TWITCH_IDS` | Text | Twitch user ID(s) of the site owner, comma-separated, for the developer tools on `/stats`. |
 | `SITE_ORIGINS` | Text | Website address(es) whose usage pings are counted, comma-separated. |
-| `NTFY_TOKEN` | Secret | Optional. Access token of an [ntfy](https://ntfy.sh) account, for the iOS app's live notifications: the free ntfy.sh tier allows 250 messages a day per sender (the Worker sends for every app user), a paid account raises that (2,500 a day for 5 $/month). |
+| `NTFY_TOKEN` | Secret | Optional. Access token of a **paid** [ntfy](https://ntfy.sh) account, for the iOS app's live notifications: ntfy.sh counts free use per IP address (250 messages a day), which the Worker's shared Cloudflare addresses don't get — hence the relay below. A paid account is counted per account (2,500 a day for $6/month) and lets the Worker publish directly. A free account changes nothing. |
+| `NTFY_RELAY` | Text | Set in `wrangler.toml`: the [video relay](#video-relay-on-your-own-server-vps) that publishes the iOS app's ntfy messages (see [How it works](#how-it-works)). For your own Worker, point it to your own relay (with `NTFY_WORKER` set there) or remove it. |
 
 `wrangler.toml` sets `keep_vars = true`, so deploying again doesn't wipe the ones set in the dashboard. It also declares the Cron Trigger (every minute) behind the live notifications — nothing to set up.
 
@@ -294,6 +297,14 @@ To update: `docker compose pull && docker compose up -d` (add `--profile caddy`
 if you use the bundled Caddy). The relay runs from
 the website's image (`ghcr.io/mxfia19/twitchunblock-web`), started with
 `node /app/relay.mjs`.
+
+**ntfy:** the relay also publishes the iOS app's live notifications to
+ntfy.sh for the Worker (`POST /ntfy`), since ntfy.sh refuses Cloudflare's
+shared addresses. It only accepts batches signed by the Worker whose address
+is in `NTFY_WORKER` (default: the official Worker; its public key is read
+from `<NTFY_WORKER>/api/push/key`), and only for the app's topics with a link
+back into the app. An empty `NTFY_WORKER=` in `.env` turns it off. Your
+server's address gets ntfy.sh's free quota: 250 messages a day.
 
 `ALLOWED_ORIGINS` (in `docker-compose.yml`) lists the websites allowed to use
 the relay; other sites get a 403, so they can't use your bandwidth. Bandwidth:
