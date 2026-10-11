@@ -25,6 +25,12 @@ const CURSOR_RE = /^[A-Za-z0-9+/=_-]{1,500}$/;
 const QUALITY_ORDER = ['chunked', 'source', '1080p60', '1080p30', '720p60', '720p30', '480p30', '360p30', '160p30', 'audio_only'];
 
 export default {
+    // Toutes les 2 minutes (wrangler.toml) : notifications de live du site.
+    async scheduled(event, env, ctx) {
+        applyEnvConfig(env);
+        ctx.waitUntil(pushTick(env).catch((e) => console.error(e)));
+    },
+
     async fetch(request, env, ctx) {
         if (request.method === "OPTIONS") return new Response(null, { headers: RESPONSE_HEADERS });
         applyEnvConfig(env);
@@ -68,6 +74,12 @@ export default {
                 case '/api/feedback/reply': return await handleFeedbackReply(request, env, ctx);
                 case '/api/feedback/photo': return await handleFeedbackPhoto(url, request, env);
                 case '/api/admin/feedback': return await handleAdminFeedback(request, env);
+
+                // Notifications de live du site installé (Web Push)
+                case '/api/push/key': return await handlePushKey(env);
+                case '/api/push/subscribe': return await handlePushSubscribe(request, env);
+                case '/api/push/unsubscribe': return await handlePushUnsubscribe(request, env);
+                case '/api/push/test': return await handlePushTest(request, env);
 
                 // Commandes Moobot pour le site (son API refuse les navigateurs)
                 case '/api/bot-commands/moobot': return await handleMoobotCommands(url);
@@ -1603,6 +1615,34 @@ const SCHEMA = [
         n      INTEGER NOT NULL DEFAULT 0,
         PRIMARY KEY (day, metric)
     )`,
+    // Notifications de live (Web Push) : abonnements, chaînes suivies par
+    // chacun, dernier live vu par chaîne (« ? » : pas encore lu), file d'envoi.
+    `CREATE TABLE IF NOT EXISTS push_subs (
+        id       TEXT PRIMARY KEY,
+        endpoint TEXT NOT NULL,
+        p256dh   TEXT NOT NULL,
+        auth     TEXT NOT NULL,
+        lang     TEXT,
+        hash     TEXT,
+        created  INTEGER,
+        updated  INTEGER
+    )`,
+    `CREATE TABLE IF NOT EXISTS push_follow (
+        login TEXT NOT NULL,
+        sub   TEXT NOT NULL,
+        PRIMARY KEY (login, sub)
+    )`,
+    `CREATE INDEX IF NOT EXISTS push_follow_sub ON push_follow (sub)`,
+    `CREATE TABLE IF NOT EXISTS push_live (
+        login  TEXT PRIMARY KEY,
+        stream TEXT
+    )`,
+    `CREATE TABLE IF NOT EXISTS push_queue (
+        id   INTEGER PRIMARY KEY AUTOINCREMENT,
+        sub  TEXT NOT NULL,
+        body TEXT NOT NULL,
+        at   INTEGER NOT NULL
+    )`,
 ];
 let schemaReady = null;   // une fois par instance du Worker
 function ensureSchema(env) {
@@ -1692,4 +1732,315 @@ function applyEnvConfig(env) {
     const list = (v) => String(v || '').split(',').map((x) => x.trim()).filter(Boolean);
     if (list(env?.ADMIN_TWITCH_IDS).length) ADMIN_IDS = list(env.ADMIN_TWITCH_IDS).filter((x) => /^\d{1,20}$/.test(x));
     if (list(env?.SITE_ORIGINS).length) USAGE_ORIGINS = list(env.SITE_ORIGINS);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Notifications de live du site installé (Web Push)
+//
+//  Le navigateur s'abonne auprès de son service de push (Apple, Google,
+//  Mozilla, Microsoft) et nous confie l'adresse d'envoi, ses clés, et les
+//  chaînes suivies. Toutes les 2 minutes (tâche planifiée, `scheduled`), on
+//  demande à Twitch lesquelles sont en live, 100 par requête GQL ; une chaîne
+//  qui vient de démarrer met une notification en file pour chacun de ceux qui
+//  la suivent. Envoi chiffré (RFC 8291, aes128gcm) et signé (VAPID, RFC 8292).
+//
+//  Coût : une exécution toutes les 2 minutes, quel que soit le nombre
+//  d'abonnés ; au plus 50 requêtes sortantes par exécution sur l'offre
+//  gratuite, d'où la file : ce qui ne part pas tout de suite part à la
+//  suivante. Les clés VAPID sont créées au premier besoin et gardées en D1.
+// ═══════════════════════════════════════════════════════════════════════════
+const PUSH_HOSTS = /(^|\.)(push\.apple\.com|fcm\.googleapis\.com|android\.googleapis\.com|push\.services\.mozilla\.com|notify\.windows\.com)$/;
+const PUSH_MAX_CHANNELS = 500;
+const PUSH_GQL_PER_RUN = 12;      // 1 200 chaînes vérifiées par passage
+const PUSH_SENDS_PER_RUN = 30;
+const PUSH_QUEUE_TTL = 30 * 60 * 1000;
+const PUSH_TEXT = {
+    fr: { live: (n) => `${n} est en live`, test: 'Les notifications de live fonctionnent.' },
+    en: { live: (n) => `${n} is live`, test: 'Live notifications are working.' },
+    es: { live: (n) => `${n} está en directo`, test: 'Las notificaciones de directos funcionan.' },
+    ru: { live: (n) => `${n} в эфире`, test: 'Уведомления о трансляциях работают.' },
+};
+const pushHits = new Map();
+
+const b64u = {
+    enc: (buf) => {
+        const bytes = buf instanceof Uint8Array ? buf : new Uint8Array(buf);
+        let s = '';
+        for (const b of bytes) s += String.fromCharCode(b);
+        return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    },
+    dec: (str) => {
+        const s = String(str).replace(/-/g, '+').replace(/_/g, '/');
+        return Uint8Array.from(atob(s + '==='.slice((s.length + 3) % 4)), (c) => c.charCodeAt(0));
+    },
+};
+const concatBytes = (...parts) => {
+    const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+    let at = 0;
+    for (const p of parts) { out.set(p, at); at += p.length; }
+    return out;
+};
+
+/** Clés VAPID (ECDSA P-256) : créées une fois, gardées dans la table kv. */
+let vapidCache = null;
+async function vapidKeys(env) {
+    if (vapidCache) return vapidCache;
+    await ensureSchema(env);
+    const read = async () => {
+        const v = await env.DB.prepare(`SELECT value FROM kv WHERE key = 'push_vapid'`).first('value');
+        return v ? JSON.parse(v) : null;
+    };
+    let keys = await read();
+    if (!keys) {
+        const pair = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify']);
+        const jwk = await crypto.subtle.exportKey('jwk', pair.privateKey);
+        const pub = b64u.enc(await crypto.subtle.exportKey('raw', pair.publicKey));
+        await env.DB.prepare(`INSERT OR IGNORE INTO kv (key, value) VALUES ('push_vapid', ?1)`)
+            .bind(JSON.stringify({ jwk, pub })).run();
+        keys = await read();   // deux créations simultanées : la première gagne
+    }
+    vapidCache = keys;
+    return keys;
+}
+
+/** En-tête Authorization VAPID : jeton signé pour le service de push visé. */
+async function vapidAuthorization(endpoint, keys) {
+    const enc = new TextEncoder();
+    const header = b64u.enc(enc.encode(JSON.stringify({ typ: 'JWT', alg: 'ES256' })));
+    const claims = b64u.enc(enc.encode(JSON.stringify({
+        aud: new URL(endpoint).origin,
+        exp: Math.floor(Date.now() / 1000) + 12 * 3600,
+        sub: 'https://twitchunblock.vercel.app',
+    })));
+    const key = await crypto.subtle.importKey('jwk', keys.jwk, { name: 'ECDSA', namedCurve: 'P-256' }, false, ['sign']);
+    const sig = await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, key, enc.encode(`${header}.${claims}`));
+    return `vapid t=${header}.${claims}.${b64u.enc(sig)}, k=${keys.pub}`;
+}
+
+async function hkdf(salt, ikm, info, length) {
+    const key = await crypto.subtle.importKey('raw', ikm, 'HKDF', false, ['deriveBits']);
+    return new Uint8Array(await crypto.subtle.deriveBits({ name: 'HKDF', hash: 'SHA-256', salt, info }, key, length * 8));
+}
+
+/** Corps chiffré pour un abonnement (RFC 8291) : un seul enregistrement.
+ *  `local` et `salt` ne servent qu'aux vecteurs de test de la RFC. */
+async function encryptPush(sub, text, local = null, salt = null) {
+    const enc = new TextEncoder();
+    const uaPublic = b64u.dec(sub.p256dh);
+    const authSecret = b64u.dec(sub.auth);
+    local ??= await crypto.subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, true, ['deriveBits']);
+    const asPublic = new Uint8Array(await crypto.subtle.exportKey('raw', local.publicKey));
+    const uaKey = await crypto.subtle.importKey('raw', uaPublic, { name: 'ECDH', namedCurve: 'P-256' }, false, []);
+    const ecdh = new Uint8Array(await crypto.subtle.deriveBits({ name: 'ECDH', public: uaKey }, local.privateKey, 256));
+    const ikm = await hkdf(authSecret, ecdh, concatBytes(enc.encode('WebPush: info\0'), uaPublic, asPublic), 32);
+    salt ??= crypto.getRandomValues(new Uint8Array(16));
+    const cek = await hkdf(salt, ikm, enc.encode('Content-Encoding: aes128gcm\0'), 16);
+    const nonce = await hkdf(salt, ikm, enc.encode('Content-Encoding: nonce\0'), 12);
+    const key = await crypto.subtle.importKey('raw', cek, 'AES-GCM', false, ['encrypt']);
+    // Délimiteur 0x02 : dernier (et seul) enregistrement.
+    const cipher = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv: nonce }, key,
+        concatBytes(enc.encode(text), new Uint8Array([2]))));
+    const head = new Uint8Array(21);
+    head.set(salt, 0);
+    new DataView(head.buffer).setUint32(16, 4096);
+    head[20] = asPublic.length;
+    return concatBytes(head, asPublic, cipher);
+}
+
+/** Envoie une notification ; code HTTP du service de push (0 : injoignable). */
+async function sendPush(env, sub, payload) {
+    try {
+        const keys = await vapidKeys(env);
+        const res = await fetch(sub.endpoint, {
+            method: 'POST',
+            headers: {
+                Authorization: await vapidAuthorization(sub.endpoint, keys),
+                'Content-Encoding': 'aes128gcm',
+                'Content-Type': 'application/octet-stream',
+                TTL: '1800',
+                Urgency: 'high',
+            },
+            body: await encryptPush(sub, JSON.stringify(payload)),
+        });
+        return res.status;
+    } catch (e) {
+        return 0;
+    }
+}
+
+const pushIdOf = async (text) => {
+    const d = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+    return [...new Uint8Array(d)].slice(0, 16).map((b) => b.toString(16).padStart(2, '0')).join('');
+};
+
+/** Abonnement envoyé par le site : service de push connu, clés au bon format. */
+function readPushSubscription(body) {
+    const s = body?.subscription;
+    const endpoint = String(s?.endpoint || '');
+    const p256dh = String(s?.keys?.p256dh || '');
+    const auth = String(s?.keys?.auth || '');
+    let host = '';
+    try { const u = new URL(endpoint); if (u.protocol === 'https:') host = u.hostname; } catch (e) {}
+    if (!host || !PUSH_HOSTS.test(host) || endpoint.length > 1000) return null;
+    if (!/^[A-Za-z0-9_-]{80,100}$/.test(p256dh) || !/^[A-Za-z0-9_-]{16,32}$/.test(auth)) return null;
+    return { endpoint, p256dh, auth };
+}
+
+const pushLang = (l) => (PUSH_TEXT[l] ? l : 'en');
+
+async function handlePushKey(env) {
+    if (!env.DB) return jsonError('Indisponible', 503);
+    return jsonResponse({ key: (await vapidKeys(env)).pub });
+}
+
+/** Abonnement (ou mise à jour des chaînes suivies). Une chaîne nouvelle pour
+ *  le serveur est marquée « ? » : son état est lu sans notifier, sinon un
+ *  live déjà en cours partirait comme un nouveau. */
+async function handlePushSubscribe(request, env) {
+    if (request.method !== 'POST' || !env.DB) return jsonError('Méthode non autorisée', 405);
+    if (overLimit(pushHits, request.headers.get('CF-Connecting-IP') || '', 60)) return jsonError('Trop de requêtes', 429);
+    const body = await request.json().catch(() => null);
+    const sub = readPushSubscription(body);
+    if (!sub) return jsonError('Abonnement invalide', 400);
+    const channels = [...new Set((Array.isArray(body.channels) ? body.channels : [])
+        .map((c) => String(c).toLowerCase()).filter((c) => LOGIN_RE.test(c)))].slice(0, PUSH_MAX_CHANNELS);
+    const lang = pushLang(body.lang);
+    await ensureSchema(env);
+    const id = await pushIdOf(sub.endpoint);
+    const hash = await pushIdOf(channels.slice().sort().join(','));
+    const old = await env.DB.prepare('SELECT hash FROM push_subs WHERE id = ?1').bind(id).first('hash');
+    const now = Date.now();
+    const ops = [env.DB.prepare(
+        `INSERT INTO push_subs (id, endpoint, p256dh, auth, lang, hash, created, updated)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)
+         ON CONFLICT(id) DO UPDATE SET endpoint = excluded.endpoint, p256dh = excluded.p256dh,
+           auth = excluded.auth, lang = excluded.lang, hash = excluded.hash, updated = excluded.updated`)
+        .bind(id, sub.endpoint, sub.p256dh, sub.auth, lang, hash, now)];
+    if (old !== hash) {
+        const list = JSON.stringify(channels);
+        ops.push(env.DB.prepare('DELETE FROM push_follow WHERE sub = ?1').bind(id));
+        ops.push(env.DB.prepare('INSERT OR IGNORE INTO push_follow (login, sub) SELECT value, ?1 FROM json_each(?2)').bind(id, list));
+        ops.push(env.DB.prepare(`INSERT OR IGNORE INTO push_live (login, stream) SELECT value, '?' FROM json_each(?1)`).bind(list));
+    }
+    await env.DB.batch(ops);
+    return jsonResponse({ ok: true, channels: channels.length });
+}
+
+async function handlePushUnsubscribe(request, env) {
+    if (request.method !== 'POST' || !env.DB) return jsonError('Méthode non autorisée', 405);
+    const body = await request.json().catch(() => null);
+    const endpoint = String(body?.subscription?.endpoint || '');
+    if (!endpoint) return jsonError('Abonnement invalide', 400);
+    await ensureSchema(env);
+    const id = await pushIdOf(endpoint);
+    await env.DB.batch([
+        env.DB.prepare('DELETE FROM push_subs WHERE id = ?1').bind(id),
+        env.DB.prepare('DELETE FROM push_follow WHERE sub = ?1').bind(id),
+        env.DB.prepare('DELETE FROM push_queue WHERE sub = ?1').bind(id),
+    ]);
+    return jsonResponse({ ok: true });
+}
+
+/** Notification de test, envoyée tout de suite. */
+async function handlePushTest(request, env) {
+    if (request.method !== 'POST' || !env.DB) return jsonError('Méthode non autorisée', 405);
+    if (overLimit(pushHits, request.headers.get('CF-Connecting-IP') || '', 60)) return jsonError('Trop de requêtes', 429);
+    const body = await request.json().catch(() => null);
+    const sub = readPushSubscription(body);
+    if (!sub) return jsonError('Abonnement invalide', 400);
+    const text = PUSH_TEXT[pushLang(body.lang)];
+    const status = await sendPush(env, sub, { title: 'TwitchUnblock', body: text.test, tag: 'test', url: '/' });
+    return status >= 200 && status < 300 ? jsonResponse({ ok: true }) : jsonError(`Service de push : ${status}`, 502);
+}
+
+/** Passage planifié : lives démarrés → file d'attente → envois. */
+async function pushTick(env) {
+    if (!env.DB) return;
+    await ensureSchema(env);
+    const db = env.DB;
+    const now = Date.now();
+    let outgoing = 0;
+
+    // 1) Qui est en live, parmi les chaînes suivies (par tranches, à tour de
+    //    rôle au-delà de PUSH_GQL_PER_RUN × 100 chaînes).
+    const rows = (await db.prepare('SELECT login, stream FROM push_live').all()).results || [];
+    const known = new Map(rows.map((r) => [r.login, r.stream]));
+    const logins = [...known.keys()];
+    const batches = Math.ceil(logins.length / 100);
+    const first = batches > PUSH_GQL_PER_RUN ? Math.floor(now / 120000) % batches : 0;
+    const changes = [];
+    const started = [];
+    for (let k = 0; k < Math.min(batches, PUSH_GQL_PER_RUN); k++) {
+        const slice = logins.slice(((first + k) % batches) * 100, ((first + k) % batches) * 100 + 100);
+        outgoing++;
+        let users = [];
+        try {
+            const data = await twitchGQL(`query($logins: [String!]) { users(logins: $logins) {
+                login displayName profileImageURL(width: 70) stream { id title game { displayName } } } }`, { logins: slice });
+            users = data?.data?.users || [];
+        } catch (e) { continue; }
+        for (const u of users) {
+            if (!u?.login) continue;
+            const login = u.login.toLowerCase();
+            const stream = u.stream?.id ? String(u.stream.id) : null;
+            const before = known.get(login);
+            if (stream === before) continue;
+            changes.push([login, stream]);
+            if (stream && before !== '?') {
+                started.push({ login, name: u.displayName || login, title: u.stream.title || '',
+                               game: u.stream.game?.displayName || '', icon: u.profileImageURL || '' });
+            }
+        }
+    }
+    const writes = [];
+    if (changes.length) {
+        writes.push(db.prepare(`INSERT INTO push_live (login, stream)
+            SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?1) WHERE true
+            ON CONFLICT(login) DO UPDATE SET stream = excluded.stream`).bind(JSON.stringify(changes)));
+    }
+    if (started.length) {
+        writes.push(db.prepare(`INSERT INTO push_queue (sub, body, at)
+            SELECT f.sub, j.value, ?2 FROM json_each(?1) j
+            JOIN push_follow f ON f.login = json_extract(j.value, '$.login')`).bind(JSON.stringify(started), now));
+    }
+    writes.push(db.prepare('DELETE FROM push_queue WHERE at < ?1').bind(now - PUSH_QUEUE_TTL));
+    await db.batch(writes);
+
+    // 2) Envois, dans la limite des requêtes sortantes d'une exécution.
+    const room = Math.max(0, Math.min(PUSH_SENDS_PER_RUN, 45 - outgoing));
+    if (!room) return;
+    const queue = (await db.prepare(`SELECT q.id, q.body, s.id AS sid, s.endpoint, s.p256dh, s.auth, s.lang
+        FROM push_queue q JOIN push_subs s ON s.id = q.sub ORDER BY q.id LIMIT ?1`).bind(room).all()).results || [];
+    if (!queue.length) {
+        // De temps en temps : chaînes que plus personne ne suit.
+        if (Math.random() < 0.02) await db.prepare('DELETE FROM push_live WHERE login NOT IN (SELECT login FROM push_follow)').run();
+        return;
+    }
+    const done = [];
+    const gone = [];
+    await Promise.all(queue.map(async (q) => {
+        let live = {};
+        try { live = JSON.parse(q.body); } catch (e) {}
+        const text = PUSH_TEXT[pushLang(q.lang)];
+        const status = await sendPush(env, q, {
+            title: text.live(live.name || live.login),
+            body: [live.title, live.game].filter(Boolean).join(' · '),
+            icon: live.icon || '',
+            tag: `live-${live.login}`,
+            url: `/${live.login}`,
+        });
+        // Abonnement expiré ou retiré par le navigateur : oublié.
+        if (status === 404 || status === 410) gone.push(q.sid);
+        // Envoyé, refusé pour de bon, ou injoignable : retiré de la file
+        // (un live en retard de 30 minutes n'a plus d'intérêt).
+        if (status !== 429) done.push(q.id);
+    }));
+    const cleanup = [db.prepare('DELETE FROM push_queue WHERE id IN (SELECT value FROM json_each(?1))').bind(JSON.stringify(done))];
+    if (gone.length) {
+        const list = JSON.stringify(gone);
+        cleanup.push(db.prepare('DELETE FROM push_subs WHERE id IN (SELECT value FROM json_each(?1))').bind(list));
+        cleanup.push(db.prepare('DELETE FROM push_follow WHERE sub IN (SELECT value FROM json_each(?1))').bind(list));
+        cleanup.push(db.prepare('DELETE FROM push_queue WHERE sub IN (SELECT value FROM json_each(?1))').bind(list));
+    }
+    await db.batch(cleanup);
 }

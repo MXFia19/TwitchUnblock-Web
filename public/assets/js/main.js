@@ -69,6 +69,13 @@ async function boot() {
   // Installable comme une app (et la coque s'ouvre hors ligne).
   if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
     navigator.serviceWorker.register('/sw.js').catch(() => {})
+    // Notification de live touchée, site déjà ouvert : on y ouvre le direct.
+    navigator.serviceWorker.addEventListener('message', (e) => {
+      if (e.data?.type !== 'open') return
+      const u = new URL(e.data.url, location.origin)
+      go(u.pathname + u.search, { watch: true })
+      applyRoute(routeFromLocation(), { initial: true })
+    })
   }
 
   // Jeton déjà là (session précédente, ou retour de connexion sans popup).
@@ -503,6 +510,7 @@ function bindGlobal() {
 
 const actions = {
   login: () => (session.login ? openSettings() : login()),
+  'push-test': () => testPush(),
   'multi-open': () => multi.open(),
   'multi-clear': () => multi.clear(),
   'multi-close': () => multi.close(),
@@ -698,6 +706,100 @@ function toggleLocalFollow(login) {
   store.prefs.localFollows = list.includes(l) ? list.filter((x) => x !== l) : [l, ...list].slice(0, 300)
   store.savePrefs()
   state.loaded.followed = 0
+  // Sans compte (sinon la liste du compte n'est pas encore connue ici).
+  if (!session.token) syncPush()
+}
+
+// ── Notifications de live (site installé, Web Push) ────────────────────────
+// Le navigateur s'abonne à son service de push ; le Worker garde l'abonnement
+// et les chaînes suivies, et envoie une notification quand l'une d'elles
+// passe en live — même site fermé. Sur iPhone et iPad : seulement pour le
+// site ajouté à l'écran d'accueil (iOS 16.4 et plus).
+const PUSH_STATE = 'tu_push'
+const pushSupported = () => 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window
+const isStandalone = () => Boolean(window.matchMedia?.('(display-mode: standalone)').matches || navigator.standalone)
+function pushState() { try { return JSON.parse(localStorage.getItem(PUSH_STATE) || '{}') } catch { return {} } }
+function savePushState(s) { try { localStorage.setItem(PUSH_STATE, JSON.stringify(s)) } catch {} }
+const pushOn = () => pushSupported() && Notification.permission === 'granted' && pushState().on === true
+const pushChannels = () => [...new Set([...(state.accountFollows ?? []), ...localFollows()])].slice(0, 500)
+const pushHash = (list) => list.slice().sort().join(',')
+
+function b64uBytes(s) {
+  const t = s.replace(/-/g, '+').replace(/_/g, '/')
+  return Uint8Array.from(atob(t + '==='.slice((t.length + 3) % 4)), (c) => c.charCodeAt(0))
+}
+
+async function pushSubscription() {
+  if (!pushSupported()) return null
+  const reg = await navigator.serviceWorker.getRegistration()
+  return reg ? reg.pushManager.getSubscription() : null
+}
+
+async function enablePush() {
+  if (!pushSupported()) {
+    toast(t(isIOS && !isStandalone() ? 'push_ios_install' : 'push_unsupported'), 'error')
+    return false
+  }
+  try {
+    if (await Notification.requestPermission() !== 'granted') { toast(t('push_denied'), 'error'); return false }
+    const reg = await Promise.race([navigator.serviceWorker.ready,
+      new Promise((_, reject) => setTimeout(() => reject(new Error('service worker')), 10000))])
+    const key = await api.pushKey()
+    const sub = await reg.pushManager.getSubscription()
+      ?? await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64uBytes(key) })
+    const channels = pushChannels()
+    await api.pushSubscribe(sub.toJSON(), channels, lang())
+    savePushState({ on: true, hash: pushHash(channels), at: Date.now() })
+    toast(t('push_on'), 'success')
+    return true
+  } catch (e) {
+    console.warn('[TwitchUnblock] Notifications :', e)
+    toast(t('push_failed'), 'error')
+    return false
+  }
+}
+
+async function disablePush() {
+  savePushState({ on: false })
+  const sub = await pushSubscription().catch(() => null)
+  if (!sub) return
+  await api.pushUnsubscribe(sub.toJSON()).catch(() => {})
+  await sub.unsubscribe().catch(() => {})
+}
+
+/** Chaînes suivies changées (ou au plus tard chaque jour) : renvoyées au Worker. */
+async function syncPush() {
+  if (!pushOn()) return
+  const channels = pushChannels()
+  const hash = pushHash(channels)
+  const s = pushState()
+  if (hash === s.hash && Date.now() - (s.at || 0) < 86400000) return
+  const sub = await pushSubscription().catch(() => null)
+  if (!sub) return
+  try {
+    await api.pushSubscribe(sub.toJSON(), channels, lang())
+    savePushState({ on: true, hash, at: Date.now() })
+  } catch {}
+}
+
+async function togglePush(input) {
+  input.disabled = true
+  const on = input.checked ? await enablePush() : (await disablePush(), false)
+  input.checked = on
+  input.disabled = false
+  const test = $('#push-test')
+  if (test) test.hidden = !on
+}
+
+async function testPush() {
+  const sub = await pushSubscription().catch(() => null)
+  if (!sub) return toast(t('push_failed'), 'error')
+  try {
+    await api.pushTest(sub.toJSON(), lang())
+    toast(t('push_test_sent'), 'success')
+  } catch {
+    toast(t('push_failed'), 'error')
+  }
 }
 
 /** Grille de cartes ou liste façon Twitch, au choix (bouton + réglage). */
@@ -735,6 +837,7 @@ async function loadFollowed({ silent = false } = {}) {
       const offline = channels.filter((c) => !c.stream)
       grid.innerHTML = (live.length ? live.map(streamCard).join('') : noLiveFollowed(offline.length)) + loginCard(true)
       renderOffline(offline, live.length > 0)
+      syncPush()
     } catch {
       if (!silent) { grid.innerHTML = emptyState(t('err_loading'), 'refresh'); offlineFailed() }
     }
@@ -749,10 +852,10 @@ async function loadFollowed({ silent = false } = {}) {
     // appareil) pour les lives de l'appareil et la liste hors ligne.
     const [streams, logins] = await Promise.all([
       api.getFollowedStreams(session.userId),
-      api.getFollowedLogins(session.userId).catch(() => []),
+      api.getFollowedLogins(session.userId).catch(() => null),
     ])
-    state.accountFollows = logins
-    const all = [...new Set([...logins, ...local])]
+    state.accountFollows = logins ?? []
+    const all = [...new Set([...(logins ?? []), ...local])]
     const channels = await api.getChannelsByLogins(all).catch(() => null)
     if (session.token !== token) return   // déconnecté entre-temps
     followedRetried = false
@@ -764,6 +867,8 @@ async function loadFollowed({ silent = false } = {}) {
     grid.innerHTML = live.length ? live.map(streamCard).join('') : noLiveFollowed(offline?.length ?? 0)
     if (offline) renderOffline(offline, live.length > 0)
     else if (!silent) offlineFailed()
+    // Notifications de live : la liste complète, seulement si elle a pu être lue.
+    if (logins) syncPush()
   } catch (err) {
     if (session.token !== token) return
     // Une seule nouvelle tentative : un jeton valide mais refusé par Helix
@@ -2774,6 +2879,11 @@ function openSettings() {
       </label>
     </div>
     <div class="sheet-section">
+      <h3>${esc(t('push_title'))}</h3>
+      ${toggle('set-push', t('push_live'), pushOn(), t(isIOS && !isStandalone() ? 'push_live_sub_ios' : 'push_live_sub'))}
+      <button class="btn ghost sm" type="button" id="push-test" data-action="push-test" ${pushOn() ? '' : 'hidden'}>${icon('send', 15)}<span>${esc(t('push_test'))}</span></button>
+    </div>
+    <div class="sheet-section">
       <h3>${esc(t('chat_settings'))}</h3>
       ${toggle('set-sync', t('chat_sync'), p.chatSync, t('chat_sync_sub'))}
       ${toggle('set-multichat', t('multi_chat'), p.multiChat !== false, t('multi_chat_sub'))}
@@ -2855,6 +2965,7 @@ function openSettings() {
     if (id === 'set-ts') p.timestamps = e.target.checked
     if (id === 'set-sync') p.chatSync = e.target.checked
     if (id === 'set-multichat') { setMultiChat(e.target.checked); return }
+    if (id === 'set-push') { togglePush(e.target); return }
     if (id === 'set-raid') p.autoRaid = e.target.checked
     if (id === 'set-deleted') p.keepDeleted = e.target.checked
     if (id === 'set-history') p.loadHistory = e.target.checked

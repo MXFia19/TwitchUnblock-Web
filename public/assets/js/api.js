@@ -509,6 +509,32 @@ export function fixProxiedUrl(url, playlistUrl) {
   }
 }
 
+// ── Notifications de live (Web Push) : Worker principal (base D1) ─────────
+async function pushPost(path, body) {
+  const res = await fetch(`${API_URL}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+    cache: 'no-store',
+  })
+  if (!res.ok) {
+    const err = new Error(`HTTP ${res.status}`)
+    err.status = res.status
+    throw err
+  }
+  return res.json()
+}
+
+/** Clé publique VAPID du Worker (base64url). */
+export async function pushKey() {
+  const res = await fetch(`${API_URL}/api/push/key`, { cache: 'no-store' })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return (await res.json()).key
+}
+export const pushSubscribe = (subscription, channels, lang) => pushPost('/api/push/subscribe', { subscription, channels, lang })
+export const pushUnsubscribe = (subscription) => pushPost('/api/push/unsubscribe', { subscription })
+export const pushTest = (subscription, lang) => pushPost('/api/push/test', { subscription, lang })
+
 /** Retour (bug, idée) : rangé par le Worker principal (base D1), qui le
  *  transmet aussi sur Discord. Rend `{ id, token }` : le jeton permet de
  *  suivre la discussion. Lève avec `status` en cas de refus. */

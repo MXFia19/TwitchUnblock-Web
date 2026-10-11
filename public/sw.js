@@ -34,3 +34,30 @@ self.addEventListener('fetch', (e) => {
     }
   })())
 })
+
+// ── Notifications de live (site installé) ───────────────────────────────
+// Le Worker envoie une notification chiffrée quand une chaîne suivie passe
+// en live ; la toucher ouvre son direct, dans le site déjà ouvert s'il l'est.
+self.addEventListener('push', (e) => {
+  let data = {}
+  try { data = e.data ? e.data.json() : {} } catch {}
+  e.waitUntil(self.registration.showNotification(data.title || 'TwitchUnblock', {
+    body: data.body || '',
+    icon: data.icon || '/assets/icons/icon-192.png',
+    badge: '/assets/icons/icon-192.png',
+    tag: data.tag || undefined,
+    data: { url: data.url || '/' },
+  }))
+})
+
+self.addEventListener('notificationclick', (e) => {
+  e.notification.close()
+  const url = new URL(e.notification.data?.url || '/', self.location.origin).href
+  e.waitUntil((async () => {
+    const wins = await self.clients.matchAll({ type: 'window', includeUncontrolled: true })
+    const win = wins.find((w) => new URL(w.url).origin === self.location.origin)
+    if (!win) return self.clients.openWindow(url)
+    await win.focus()
+    win.postMessage({ type: 'open', url })
+  })())
+})

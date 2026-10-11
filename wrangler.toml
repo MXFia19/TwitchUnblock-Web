@@ -6,6 +6,10 @@ compatibility_date = "2024-01-01"
 # `main` effaçait celles de type « Texte » (les « Secrets », eux, restent).
 keep_vars = true
 
+# Notifications de live du site (Web Push) : un passage toutes les 2 minutes.
+[triggers]
+crons = ["*/2 * * * *"]
+
 [observability]
 enabled = false
 head_sampling_rate = 1
@@ -36,3 +40,7 @@ database_id = "b586defd-3216-425b-9c13-e75abd8dbd13"
 # « Fallback Worker ».
 [env.fallback]
 workers_dev = true
+
+# Le secours n'a pas de base : pas de tâche planifiée.
+[env.fallback.triggers]
+crons = []
