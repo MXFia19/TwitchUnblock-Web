@@ -46,6 +46,7 @@ Watch Twitch lives and VODs in your browser, no subscription needed, with the re
 ### Multi-live
 - Up to **four lives side by side**: the “+” on a live card (or “Multi-live” on a channel page and under the player) adds a stream, and a bar at the bottom shows your picks
 - Each tile picks its quality from its size; click a tile to hear it (or 1–4 on the keyboard, M to mute), double-click for fullscreen
+- On large screens, the chat of the stream you hear shows on the right (button in the mosaic, or Settings → Chat → Chat in multi-live)
 - Add a channel by name from the mosaic, open one with its chat in the regular player, and **share the mosaic's link** (`/?multi=xqc,pokimane`)
 
 ### Chat

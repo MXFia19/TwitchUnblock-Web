@@ -29,6 +29,7 @@ function load() {
 function save() { try { localStorage.setItem(KEY, JSON.stringify(list)) } catch {} }
 
 export const has = (login) => list.some((x) => x.login === login)
+export const audibleLogin = () => (has(audible) ? audible : list[0]?.login ?? null)
 export const isOpen = () => !$('#multi').hidden
 const sharePath = () => `/?multi=${list.map((x) => x.login).join(',')}`
 
@@ -37,6 +38,7 @@ const sharePath = () => `/?multi=${list.map((x) => x.login).join(',')}`
  * @param {() => void} o.onOpen          avant l'ouverture (le lecteur se ferme)
  * @param {(login: string) => void} o.onWatch  ouvrir un direct dans le lecteur (avec le chat)
  * @param {(path: string|null, replace?: boolean) => void} o.onUrl  adresse de la mosaïque (null : fermée)
+ * @param {(login: string|null) => void} o.onAudible  direct qui a le son (son chat), null à la fermeture
  */
 export function init(o) {
   hooks = o
@@ -169,6 +171,7 @@ export function close({ url = true } = {}) {
   tiles.clear()
   $('#multi').hidden = true
   document.documentElement.classList.remove('multi-open')
+  hooks.onAudible?.(null)
   renderBar()
   if (url) hooks.onUrl?.(null)
 }
@@ -303,7 +306,6 @@ async function play(login, tile) {
     // Son refusé tant qu'on n'a pas cliqué dans la page (adresse partagée) :
     // en muet, et un clic sur une tuile le lui donnera.
     v.muted = true
-    audible = null
     refreshSound()
     toast(t('multi_sound'))
     try { await v.play() } catch {}
@@ -311,12 +313,14 @@ async function play(login, tile) {
 }
 
 function setAudible(login) {
+  const changed = audible !== login
   audible = login
   for (const [l, tile] of tiles) {
     tile.video.muted = l !== login
     if (l === login && tile.video.paused && tile.hls) tile.video.play().catch(() => {})
   }
   refreshSound()
+  if (changed || !$('#multi').classList.contains('chat-ready')) hooks.onAudible?.(login)
 }
 
 function refreshSound() {

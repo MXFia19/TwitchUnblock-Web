@@ -506,6 +506,7 @@ const actions = {
   'multi-open': () => multi.open(),
   'multi-clear': () => multi.clear(),
   'multi-close': () => multi.close(),
+  'multi-chat': () => setMultiChat(store.prefs.multiChat === false),
   'multi-share': () => {
     const url = location.href
     navigator.clipboard?.writeText(url).then(() => toast(t('copied'), 'success'), () => toast(url))
@@ -1812,7 +1813,49 @@ function setupMulti() {
     onOpen: () => { if (!$('#watch').hidden) closeWatch({ url: false }) },
     onWatch: (login) => openLive(login),
     onUrl: (path, replace = false) => (path ? go(path, { watch: true, replace }) : go(pagePath(), { replace: true })),
+    onAudible: (channel) => showMultiChat(channel),
   })
+}
+
+// Chat du direct qui a le son, à droite de la mosaïque (grand écran) :
+// réglage « Chat dans le multi-live », et bouton dans la mosaïque.
+let multiChat = null
+let multiChatChannel = null
+async function showMultiChat(channel) {
+  const box = $('#multi')
+  const on = Boolean(channel) && store.prefs.multiChat !== false
+  box.classList.toggle('with-chat', on)
+  box.classList.toggle('chat-ready', Boolean(channel))
+  $('.multi-chat-btn', box)?.classList.toggle('on', store.prefs.multiChat !== false)
+  if (!on) {
+    multiChat?.close()
+    multiChatChannel = null
+    return
+  }
+  if (channel === multiChatChannel) return
+  multiChatChannel = channel
+  multiChat ??= new ChatView($('#multi-chat'), {
+    prefs: store.prefs,
+    getDelay: () => 0,
+    onOpenChannel: (target) => { multi.close({ url: false }); openLive(target) },
+    onOpenClip: (slug) => { multi.close({ url: false }); openClip(slug) },
+    onPrefsChange: () => store.savePrefs(),
+    session: () => session,
+    onLogin: () => login(),
+    onHide: () => setMultiChat(false),
+  })
+  applyStatic($('#multi-chat'))
+  const info = await api.getChannelInfo(channel).catch(() => null)
+  if (multiChatChannel !== channel) return
+  multiChat.openLive({ channel, channelId: info?.id ?? null })
+}
+
+function setMultiChat(on) {
+  store.prefs.multiChat = on
+  store.savePrefs()
+  const channel = multiChatChannel ?? multi.audibleLogin()
+  multiChatChannel = null
+  showMultiChat(multi.isOpen() ? channel : null)
 }
 
 function switchWorker(base) {
@@ -2733,6 +2776,7 @@ function openSettings() {
     <div class="sheet-section">
       <h3>${esc(t('chat_settings'))}</h3>
       ${toggle('set-sync', t('chat_sync'), p.chatSync, t('chat_sync_sub'))}
+      ${toggle('set-multichat', t('multi_chat'), p.multiChat !== false, t('multi_chat_sub'))}
       ${toggle('set-raid', t('auto_raid'), p.autoRaid, t('auto_raid_sub'))}
       ${toggle('set-ts', t('timestamps'), p.timestamps)}
       ${toggle('set-deleted', t('keep_deleted'), p.keepDeleted)}
@@ -2810,6 +2854,7 @@ function openSettings() {
     const id = e.target.id
     if (id === 'set-ts') p.timestamps = e.target.checked
     if (id === 'set-sync') p.chatSync = e.target.checked
+    if (id === 'set-multichat') { setMultiChat(e.target.checked); return }
     if (id === 'set-raid') p.autoRaid = e.target.checked
     if (id === 'set-deleted') p.keepDeleted = e.target.checked
     if (id === 'set-history') p.loadHistory = e.target.checked

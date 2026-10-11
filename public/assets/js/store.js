@@ -33,6 +33,7 @@ const DEFAULT_PREFS = {
   chatOpen: true,
   shareUsage: true,
   chatSync: true,
+  multiChat: true,   // multi-live : chat du direct qui a le son (grand écran)
   autoRaid: true,
   clickPause: true,  // un clic sur la vidéo met en pause (ordinateur)
   showRecent: true,  // raccourcis vers les chaînes ouvertes récemment (onglet Streamer)

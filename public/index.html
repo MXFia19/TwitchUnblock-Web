@@ -242,10 +242,14 @@
         <input type="text" id="multi-add-input" data-i18n-ph="multi_add_ph" maxlength="25" enterkeyhint="go" spellcheck="false" autocapitalize="off" autocorrect="off">
         <button class="icon-btn sm" type="submit" data-i18n-title="multi_add" data-icon="plus" data-size="18"></button>
       </form>
+      <button class="icon-btn multi-chat-btn" type="button" data-action="multi-chat" data-i18n-title="multi_chat" data-icon="chat" data-size="20"></button>
       <button class="icon-btn" type="button" data-action="multi-share" data-i18n-title="multi_share" data-icon="link" data-size="20"></button>
       <button class="icon-btn" type="button" data-action="multi-close" data-i18n-title="close" data-icon="x" data-size="22"></button>
     </header>
-    <div class="multi-grid" id="multi-grid"></div>
+    <div class="multi-body">
+      <div class="multi-grid" id="multi-grid"></div>
+      <aside class="multi-chat" id="multi-chat"></aside>
+    </div>
   </div>
 
   <!-- ── Feuille (réglages, ouvrir dans…) ────────────────────────────── -->
