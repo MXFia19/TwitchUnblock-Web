@@ -207,7 +207,7 @@ export async function getChannelInfo(login) {
   const data = await gql(`query($l: String!) {
     user(login: $l) {
       id login displayName profileImageURL(width: 150) lastBroadcast { startedAt }
-      stream { id title viewersCount createdAt game { id displayName name } previewImageURL(width: 640, height: 360) }
+      stream { id title viewersCount createdAt game { id displayName name } previewImageURL(width: 640, height: 360) freeformTags { name } }
       broadcastSettings { title game { id displayName } }
     }
   }`, { l: login })
@@ -235,6 +235,8 @@ function streamFromGQL(n) {
     viewers: n?.viewersCount ?? 0,
     thumb: n?.previewImageURL ?? '',
     startedAt: n?.createdAt ?? null,
+    // Tags de la chaîne, langue comprise (« English », « DropsEnabled »…).
+    tags: (n?.freeformTags ?? []).map((x) => x?.name).filter(Boolean),
   }
 }
 
@@ -246,7 +248,7 @@ export async function getChannelsByLogins(logins) {
     const data = await gql(`query($l: [String!]) { users(logins: $l) { login displayName profileImageURL(width: 70)
       lastBroadcast { startedAt }
       videos(first: 1, type: ARCHIVE, sort: TIME) { edges { node { publishedAt lengthSeconds } } }
-      stream { title viewersCount createdAt previewImageURL(width: 440, height: 248) game { id displayName } } } }`, { l: logins.slice(i, i + 100) })
+      stream { title viewersCount createdAt previewImageURL(width: 440, height: 248) game { id displayName } freeformTags { name } } } }`, { l: logins.slice(i, i + 100) })
     for (const u of data?.users ?? []) {
       if (!u?.login) continue
       // Fin du dernier live : la dernière VOD (début + durée) ou, si plus
@@ -274,7 +276,7 @@ export async function getFollowedLogins(userId) {
 }
 
 // ── Catégories (GQL public) ────────────────────────────────────────────────
-const CAT_FIELDS = 'id name displayName slug boxArtURL(width: 188, height: 250) viewersCount'
+const CAT_FIELDS = 'id name displayName slug boxArtURL(width: 285, height: 380) viewersCount'
 const catFrom = (n) => ({ id: n.id, name: n.displayName || n.name, slug: n.slug || '', box: n.boxArtURL || '', viewers: n.viewersCount ?? null })
 
 /** Une catégorie par son nom d'adresse (« just-chatting », comme sur Twitch). */
@@ -319,7 +321,7 @@ async function helixMore(c, path, convert, keyOf, step) {
   return servePage({ ...c, rest: fresh, more: Boolean(after), after }, step)
 }
 
-const catFromHelix = (g) => ({ id: g.id, name: g.name, box: String(g.box_art_url ?? '').replace('{width}', '188').replace('{height}', '250'), viewers: null })
+const catFromHelix = (g) => ({ id: g.id, name: g.name, box: String(g.box_art_url ?? '').replace('{width}', '285').replace('{height}', '380'), viewers: null })
 
 /** Catégories les plus regardées. { items, cursor } */
 export async function getTopCategories(cursor = null) {
@@ -363,7 +365,7 @@ export async function getCategoryStreams(id, cursor = null) {
   else if (cursor) page = await helixMore(cursor, `streams?game_id=${encodeURIComponent(id)}`, streamFromHelix, (s) => s.login, 30)
   else {
     const data = await gql(`query($id: ID!) { game(id: $id) { streams(first: 100) {
-      edges { node { title viewersCount createdAt previewImageURL(width: 440, height: 248) game { id displayName }
+      edges { node { title viewersCount createdAt previewImageURL(width: 440, height: 248) game { id displayName } freeformTags { name }
         broadcaster { login displayName profileImageURL(width: 50) } } } pageInfo { hasNextPage } } } }`, { id })
     const items = (data?.game?.streams?.edges ?? []).map((e) => streamFromGQL(e.node)).filter((s) => s.login)
     page = servePage({ rest: items, seen: new Set(items.map((s) => s.login)), more: Boolean(data?.game?.streams?.pageInfo?.hasNextPage), after: null }, 30)
@@ -382,7 +384,7 @@ export async function getLiveByLogins(logins) {
   const out = []
   for (let i = 0; i < logins.length; i += 100) {
     const data = await gql(`query($l: [String!]) { users(logins: $l) { login displayName profileImageURL(width: 50)
-      stream { title viewersCount createdAt previewImageURL(width: 440, height: 248) game { id displayName } } } }`, { l: logins.slice(i, i + 100) })
+      stream { title viewersCount createdAt previewImageURL(width: 440, height: 248) game { id displayName } freeformTags { name } } } }`, { l: logins.slice(i, i + 100) })
     for (const u of data?.users ?? []) {
       if (u?.stream) out.push(streamFromGQL({ ...u.stream, broadcaster: u }))
     }
@@ -401,6 +403,7 @@ export function streamFromHelix(s) {
     viewers: s.viewer_count ?? 0,
     thumb: String(s.thumbnail_url ?? '').replace('{width}', '440').replace('{height}', '248'),
     startedAt: s.started_at ?? null,
+    tags: Array.isArray(s.tags) ? s.tags : [],
   }
 }
 
@@ -410,7 +413,7 @@ export async function getTopStreams(language) {
   const data = await gql(`query($n: Int!, $langs: [Language!]) {
     streams(first: $n, options: { broadcasterLanguages: $langs }) {
       edges { node {
-        title viewersCount createdAt previewImageURL(width: 440, height: 248)
+        title viewersCount createdAt previewImageURL(width: 440, height: 248) freeformTags { name }
         broadcaster { login displayName profileImageURL(width: 50) }
         game { id displayName }
       } }
@@ -451,8 +454,15 @@ export async function getVodMeta(id) {
 // « proxy » ne concerne plus que les liens donnés aux applis externes
 // (VLC, Infuse…), voir `directUrl`.
 export async function getLive(login) {
-  return viaRelay(await workerJson(`/api/get-live?name=${encodeURIComponent(login)}&proxy=true`))
+  // Source choisie (réglage « Source du direct ») : le Worker l'essaie en premier.
+  const src = store.prefs.liveSource
+  const param = LIVE_SOURCES.includes(src) && src !== 'auto' ? `&source=${src}` : ''
+  return viaRelay(await workerJson(`/api/get-live?name=${encodeURIComponent(login)}&proxy=true${param}`))
 }
+
+/** Sources du direct proposées : automatique, Luminous Asie, proxy albanais
+ *  (TTV.LOL), Luminous Europe, Twitch officiel (avec ses pubs). */
+export const LIVE_SOURCES = ['auto', 'as', 'al', 'eu', 'twitch']
 
 export async function getVodLinks(id) {
   return viaRelay(await workerJson(`/api/get-m3u8?id=${encodeURIComponent(id)}&proxy=true`))

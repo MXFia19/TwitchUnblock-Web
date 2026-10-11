@@ -239,48 +239,30 @@ async function handleGetLive(url, workerOrigin) {
     if (!LOGIN_RE.test(login)) return jsonError("Nom invalide", 400);
     const useProxy = true; // On force toujours le proxy pour les Lives (CORS)
     
+    // Source choisie dans les réglages (« Source du direct ») : essayée en
+    // premier. Si elle ne répond pas, les autres suivent dans l'ordre
+    // habituel, pour que le direct se lance quand même ; `source`, dans la
+    // réponse, dit laquelle a servi.
+    const wanted = url.searchParams.get('source') || 'auto';
+    const proxies = LIVE_PROXY_ORDER.includes(wanted)
+        ? [wanted, ...LIVE_PROXY_ORDER.filter((id) => id !== wanted)]
+        : LIVE_PROXY_ORDER;
+    const steps = wanted === 'twitch' ? ['twitch', ...proxies] : [...proxies, 'twitch'];
+
     let m3u8Content = "";
     let masterUrl = "";
-
-    try {
-        // --- TENTATIVE 1 : Luminous API (Filtre Anti-Pub) ---
-        // fast_bread : chaque playlist annonce en plus les deux prochains
-        // segments (« EXT-X-TWITCH-PREFETCH »), dont le lecteur du site se
-        // sert pour coller au direct. Miroir asiatique d'abord, comme avant et
-        // comme l'app : l'européen renvoie des listes au format des serveurs
-        // IVS, où le choix « Source » donnait un écran noir chez des
-        // utilisateurs. Il reste en secours (variantName lit les deux formats).
-        // Entre les deux, le proxy albanais (TTV.LOL), sans pub lui aussi.
-        const candidates = [
-            { url: `https://as.luminous.dev/live/${login}?allow_source=true&allow_audio_only=true&fast_bread=true`, headers: getRequestHeaders(login) },
-            ...TTVLOL_HOSTS.map((h) => ({ url: ttvlolUrl(h, login), headers: { 'X-Donate-To': 'https://ttv.lol/donate' } })),
-            { url: `https://eu.luminous.dev/live/${login}?allow_source=true&allow_audio_only=true&fast_bread=true`, headers: getRequestHeaders(login) },
-        ];
-        for (const c of candidates) {
-            try {
-                const r = await fetch(c.url, { headers: c.headers });
-                if (!r.ok) continue;
-                const text = await r.text();
-                // Chaîne hors ligne ou page d'erreur : source suivante.
-                if (!text.includes('#EXT-X-STREAM-INF')) continue;
-                m3u8Content = text;
-                masterUrl = r.url;
-                break;
-            } catch (err) { /* source suivante */ }
-        }
-        if (!m3u8Content) throw new Error("Luminous down");
-    } catch(e) {
-        // --- TENTATIVE 2 : Plan de Secours Officiel Twitch ---
+    let source = "";
+    for (const id of steps) {
         try {
-            const token = await getAccessToken(login, true); if (!token) return jsonError("Offline", 404);
-            const resUsher = await fetch(`https://usher.ttvnw.net/api/channel/hls/${login}.m3u8?allow_source=true&allow_audio_only=true&allow_spectre=true&fast_bread=true&player=twitchweb&playlist_include_framerate=true&segment_preference=4&sig=${encodeURIComponent(token.signature)}&token=${encodeURIComponent(token.value)}`, { headers: REQUEST_HEADERS });
-            if (!resUsher.ok) throw new Error("Stream introuvable");
-            m3u8Content = await resUsher.text();
-            masterUrl = resUsher.url;
-        } catch(err) {
-            return jsonError("Offline ou introuvable", 404);
-        }
+            const got = id === 'twitch' ? await usherLiveMaster(login) : await proxyLiveMaster(LIVE_PROXIES[id](login));
+            if (!got) continue;
+            m3u8Content = got.text;
+            masterUrl = got.url;
+            source = id;
+            break;
+        } catch (err) { /* source suivante */ }
     }
+    if (!m3u8Content) return jsonError("Offline ou introuvable", 404);
 
     // Découpage du fichier M3U8 avec notre Proxy
     const links = parseAndProxyM3U8(m3u8Content, masterUrl, workerOrigin, false, useProxy);
@@ -289,10 +271,10 @@ async function handleGetLive(url, workerOrigin) {
     try {
         const meta = await twitchGQL(`query($login: String!) { user(login: $login) { profileImageURL(width: 70) broadcastSettings { title game { displayName } } } }`, { login });
         const info = meta.data?.user?.broadcastSettings, avatar = meta.data?.user?.profileImageURL;
-        return jsonResponse({ links, best: links["Source"] || links["Auto"], title: info?.title || "Live", game: info?.game?.displayName || "", thumbnail: `https://static-cdn.jtvnw.net/previews-ttv/live_user_${login}-640x360.jpg`, avatar: avatar || "" });
+        return jsonResponse({ links, source, best: links["Source"] || links["Auto"], title: info?.title || "Live", game: info?.game?.displayName || "", thumbnail: `https://static-cdn.jtvnw.net/previews-ttv/live_user_${login}-640x360.jpg`, avatar: avatar || "" });
     } catch(e) {
         // Si l'API GQL bug, on renvoie la vidéo quand même
-        return jsonResponse({ links, best: links["Source"] || links["Auto"], title: "Live", game: "", thumbnail: `https://static-cdn.jtvnw.net/previews-ttv/live_user_${login}-640x360.jpg`, avatar: "" });
+        return jsonResponse({ links, source, best: links["Source"] || links["Auto"], title: "Live", game: "", thumbnail: `https://static-cdn.jtvnw.net/previews-ttv/live_user_${login}-640x360.jpg`, avatar: "" });
     }
 }
 
@@ -453,6 +435,38 @@ const PROXY_HOSTS = ['ttvnw.net', 'jtvnw.net', 'twitch.tv', 'cloudfront.net', 'l
 const TTVLOL_HOSTS = ['twitch-al.nadeko.net'];
 const ttvlolUrl = (host, login) =>
     `https://${host}/playlist/${login}.m3u8%3F${encodeURIComponent('allow_source=true&allow_audio_only=true&fast_bread=true')}`;
+
+// Sources sans pub du direct, dans l'ordre automatique. fast_bread : chaque
+// playlist annonce en plus les deux prochains segments (« EXT-X-TWITCH-
+// PREFETCH »), dont le lecteur du site se sert pour coller au direct.
+// Luminous Asie d'abord, comme l'app ; l'européen renvoie des listes au
+// format des serveurs IVS, où « Source » donnait un écran noir chez des
+// utilisateurs. Twitch officiel, avec ses pubs, vient en dernier — ou en
+// premier si on le choisit.
+const LIVE_QUERY = 'allow_source=true&allow_audio_only=true&fast_bread=true';
+const LIVE_PROXIES = {
+    as: (login) => ({ url: `https://as.luminous.dev/live/${login}?${LIVE_QUERY}`, headers: getRequestHeaders(login) }),
+    al: (login) => ({ url: ttvlolUrl(TTVLOL_HOSTS[0], login), headers: { 'X-Donate-To': 'https://ttv.lol/donate' } }),
+    eu: (login) => ({ url: `https://eu.luminous.dev/live/${login}?${LIVE_QUERY}`, headers: getRequestHeaders(login) }),
+};
+const LIVE_PROXY_ORDER = ['as', 'al', 'eu'];
+
+/** Liste maîtresse d'un proxy sans pub ; null s'il ne répond pas ou si la
+ *  chaîne y est hors ligne (pas de « #EXT-X-STREAM-INF »). */
+async function proxyLiveMaster(c) {
+    const r = await fetch(c.url, { headers: c.headers });
+    if (!r.ok) return null;
+    const text = await r.text();
+    return text.includes('#EXT-X-STREAM-INF') ? { text, url: r.url } : null;
+}
+
+/** Liste maîtresse officielle de Twitch (usher), avec ses pubs. */
+async function usherLiveMaster(login) {
+    const token = await getAccessToken(login, true);
+    if (!token) return null;
+    const r = await fetch(`https://usher.ttvnw.net/api/channel/hls/${login}.m3u8?allow_source=true&allow_audio_only=true&allow_spectre=true&fast_bread=true&player=twitchweb&playlist_include_framerate=true&segment_preference=4&sig=${encodeURIComponent(token.signature)}&token=${encodeURIComponent(token.value)}`, { headers: REQUEST_HEADERS });
+    return r.ok ? { text: await r.text(), url: r.url } : null;
+}
 function proxyAllowed(target) {
     try {
         const u = new URL(target);

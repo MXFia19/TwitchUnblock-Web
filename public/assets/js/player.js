@@ -9,7 +9,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { t } from './i18n.js'
-import { API_URL, RELAY_BASE, WORKER_BASES, fixProxiedUrl, proxyBaseOf } from './api.js'
+import { API_URL, LIVE_SOURCES, RELAY_BASE, WORKER_BASES, fixProxiedUrl, proxyBaseOf } from './api.js'
 import { $, esc, formatClock, icon, isIOS } from './util.js'
 
 const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 2]
@@ -183,6 +183,8 @@ export class Player {
     this.links = {}
     this.kind = 'vod'
     this.quality = null
+    // Source qui sert le direct en cours (« as », « al », « eu », « twitch »).
+    this.liveSource = null
     this.hideTimer = null
     this.lastTap = 0
     this.tapTimer = null
@@ -354,6 +356,7 @@ export class Player {
   load({ links, kind, startAt = 0 }) {
     this.links = links
     this.kind = kind
+    this.liveSource = null
     this.root.dataset.kind = kind
     this.el.progress.hidden = kind !== 'vod'
     this.setChapters([])
@@ -546,6 +549,9 @@ export class Player {
   updateQualityLabel() {
     this.el.qLabel.textContent = this.quality ? qualityLabel(this.quality) : ''
   }
+
+  /** Source qui sert le direct, affichée dans le menu ⚙. */
+  setLiveSource(id) { this.liveSource = id || null }
 
   /** Libellé dans le menu : « Auto · 720p » une fois le débit connu. */
   menuLabel(k) {
@@ -937,6 +943,13 @@ export class Player {
     let html = `<div class="p-menu-title">${esc(t('quality'))}</div>`
     html += keys.map((k) => `<button type="button" data-q="${esc(k)}" class="${k === this.quality ? 'on' : ''}">
       <span>${esc(this.menuLabel(k))}</span>${k === this.quality ? icon('check', 16) : ''}</button>`).join('')
+    // Direct : la source (proxy) qui sert le flux, et de quoi en changer.
+    if (this.kind === 'live' && this.o.onSource) {
+      const pref = this.o.prefs.liveSource || 'auto'
+      html += `<div class="p-menu-title">${esc(t('live_source'))}${this.liveSource ? ` · ${esc(t(`src_${this.liveSource}`))}` : ''}</div>`
+      html += LIVE_SOURCES.map((id) => `<button type="button" data-src="${id}" class="${id === pref ? 'on' : ''}">
+        <span>${esc(t(`src_${id}`))}</span>${id === pref ? icon('check', 16) : ''}</button>`).join('')
+    }
     if (this.kind === 'vod') {
       html += `<div class="p-menu-title">${esc(t('speed'))}</div><div class="p-speeds">`
       html += SPEEDS.map((s) => `<button type="button" data-s="${s}" class="${s === rate ? 'on' : ''}">${s === 1 ? esc(t('normal')) : `${s}×`}</button>`).join('')
@@ -984,6 +997,11 @@ export class Player {
     const b = e.target.closest('button')
     if (!b) return
     if (b.dataset.report) { this.closeMenu(); this.o.onReport?.(); return }
+    if (b.dataset.src) {
+      this.closeMenu()
+      if (b.dataset.src !== (this.o.prefs.liveSource || 'auto')) this.o.onSource?.(b.dataset.src)
+      return
+    }
     if (b.dataset.q) this.setQuality(b.dataset.q)
     if (b.dataset.s) this.video.playbackRate = Number(b.dataset.s)
     if (b.dataset.c) { this.video.currentTime = Number(b.dataset.c); this.updateChapterLabel() }

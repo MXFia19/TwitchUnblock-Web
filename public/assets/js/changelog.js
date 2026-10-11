@@ -6,6 +6,31 @@
 
 export const CHANGELOG = [
   {
+    version: '2026.10.11a',
+    items: {
+      fr: [
+        'Direct : choisis la source (Luminous Asie, Luminous Europe, proxy albanais ou Twitch officiel) dans les réglages ou directement dans le menu ⚙ du lecteur, qui montre aussi celle en cours. Si elle ne répond pas, les autres prennent le relais.',
+        'Les tags des lives (langue, DropsEnabled…) s’affichent sous les cartes et sous le titre du direct, comme sur Twitch.',
+        'Catégories : jaquettes plus nettes.',
+      ],
+      en: [
+        'Live: pick the source (Luminous Asia, Luminous Europe, Albania proxy or official Twitch) in the settings or right from the player’s ⚙ menu, which also shows the one in use. If it doesn’t answer, the others take over.',
+        'Stream tags (language, DropsEnabled…) show under the cards and under the stream title, like on Twitch.',
+        'Categories: sharper box art.',
+      ],
+      es: [
+        'Directo: elige la fuente (Luminous Asia, Luminous Europa, proxy de Albania o Twitch oficial) en los ajustes o directamente en el menú ⚙ del reproductor, que también muestra la que está en uso. Si no responde, las demás toman el relevo.',
+        'Las etiquetas de los directos (idioma, DropsEnabled…) aparecen bajo las tarjetas y bajo el título del directo, como en Twitch.',
+        'Categorías: carátulas más nítidas.',
+      ],
+      ru: [
+        'Трансляции: выбирайте источник (Luminous Азия, Luminous Европа, албанский прокси или официальный Twitch) в настройках или прямо в меню ⚙ плеера — там же видно, какой используется сейчас. Если он не отвечает, его заменяют остальные.',
+        'Теги трансляций (язык, DropsEnabled…) показываются под карточками и под названием трансляции, как на Twitch.',
+        'Категории: более чёткие обложки.',
+      ],
+    },
+  },
+  {
     version: '2026.10.10c',
     items: {
       fr: ['Direct : environ 4 s de retard au lieu d’une dizaine. Le lecteur se sert maintenant des segments que Twitch annonce d’avance, comme son propre lecteur, et rattrape tout seul le retard pris après une coupure.'],

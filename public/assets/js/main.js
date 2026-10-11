@@ -561,6 +561,12 @@ function gameLink(id, name) {
   return id ? `<span class="card-link" data-category="${esc(id)}" data-category-name="${esc(name)}">${esc(name)}</span>` : esc(name)
 }
 
+/** Tags d'un live, comme sous les cartes de Twitch (langue comprise) : une
+ *  seule ligne, ceux qui ne tiennent pas restent masqués. */
+function tagsHtml(tags) {
+  return tags?.length ? `<div class="tags">${tags.slice(0, 10).map((x) => `<span class="tag">${esc(x)}</span>`).join('')}</div>` : ''
+}
+
 function streamCard(s) {
   return `
     <a class="card stream-card" href="/${esc(s.login)}" data-live="${esc(s.login)}">
@@ -576,6 +582,7 @@ function streamCard(s) {
           <h3 title="${esc(s.title)}">${esc(s.title)}</h3>
           <p class="name"><span class="card-link" data-channel="${esc(s.login)}">${esc(s.name)}</span></p>
           ${s.game ? `<p class="meta">${gameLink(s.gameId, s.game)}</p>` : ''}
+          ${tagsHtml(s.tags)}
         </div>
       </div>
     </a>`
@@ -780,11 +787,14 @@ function setHomeTab(tab) {
 // ── Catégories ─────────────────────────────────────────────────────────
 const cat = { tab: 'all', items: [], cursor: null, q: '', loaded: 0, current: null, streamsCursor: null, locked: false }
 const followedCats = () => store.prefs.followedCategories ?? []
+/** Jaquette en 285×380 quelle que soit la taille enregistrée (les catégories
+ *  suivies gardent l'adresse en 188×250 des versions précédentes). */
+const boxArt = (u) => String(u || '').replace(/-\d+x\d+(\.(?:jpe?g|png|webp))$/i, '-285x380$1')
 const isCatFollowed = (id) => followedCats().some((c) => c.id === id)
 
 function catCard(c) {
   return `<a class="cat-card" href="/directory/category/${esc(encodeURIComponent(c.slug || c.id))}" data-cat="${esc(c.id)}" data-cat-name="${esc(c.name)}" data-cat-slug="${esc(c.slug ?? '')}" data-cat-box="${esc(c.box)}">
-    <div class="cat-box"><img src="${esc(c.box)}" alt="" loading="lazy" decoding="async"></div>
+    <div class="cat-box"><img src="${esc(boxArt(c.box))}" alt="" loading="lazy" decoding="async"></div>
     <h3 title="${esc(c.name)}">${esc(c.name)}</h3>
     ${c.viewers != null ? `<p class="meta">${icon('eye', 12)} ${esc(formatViewers(c.viewers))}</p>` : ''}
   </a>`
@@ -844,7 +854,7 @@ async function openCategory(c, { more = false } = {}) {
     box.innerHTML = `
       <div class="cat-head">
         <button class="btn ghost sm" type="button" data-action="cat-back">${icon('chevronLeft', 16)}<span>${esc(t('nav_categories'))}</span></button>
-        ${c.box ? `<img class="cat-head-box" src="${esc(c.box)}" alt="">` : ''}
+        ${c.box ? `<img class="cat-head-box" src="${esc(boxArt(c.box))}" alt="">` : ''}
         <h2>${esc(c.name)}</h2>
         <button class="btn ghost sm follow-local${on ? ' on' : ''}" type="button" data-action="cat-follow">${icon('heart', 15)}<span>${esc(t(on ? 'following' : 'follow'))}</span></button>
       </div>
@@ -1695,6 +1705,7 @@ function setupPlayer() {
     onToggleChat: () => toggleChat(),
     onTheatre: () => toggleTheatre(),
     onHelp: () => toast(t('shortcuts_help'), 'info'),
+    onSource: (id) => switchLiveSource(id),
     // Raccourcis actifs : lecteur affiché en grand, aucune feuille ouverte.
     keysActive: () => !$('#watch').hidden && !$('#watch').classList.contains('minimized') && !$('#sheet')?.classList.contains('open'),
     isChatOpen: () => store.prefs.chatOpen,
@@ -1759,9 +1770,26 @@ function switchWorker(base) {
       if (state.watch !== w || !links?.links || !Object.keys(links.links).length) return
       w.links = links.links
       player.swapLinks(links.links)
+      if (w.kind === 'live') player.setLiveSource(links.source)
     })
     .catch(() => {})
   return true
+}
+
+/** « Source du direct » changée (réglages ou menu ⚙ du lecteur) : enregistrée,
+ *  et le direct en cours repart aussitôt par elle. */
+async function switchLiveSource(id) {
+  store.prefs.liveSource = id === 'auto' ? null : id
+  store.savePrefs()
+  const w = state.watch
+  if (w?.kind !== 'live') return
+  const links = await api.getLive(w.login).catch(() => null)
+  if (state.watch !== w) return
+  if (!links?.links || !Object.keys(links.links).length) return toast(t('err_live'), 'error')
+  w.links = links.links
+  player.swapLinks(links.links)
+  player.setLiveSource(links.source)
+  if (links.source) toast(t('src_now', { s: t(`src_${links.source}`) }), 'info')
 }
 
 /** Mode théâtre : la vidéo prend toute la hauteur, sans le bandeau d'infos. */
@@ -1826,6 +1854,7 @@ async function openLive(rawLogin) {
   token.info = info
   $('#watch-loading').hidden = true
   player.load({ links: links.links, kind: 'live' })
+  player.setLiveSource(links.source)
   chat.openLive({ channel: login, channelId: info?.id ?? null })
   renderLiveInfo(info, links)
   if (info?.id) startHermes(token, login, info.id)
@@ -1946,6 +1975,7 @@ function renderLiveInfo(info, links) {
     <div class="wi-text">
       <h1 title="${esc(title)}">${esc(title)}</h1>
       ${game ? `<p class="hero-game">${icon('gamepad', 14)} ${gameLink(gameId, game)}</p>` : ''}
+      ${tagsHtml((s?.freeformTags ?? []).map((x) => x?.name).filter(Boolean))}
     </div>
     <div class="wi-actions">
       <button class="btn ghost sm" type="button" data-action="see-vods">${icon('film', 16)}<span>${esc(t('see_vods'))}</span></button>
@@ -2618,6 +2648,12 @@ function openSettings() {
     <div class="sheet-section">
       <h3>${esc(t('player_settings'))}</h3>
       ${toggle('set-clickpause', t('click_pause'), p.clickPause !== false, t('click_pause_sub'))}
+      <label class="setting setting-col">
+        <span class="setting-text"><span>${esc(t('live_source'))}</span><small>${esc(t('live_source_sub'))}</small></span>
+        <select class="text-input" id="set-source">
+          ${api.LIVE_SOURCES.map((id) => `<option value="${id}" ${(p.liveSource || 'auto') === id ? 'selected' : ''}>${esc(t(`src_${id}`))}</option>`).join('')}
+        </select>
+      </label>
     </div>
     <div class="sheet-section">
       <h3>${esc(t('chat_settings'))}</h3>
@@ -2712,6 +2748,7 @@ function openSettings() {
     }
     if (id === 'import-file') { importData(e.target.files?.[0]); e.target.value = ''; return }
     if (id === 'set-clickpause') p.clickPause = e.target.checked
+    if (id === 'set-source') { switchLiveSource(e.target.value); return }
     if (id === 'set-homelist') { p.homeList = e.target.checked; store.savePrefs(); applyLayout(); return }
     if (id === 'set-recent') { p.showRecent = e.target.checked; store.savePrefs(); renderRecentChannels(); return }
     if (id === 'set-toplang') {

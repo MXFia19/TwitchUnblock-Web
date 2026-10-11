@@ -208,6 +208,7 @@ input[type='search']::-webkit-search-cancel-button { filter: invert(1) opacity(0
 .grid.as-list .stream-card .card-text { display: flex; flex-direction: column; }
 .grid.as-list .stream-card .name { order: 1; margin: 0 0 2px; font-size: 15px; font-weight: 700; color: var(--text); }
 .grid.as-list .stream-card .meta { order: 3; color: var(--purple); font-weight: 600; }
+.grid.as-list .stream-card .tags { order: 4; }
 @media (max-width: 520px) { .grid.as-list .stream-card .thumb { width: 136px; } }
 .follow-local { margin-left: auto; }
 .follow-local.on { color: var(--danger); border-color: var(--danger); }
@@ -241,6 +242,10 @@ a.card, a.cat-card { display: block; }
 .card h3 { font-size: 14px; font-weight: 700; line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .card .name { margin-top: 3px; font-size: 13px; font-weight: 600; color: var(--purple); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .card .meta { margin-top: 2px; font-size: 13px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* Tags d'un live (langue, DropsEnabled…) : une ligne, le reste masqué. */
+.tags { display: flex; flex-wrap: wrap; gap: 4px; height: 20px; overflow: hidden; margin-top: 6px; }
+.tag { max-width: 100%; padding: 0 8px; border-radius: 999px; background: var(--surface); color: var(--muted); font-size: 12px; font-weight: 600; line-height: 20px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wi-text .tags { margin-top: 8px; }
 /* Pseudo et catégorie d'une carte : ouvrent la chaîne ou la catégorie. */
 .card-link { cursor: pointer; }
 .card-link:hover { text-decoration: underline; text-underline-offset: 2px; color: var(--text); }
