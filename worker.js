@@ -760,7 +760,9 @@ async function cachedStats(request, env, ctx) {
 async function handleStats(env) {
     if (!env.DB) return jsonError("Base D1 'DB' non liée au Worker.", 500);
     const todayMs = Date.parse(new Date().toISOString().slice(0, 10) + 'T00:00:00Z');
-    const blank = () => ({ today: 0, week: 0, month: 0, known: 0, returning: 0 });
+    // `…New` : parmi les personnes de la période, celles vues pour la
+    // première fois pendant cette période (les autres étaient déjà venues).
+    const blank = () => ({ today: 0, week: 0, month: 0, known: 0, returning: 0, todayNew: 0, weekNew: 0, monthNew: 0 });
     const total = blank();
     const kinds = { accounts: blank(), anonymous: blank() };
     const platforms = Object.fromEntries(PLATFORMS.map((p) => [p, blank()]));
@@ -780,17 +782,21 @@ async function handleStats(env) {
             const meta = key.metadata || {};
             const then = Date.parse((meta.last || '') + 'T00:00:00Z');
             const age = Number.isNaN(then) ? Infinity : Math.floor((todayMs - then) / 86400000);
+            const firstThen = Date.parse((meta.first || meta.last || '') + 'T00:00:00Z');
+            const firstAge = Number.isNaN(firstThen) ? Infinity : Math.floor((todayMs - firstThen) / 86400000);
             // Une seule plateforme par identifiant : utilisé sur l'app ET le
             // site, il compte comme iOS (l'app est le vrai signe d'adoption).
             const plats = meta.ps ? String(meta.ps).split(',') : [meta.p || 'ios'];
             const plat = plats.includes('ios') || !plats.includes('web') ? 'ios' : 'web';
             const buckets = [platforms[plat]];
             const kind = meta.k === 'a' ? kinds.accounts : kinds.anonymous;
+            // Une seule fois par période, quel que soit le nombre de jours où
+            // la personne (le compte, ou l'appareil sans compte) est revenue.
             for (const c of [total, kind, ...buckets]) {
                 c.known++;
-                if (age === 0) c.today++;
-                if (age <= 7) c.week++;
-                if (age <= 30) c.month++;
+                if (age === 0) { c.today++; if (firstAge === 0) c.todayNew++; }
+                if (age <= 7) { c.week++; if (firstAge <= 7) c.weekNew++; }
+                if (age <= 30) { c.month++; if (firstAge <= 30) c.monthNew++; }
             }
             if (age <= 30) { const v = `${meta.p || 'ios'} ${meta.v || '?'}`; versions[v] = (versions[v] || 0) + 1; }
             const d = meta.days || 1;
