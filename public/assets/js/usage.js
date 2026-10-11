@@ -6,8 +6,10 @@
 //  Ce qui part : un identifiant tiré au hasard et gardé dans ce navigateur,
 //  la version du site, « web » ; si l'on est connecté, le jeton Twitch, pour
 //  compter le compte une seule fois sur tous les appareils (le Worker garde
-//  l'identifiant et le pseudo Twitch, visibles du seul administrateur). Pas
-//  de chaîne regardée, pas d'historique ; pas d'adresse IP.
+//  l'identifiant et le pseudo Twitch, visibles du seul administrateur). Plus
+//  la langue du site, « mobile » ou « ordinateur », et le nombre de lectures
+//  depuis le signal précédent (source qui a servi un direct, échecs). Pas de
+//  chaîne regardée, pas d'historique ; pas d'adresse IP.
 //
 //  Désactivable dans les réglages : l'identifiant est alors effacé côté
 //  serveur.
@@ -19,6 +21,7 @@ import { uid } from './util.js'
 export const SITE_VERSION = '2026.10.11a'
 const ID_KEY = 'tu_install_id'
 const LAST_KEY = 'tu_last_ping'
+const EV_KEY = 'tu_usage_ev'
 /** Un signal par heure au plus : le Worker ne compte qu'une fois par jour,
  *  inutile de lui écrire à chaque rechargement de page. */
 const PING_EVERY = 60 * 60 * 1000
@@ -85,6 +88,33 @@ function visibleFor(ms) {
   return warm
 }
 
+/** Compteurs de lecture (« live_as », « vod_fail »…), envoyés avec le
+ *  signal suivant puis remis à zéro. Jamais de chaîne ni de titre. */
+export function count(event, enabled) {
+  if (!enabled) return
+  try {
+    const all = JSON.parse(localStorage.getItem(EV_KEY) || '{}')
+    all[event] = (all[event] || 0) + 1
+    localStorage.setItem(EV_KEY, JSON.stringify(all))
+  } catch {}
+}
+
+function pendingEvents() {
+  try { return JSON.parse(localStorage.getItem(EV_KEY) || '{}') || {} } catch { return {} }
+}
+
+/** Retire ce qui vient de partir (ce qui est arrivé pendant l'envoi reste). */
+function clearSent(sent) {
+  try {
+    const now = pendingEvents()
+    for (const [k, n] of Object.entries(sent)) {
+      now[k] = Math.max(0, (now[k] || 0) - n)
+      if (!now[k]) delete now[k]
+    }
+    localStorage.setItem(EV_KEY, JSON.stringify(now))
+  } catch {}
+}
+
 /** Appelé au démarrage et à intervalles réguliers. */
 export async function ping(enabled) {
   if (!enabled) return
@@ -96,8 +126,17 @@ export async function ping(enabled) {
   try { last = Number(localStorage.getItem(LAST_KEY)) || 0 } catch {}
   if (Date.now() - last < PING_EVERY) return
   try {
-    const res = await post({ id: installId(), version: SITE_VERSION, platform: 'web' })
-    if (res.ok) try { localStorage.setItem(LAST_KEY, String(Date.now())) } catch {}
+    const ev = pendingEvents()
+    const res = await post({
+      id: installId(), version: SITE_VERSION, platform: 'web',
+      lang: (document.documentElement.lang || 'en').slice(0, 2).toLowerCase(),
+      device: matchMedia('(pointer: coarse)').matches ? 'mobile' : 'desktop',
+      ...(Object.keys(ev).length ? { ev } : {}),
+    })
+    if (res.ok) {
+      try { localStorage.setItem(LAST_KEY, String(Date.now())) } catch {}
+      clearSent(ev)
+    }
   } catch { /* le comptage ne doit jamais gêner le site */ }
 }
 
@@ -113,6 +152,7 @@ export async function forget() {
   try {
     await post({ id: installId(), forget: true })
     localStorage.removeItem(LAST_KEY)
+    localStorage.removeItem(EV_KEY)
   } catch {}
 }
 

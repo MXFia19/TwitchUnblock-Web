@@ -1713,7 +1713,12 @@ function setupPlayer() {
     // Une pause est un bon moment pour sauvegarder — sans dépasser un envoi
     // par minute si l'on enchaîne pause et lecture.
     onPause: () => { if (Date.now() - lastSyncAt > 60_000) flushSync({ force: true }) },
-    onError: () => showWatchError(state.watch?.kind === 'live' ? t('err_live') : t('err_vod')),
+    onError: () => {
+      // Lecture qui échoue après le chargement (proxy en panne, flux noir…).
+      const kind = state.watch?.kind
+      if (kind === 'live' || kind === 'vod') usage.count(`${kind}_play_fail`, store.prefs.shareUsage)
+      showWatchError(kind === 'live' ? t('err_live') : t('err_vod'))
+    },
     onWorkerDown: (base) => switchWorker(base),
     // « Signaler un problème » du menu du lecteur : hors plein écran, la
     // feuille n'y serait pas visible.
@@ -1847,6 +1852,11 @@ async function openLive(rawLogin) {
     api.getChannelInfo(login).catch(() => null),
   ])
   if (state.watch !== token) return
+  // Santé du direct (/stats) : la source qui a servi, ou un échec — jamais la
+  // chaîne. « missing » : hors ligne ou introuvable, ce n'est pas un échec.
+  const liveOk = links && !links.error && links.links && Object.keys(links.links).length
+  if (liveOk) usage.count(`live_${links.source || 'unknown'}`, store.prefs.shareUsage)
+  else if (links?.error !== 'missing') usage.count('live_fail', store.prefs.shareUsage)
   if (!links || links.error || !links.links || !Object.keys(links.links).length) {
     return showWatchError(links?.error === 'network' ? t('err_network') : t('err_live'))
   }
@@ -2133,6 +2143,7 @@ async function openVod(id, preset, { keepPlaylist = false, at = null } = {}) {
     api.getVodMeta(vodId).catch(() => null),
   ])
   if (state.watch !== token) return
+  usage.count(links && !links.error && links.links && Object.keys(links.links).length ? 'vod' : 'vod_fail', store.prefs.shareUsage)
   if (!links || links.error || !links.links || !Object.keys(links.links).length) {
     return showWatchError(links?.error === 'network' ? t('err_network') : t('err_vod'))
   }

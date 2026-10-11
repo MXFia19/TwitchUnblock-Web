@@ -126,13 +126,15 @@ The iOS app uses the same Worker.
 
 ## Usage count
 
-To know whether people actually use the website and the app, each browser (and each app install) sends a small signal to the Worker at most once an hour. Numbers are public at **[/stats](https://twitchunblock.vercel.app/stats)**: distinct people today, over 7 and 30 days, website vs iOS app, logged-in accounts vs anonymous, new people per day and how many came back.
+To know whether people actually use the website and the app, each browser (and each app install) sends a small signal to the Worker at most once an hour. Numbers are public at **[/stats](https://twitchunblock.vercel.app/stats)**: unique people today, over 7 and 30 days (each one counted once per period), website vs iOS app, logged-in accounts vs anonymous, new vs returning people, active people per day, retention (back after 1, 7 and 14 days), live health (which source served each live, failures) and devices and languages.
 
 | Sent | Never sent |
 |---|---|
 | Logged out: a random ID generated in the browser | Channels watched, history |
 | Logged in: your Twitch token, so the Worker counts your **account** once across all your devices (its Twitch ID and username are kept, visible to the site owner only) | IP address (not stored by the Worker) |
 | The website version, `web` or `ios` | |
+| The interface language, the device type (phone or computer; iPhone or iPad) and, from the app, the iOS major version | Titles, searches |
+| How many lives and VODs were started since the last signal: which source served each live, and how many failed — counters only | |
 
 Not counted: automated browsers and bots, copies of the site outside the official domain, private windows that can't keep the ID, visits shorter than 15 s. Keys expire on their own after 35 days. Anyone can turn it off in the settings, which also deletes their entry from the server.
 

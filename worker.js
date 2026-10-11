@@ -644,6 +644,12 @@ const PLATFORMS = ['ios', 'web'];
 let USAGE_ORIGINS = ['https://twitchunblock.vercel.app', 'https://test2-fawn-eta.vercel.app'];
 // Navigateurs automatisés et robots qui exécutent le JavaScript.
 const BOT_UA = /headless|bot\b|crawler|spider|slurp|playwright|puppeteer|selenium|phantomjs|lighthouse|preview/i;
+// Ce que le ping peut ajouter (pour /stats) : langue de l'interface, type
+// d'appareil, version majeure d'iOS, et des compteurs de lectures — la source
+// qui a servi un direct, les échecs. Jamais de chaîne ni de titre.
+const USAGE_DEVICES = ['iphone', 'ipad', 'tv', 'mobile', 'desktop'];
+const USAGE_EVENTS = ['live_as', 'live_al', 'live_eu', 'live_twitch', 'live_worker', 'live_unknown',
+    'live_fail', 'live_play_fail', 'vod', 'vod_fail', 'vod_play_fail'];
 
 // POST /api/ping — { id, version, platform } enregistre ; { id, forget: true } efface.
 async function handlePing(request, env) {
@@ -719,11 +725,41 @@ async function handlePing(request, env) {
 
     const platforms = [...new Set([...(prev.ps ? String(prev.ps).split(',') : (prev.p ? [prev.p] : [])), platform])].filter((x) => PLATFORMS.includes(x)).sort().join(',');
     const days = prev.last === day ? (prev.days || 1) : (prev.days || 0) + 1;
+    // Premier signal de la journée pour cette personne (l'historique anonyme
+    // repris compris) : comptée une fois dans les actifs du jour.
+    const firstToday = prev.last !== day;
     const meta = { first: prev.first || day, last: day, days, v: version, p: platform, ps: platforms };
     if (who) { meta.k = 'a'; meta.l = who.login.slice(0, 25); }
 
+    // Langue et appareil, par plateforme (un compte peut utiliser l'app et le
+    // site) ; gardés tels quels si le client ne les envoie pas (anciennes versions).
+    const suffix = platform === 'web' ? 'w' : 'i';
+    for (const f of ['li', 'lw', 'di', 'dw', 'os']) if (prev[f] !== undefined) meta[f] = prev[f];
+    const lang = String(body.lang || '').toLowerCase();
+    if (/^[a-z]{2}$/.test(lang)) meta['l' + suffix] = lang;
+    if (USAGE_DEVICES.includes(body.device)) meta['d' + suffix] = body.device;
+    if (platform === 'ios' && /^\d{1,2}$/.test(String(body.os ?? ''))) meta.os = String(body.os);
+
+    // Compteurs du jour : actifs (une fois par personne), lectures par issue
+    // (plafonnées par ping, contre un client qui enverrait n'importe quoi).
+    const counts = {};
+    if (firstToday) {
+        counts.a = 1;
+        counts['a_' + platform] = 1;
+        counts[who ? 'a_acct' : 'a_anon'] = 1;
+    }
+    if (body.ev && typeof body.ev === 'object') {
+        for (const k of USAGE_EVENTS) {
+            const n = Math.min(50, Math.max(0, Math.floor(Number(body.ev[k]) || 0)));
+            if (n) counts[`ev_${platform}_${k}`] = n;
+        }
+    }
+    try { await bumpDaily(env, day, counts); } catch (e) { console.warn('stats_day :', e.message); }
+
     // Rien de neuf aujourd'hui : pas d'écriture.
-    if (prev.last === day && prev.v === version && prev.ps === platforms && (!who || prev.l === meta.l)) {
+    const same = (f) => prev[f] === meta[f];
+    if (prev.last === day && prev.v === version && prev.ps === platforms && (!who || prev.l === meta.l)
+        && ['li', 'lw', 'di', 'dw', 'os'].every(same)) {
         return jsonResponse({ ok: true, days, unchanged: true });
     }
     await store(env).put(key, '', { expirationTtl: 60 * 60 * 24 * USAGE_RETENTION_DAYS, metadata: meta });
@@ -775,6 +811,20 @@ async function handleStats(env) {
     const daily = {};
     for (let i = 29; i >= 0; i--) daily[dayKey(i)] = { date: dayKey(i), newIos: 0, newWeb: 0, lastIos: 0, lastWeb: 0 };
 
+    // Rétention : parmi ceux arrivés il y a au moins N jours, la part revue N
+    // jours ou plus après son premier jour (J+1, J+7, J+14), au total et par
+    // semaine d'arrivée (lundi UTC). Les entrées s'effacent 35 jours après le
+    // dernier passage : au-delà de 5 semaines, les chiffres seraient flatteurs.
+    const ret = { d1: { base: 0, kept: 0 }, d7: { base: 0, kept: 0 }, d14: { base: 0, kept: 0 } };
+    const cohorts = {};
+    const weekOf = (iso) => {
+        const d = new Date(iso + 'T00:00:00Z');
+        return new Date(d.getTime() - ((d.getUTCDay() + 6) % 7) * 86400000).toISOString().slice(0, 10);
+    };
+    // Appareils : personnes actives sur 30 jours qui envoient ces infos.
+    const devices = { reporting: { ios: 0, web: 0 }, lang: { ios: {}, web: {} }, os: {}, device: { ios: {}, web: {} } };
+    const tally = (obj, k) => { obj[k] = (obj[k] || 0) + 1; };
+
     // list() renvoie les métadonnées sans lecture par clé ; 1000 clés par page.
     do {
         const page = await store(env).list({ prefix: USAGE_PREFIX, limit: 1000, cursor });
@@ -807,12 +857,66 @@ async function handleStats(env) {
             const p = plat === 'web' ? 'Web' : 'Ios';
             if (daily[meta.first]) daily[meta.first]['new' + p]++;
             if (daily[meta.last]) daily[meta.last]['last' + p]++;
+
+            if (meta.first && Number.isFinite(firstAge)) {
+                const span = Math.round((then - firstThen) / 86400000);
+                const week = weekOf(meta.first);
+                const c = cohorts[week] ??= { week, size: 0, d1: { base: 0, kept: 0 }, d7: { base: 0, kept: 0 } };
+                c.size++;
+                for (const [n, k] of [[1, 'd1'], [7, 'd7'], [14, 'd14']]) {
+                    if (firstAge < n) continue;
+                    ret[k].base++;
+                    if (span >= n) ret[k].kept++;
+                    if (c[k]) { c[k].base++; if (span >= n) c[k].kept++; }
+                }
+            }
+            if (age <= 30) {
+                if (meta.li || meta.di || meta.os) devices.reporting.ios++;
+                if (meta.lw || meta.dw) devices.reporting.web++;
+                if (meta.li) tally(devices.lang.ios, meta.li);
+                if (meta.lw) tally(devices.lang.web, meta.lw);
+                if (meta.os) tally(devices.os, meta.os);
+                if (meta.di) tally(devices.device.ios, meta.di);
+                if (meta.dw) tally(devices.device.web, meta.dw);
+            }
         }
         cursor = page.list_complete ? undefined : page.cursor;
     } while (cursor);
 
+    // Actifs par jour et santé du direct : compteurs de stats_day (depuis
+    // leur mise en place seulement, l'historique d'avant n'existe pas).
+    const activeDaily = Object.keys(daily).map((date) => ({ date, total: 0, ios: 0, web: 0, acct: 0, anon: 0 }));
+    const byDate = Object.fromEntries(activeDaily.map((d) => [d.date, d]));
+    const health = { week: { ios: {}, web: {} }, month: { ios: {}, web: {} }, since: null };
+    let activeSince = null;
+    try {
+        await ensureSchema(env);
+        const { results } = await env.DB.prepare(`SELECT day, metric, n FROM stats_day WHERE day >= ?1`).bind(dayKey(29)).all();
+        const weekStart = dayKey(6);
+        for (const r of results || []) {
+            const n = Number(r.n) || 0;
+            const m = String(r.metric);
+            if (m.startsWith('ev_')) {
+                const [, plat, ...rest] = m.split('_');
+                const key = rest.join('_');
+                if (!health.month[plat]) continue;
+                health.month[plat][key] = (health.month[plat][key] || 0) + n;
+                if (r.day >= weekStart) health.week[plat][key] = (health.week[plat][key] || 0) + n;
+                if (!health.since || r.day < health.since) health.since = r.day;
+            } else if (m === 'a' || m.startsWith('a_')) {
+                const d = byDate[r.day];
+                if (!d) continue;
+                const field = m === 'a' ? 'total' : m.slice(2);
+                if (field in d) d[field] += n;
+                if (m === 'a' && n > 0 && (!activeSince || r.day < activeSince)) activeSince = r.day;
+            }
+        }
+    } catch (e) { console.warn('stats_day :', e.message); }
+
     const payload = {
         ...total, platforms, accounts: kinds.accounts, anonymous: kinds.anonymous, returning, loyalty,
+        retention: { ...ret, cohorts: Object.values(cohorts).sort((a, b) => b.week.localeCompare(a.week)).slice(0, 5) },
+        devices, activeDaily, activeSince, health,
         avgDays: total.known ? Math.round((totalDays / total.known) * 10) / 10 : 0,
         oldestFirst,
         versions: Object.entries(versions).map(([version, count]) => ({ version, count })).sort((a, b) => b.count - a.count),
@@ -1492,6 +1596,13 @@ const SCHEMA = [
         expires INTEGER
     )`,
     `CREATE INDEX IF NOT EXISTS kv_expires ON kv (expires)`,
+    // Compteurs par jour (/stats) : actifs du jour, lectures par issue.
+    `CREATE TABLE IF NOT EXISTS stats_day (
+        day    TEXT NOT NULL,
+        metric TEXT NOT NULL,
+        n      INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (day, metric)
+    )`,
 ];
 let schemaReady = null;   // une fois par instance du Worker
 function ensureSchema(env) {
@@ -1500,6 +1611,22 @@ function ensureSchema(env) {
 }
 
 const parseMeta = (m) => { if (!m) return null; try { return JSON.parse(m); } catch (e) { return null; } };
+
+/** Ajoute aux compteurs d'un jour, sur place (un ping simultané n'efface pas
+ *  l'autre) : une écriture D1 par mesure. */
+async function bumpDaily(env, day, counts) {
+    const entries = Object.entries(counts).filter(([, n]) => n > 0);
+    if (!entries.length) return;
+    await ensureSchema(env);
+    await env.DB.batch(entries.map(([metric, n]) => env.DB.prepare(
+        `INSERT INTO stats_day (day, metric, n) VALUES (?1, ?2, ?3)
+         ON CONFLICT(day, metric) DO UPDATE SET n = n + excluded.n`).bind(day, metric, n)));
+    // De temps en temps, ménage au-delà de 120 jours.
+    if (Math.random() < 0.01) {
+        const old = new Date(Date.now() - 120 * 86400000).toISOString().slice(0, 10);
+        await env.DB.prepare(`DELETE FROM stats_day WHERE day < ?1`).bind(old).run();
+    }
+}
 const alive = (now) => `(expires IS NULL OR expires > ${Number(now)})`;
 
 function store(env) {
