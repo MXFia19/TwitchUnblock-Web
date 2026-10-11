@@ -6,7 +6,7 @@ Watch Twitch lives and VODs in your browser, no subscription needed, with the re
 
 > 🤖 **Vibe-coded project.** Built with AI coding assistants (prompted, reviewed and tested by a human). Expect rough edges: bug reports on [Discord](https://discord.gg/cEsMRdxsVq) help a lot.
 
-> 📱 **Also on iPhone and iPad** — [TwitchUnblock for iOS](https://github.com/MXFia19/TwitchUnblock) is the native app this website comes from: same backend, plus channel points, an immersive landscape player, a sleep timer and more. Install it through AltStore, SideStore or Feather.
+> 📱 **Also on iPhone and iPad** — [TwitchUnblock for iOS](https://github.com/MXFia19/TwitchUnblock) is the native app this website comes from: same backend, plus channel points, drops, an immersive landscape player, a sleep timer and more. Install it through AltStore, SideStore or Feather.
 
 ---
 
@@ -17,6 +17,7 @@ Watch Twitch lives and VODs in your browser, no subscription needed, with the re
 - **Followed channels** once logged in with Twitch, with profile pictures
 - **Continue watching**: VODs you started, with their progress bar
 - Live durations and viewer counts kept up to date
+- **Stream tags** under every live (language, DropsEnabled…), like on Twitch
 
 ### Streamer
 - Search with suggestions as you type
@@ -32,6 +33,7 @@ Watch Twitch lives and VODs in your browser, no subscription needed, with the re
 - Quality picker, including “Auto”, which shows the bitrate actually in use
 - Playback speed, ±10 s, double-tap on mobile, keyboard shortcuts
 - Picture in picture, “back to live” button, live latency
+- **Ad-free lives, from the source you pick**: Luminous Asia, an Albania proxy (TTV.LOL) and Luminous Europe, tried in that order — or official Twitch, with ads. Change it in the settings or right from the ⚙ menu, which shows the one in use; if it doesn't answer, the others take over
 - **Theatre mode** (T), keyboard shortcuts anywhere on the page (? lists them)
 - **VOD chapters**: game changes marked on the progress bar
 - **Muted parts**: passages Twitch muted for copyrighted music show in orange on the progress bar, with a notice and a **Skip** button. For a day or two after a stream, Twitch's CDN still serves the original sound: the site loads it instead, automatically
@@ -102,7 +104,7 @@ The website is plain JavaScript (ES modules) — no framework, no build step.
 ## How it works
 
 ```
-Browser ──► Cloudflare Worker ──► Twitch (playlists, video segments)
+Browser ──► Cloudflare Worker ──► Twitch (playlists, video segments), ad-free sources (Luminous, TTV.LOL)
     │
     ├──► Twitch GQL     public data: streams, channels, VODs, VOD chat
     ├──► Twitch Helix   logged-in account: followed channels
@@ -117,7 +119,7 @@ The iOS app uses the same Worker.
 
 ### Security
 - **History backups are private**: every read or write must carry the owner's Twitch token. The Worker has Twitch confirm it and checks it belongs to that account — knowing someone's (public) Twitch ID is no longer enough.
-- **The proxy only relays Twitch and Luminous** (`ttvnw.net`, `jtvnw.net`, `twitch.tv`, `cloudfront.net`, `luminous.dev`), over HTTPS — it is not an open proxy.
+- **The proxy only relays Twitch and the ad-free sources** (`ttvnw.net`, `jtvnw.net`, `twitch.tv`, `cloudfront.net`, `luminous.dev`, and exactly `twitch-al.nadeko.net`), over HTTPS — it is not an open proxy.
 - Usage pings only accept random UUIDs and store no IP address.
 
 ---
