@@ -147,6 +147,7 @@
     .st.progress { background: rgba(230, 230, 25, 0.14); color: #fde68a; }
     .st.done { background: rgba(74, 222, 128, 0.16); color: #86efac; }
     .st.refused { background: rgba(248, 113, 113, 0.14); color: #fca5a5; }
+    .st.seen { background: rgba(191, 148, 255, 0.16); color: var(--purple); }
     .fb-await { color: #fde68a; font-weight: 700; }
     .fb-hook { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 2px 0 10px; font-size: 13px; color: var(--muted); }
     .fb-hook .ok { color: #4ade80; font-weight: 700; }
@@ -290,6 +291,7 @@
           <option value="" data-t="fbAllStatus"></option>
           <option value="await" data-t="fbToAnswer"></option>
           <option value="new" data-t="fbStatus_new"></option>
+          <option value="seen" data-t="fbStatus_seen"></option>
           <option value="accepted" data-t="fbStatus_accepted"></option>
           <option value="progress" data-t="fbStatus_progress"></option>
           <option value="done" data-t="fbStatus_done"></option>
@@ -403,7 +405,7 @@
       annTitle: 'Annonce (app et site)', annSub: 'Affichée en haut de l’accueil de l’app iOS et du site jusqu’à expiration. Une seule à la fois ; en publier une remplace la précédente.', annTitlePh: 'Titre', annMsgPh: 'Message', annLinkPh: 'Lien (facultatif, https://…)', annFor: 'Durée', annPublish: 'Publier', annCustom: 'Personnalisée…', unitMin: 'minutes', unitHour: 'heures', unitDay: 'jours', annBadDuration: 'Durée : entre 1 minute et 30 jours.', annClear: 'Retirer', annEdit: 'Modifier', annReactions: 'Réactions', annReactTotal: '{n} réaction(s) · une par appareil', annSave: 'Enregistrer', annCancel: 'Annuler', annKeep: 'Garder l’échéance actuelle', annRenotify: 'Réafficher à ceux qui l’avaient fermée', annSaved: 'Annonce modifiée.', annEdited: 'modifiée', annNone: 'Aucune annonce en cours.', annLive: 'En cours jusqu’au {d} :', annPublished: 'Annonce publiée.', annCleared: 'Annonce retirée.', annConfirmClear: 'Retirer l’annonce en cours ?',
       fAllKinds: 'Tous les types', fAccounts: 'Comptes', fAnon: 'Anonymes', fAllPlats: 'Toutes plateformes', fIosOnly: 'iOS seulement', fWebOnly: 'Web seulement', fBoth: 'iOS + Web', fAllVersions: 'Toutes versions',
       fbTitle: 'Retours (bugs, idées)', fbSub: 'Envoyés depuis le site et l’app. Ta réponse et l’état choisi s’affichent chez la personne (« Mes signalements »), qui peut répondre à son tour, photos comprises. Gardés 180 jours après le dernier message. Avec le secret FEEDBACK_WEBHOOK posé sur le Worker, chaque retour et chaque réponse arrivent aussi sur Discord.',
-      fbStatus_new: 'Nouveau', fbStatus_accepted: 'Accepté', fbStatus_progress: 'En cours', fbStatus_done: 'Fait', fbStatus_refused: 'Refusé',
+      fbStatus_new: 'Nouveau', fbStatus_seen: 'Vu', fbMarkSeen: 'Marquer comme vu', fbStatus_accepted: 'Accepté', fbStatus_progress: 'En cours', fbStatus_done: 'Fait', fbStatus_refused: 'Refusé',
       fbHookOk: 'Discord : dernier envoi réussi ({d})', fbHookFail: 'Discord : dernier envoi refusé ({d}) — {e}', fbHookMissing: 'Discord : secret FEEDBACK_WEBHOOK absent du Worker. À poser comme « Secret » (pas « Texte ») dans Cloudflare → Workers → test2 → Paramètres → Variables et secrets.', fbHookInvalid: 'Discord : FEEDBACK_WEBHOOK ne ressemble pas à une adresse de webhook (https://discord.com/api/webhooks/…).', fbHookNever: 'Discord : aucun envoi depuis la mise à jour.', fbHookTest: 'Tester l’envoi Discord', fbHookTestOk: 'Message de test envoyé : regarde le salon Discord.', fbHookTestFail: 'Échec du test : {e}',
       fbAllStatus: 'Tous les états', fbToAnswer: 'À répondre', fbAwait: 'réponse de la personne', fbThread: 'Conversation', fbHide: 'Masquer',
       fbReplyPh: 'Répondre (visible par la personne dans l’app ou sur le site)…', fbSend: 'Envoyer', fbPhotosPick: 'Photos (3 max)', fbYou: 'Toi', fbThem: 'La personne', fbStatusNow: 'État : {s}', fbSent: 'Réponse envoyée.', fbNoMatch: 'Aucun retour dans cet état.', fbNone: 'Aucun retour pour l’instant.', fbCount: '{n} retour(s)', fbClear: 'Tout effacer', fbConfirmClear: 'Effacer tous les retours ?', fbConfirmDel: 'Supprimer ce retour ?', fbBug: 'Bug', fbIdea: 'Idée', fbOther: 'Autre', fbContact: 'Contact :', fbWeb: 'Site', fbIos: 'App iOS',
@@ -448,7 +450,7 @@
       annTitle: 'Announcement (app and site)', annSub: 'Shown at the top of the iOS app and website home until it expires. One at a time; publishing replaces the previous one.', annTitlePh: 'Title', annMsgPh: 'Message', annLinkPh: 'Link (optional, https://…)', annFor: 'Duration', annPublish: 'Publish', annCustom: 'Custom…', unitMin: 'minutes', unitHour: 'hours', unitDay: 'days', annBadDuration: 'Duration: between 1 minute and 30 days.', annClear: 'Remove', annEdit: 'Edit', annReactions: 'Reactions', annReactTotal: '{n} reaction(s) · one per device', annSave: 'Save', annCancel: 'Cancel', annKeep: 'Keep current end time', annRenotify: 'Show again to people who closed it', annSaved: 'Announcement updated.', annEdited: 'edited', annNone: 'No announcement running.', annLive: 'Running until {d}:', annPublished: 'Announcement published.', annCleared: 'Announcement removed.', annConfirmClear: 'Remove the current announcement?',
       fAllKinds: 'All types', fAccounts: 'Accounts', fAnon: 'Anonymous', fAllPlats: 'All platforms', fIosOnly: 'iOS only', fWebOnly: 'Web only', fBoth: 'iOS + Web', fAllVersions: 'All versions',
       fbTitle: 'Feedback (bugs, ideas)', fbSub: 'Sent from the website and the app. Your reply and the status you pick show up for the person (“My reports”), who can answer back, photos included. Kept 180 days after the last message. With the FEEDBACK_WEBHOOK secret set on the Worker, each report and each reply also lands on Discord.',
-      fbStatus_new: 'New', fbStatus_accepted: 'Accepted', fbStatus_progress: 'In progress', fbStatus_done: 'Done', fbStatus_refused: 'Declined',
+      fbStatus_new: 'New', fbStatus_seen: 'Seen', fbMarkSeen: 'Mark as seen', fbStatus_accepted: 'Accepted', fbStatus_progress: 'In progress', fbStatus_done: 'Done', fbStatus_refused: 'Declined',
       fbHookOk: 'Discord: last delivery succeeded ({d})', fbHookFail: 'Discord: last delivery refused ({d}) — {e}', fbHookMissing: 'Discord: the FEEDBACK_WEBHOOK secret is missing from the Worker. Add it as a “Secret” (not “Text”) in Cloudflare → Workers → test2 → Settings → Variables and Secrets.', fbHookInvalid: 'Discord: FEEDBACK_WEBHOOK doesn’t look like a webhook address (https://discord.com/api/webhooks/…).', fbHookNever: 'Discord: nothing sent since the update.', fbHookTest: 'Test Discord delivery', fbHookTestOk: 'Test message sent: check the Discord channel.', fbHookTestFail: 'Test failed: {e}',
       fbAllStatus: 'All statuses', fbToAnswer: 'Awaiting reply', fbAwait: 'reply from the person', fbThread: 'Conversation', fbHide: 'Hide',
       fbReplyPh: 'Reply (the person sees it in the app or on the website)…', fbSend: 'Send', fbPhotosPick: 'Photos (3 max)', fbYou: 'You', fbThem: 'The person', fbStatusNow: 'Status: {s}', fbSent: 'Reply sent.', fbNoMatch: 'No feedback with this status.', fbNone: 'No feedback yet.', fbCount: '{n} message(s)', fbClear: 'Clear all', fbConfirmClear: 'Delete all feedback?', fbConfirmDel: 'Delete this message?', fbBug: 'Bug', fbIdea: 'Idea', fbOther: 'Other', fbContact: 'Contact:', fbWeb: 'Website', fbIos: 'iOS app',
@@ -493,7 +495,7 @@
       annTitle: 'Anuncio (app y sitio)', annSub: 'Se muestra arriba del inicio de la app iOS y del sitio hasta que caduca. Uno a la vez; publicar uno reemplaza al anterior.', annTitlePh: 'Título', annMsgPh: 'Mensaje', annLinkPh: 'Enlace (opcional, https://…)', annFor: 'Duración', annPublish: 'Publicar', annCustom: 'Personalizada…', unitMin: 'minutos', unitHour: 'horas', unitDay: 'días', annBadDuration: 'Duración: entre 1 minuto y 30 días.', annClear: 'Retirar', annEdit: 'Editar', annReactions: 'Reacciones', annReactTotal: '{n} reacción(es) · una por dispositivo', annSave: 'Guardar', annCancel: 'Cancelar', annKeep: 'Mantener el fin actual', annRenotify: 'Volver a mostrar a quien lo cerró', annSaved: 'Anuncio modificado.', annEdited: 'editado', annNone: 'Ningún anuncio activo.', annLive: 'Activo hasta el {d}:', annPublished: 'Anuncio publicado.', annCleared: 'Anuncio retirado.', annConfirmClear: '¿Retirar el anuncio activo?',
       fAllKinds: 'Todos los tipos', fAccounts: 'Cuentas', fAnon: 'Anónimos', fAllPlats: 'Todas las plataformas', fIosOnly: 'Solo iOS', fWebOnly: 'Solo web', fBoth: 'iOS + Web', fAllVersions: 'Todas las versiones',
       fbTitle: 'Comentarios (errores, ideas)', fbSub: 'Enviados desde la web y la app. Tu respuesta y el estado elegido le aparecen a la persona («Mis reportes»), que puede contestar, fotos incluidas. Se guardan 180 días tras el último mensaje. Con el secreto FEEDBACK_WEBHOOK en el Worker, cada comentario y cada respuesta llegan también a Discord.',
-      fbStatus_new: 'Nuevo', fbStatus_accepted: 'Aceptado', fbStatus_progress: 'En curso', fbStatus_done: 'Hecho', fbStatus_refused: 'Rechazado',
+      fbStatus_new: 'Nuevo', fbStatus_seen: 'Visto', fbMarkSeen: 'Marcar como visto', fbStatus_accepted: 'Aceptado', fbStatus_progress: 'En curso', fbStatus_done: 'Hecho', fbStatus_refused: 'Rechazado',
       fbHookOk: 'Discord: último envío correcto ({d})', fbHookFail: 'Discord: último envío rechazado ({d}) — {e}', fbHookMissing: 'Discord: falta el secreto FEEDBACK_WEBHOOK en el Worker. Añádelo como «Secret» (no «Text») en Cloudflare → Workers → test2 → Settings → Variables and Secrets.', fbHookInvalid: 'Discord: FEEDBACK_WEBHOOK no parece una dirección de webhook (https://discord.com/api/webhooks/…).', fbHookNever: 'Discord: nada enviado desde la actualización.', fbHookTest: 'Probar el envío a Discord', fbHookTestOk: 'Mensaje de prueba enviado: mira el canal de Discord.', fbHookTestFail: 'La prueba falló: {e}',
       fbAllStatus: 'Todos los estados', fbToAnswer: 'Por responder', fbAwait: 'respuesta de la persona', fbThread: 'Conversación', fbHide: 'Ocultar',
       fbReplyPh: 'Responder (la persona lo ve en la app o en la web)…', fbSend: 'Enviar', fbPhotosPick: 'Fotos (3 máx.)', fbYou: 'Tú', fbThem: 'La persona', fbStatusNow: 'Estado: {s}', fbSent: 'Respuesta enviada.', fbNoMatch: 'Ningún comentario con este estado.', fbNone: 'Aún no hay comentarios.', fbCount: '{n} mensaje(s)', fbClear: 'Borrar todo', fbConfirmClear: '¿Borrar todos los comentarios?', fbConfirmDel: '¿Borrar este mensaje?', fbBug: 'Error', fbIdea: 'Idea', fbOther: 'Otro', fbContact: 'Contacto:', fbWeb: 'Web', fbIos: 'App iOS',
@@ -870,7 +872,7 @@
     } catch {}
     return text
   }
-  const FB_STATES = ['new', 'accepted', 'progress', 'done', 'refused']
+  const FB_STATES = ['new', 'seen', 'accepted', 'progress', 'done', 'refused']
   let fbItems = []
   const fbOpen = new Set()         // conversations dépliées
   const fbThreads = new Map()      // clé → discussion chargée
@@ -920,7 +922,8 @@
       } catch (err) { devMsg(t('fail', { e: err.message }), 'err'); e.target.disabled = false }
     }
   }
-  const awaiting = (f) => f.lastFrom === 'u' && f.count > 1
+  // La personne a répondu, et rien depuis : ni réponse, ni état, ni « Vu ».
+  const awaiting = (f) => f.lastFrom === 'u' && f.count > 1 && (f.updatedAt || 0) > (f.seenAt || 0)
   function renderFeedback() {
     const items = fbItems
     const filter = $('#fb-status').value
@@ -942,6 +945,7 @@
           ${f.photos ? `<span>📷 ${fmt(f.photos)}</span>` : ''}
           ${awaiting(f) ? `<span class="fb-await">● ${esc(t('fbAwait'))}</span>` : ''}
           <span class="spacer"></span>
+          ${f.status === 'new' || awaiting(f) ? `<button class="btn sm" type="button" data-fb-seen="${esc(f.key)}">👁 ${esc(t('fbMarkSeen'))}</button>` : ''}
           <button class="btn sm" type="button" data-fb-open="${esc(f.key)}">${esc(t(fbOpen.has(f.key) ? 'fbHide' : 'fbThread'))}</button>
           <button class="btn sm" type="button" data-fb-del="${esc(f.key)}">${esc(t('del'))}</button>
         </div>
@@ -1036,6 +1040,19 @@
       const key = openBtn.dataset.fbOpen
       if (fbOpen.has(key)) fbOpen.delete(key); else { fbOpen.add(key); loadThread(key) }
       renderFeedback()
+      return
+    }
+    const seenBtn = e.target.closest('[data-fb-seen]')
+    if (seenBtn) {
+      const key = seenBtn.dataset.fbSeen
+      seenBtn.disabled = true
+      try {
+        const r = await postFeedback({ seen: { key } })
+        fbThreads.set(key, r.thread)
+        const i = fbItems.findIndex((f) => f.key === key)
+        if (i >= 0) fbItems[i] = r.item
+        renderFeedback()
+      } catch (err) { devMsg(t('fail', { e: err.message }), 'err'); seenBtn.disabled = false }
       return
     }
     const st = e.target.closest('[data-fb-state]')

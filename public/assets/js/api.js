@@ -454,15 +454,25 @@ export async function getVodMeta(id) {
 // « proxy » ne concerne plus que les liens donnés aux applis externes
 // (VLC, Infuse…), voir `directUrl`.
 export async function getLive(login) {
-  // Source choisie (réglage « Source du direct ») : le Worker l'essaie en premier.
-  const src = store.prefs.liveSource
-  const param = LIVE_SOURCES.includes(src) && src !== 'auto' ? `&source=${src}` : ''
-  return viaRelay(await workerJson(`/api/get-live?name=${encodeURIComponent(login)}&proxy=true${param}`))
+  // Ordre des sources (réglages) : le Worker les essaie l'une après l'autre.
+  // `source` (la première) pour un Worker d'avant l'ordre.
+  const order = liveSourceOrder()
+  return viaRelay(await workerJson(`/api/get-live?name=${encodeURIComponent(login)}&proxy=true&source=${order[0]}&order=${order.join(',')}`))
 }
 
-/** Sources du direct proposées : automatique, Luminous Asie, proxy albanais
- *  (TTV.LOL), Luminous Europe, Twitch officiel (avec ses pubs). */
-export const LIVE_SOURCES = ['auto', 'as', 'al', 'eu', 'twitch']
+/** Sources du direct, dans l'ordre automatique : Luminous Asie, proxy
+ *  albanais (TTV.LOL), Luminous Europe, Twitch officiel (avec ses pubs). */
+export const LIVE_SOURCES = ['as', 'al', 'eu', 'twitch']
+
+/** Ordre choisi dans les réglages ; avant lui, une seule source préférée
+ *  (`liveSource`), mise en tête. Une source inconnue est ignorée, une
+ *  oubliée ajoutée à la fin : toutes restent essayées. */
+export function liveSourceOrder(prefs = store.prefs) {
+  const saved = Array.isArray(prefs.liveSourceOrder) ? prefs.liveSourceOrder
+    : LIVE_SOURCES.includes(prefs.liveSource) ? [prefs.liveSource] : []
+  const order = saved.filter((id, i) => LIVE_SOURCES.includes(id) && saved.indexOf(id) === i)
+  return [...order, ...LIVE_SOURCES.filter((id) => !order.includes(id))]
+}
 
 export async function getVodLinks(id) {
   return viaRelay(await workerJson(`/api/get-m3u8?id=${encodeURIComponent(id)}&proxy=true`))

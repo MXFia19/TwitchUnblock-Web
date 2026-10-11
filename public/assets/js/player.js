@@ -9,7 +9,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { t } from './i18n.js'
-import { API_URL, LIVE_SOURCES, RELAY_BASE, WORKER_BASES, fixProxiedUrl, proxyBaseOf } from './api.js'
+import { API_URL, RELAY_BASE, WORKER_BASES, fixProxiedUrl, liveSourceOrder, proxyBaseOf } from './api.js'
 import { $, esc, formatClock, icon, isIOS } from './util.js'
 
 const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 2]
@@ -952,10 +952,11 @@ export class Player {
       <span>${esc(this.menuLabel(k))}</span>${k === this.quality ? icon('check', 16) : ''}</button>`).join('')
     // Direct : la source (proxy) qui sert le flux, et de quoi en changer.
     if (this.kind === 'live' && this.o.onSource) {
-      const pref = this.o.prefs.liveSource || 'auto'
+      // Dans l'ordre des réglages ; en choisir une la met en tête.
+      const order = liveSourceOrder(this.o.prefs)
       html += `<div class="p-menu-title">${esc(t('live_source'))}${this.liveSource ? ` · ${esc(t(`src_${this.liveSource}`))}` : ''}</div>`
-      html += LIVE_SOURCES.map((id) => `<button type="button" data-src="${id}" class="${id === pref ? 'on' : ''}">
-        <span>${esc(t(`src_${id}`))}</span>${id === pref ? icon('check', 16) : ''}</button>`).join('')
+      html += order.map((id, i) => `<button type="button" data-src="${id}" class="${i === 0 ? 'on' : ''}">
+        <span>${esc(t(`src_${id}`))}</span>${i === 0 ? icon('check', 16) : ''}</button>`).join('')
     }
     if (this.kind === 'vod') {
       html += `<div class="p-menu-title">${esc(t('speed'))}</div><div class="p-speeds">`
@@ -1006,7 +1007,7 @@ export class Player {
     if (b.dataset.report) { this.closeMenu(); this.o.onReport?.(); return }
     if (b.dataset.src) {
       this.closeMenu()
-      if (b.dataset.src !== (this.o.prefs.liveSource || 'auto')) this.o.onSource?.(b.dataset.src)
+      if (b.dataset.src !== liveSourceOrder(this.o.prefs)[0]) this.o.onSource?.(b.dataset.src)
       return
     }
     if (b.dataset.q) this.setQuality(b.dataset.q)

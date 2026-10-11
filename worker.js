@@ -251,15 +251,10 @@ async function handleGetLive(url, workerOrigin) {
     if (!LOGIN_RE.test(login)) return jsonError("Nom invalide", 400);
     const useProxy = true; // On force toujours le proxy pour les Lives (CORS)
     
-    // Source choisie dans les réglages (« Source du direct ») : essayée en
-    // premier. Si elle ne répond pas, les autres suivent dans l'ordre
-    // habituel, pour que le direct se lance quand même ; `source`, dans la
-    // réponse, dit laquelle a servi.
-    const wanted = url.searchParams.get('source') || 'auto';
-    const proxies = LIVE_PROXY_ORDER.includes(wanted)
-        ? [wanted, ...LIVE_PROXY_ORDER.filter((id) => id !== wanted)]
-        : LIVE_PROXY_ORDER;
-    const steps = wanted === 'twitch' ? ['twitch', ...proxies] : [...proxies, 'twitch'];
+    // Ordre des sources choisi dans les réglages : essayées l'une après
+    // l'autre jusqu'à ce qu'une réponde, pour que le direct se lance quand
+    // même ; `source`, dans la réponse, dit laquelle a servi.
+    const steps = liveSourceSteps(url.searchParams.get('order'), url.searchParams.get('source'));
 
     let m3u8Content = "";
     let masterUrl = "";
@@ -462,6 +457,18 @@ const LIVE_PROXIES = {
     eu: (login) => ({ url: `https://eu.luminous.dev/live/${login}?${LIVE_QUERY}`, headers: getRequestHeaders(login) }),
 };
 const LIVE_PROXY_ORDER = ['as', 'al', 'eu'];
+const LIVE_SOURCE_IDS = [...LIVE_PROXY_ORDER, 'twitch'];
+
+/** Sources à essayer, dans l'ordre demandé (`order=eu,as,…`) ; une source
+ *  inconnue est ignorée, une oubliée ajoutée à la fin : toutes restent
+ *  essayées. Les clients d'avant l'ordre n'envoient que leur préférée
+ *  (`source=`) : elle passe en tête de l'ordre automatique. */
+function liveSourceSteps(order, wanted) {
+    const asked = String(order || '').split(',').map((s) => s.trim())
+        .filter((id, i, all) => LIVE_SOURCE_IDS.includes(id) && all.indexOf(id) === i);
+    const first = asked.length ? asked : (LIVE_SOURCE_IDS.includes(wanted) ? [wanted] : []);
+    return [...first, ...LIVE_SOURCE_IDS.filter((id) => !first.includes(id))];
+}
 
 /** Liste maîtresse d'un proxy sans pub ; null s'il ne répond pas ou si la
  *  chaîne y est hors ligne (pas de « #EXT-X-STREAM-INF »). */
@@ -1144,8 +1151,8 @@ async function handleAdminAnnouncement(request, env) {
 const FEEDBACK_PREFIX = 'fb_';
 const FEEDBACK_PHOTO_PREFIX = 'fbimg_';
 const FEEDBACK_KINDS = ['bug', 'idea', 'other'];
-// nouveau → accepté → en cours → fait, ou refusé.
-const FEEDBACK_STATUSES = ['new', 'accepted', 'progress', 'done', 'refused'];
+// nouveau → vu → accepté → en cours → fait, ou refusé.
+const FEEDBACK_STATUSES = ['new', 'seen', 'accepted', 'progress', 'done', 'refused'];
 const FEEDBACK_TTL = 180 * 86400;
 const FEEDBACK_MAX_PHOTOS = 3;
 const FEEDBACK_MAX_PHOTO_B64 = 700000;   // ~500 Ko d'image
@@ -1424,7 +1431,8 @@ async function postFeedbackToDiscord(webhook, e, photos = [], inReplyTo = null) 
 // GET  /api/admin/feedback          — les retours, du plus récent au plus ancien.
 // GET  /api/admin/feedback?key=fb_… — un retour et sa discussion.
 // POST /api/admin/feedback — { reply: { key, message, photos? } },
-//      { status: { key, status } }, { delete: '<clé>' } ou { clear: true }.
+//      { status: { key, status } }, { seen: { key } }, { delete: '<clé>' }
+//      ou { clear: true }.
 async function handleAdminFeedback(request, env) {
     const { denied } = await requireAdmin(request);
     if (denied) return denied;
@@ -1442,12 +1450,33 @@ async function handleAdminFeedback(request, env) {
         key, kind: m.k || 'other', message: m.m || '', contact: m.c || null, platform: m.p || '?',
         version: m.v || '?', info: m.i || null, at: m.at || 0,
         status: m.s || 'new', updatedAt: m.u || m.at || 0, lastFrom: m.r || 'u', count: m.n || 1, photos: m.ph || 0,
+        // Dernière fois que l'admin l'a vu (« Vu », réponse ou nouvel état).
+        seenAt: m.sa || 0,
     });
     const noStore = { ...RESPONSE_HEADERS, 'Content-Type': 'application/json', 'Cache-Control': 'no-store' };
 
     if (request.method === 'POST') {
         let body;
         try { body = await request.json(); } catch (e) { return jsonError('JSON invalide', 400); }
+
+        // « Vu » : un retour nouveau passe à l'état « Vu », que la personne
+        // voit ; ce qu'elle a écrit jusque-là n'est plus « à répondre ». Rien
+        // d'autre ne lui est envoyé.
+        if (typeof body.seen?.key === 'string') {
+            const key = body.seen.key;
+            if (!FEEDBACK_KEY_RE.test(key)) return jsonError('Clé invalide', 400);
+            const { value, metadata } = await store(env).getWithMetadata(key);
+            if (!metadata) return jsonError('Retour introuvable', 404);
+            const thread = feedbackThread(value, metadata);
+            const now = Date.now();
+            const next = { ...metadata, sa: now };
+            if ((metadata.s || 'new') === 'new' && thread.length < FEEDBACK_MAX_MESSAGES) {
+                thread.push({ f: 'a', s: 'seen', at: now });
+                Object.assign(next, { s: 'seen', u: now, r: 'a' });
+            }
+            await store(env).put(key, JSON.stringify(thread), { metadata: next, expirationTtl: FEEDBACK_TTL });
+            return jsonResponse({ ok: true, item: summary(key, next), thread });
+        }
 
         // Réponse ou nouvel état : ajoutés à la discussion, que la personne lit
         // dans l'app ou sur le site.
@@ -1459,7 +1488,7 @@ async function handleAdminFeedback(request, env) {
             const thread = feedbackThread(value, metadata);
             if (thread.length >= FEEDBACK_MAX_MESSAGES) return jsonError('Discussion trop longue', 409);
             const now = Date.now();
-            const next = { ...metadata, u: now, r: 'a' };
+            const next = { ...metadata, u: now, r: 'a', sa: now };
             if (body.reply) {
                 const message = cleanText(body.reply.message, 2000);
                 const photos = cleanPhotos(body.reply.photos);

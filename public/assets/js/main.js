@@ -1989,11 +1989,48 @@ function switchWorker(base) {
   return true
 }
 
-/** « Source du direct » changée (réglages ou menu ⚙ du lecteur) : enregistrée,
- *  et le direct en cours repart aussitôt par elle. */
-async function switchLiveSource(id) {
-  store.prefs.liveSource = id === 'auto' ? null : id
+/** Source choisie dans le menu ⚙ du lecteur : mise en tête de l'ordre. */
+function switchLiveSource(id) {
+  setLiveSourceOrder([id, ...api.liveSourceOrder().filter((x) => x !== id)])
+}
+
+/** Une source montée ou descendue d'un cran (réglages). */
+function moveLiveSource(id, delta) {
+  const order = api.liveSourceOrder()
+  const i = order.indexOf(id), j = i + delta
+  if (i < 0 || j < 0 || j >= order.length) return
+  ;[order[i], order[j]] = [order[j], order[i]]
+  setLiveSourceOrder(order)
+}
+
+/** Ordre des sources enregistré ; si la première change, le direct en cours
+ *  repart aussitôt par le nouvel ordre. */
+function setLiveSourceOrder(order) {
+  const before = api.liveSourceOrder()[0]
+  store.prefs.liveSourceOrder = order
+  store.prefs.liveSource = null
   store.savePrefs()
+  const list = $('#src-order')
+  if (list) list.innerHTML = sourceOrderHtml()
+  if (api.liveSourceOrder()[0] !== before) reloadLiveSource()
+}
+
+/** Lignes de l'ordre des sources (réglages) : rang, nom, monter, descendre. */
+function sourceOrderHtml() {
+  const order = api.liveSourceOrder()
+  return order.map((id, i) => `<li data-src="${id}">
+      <span class="src-rank">${i + 1}</span><span class="src-name">${esc(t(`src_${id}`))}</span>
+      <button class="icon-btn sm" type="button" data-action="src-up" title="${esc(t('src_up'))}" aria-label="${esc(t('src_up'))}" ${i === 0 ? 'disabled' : ''}>${icon('chevronUp', 18)}</button>
+      <button class="icon-btn sm" type="button" data-action="src-down" title="${esc(t('src_down'))}" aria-label="${esc(t('src_down'))}" ${i === order.length - 1 ? 'disabled' : ''}>${icon('chevronDown', 18)}</button>
+    </li>`).join('')
+}
+
+actions['src-up'] = (e) => moveLiveSource(e.target.closest('[data-src]')?.dataset.src, -1)
+actions['src-down'] = (e) => moveLiveSource(e.target.closest('[data-src]')?.dataset.src, 1)
+actions['src-reset'] = () => setLiveSourceOrder([...api.LIVE_SOURCES])
+
+/** Le direct en cours repart par l'ordre des sources. */
+async function reloadLiveSource() {
   const w = state.watch
   if (w?.kind !== 'live') return
   const links = await api.getLive(w.login).catch(() => null)
@@ -2871,12 +2908,11 @@ function openSettings() {
     <div class="sheet-section">
       <h3>${esc(t('player_settings'))}</h3>
       ${toggle('set-clickpause', t('click_pause'), p.clickPause !== false, t('click_pause_sub'))}
-      <label class="setting setting-col">
-        <span class="setting-text"><span>${esc(t('live_source'))}</span><small>${esc(t('live_source_sub'))}</small></span>
-        <select class="text-input" id="set-source">
-          ${api.LIVE_SOURCES.map((id) => `<option value="${id}" ${(p.liveSource || 'auto') === id ? 'selected' : ''}>${esc(t(`src_${id}`))}</option>`).join('')}
-        </select>
-      </label>
+      <div class="setting setting-col">
+        <span class="setting-text"><span>${esc(t('live_source_order'))}</span><small>${esc(t('live_source_order_sub'))}</small></span>
+        <ol class="src-order" id="src-order">${sourceOrderHtml()}</ol>
+        <button class="btn ghost sm src-reset" type="button" data-action="src-reset">${esc(t('src_reset'))}</button>
+      </div>
     </div>
     <div class="sheet-section">
       <h3>${esc(t('push_title'))}</h3>
@@ -2979,7 +3015,6 @@ function openSettings() {
     }
     if (id === 'import-file') { importData(e.target.files?.[0]); e.target.value = ''; return }
     if (id === 'set-clickpause') p.clickPause = e.target.checked
-    if (id === 'set-source') { switchLiveSource(e.target.value); return }
     if (id === 'set-homelist') { p.homeList = e.target.checked; store.savePrefs(); applyLayout(); return }
     if (id === 'set-recent') { p.showRecent = e.target.checked; store.savePrefs(); renderRecentChannels(); return }
     if (id === 'set-toplang') {

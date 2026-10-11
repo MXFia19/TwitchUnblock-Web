@@ -33,7 +33,7 @@ Watch Twitch lives and VODs in your browser, no subscription needed, with the re
 - Quality picker, including “Auto”, which shows the bitrate actually in use
 - Playback speed, ±10 s, double-tap on mobile, keyboard shortcuts
 - Picture in picture, “back to live” button, live latency
-- **Ad-free lives, from the source you pick**: Luminous Asia, an Albania proxy (TTV.LOL) and Luminous Europe, tried in that order — or official Twitch, with ads. Change it in the settings or right from the ⚙ menu, which shows the one in use; if it doesn't answer, the others take over
+- **Ad-free lives, in the source order you pick**: Luminous Asia, an Albania proxy (TTV.LOL), Luminous Europe and official Twitch (with ads), tried one after the other until one answers. Reorder them in Settings → Player; picking a source from the player's ⚙ menu (which shows the one in use) moves it to the top. Channels that stream with multiple encodes (Enhanced Broadcasting) keep each quality's own name on every source
 - **Theatre mode** (T), keyboard shortcuts anywhere on the page (? lists them)
 - **VOD chapters**: game changes marked on the progress bar
 - **Muted parts**: passages Twitch muted for copyrighted music show in orange on the progress bar, with a notice and a **Skip** button. For a day or two after a stream, Twitch's CDN still serves the original sound: the site loads it instead, automatically
@@ -66,7 +66,7 @@ Watch Twitch lives and VODs in your browser, no subscription needed, with the re
 - French, English, Spanish and Russian — follows your device language by default. The Russian translation was made with AI: the settings say so, with a button to report a mistake
 - **Twitch-style links**: replace `twitch.tv` with the site's address — `/xqc`, `/xqc/clips`, `/xqc/about`, `/videos/123?t=1h2m3s`, `/directory/category/just-chatting` — and the browser's back/forward buttons move between pages
 - Streams, VODs, clips, categories and channels are real links: middle-click or Ctrl/Cmd + click opens them in a new tab
-- **Bug reports & ideas** from the top bar, the settings or the player, screenshots included (pick them or paste with Ctrl+V). **My reports** shows where each one stands (received, accepted, in progress, done, declined) and the developer's reply, and lets you answer back — updated on its own
+- **Bug reports & ideas** from the top bar, the settings or the player, screenshots included (pick them or paste with Ctrl+V). **My reports** shows where each one stands (received, seen, accepted, in progress, done, declined) and the developer's reply, and lets you answer back — updated on its own
 - **Switch account** in the settings; after logging out, Twitch asks which account to use instead of signing the old one back in
 - History and progress synced across devices when logged in
 - **Live notifications**: a notification when a channel you follow goes live, even with the site closed (Settings → Notifications, with a test button). On iPhone and iPad, add the site to the Home Screen first (iOS 16.4 or later)

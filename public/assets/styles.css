@@ -1067,6 +1067,7 @@ html.multi-open { overflow: hidden; }
 .fb-status.progress { background: rgba(230, 230, 25, 0.14); color: #fde68a; }
 .fb-status.done { background: rgba(0, 200, 120, 0.16); color: #86efac; }
 .fb-status.refused { background: rgba(255, 79, 77, 0.14); color: #fca5a5; }
+.fb-status.seen { background: rgba(145, 70, 255, 0.16); color: var(--purple); }
 .sheet-head h2 .fb-kind, .sheet-head h2 .fb-status { font-size: 12px; }
 .fb-chat { display: flex; flex-direction: column; gap: 8px; max-height: min(52vh, 460px); overflow-y: auto; padding: 2px 2px 8px; }
 .fb-bubble { max-width: 85%; align-self: flex-start; padding: 8px 12px; border-radius: 14px; background: var(--card); border: 1px solid var(--line); font-size: 14px; white-space: pre-wrap; overflow-wrap: anywhere; }
@@ -1229,3 +1230,11 @@ html.touring { overflow: hidden; }
 .cat-head .follow-local { margin-left: auto; }
 .load-more { display: flex; justify-content: center; margin: 22px 0 0; }
 @media (max-width: 520px) { .cat-grid { grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 14px 10px; } }
+
+/* Ordre des sources du direct (réglages → Lecteur) */
+.src-order { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.src-order li { display: flex; align-items: center; gap: 10px; padding: 3px 4px 3px 10px; border-radius: var(--r-control); background: var(--surface); }
+.src-order .src-rank { flex: none; width: 22px; height: 22px; border-radius: 999px; display: grid; place-items: center; font-size: 12px; font-weight: 700; background: rgba(145, 70, 255, 0.2); color: var(--purple); }
+.src-order .src-name { flex: 1; min-width: 0; font-size: 14px; }
+.src-order .icon-btn[disabled] { opacity: 0.3; cursor: default; }
+.src-reset { align-self: flex-start; margin-top: 8px; }
