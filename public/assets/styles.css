@@ -1247,3 +1247,11 @@ html.touring { overflow: hidden; }
 .expert-row .text-input { flex: 1; min-width: 0; }
 .expert-reset { align-self: flex-start; margin-top: 6px; }
 #worker-status:empty { display: none; }
+
+/* Chat : modes du salon et règles à accepter */
+.chat-modes { display: flex; flex-wrap: wrap; gap: 4px; padding: 0 2px 6px; }
+.chat-mode { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 999px; font-size: 11.5px; font-weight: 600; color: #fde68a; background: rgba(230, 230, 25, 0.12); }
+.chat-rules { margin: 0 0 8px; padding: 12px; border-radius: var(--r-control); background: var(--card-hi); border: 1px solid var(--line-strong); font-size: 13px; max-height: 45vh; overflow-y: auto; }
+.chat-rules b { display: block; margin-bottom: 6px; }
+.chat-rules .rule { margin: 3px 0; white-space: pre-wrap; }
+.chat-rules-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; }

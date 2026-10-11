@@ -14,8 +14,34 @@ import { parseBadgeTag } from './badges.js'
 import { emoteCatalog, suggestEmotes } from './emotes.js'
 import { linkifyHtml, plainText, systemMessage } from './message.js'
 import { clipSlugFrom, gql } from '../api.js'
-import { t } from '../i18n.js'
+import { lang, t } from '../i18n.js'
 import { $, debounce, esc, formatClock, icon, toast } from '../util.js'
+
+/** « 10 min », « 24 h », « 7 j » dans la langue du site. */
+function durationLabel(min) {
+  const [n, unit] = min >= 1440 && min % 1440 === 0 ? [min / 1440, 'day']
+    : min >= 60 && min % 60 === 0 ? [min / 60, 'hour'] : [min, 'minute']
+  try { return new Intl.NumberFormat(lang(), { style: 'unit', unit, unitDisplay: 'short' }).format(n) } catch { return `${min} min` }
+}
+
+// Règles du chat acceptées, par chaîne (redemandées si elles changent) ;
+// en mémoire aussi, quand le navigateur refuse le stockage.
+const RULES_KEY = 'tu_chat_rules'
+const rulesMem = new Map()
+function rulesAccepted(channel, rules) {
+  const text = rules.join('\n')
+  if (rulesMem.get(channel) === text) return true
+  try { return (JSON.parse(localStorage.getItem(RULES_KEY) || '{}') || {})[channel] === text } catch { return false }
+}
+function acceptRules(channel, rules) {
+  const text = rules.join('\n')
+  rulesMem.set(channel, text)
+  try {
+    const all = JSON.parse(localStorage.getItem(RULES_KEY) || '{}') || {}
+    all[channel] = text
+    localStorage.setItem(RULES_KEY, JSON.stringify(all))
+  } catch {}
+}
 
 const MAX_NODES = 300
 
@@ -81,6 +107,8 @@ export class ChatView {
           <div class="emote-grid"></div>
         </div>
         <div class="chat-replying" hidden><span></span><button class="icon-btn xs" type="button">${icon('x', 14)}</button></div>
+        <div class="chat-rules" hidden role="dialog"></div>
+        <div class="chat-modes" hidden></div>
         <div class="chat-input-row">
           <input class="chat-input" type="text" maxlength="500" autocomplete="off" enterkeyhint="send" spellcheck="true">
           <button class="icon-btn sm chat-emote-btn" type="button" data-i18n-title="emotes">${icon('smile', 20)}</button>
@@ -108,6 +136,8 @@ export class ChatView {
       login: $('.chat-login', this.root),
       card: $('.user-card', this.root),
       inputRow: $('.chat-input-row', this.root),
+      modes: $('.chat-modes', this.root),
+      rules: $('.chat-rules', this.root),
       pinned: $('.chat-pinned', this.root),
       pinBtn: $('.pin-chip', this.root),
       events: $('.chat-events', this.root),
@@ -202,6 +232,65 @@ export class ChatView {
     })
     this.client.start()
     this.startPinned(channel)
+    this.loadChatSettings(channel)
+  }
+
+  // ── Modes du salon et règles ───────────────────────────────────────────
+  /** Règles et modes du chat (GQL public) : on sait avant d'écrire qui peut
+   *  écrire, et les règles s'acceptent avant le premier message. */
+  async loadChatSettings(channel) {
+    try {
+      const data = await gql(`query($l: String!) { user(login: $l) { chatSettings { rules followersOnlyDurationMinutes
+        isSubscribersOnlyModeEnabled isEmoteOnlyModeEnabled slowModeDurationSeconds requireVerifiedAccount isUniqueChatModeEnabled } } }`, { l: channel })
+      const cs = data?.user?.chatSettings
+      if (!cs || this.channel !== channel || this.mode !== 'live') return
+      this.rules = (cs.rules ?? []).map((r) => String(r).trim()).filter(Boolean)
+      this.renderModes({
+        ...this.modes,
+        followers: cs.followersOnlyDurationMinutes ?? null,
+        subs: Boolean(cs.isSubscribersOnlyModeEnabled),
+        emotes: Boolean(cs.isEmoteOnlyModeEnabled),
+        slow: cs.slowModeDurationSeconds || 0,
+        unique: Boolean(cs.isUniqueChatModeEnabled),
+        verified: Boolean(cs.requireVerifiedAccount),
+      })
+    } catch {}
+  }
+
+  /** Modes qui limitent qui peut écrire, au-dessus du champ. */
+  renderModes(m) {
+    this.modes = m
+    const chips = []
+    if (m.followers != null) chips.push(['users', m.followers > 0 ? t('chat_mode_followers_min', { d: durationLabel(m.followers) }) : t('chat_mode_followers')])
+    if (m.subs) chips.push(['sparkles', t('chat_mode_subs')])
+    if (m.emotes) chips.push(['smile', t('chat_mode_emotes')])
+    if (m.slow > 0) chips.push(['clock', t('chat_mode_slow', { s: m.slow })])
+    if (m.unique) chips.push(['copy', t('chat_mode_unique')])
+    if (m.verified) chips.push(['check', t('chat_mode_verified')])
+    this.el.modes.innerHTML = chips.map(([ic, label]) => `<span class="chat-mode">${icon(ic, 12)}<span>${esc(label)}</span></span>`).join('')
+    this.el.modes.hidden = !chips.length
+  }
+
+  /** Règles de la chaîne, à accepter avant d'écrire (comme sur Twitch) :
+   *  acceptées, le message en attente dans le champ part. */
+  showRules() {
+    const box = this.el.rules
+    box.innerHTML = `<b>${esc(t('chat_rules_title', { c: this.channel }))}</b>
+      ${this.rules.map((r) => `<p class="rule">${esc(r)}</p>`).join('')}
+      <div class="chat-rules-actions">
+        <button class="btn ghost sm" type="button" data-rules="no">${esc(t('cancel'))}</button>
+        <button class="btn primary sm" type="button" data-rules="yes">${esc(t('chat_rules_accept'))}</button>
+      </div>`
+    box.hidden = false
+    box.onclick = (e) => {
+      const b = e.target.closest('[data-rules]')
+      if (!b) return
+      box.hidden = true
+      if (b.dataset.rules === 'yes') {
+        acceptRules(this.channel, this.rules)
+        this.submit()
+      }
+    }
   }
 
   // ── Message épinglé ────────────────────────────────────────────────────
@@ -409,6 +498,9 @@ export class ChatView {
   }
 
   close() {
+    this.rules = []
+    this.renderModes({})
+    this.el.rules.hidden = true
     clearInterval(this.pinTimer)
     clearTimeout(this.pinExpiry)
     clearInterval(this.raidTimer)
@@ -495,6 +587,22 @@ export class ChatView {
         this.el.empty.textContent = t('chat_vod_empty')
         this.el.empty.hidden = false
         break
+      case 'modes':
+        this.renderModes({ ...this.modes, ...payload })
+        break
+      case 'rejected': {
+        // Message refusé par Twitch : retiré du chat, la raison à sa place.
+        if (payload.id) {
+          for (const n of this.el.list.querySelectorAll(`[data-id="${CSS.escape(payload.id)}"]`)) n.remove()
+          this.messages = this.messages.filter((m) => m.id !== payload.id)
+          // Pas encore affiché : retiré de la file aussi.
+          this.queue = (this.queue ?? []).filter((m) => m.id !== payload.id)
+          this.delayed = this.delayed.filter((d) => d.msg.id !== payload.id)
+        }
+        const f = this.modes.followers
+        this.enqueue(systemMessage(t(payload.key, { d: f > 0 ? durationLabel(f) : '', t: payload.text })))
+        break
+      }
     }
   }
 
@@ -719,6 +827,11 @@ export class ChatView {
   submit() {
     const text = this.el.input.value.trim()
     if (!text || !this.client?.send) return
+    // Règles du chat pas encore acceptées : elles d'abord.
+    if (this.mode === 'live' && this.rules?.length && !rulesAccepted(this.channel, this.rules)) {
+      this.showRules()
+      return
+    }
     if (this.client.send(text, this.replyTo?.id)) {
       this.el.input.value = ''
       this.setReply(null)

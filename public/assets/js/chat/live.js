@@ -14,6 +14,18 @@ import { loadChannelBadges, loadGlobalBadges } from './badges.js'
 import { loadChannelEmotes, loadGlobalEmotes } from './emotes.js'
 
 const IRC_URL = 'wss://irc-ws.chat.twitch.tv:443'
+
+/** Refus de Twitch (msg-id d'un NOTICE) → raison traduite. */
+const REJECTIONS = {
+  msg_followersonly: 'chat_rej_followers', msg_followersonly_zero: 'chat_rej_followers',
+  msg_followersonly_followed: 'chat_rej_followers_time',
+  msg_subsonly: 'chat_rej_subs', msg_emoteonly: 'chat_rej_emotes', msg_slowmode: 'chat_rej_slow',
+  msg_r9k: 'chat_rej_unique', msg_duplicate: 'chat_rej_duplicate',
+  msg_verified_email: 'chat_rej_verified', msg_requires_verified_phone_number: 'chat_rej_verified',
+  msg_timedout: 'chat_rej_timeout', msg_banned: 'chat_rej_banned',
+  msg_rejected: 'chat_rej_automod', msg_rejected_mandatory: 'chat_rej_automod',
+  msg_ratelimit: 'chat_rej_ratelimit', msg_channel_suspended: 'chat_rej_suspended', msg_suspended: 'chat_rej_suspended',
+}
 const CAPS = 'twitch.tv/tags twitch.tv/commands twitch.tv/membership'
 
 export class LiveChat {
@@ -40,6 +52,10 @@ export class LiveChat {
     this.canSend = false
     this.present = new Set()
     this.myColor = null
+    /** Modes du salon (ROOMSTATE) : followers, abonnés, emotes, lent, uniques. */
+    this.modes = {}
+    /** Dernier message envoyé, affiché d'avance : retiré si Twitch le refuse. */
+    this.lastSelf = null
   }
 
   async start() {
@@ -137,8 +153,21 @@ export class LiveChat {
     if (replyParentId && !/^[0-9a-f-]{36}$/i.test(replyParentId)) replyParentId = null
     const prefix = replyParentId ? `@reply-parent-msg-id=${replyParentId} ` : ''
     this.ws.send(`${prefix}PRIVMSG #${this.o.channel} :${body}`)
-    this.emit('add', selfMessage(body, this.o.login ?? '', this.myColor))
+    const msg = selfMessage(body, this.o.login ?? '', this.myColor)
+    this.lastSelf = { id: msg.id, at: Date.now() }
+    this.emit('add', msg)
     return true
+  }
+
+  /** ROOMSTATE (complet à l'arrivée, puis ce qui change) → modes du salon. */
+  applyModes(tags) {
+    const m = this.modes
+    if (tags['followers-only'] != null) { const n = Number(tags['followers-only']); m.followers = n < 0 ? null : n }
+    if (tags['subs-only'] != null) m.subs = tags['subs-only'] === '1'
+    if (tags['emote-only'] != null) m.emotes = tags['emote-only'] === '1'
+    if (tags.slow != null) m.slow = Number(tags.slow) || 0
+    if (tags.r9k != null) m.unique = tags.r9k === '1'
+    this.emit('modes', { ...m })
   }
 
   handle(line) {
@@ -153,6 +182,7 @@ export class LiveChat {
       case 'ROOMSTATE':
         // Arrive juste après le JOIN : c'est le vrai signal « on est dedans ».
         this.emit('status', 'connected')
+        this.applyModes(irc.tags)
         break
       case 'GLOBALUSERSTATE':
         this.myColor = irc.tags.color || null
@@ -188,6 +218,17 @@ export class LiveChat {
           this.emit('status', 'auth-failed')
           this.ws?.close()
           return
+        }
+        // Message refusé (mode followers, abonnés, lent…) : il sort du chat,
+        // où il était affiché d'avance comme envoyé, et la raison s'affiche
+        // dans la langue du site.
+        const msgId = irc.tags['msg-id'] || ''
+        const key = REJECTIONS[msgId] || (msgId.startsWith('msg_') ? 'chat_rej_generic' : null)
+        if (key) {
+          const recent = this.lastSelf && Date.now() - this.lastSelf.at < 20_000 ? this.lastSelf.id : null
+          this.lastSelf = null
+          this.emit('rejected', { key, text: text ?? '', id: recent })
+          break
         }
         if (text) this.emit('add', systemMessage(text))
         break

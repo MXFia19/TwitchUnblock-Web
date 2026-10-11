@@ -58,6 +58,7 @@ Watch Twitch lives and VODs in your browser, no subscription needed, with the re
 - **Predictions** live (read-only), incoming **raids** and **announcements** highlighted
 - Your name and **chosen words highlighted**; **filters**: hide bots, `!commands`, muted words, hide someone
 - Chat once logged in: emote and username autocomplete, emote picker, replies
+- **Chat restrictions said upfront**: the room's modes above the message box (followers only and for how long, subscribers only, emotes only, slow mode, verified account…), the channel's chat rules to accept before your first message, and a message Twitch refuses removed with the reason, instead of looking sent
 - Click someone to see their latest messages, mention them or reply
 - Moderation honoured: deleted messages struck through or removed
 - Scrolling pauses when you scroll up, with a “new messages” button
