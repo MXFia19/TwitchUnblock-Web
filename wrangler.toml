@@ -6,9 +6,10 @@ compatibility_date = "2024-01-01"
 # `main` effaçait celles de type « Texte » (les « Secrets », eux, restent).
 keep_vars = true
 
-# Notifications de live du site (Web Push) : un passage toutes les 2 minutes.
+# Notifications de live du site (Web Push) : un passage par minute (lives lus
+# une minute sur deux, envois à chaque fois).
 [triggers]
-crons = ["*/2 * * * *"]
+crons = ["* * * * *"]
 
 [observability]
 enabled = false

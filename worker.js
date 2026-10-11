@@ -1744,15 +1744,20 @@ function applyEnvConfig(env) {
 //  qui vient de démarrer met une notification en file pour chacun de ceux qui
 //  la suivent. Envoi chiffré (RFC 8291, aes128gcm) et signé (VAPID, RFC 8292).
 //
-//  Coût : une exécution toutes les 2 minutes, quel que soit le nombre
-//  d'abonnés ; au plus 50 requêtes sortantes par exécution sur l'offre
-//  gratuite, d'où la file : ce qui ne part pas tout de suite part à la
-//  suivante. Les clés VAPID sont créées au premier besoin et gardées en D1.
+//  Coût : une exécution par minute (la détection une minute sur deux), quel
+//  que soit le nombre d'abonnés. L'offre gratuite borne chaque exécution
+//  (~10 ms de calcul, 50 requêtes sortantes) et un envoi coûte ~0,7 ms : la
+//  file étale les envois (~480 par heure), le reste part aux suivantes.
+//  Les clés VAPID sont créées au premier besoin et gardées en D1.
 // ═══════════════════════════════════════════════════════════════════════════
 const PUSH_HOSTS = /(^|\.)(push\.apple\.com|fcm\.googleapis\.com|android\.googleapis\.com|push\.services\.mozilla\.com|notify\.windows\.com)$/;
 const PUSH_MAX_CHANNELS = 500;
 const PUSH_GQL_PER_RUN = 12;      // 1 200 chaînes vérifiées par passage
-const PUSH_SENDS_PER_RUN = 30;
+// Offre gratuite : ~10 ms de calcul par exécution, et chaque envoi coûte
+// un échange de clés et un chiffrement (~0,7 ms). Moins d'envois quand la
+// même exécution a déjà lu les lives.
+const PUSH_SENDS_PER_RUN = 12;
+const PUSH_SENDS_WITH_CHECK = 4;
 const PUSH_QUEUE_TTL = 30 * 60 * 1000;
 const PUSH_TEXT = {
     fr: { live: (n) => `${n} est en live`, test: 'Les notifications de live fonctionnent.' },
@@ -1803,18 +1808,26 @@ async function vapidKeys(env) {
     return keys;
 }
 
-/** En-tête Authorization VAPID : jeton signé pour le service de push visé. */
+/** En-tête Authorization VAPID : jeton signé pour le service de push visé,
+ *  valable 12 h — réutilisé 11 h pour tous ses abonnés (une signature de
+ *  moins par envoi). */
+const vapidJwts = new Map();   // origine du service de push → { value, until }
 async function vapidAuthorization(endpoint, keys) {
+    const aud = new URL(endpoint).origin;
+    const hit = vapidJwts.get(aud);
+    if (hit && hit.until > Date.now() && hit.pub === keys.pub) return hit.value;
     const enc = new TextEncoder();
     const header = b64u.enc(enc.encode(JSON.stringify({ typ: 'JWT', alg: 'ES256' })));
     const claims = b64u.enc(enc.encode(JSON.stringify({
-        aud: new URL(endpoint).origin,
+        aud,
         exp: Math.floor(Date.now() / 1000) + 12 * 3600,
         sub: 'https://twitchunblock.vercel.app',
     })));
     const key = await crypto.subtle.importKey('jwk', keys.jwk, { name: 'ECDSA', namedCurve: 'P-256' }, false, ['sign']);
     const sig = await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, key, enc.encode(`${header}.${claims}`));
-    return `vapid t=${header}.${claims}.${b64u.enc(sig)}, k=${keys.pub}`;
+    const value = `vapid t=${header}.${claims}.${b64u.enc(sig)}, k=${keys.pub}`;
+    vapidJwts.set(aud, { value, pub: keys.pub, until: Date.now() + 11 * 3600 * 1000 });
+    return value;
 }
 
 async function hkdf(salt, ikm, info, length) {
@@ -1953,16 +1966,24 @@ async function handlePushTest(request, env) {
     return status >= 200 && status < 300 ? jsonResponse({ ok: true }) : jsonError(`Service de push : ${status}`, 502);
 }
 
-/** Passage planifié : lives démarrés → file d'attente → envois. */
+/** Passage planifié (chaque minute) : une minute sur deux, lives démarrés
+ *  → file d'attente ; à chaque fois, envois. */
 async function pushTick(env) {
     if (!env.DB) return;
     await ensureSchema(env);
     const db = env.DB;
     const now = Date.now();
-    let outgoing = 0;
+    const check = Math.floor(now / 60000) % 2 === 0;
+    if (check) await pushCheckLives(env, now);
+    await pushSend(env, check ? PUSH_SENDS_WITH_CHECK : PUSH_SENDS_PER_RUN);
+}
 
-    // 1) Qui est en live, parmi les chaînes suivies (par tranches, à tour de
-    //    rôle au-delà de PUSH_GQL_PER_RUN × 100 chaînes).
+/** Lives démarrés parmi les chaînes suivies → notifications en file. */
+async function pushCheckLives(env, now) {
+    const db = env.DB;
+
+    // Qui est en live, parmi les chaînes suivies (par tranches, à tour de
+    // rôle au-delà de PUSH_GQL_PER_RUN × 100 chaînes).
     const rows = (await db.prepare('SELECT login, stream FROM push_live').all()).results || [];
     const known = new Map(rows.map((r) => [r.login, r.stream]));
     const logins = [...known.keys()];
@@ -1972,7 +1993,6 @@ async function pushTick(env) {
     const started = [];
     for (let k = 0; k < Math.min(batches, PUSH_GQL_PER_RUN); k++) {
         const slice = logins.slice(((first + k) % batches) * 100, ((first + k) % batches) * 100 + 100);
-        outgoing++;
         let users = [];
         try {
             const data = await twitchGQL(`query($logins: [String!]) { users(logins: $logins) {
@@ -2005,10 +2025,11 @@ async function pushTick(env) {
     }
     writes.push(db.prepare('DELETE FROM push_queue WHERE at < ?1').bind(now - PUSH_QUEUE_TTL));
     await db.batch(writes);
+}
 
-    // 2) Envois, dans la limite des requêtes sortantes d'une exécution.
-    const room = Math.max(0, Math.min(PUSH_SENDS_PER_RUN, 45 - outgoing));
-    if (!room) return;
+/** Envois en attente, `room` au plus. */
+async function pushSend(env, room) {
+    const db = env.DB;
     const queue = (await db.prepare(`SELECT q.id, q.body, s.id AS sid, s.endpoint, s.p256dh, s.auth, s.lang
         FROM push_queue q JOIN push_subs s ON s.id = q.sub ORDER BY q.id LIMIT ?1`).bind(room).all()).results || [];
     if (!queue.length) {

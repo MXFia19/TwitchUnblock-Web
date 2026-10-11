@@ -127,7 +127,7 @@ Video always goes through the Worker — or through your own [video relay](#vide
 
 The iOS app uses the same Worker.
 
-**Live notifications** (Web Push): the browser subscribes with its push service (Apple, Google, Mozilla, Microsoft) and hands the Worker its delivery address, its keys and the followed channels. Every 2 minutes (Cron Trigger), the Worker asks Twitch which of them are live — 100 channels per GQL request — and a channel that just went live queues a notification for each of its followers, sent encrypted (RFC 8291) and signed (VAPID, keys created on first use and kept in D1). One run every 2 minutes whatever the number of subscribers; at most 50 outgoing requests per run on the free plan, so notifications wait in a queue for the next run when there are many. Expired subscriptions are forgotten.
+**Live notifications** (Web Push): the browser subscribes with its push service (Apple, Google, Mozilla, Microsoft) and hands the Worker its delivery address, its keys and the followed channels. Every 2 minutes (Cron Trigger, every minute with the check every other one), the Worker asks Twitch which of them are live — 100 channels per GQL request — and a channel that just went live queues a notification for each of its followers, sent encrypted (RFC 8291) and signed (VAPID, keys created on first use and kept in D1). The number of runs doesn't depend on the number of subscribers. On the free plan a run gets about 10 ms of CPU and a notification costs about 0.7 ms, so they leave from a queue, about 480 an hour; the $5 plan lifts that. Expired subscriptions are forgotten.
 
 ### Security
 - **History backups are private**: every read or write must carry the owner's Twitch token. The Worker has Twitch confirm it and checks it belongs to that account — knowing someone's (public) Twitch ID is no longer enough.
@@ -190,7 +190,7 @@ Optional settings, in the Cloudflare dashboard under *Workers & Pages → your W
 | `ADMIN_TWITCH_IDS` | Text | Twitch user ID(s) of the site owner, comma-separated, for the developer tools on `/stats`. |
 | `SITE_ORIGINS` | Text | Website address(es) whose usage pings are counted, comma-separated. |
 
-`wrangler.toml` sets `keep_vars = true`, so deploying again doesn't wipe the ones set in the dashboard. It also declares the Cron Trigger that checks lives every 2 minutes for the notifications (nothing to set up).
+`wrangler.toml` sets `keep_vars = true`, so deploying again doesn't wipe the ones set in the dashboard. It also declares the Cron Trigger (every minute) behind the live notifications — nothing to set up.
 
 ### Fallback Worker (daily limit)
 
@@ -336,7 +336,7 @@ Settings (in `docker-compose.yml`):
 | `TWITCH_CLIENT_ID` | Optional. To log in with Twitch, create an app on [dev.twitch.tv/console](https://dev.twitch.tv/console) with `PUBLIC_URL/` as the redirect URL, and paste its Client ID. |
 | `ADMIN_TWITCH_IDS` | Optional. Your Twitch user ID(s), comma-separated, for the developer tools on `/stats`. |
 
-Live notifications work too: the container runs the 2-minute check itself.
+Live notifications work too: the container runs the scheduled check itself.
 
 Data lives in the `twitchunblock-data` volume. Watching lives, VODs and clips,
 the chat (read-only without login), categories and device follows all work
