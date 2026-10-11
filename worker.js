@@ -1803,9 +1803,11 @@ function applyEnvConfig(env) {
 //  ntfy.sh gratuit : 250 messages par jour et par adresse IP. Or les Workers
 //  sortent tous par les mêmes adresses, déjà à court : ntfy.sh leur répond
 //  429. Avec la variable NTFY_RELAY, les messages partent donc du relais du
-//  VPS (docker/relay.mjs), en un lot signé par la clé VAPID de ce Worker. Le
-//  secret facultatif NTFY_TOKEN (offre payante de ntfy, comptée par compte et
-//  non par adresse) fait publier en direct, comme l'image Docker.
+//  VPS (docker/relay.mjs), en un lot signé par la clé VAPID de ce Worker ;
+//  relais en panne, ils attendent (pas d'envoi direct, refusé de toute
+//  façon). Le secret facultatif NTFY_TOKEN (offre payante de ntfy, comptée
+//  par compte et non par adresse) fait publier en direct, comme l'image
+//  Docker.
 // ═══════════════════════════════════════════════════════════════════════════
 const PUSH_HOSTS = /(^|\.)(push\.apple\.com|fcm\.googleapis\.com|android\.googleapis\.com|push\.services\.mozilla\.com|notify\.windows\.com)$/;
 const PUSH_MAX_CHANNELS = 500;
@@ -1985,17 +1987,19 @@ function readNtfySubscription(body) {
 
 const ntfyTopic = (sub) => sub.endpoint.slice(NTFY_URL.length + 1);
 
-/** Messages ntfy ({ topic, title, message, click, tags }) : par le relais
- *  (NTFY_RELAY, sans NTFY_TOKEN), sinon en direct. Pour chacun, dans
- *  l'ordre : { status } de ntfy.sh (0 : injoignable) et, pour un 429, son
- *  code d'erreur (`code`). */
+/** Voie des messages ntfy : le relais (NTFY_RELAY, sans NTFY_TOKEN), sinon
+ *  en direct. */
+const ntfyRoute = (env) => (env.NTFY_RELAY && !env.NTFY_TOKEN ? 'relay' : 'direct');
+
+/** Messages ntfy ({ topic, title, message, click, tags }), par la voie de
+ *  ntfyRoute. Pour chacun, dans l'ordre : { status } de ntfy.sh (0 :
+ *  injoignable) et, pour un 429, son code d'erreur (`code`). Relais en
+ *  panne : 503 et sa raison (`relay`), sans envoi direct en secours —
+ *  depuis Cloudflare, ntfy.sh le refuserait, et sa pause bloquerait le
+ *  relais revenu. */
 async function sendNtfy(env, msgs) {
     msgs = msgs.map((m) => ({ priority: 4, ...m }));
-    if (env.NTFY_RELAY && !env.NTFY_TOKEN) {
-        const relayed = await ntfyViaRelay(env, msgs);
-        if (relayed) return relayed;
-        // Relais injoignable ou pas encore à jour : envoi direct.
-    }
+    if (ntfyRoute(env) === 'relay') return ntfyViaRelay(env, msgs);
     const out = [];
     for (const msg of msgs) {
         // À la suite, pas en rafale ; après un refus, le reste attend.
@@ -2020,8 +2024,9 @@ async function sendNtfy(env, msgs) {
 /** Lot confié au relais (POST NTFY_RELAY/ntfy), qui le publie depuis sa
  *  propre adresse. Jeton signé par la clé VAPID : empreinte du corps,
  *  5 minutes de validité ; le relais le vérifie avec la clé publique de ce
- *  Worker (/api/push/key). null si le relais ne répond pas comme prévu. */
+ *  Worker (/api/push/key). */
 async function ntfyViaRelay(env, msgs) {
+    let failure;
     try {
         const body = JSON.stringify({ messages: msgs });
         const sha = b64u.enc(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(body)));
@@ -2032,23 +2037,31 @@ async function ntfyViaRelay(env, msgs) {
             body,
         });
         const out = res.ok ? (await res.json().catch(() => null))?.results : null;
-        return Array.isArray(out) && out.length === msgs.length && out.every((r) => Number.isInteger(r?.status))
-            ? out : null;
+        if (Array.isArray(out) && out.length === msgs.length && out.every((r) => Number.isInteger(r?.status))) return out;
+        failure = res.ok ? 'réponse inattendue' : `HTTP ${res.status}`;
     } catch (e) {
-        return null;
+        failure = 'injoignable';
     }
+    console.warn('ntfy : relais en échec,', failure);
+    return msgs.map(() => ({ status: 503, code: 0, relay: failure }));
 }
 
-/** Refus de ntfy.sh (429) : envois ntfy en pause (voir NTFY_PAUSE). */
+/** Refus de ntfy.sh (429) : envois ntfy en pause (voir NTFY_PAUSE), pour la
+ *  voie refusée seulement (relais ou direct). */
 async function ntfyPause(env, code) {
     const now = Date.now();
     const until = code === NTFY_DAILY_QUOTA ? (Math.floor(now / 86400000) + 1) * 86400000 + 60000 : now + NTFY_PAUSE;
     await env.DB.prepare(`INSERT INTO kv (key, value) VALUES ('push_ntfy_pause', ?1)
-        ON CONFLICT(key) DO UPDATE SET value = excluded.value`).bind(String(until)).run();
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value`).bind(JSON.stringify({ until, via: ntfyRoute(env) })).run();
 }
 
-const ntfyPaused = async (env) =>
-    (Number(await env.DB.prepare(`SELECT value FROM kv WHERE key = 'push_ntfy_pause'`).first('value')) || 0) > Date.now();
+/** Fin de la pause sur la voie actuelle, 0 sans pause. */
+async function ntfyPausedUntil(env) {
+    const raw = await env.DB.prepare(`SELECT value FROM kv WHERE key = 'push_ntfy_pause'`).first('value');
+    let p = null;
+    try { p = JSON.parse(raw); } catch (e) {}
+    return p?.via === ntfyRoute(env) && p.until > Date.now() ? p.until : 0;
+}
 
 const pushLang = (l) => (PUSH_TEXT[l] ? l : 'en');
 
@@ -2115,14 +2128,17 @@ async function handlePushTest(request, env) {
     const text = PUSH_TEXT[pushLang(body.lang)];
     if (sub.kind === 'ntfy') {
         // `limit` : ntfy.sh refuse les messages pour l'instant (l'app le dit
-        // autrement qu'un serveur injoignable).
-        const refused = (detail) => new Response(JSON.stringify({ error: `ntfy.sh : ${detail}`, limit: true }),
+        // autrement qu'un serveur injoignable). `via` : relais ou direct.
+        const via = ntfyRoute(env);
+        const refused = (detail) => new Response(JSON.stringify({ error: `ntfy.sh : ${detail}`, limit: true, via }),
             { status: 502, headers: { ...RESPONSE_HEADERS, 'Content-Type': 'application/json' } });
         await ensureSchema(env);
-        if (await ntfyPaused(env)) return refused('pause après un refus (429)');
+        const paused = await ntfyPausedUntil(env);
+        if (paused) return refused(`pause jusqu'à ${new Date(paused).toISOString().slice(11, 16)} UTC après un refus (429)`);
         const [r] = await sendNtfy(env, [{ topic: ntfyTopic(sub), title: 'TwitchUnblock', message: text.test,
                                            click: 'twitchunblock://', tags: ['white_check_mark'] }]);
-        if (r.status >= 200 && r.status < 300) return jsonResponse({ ok: true });
+        if (r.status >= 200 && r.status < 300) return jsonResponse({ ok: true, via });
+        if (r.relay) return jsonError(`Relais ntfy : ${r.relay}`, 502);
         if (r.status !== 429) return jsonError(`ntfy.sh : ${r.status}`, 502);
         await ntfyPause(env, r.code);
         return refused(`429${r.code ? ` (${r.code})` : ''}`);
@@ -2197,7 +2213,7 @@ async function pushSend(env, room) {
     const db = env.DB;
     // ntfy en pause après un refus : ses messages attendent, sans retenir
     // ceux du site qui les suivent dans la file.
-    const ntfyOn = !(await ntfyPaused(env));
+    const ntfyOn = !(await ntfyPausedUntil(env));
     const rows = (await db.prepare(`SELECT q.id, q.body, s.id AS sid, s.kind, s.endpoint, s.p256dh, s.auth, s.lang
         FROM push_queue q JOIN push_subs s ON s.id = q.sub ${ntfyOn ? '' : `WHERE s.kind IS NOT 'ntfy'`}
         ORDER BY q.id LIMIT ?1`).bind(room + (ntfyOn ? PUSH_NTFY_PER_RUN : 0)).all()).results || [];
@@ -2228,7 +2244,7 @@ async function pushSend(env, room) {
     };
     // Envoyé, refusé pour de bon, ou injoignable : retiré de la file (un live
     // en retard de 30 minutes n'a plus d'intérêt). Refusé pour l'instant
-    // (429) : il attend le passage suivant.
+    // (429) ou relais en panne (503) : il attend le passage suivant.
     const ntfyRows = queue.filter((q) => q.kind === 'ntfy');
     const sendNtfyRows = async () => {
         if (!ntfyRows.length) return;
@@ -2237,7 +2253,7 @@ async function pushSend(env, room) {
             return { topic: ntfyTopic(q), title: n.title, message: n.body || n.title,
                      click: `twitchunblock://live/${n.live.login}`, tags: ['red_circle'] };
         }));
-        results.forEach((r, i) => { if (r.status !== 429) done.push(ntfyRows[i].id); });
+        results.forEach((r, i) => { if (r.status !== 429 && r.status !== 503) done.push(ntfyRows[i].id); });
         const refused = results.find((r) => r.status === 429);
         if (refused) await ntfyPause(env, refused.code);
     };

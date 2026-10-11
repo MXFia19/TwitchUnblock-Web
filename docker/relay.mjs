@@ -163,11 +163,18 @@ async function handleNtfy(req, res) {
   if (req.method !== 'POST') { res.writeHead(405); return res.end() }
   const body = await readBody(req, NTFY_BODY_MAX)
   if (!body) { res.writeHead(413); return res.end() }
-  if (!(await signedByWorker(req.headers.authorization, body))) { res.writeHead(403); return res.end('Bad signature') }
+  if (!(await signedByWorker(req.headers.authorization, body))) {
+    console.warn('ntfy : lot refusé (signature)')
+    res.writeHead(403)
+    return res.end('Bad signature')
+  }
   let messages
   try { messages = JSON.parse(body).messages } catch {}
   if (!Array.isArray(messages) || !messages.length || messages.length > NTFY_MAX) { res.writeHead(400); return res.end() }
   const results = await publishNtfy(messages)
+  const sent = results.filter((r) => r.status >= 200 && r.status < 300).length
+  const other = results.filter((r) => r.status < 200 || r.status >= 300).map((r) => r.code || r.status)
+  console.log(`ntfy : ${sent}/${results.length} publié(s)${other.length ? `, refus ${[...new Set(other)].join(' ')}` : ''}`)
   res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
   res.end(JSON.stringify({ results }))
 }
