@@ -18,6 +18,7 @@ Watch Twitch lives and VODs in your browser, no subscription needed, with the re
 - **Continue watching**: VODs you started, with their progress bar
 - Live durations and viewer counts kept up to date
 - **Stream tags** under every live (language, DropsEnabled…), like on Twitch
+- **Categories**: every game and the ones you follow, then the lives in each — filterable by language (all, or a single one), a choice kept for every category
 
 ### Streamer
 - Search with suggestions as you type

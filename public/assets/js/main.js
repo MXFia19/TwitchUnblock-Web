@@ -1002,14 +1002,23 @@ async function openCategory(c, { more = false } = {}) {
         <button class="btn ghost sm" type="button" data-action="cat-back">${icon('chevronLeft', 16)}<span>${esc(t('nav_categories'))}</span></button>
         ${c.box ? `<img class="cat-head-box" src="${esc(boxArt(c.box))}" alt="">` : ''}
         <h2>${esc(c.name)}</h2>
+        <label class="cat-lang" title="${esc(t('cat_lang'))}">${icon('globe', 15)}
+          <select id="cat-lang" aria-label="${esc(t('cat_lang'))}">${catLangOptions(store.prefs.catLang)}</select>
+        </label>
         <button class="btn ghost sm follow-local${on ? ' on' : ''}" type="button" data-action="cat-follow">${icon('heart', 15)}<span>${esc(t(on ? 'following' : 'follow'))}</span></button>
       </div>
       <div class="grid${store.prefs.homeList ? ' as-list' : ''}" id="cat-streams">${skeleton(8)}</div>
       <div class="load-more" id="cat-streams-more"></div>`
+    // Langue des lives : la même pour toutes les catégories ; la liste repart.
+    $('#cat-lang').addEventListener('change', (e) => {
+      store.prefs.catLang = e.target.value || null
+      store.savePrefs()
+      openCategory(c)
+    })
     window.scrollTo({ top: 0 })
   }
   try {
-    const page = await api.getCategoryStreams(c.id, more ? cat.streamsCursor : null)
+    const page = await api.getCategoryStreams(c.id, more ? cat.streamsCursor : null, catLangCode())
     if (cat.current !== c) return
     cat.streamsCursor = page.cursor
     const grid = $('#cat-streams')
@@ -3131,6 +3140,18 @@ function deviceTopLang() {
   return 'en'
 }
 const topLangCode = () => (TOP_LANGS.includes(store.prefs.topLang) ? store.prefs.topLang : deviceTopLang())
+/** Langue des lives dans les catégories ; null = toutes. */
+const catLangCode = () => (TOP_LANGS.includes(store.prefs.catLang) ? store.prefs.catLang : null)
+
+/** Choix de la langue d'une catégorie : toutes, celle de l'appareil, puis les autres. */
+function catLangOptions(current) {
+  const device = deviceTopLang()
+  const others = TOP_LANGS.filter((c) => c !== device).map((c) => [c, topLangName(c)])
+    .sort((a, b) => a[1].localeCompare(b[1], lang()))
+  return `<option value="">${esc(t('cat_lang_all'))}</option>`
+    + [[device, topLangName(device)], ...others]
+      .map(([c, n]) => `<option value="${c}" ${current === c ? 'selected' : ''}>${esc(n)}</option>`).join('')
+}
 function topLangName(code) {
   try {
     const n = new Intl.DisplayNames([lang()], { type: 'language' }).of(code === 'zh_hk' ? 'zh-HK' : code)

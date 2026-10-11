@@ -358,15 +358,18 @@ export async function getCategoriesByIds(ids) {
   return ids.map((_, i) => data?.[`g${i}`]).filter(Boolean).map(catFrom)
 }
 
-/** Lives d'une catégorie, par tranches de 30. { items, cursor } (voir servePage) */
-export async function getCategoryStreams(id, cursor = null) {
+/** Lives d'une catégorie, par tranches de 30, d'une seule langue si
+ *  `language` (« fr », « zh_hk »). { items, cursor } (voir servePage) */
+export async function getCategoryStreams(id, cursor = null, language = null) {
+  const helixLang = language ? `&language=${encodeURIComponent(language.toLowerCase().replace('_', '-'))}` : ''
   let page
   if (cursor?.rest?.length) page = servePage(cursor, 30)
-  else if (cursor) page = await helixMore(cursor, `streams?game_id=${encodeURIComponent(id)}`, streamFromHelix, (s) => s.login, 30)
+  else if (cursor) page = await helixMore(cursor, `streams?game_id=${encodeURIComponent(id)}${helixLang}`, streamFromHelix, (s) => s.login, 30)
   else {
-    const data = await gql(`query($id: ID!) { game(id: $id) { streams(first: 100) {
+    const data = await gql(`query($id: ID!, $langs: [Language!]) { game(id: $id) { streams(first: 100, options: { broadcasterLanguages: $langs }) {
       edges { node { title viewersCount createdAt previewImageURL(width: 440, height: 248) game { id displayName } freeformTags { name }
-        broadcaster { login displayName profileImageURL(width: 50) } } } pageInfo { hasNextPage } } } }`, { id })
+        broadcaster { login displayName profileImageURL(width: 50) } } } pageInfo { hasNextPage } } } }`,
+    { id, langs: language ? [language.toUpperCase().replace('-', '_')] : null })
     const items = (data?.game?.streams?.edges ?? []).map((e) => streamFromGQL(e.node)).filter((s) => s.login)
     page = servePage({ rest: items, seen: new Set(items.map((s) => s.login)), more: Boolean(data?.game?.streams?.pageInfo?.hasNextPage), after: null }, 30)
   }
