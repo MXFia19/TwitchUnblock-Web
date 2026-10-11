@@ -144,7 +144,7 @@ ntfy.sh's free tier counts messages per IP address (250 a day). Every Cloudflare
 
 ## Usage count
 
-To know whether people actually use the website and the app, each browser (and each app install) sends a small signal to the Worker at most once an hour. Numbers are public at **[/stats](https://twitchunblock.vercel.app/stats)**: unique people today, over 7 and 30 days (each one counted once per period), website vs iOS app, logged-in accounts vs anonymous, new vs returning people, active people per day, retention (back after 1, 7 and 14 days), live health (which source served each live, failures) and devices and languages.
+To know whether people actually use the website and the app, each browser (and each app install) sends a small signal to the Worker at most once an hour. Numbers are public at **[/stats](https://twitchunblock.vercel.app/stats)**: unique people today, over 7 and 30 days (each one counted once per period), website vs iOS app, logged-in accounts vs anonymous, new vs returning people, active people per day, retention (back after 1, 7 and 14 days), live health (which source served each live, failures), devices and languages, and live notifications.
 
 | Sent | Never sent |
 |---|---|
@@ -155,6 +155,8 @@ To know whether people actually use the website and the app, each browser (and e
 | How many lives and VODs were started since the last signal: which source served each live, and how many failed — counters only | |
 
 Not counted: automated browsers and bots, copies of the site outside the official domain, private windows that can't keep the ID, visits shorter than 15 s. Keys expire on their own after 35 days. Anyone can turn it off in the settings, which also deletes their entry from the server.
+
+**Live notifications** on `/stats` come from the Worker's own tables, not from the signal above: subscribers (website by push service — Apple, Google, Mozilla, Microsoft — and iOS app through ntfy), new ones today and over 7 days, channels watched and how many are live right now, notifications waiting, the ntfy route (relay or direct) with today's messages against ntfy.sh's 250 a day and any pause, and notifications sent per day with the last 7 days' totals (lives detected, tests, failures, refusals, expired subscriptions). Counts only: no channel name, nothing per subscriber.
 
 The site owner's Twitch account gets developer tools on `/stats` (delete entries, reset, erase someone's backup); the Worker checks the token on every admin request.
 

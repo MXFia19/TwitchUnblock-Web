@@ -924,6 +924,11 @@ async function handleStats(env) {
     const byDate = Object.fromEntries(activeDaily.map((d) => [d.date, d]));
     const health = { week: { ios: {}, web: {} }, month: { ios: {}, web: {} }, since: null };
     let activeSince = null;
+    // Notifications : envois réussis par jour (et le reste des compteurs).
+    const pushDaily = Object.keys(daily).map((date) => ({ date, ok_web: 0, ok_ntfy: 0 }));
+    const pushByDate = Object.fromEntries(pushDaily.map((d) => [d.date, d]));
+    const pushWeek = {};
+    let pushSince = null;
     try {
         await ensureSchema(env);
         const { results } = await env.DB.prepare(`SELECT day, metric, n FROM stats_day WHERE day >= ?1`).bind(dayKey(29)).all();
@@ -944,14 +949,75 @@ async function handleStats(env) {
                 const field = m === 'a' ? 'total' : m.slice(2);
                 if (field in d) d[field] += n;
                 if (m === 'a' && n > 0 && (!activeSince || r.day < activeSince)) activeSince = r.day;
+            } else if (m.startsWith('pu_')) {
+                const key = m.slice(3);
+                const d = pushByDate[r.day];
+                if (d) d[key] = (d[key] || 0) + n;
+                if (r.day >= weekStart) pushWeek[key] = (pushWeek[key] || 0) + n;
+                if (!pushSince || r.day < pushSince) pushSince = r.day;
             }
         }
     } catch (e) { console.warn('stats_day :', e.message); }
 
+    // Notifications de live : état du moment (abonnés, chaînes, file, ntfy)
+    // et compteurs du jour. Que des nombres : aucune chaîne, aucun abonné.
+    let push = null;
+    try {
+        const rows = (sql, ...args) => {
+            const st = env.DB.prepare(sql);
+            return (args.length ? st.bind(...args) : st).all().then((r) => r.results || []);
+        };
+        const [subs, services, channels, follows, queue, pauseRow] = await Promise.all([
+            rows(`SELECT kind, COUNT(*) AS n, SUM(created >= ?1) AS today, SUM(created >= ?2) AS week
+                  FROM push_subs GROUP BY kind`, todayMs, todayMs - 6 * 86400000),
+            // Service de push du navigateur, d'après l'adresse d'envoi.
+            rows(`SELECT CASE
+                    WHEN endpoint LIKE '%push.apple.com/%' THEN 'apple'
+                    WHEN endpoint LIKE '%googleapis.com/%' THEN 'google'
+                    WHEN endpoint LIKE '%push.services.mozilla.com/%' THEN 'mozilla'
+                    WHEN endpoint LIKE '%notify.windows.com/%' THEN 'microsoft'
+                    ELSE 'other' END AS svc, COUNT(*) AS n
+                  FROM push_subs WHERE kind IS NOT 'ntfy' GROUP BY svc`),
+            rows(`SELECT COUNT(*) AS n, SUM(stream IS NOT NULL AND stream != '?') AS live FROM push_live`),
+            rows(`SELECT COUNT(*) AS n FROM push_follow`),
+            rows(`SELECT s.kind, COUNT(*) AS n, MIN(q.at) AS oldest
+                  FROM push_queue q JOIN push_subs s ON s.id = q.sub GROUP BY s.kind`),
+            rows(`SELECT value FROM kv WHERE key = 'push_ntfy_pause'`),
+        ]);
+        const side = (r) => (r.kind === 'ntfy' ? 'ntfy' : 'web');
+        const kinds = Object.fromEntries(subs.map((r) => [side(r), r]));
+        const num = (v) => Number(v) || 0;
+        let pause = null;
+        try { pause = JSON.parse(pauseRow[0]?.value); } catch (e) {}
+        const route = ntfyRoute(env);
+        push = {
+            subs: { web: num(kinds.web?.n), ntfy: num(kinds.ntfy?.n),
+                    today: num(kinds.web?.today) + num(kinds.ntfy?.today),
+                    week: num(kinds.web?.week) + num(kinds.ntfy?.week) },
+            services: Object.fromEntries(services.map((r) => [r.svc, num(r.n)])),
+            channels: num(channels[0]?.n),
+            live: num(channels[0]?.live),
+            follows: num(follows[0]?.n),
+            queue: Object.fromEntries(queue.map((r) => [side(r), { n: num(r.n), oldest: num(r.oldest) }])),
+            ntfy: {
+                route,
+                // Quota de l'adresse qui publie (relais, ou serveur en
+                // direct) ; offre payante (NTFY_TOKEN) : le sien, inconnu ici.
+                quota: env.NTFY_TOKEN ? null : NTFY_FREE_DAILY,
+                sentToday: pushByDate[dayKey(0)]?.ok_ntfy || 0,
+                pausedUntil: pause?.via === route && pause.until > Date.now() ? pause.until : 0,
+                pauseCode: num(pause?.code),
+            },
+            daily: pushSince ? pushDaily.filter((d) => d.date >= pushSince) : [],
+            week: pushWeek,
+            since: pushSince,
+        };
+    } catch (e) { console.warn('stats des notifications :', e.message); }
+
     const payload = {
         ...total, platforms, accounts: kinds.accounts, anonymous: kinds.anonymous, returning, loyalty,
         retention: { ...ret, cohorts: Object.values(cohorts).sort((a, b) => b.week.localeCompare(a.week)).slice(0, 5) },
-        devices, activeDaily, activeSince, health,
+        devices, activeDaily, activeSince, health, push,
         avgDays: total.known ? Math.round((totalDays / total.known) * 10) / 10 : 0,
         oldestFirst,
         versions: Object.entries(versions).map(([version, count]) => ({ version, count })).sort((a, b) => b.count - a.count),
@@ -1828,6 +1894,8 @@ const NTFY_URL = 'https://ntfy.sh';
  *  atteint (code d'erreur 42908). */
 const NTFY_PAUSE = 5 * 60 * 1000;
 const NTFY_DAILY_QUOTA = 42908;
+/** ntfy.sh gratuit : messages par jour et par adresse (affiché dans /stats). */
+const NTFY_FREE_DAILY = 250;
 /** Sujet ntfy sans nouvelles de l'app depuis 60 jours (désinstallée…) : oublié. */
 const NTFY_IDLE = 60 * 86400000;
 const PUSH_QUEUE_TTL = 30 * 60 * 1000;
@@ -2052,7 +2120,21 @@ async function ntfyPause(env, code) {
     const now = Date.now();
     const until = code === NTFY_DAILY_QUOTA ? (Math.floor(now / 86400000) + 1) * 86400000 + 60000 : now + NTFY_PAUSE;
     await env.DB.prepare(`INSERT INTO kv (key, value) VALUES ('push_ntfy_pause', ?1)
-        ON CONFLICT(key) DO UPDATE SET value = excluded.value`).bind(JSON.stringify({ until, via: ntfyRoute(env) })).run();
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value`).bind(JSON.stringify({ until, via: ntfyRoute(env), code: code || 0 })).run();
+}
+
+/** Résultat d'un envoi → compteur du jour pour /stats (pu_<issue>_<voie>). */
+function pushCount(counts, kind, r) {
+    const issue = r.status >= 200 && r.status < 300 ? 'ok' : r.relay ? 'relay' : r.status === 429 ? 'limit'
+        : kind === 'web' && (r.status === 404 || r.status === 410) ? 'gone' : 'fail';
+    counts[`pu_${issue}_${kind}`] = (counts[`pu_${issue}_${kind}`] || 0) + 1;
+    return counts;
+}
+
+/** Compteurs du jour (UTC) des notifications, sans faire échouer l'envoi. */
+async function pushStats(env, counts) {
+    try { await bumpDaily(env, new Date().toISOString().slice(0, 10), counts); }
+    catch (e) { console.warn('stats_day :', e.message); }
 }
 
 /** Fin de la pause sur la voie actuelle, 0 sans pause. */
@@ -2137,6 +2219,7 @@ async function handlePushTest(request, env) {
         if (paused) return refused(`pause jusqu'à ${new Date(paused).toISOString().slice(11, 16)} UTC après un refus (429)`);
         const [r] = await sendNtfy(env, [{ topic: ntfyTopic(sub), title: 'TwitchUnblock', message: text.test,
                                            click: 'twitchunblock://', tags: ['white_check_mark'] }]);
+        await pushStats(env, pushCount({ pu_test: 1 }, 'ntfy', r));
         if (r.status >= 200 && r.status < 300) return jsonResponse({ ok: true, via });
         if (r.relay) return jsonError(`Relais ntfy : ${r.relay}`, 502);
         if (r.status !== 429) return jsonError(`ntfy.sh : ${r.status}`, 502);
@@ -2144,6 +2227,7 @@ async function handlePushTest(request, env) {
         return refused(`429${r.code ? ` (${r.code})` : ''}`);
     }
     const status = await sendPush(env, sub, { title: 'TwitchUnblock', body: text.test, tag: 'test', url: '/' });
+    await pushStats(env, pushCount({ pu_test: 1 }, 'web', { status }));
     return status >= 200 && status < 300 ? jsonResponse({ ok: true }) : jsonError(`Service de push : ${status}`, 502);
 }
 
@@ -2152,15 +2236,17 @@ async function handlePushTest(request, env) {
 async function pushTick(env) {
     if (!env.DB) return;
     await ensureSchema(env);
-    const db = env.DB;
     const now = Date.now();
     const check = Math.floor(now / 60000) % 2 === 0;
-    if (check) await pushCheckLives(env, now);
-    await pushSend(env, check ? PUSH_SENDS_WITH_CHECK : PUSH_SENDS_PER_RUN);
+    // Compteurs du jour pour /stats : une écriture D1 par mesure non nulle.
+    const counts = {};
+    if (check) await pushCheckLives(env, now, counts);
+    await pushSend(env, check ? PUSH_SENDS_WITH_CHECK : PUSH_SENDS_PER_RUN, counts);
+    await pushStats(env, counts);
 }
 
 /** Lives démarrés parmi les chaînes suivies → notifications en file. */
-async function pushCheckLives(env, now) {
+async function pushCheckLives(env, now, counts = {}) {
     const db = env.DB;
 
     // Qui est en live, parmi les chaînes suivies (par tranches, à tour de
@@ -2199,17 +2285,22 @@ async function pushCheckLives(env, now) {
             SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?1) WHERE true
             ON CONFLICT(login) DO UPDATE SET stream = excluded.stream`).bind(JSON.stringify(changes)));
     }
+    const queuedAt = writes.length;
     if (started.length) {
         writes.push(db.prepare(`INSERT INTO push_queue (sub, body, at)
             SELECT f.sub, j.value, ?2 FROM json_each(?1) j
             JOIN push_follow f ON f.login = json_extract(j.value, '$.login')`).bind(JSON.stringify(started), now));
     }
     writes.push(db.prepare('DELETE FROM push_queue WHERE at < ?1').bind(now - PUSH_QUEUE_TTL));
-    await db.batch(writes);
+    const res = await db.batch(writes);
+    if (started.length) {
+        counts.pu_lives = started.length;
+        counts.pu_queued = Number(res?.[queuedAt]?.meta?.changes) || 0;
+    }
 }
 
 /** Envois en attente, `room` au plus. */
-async function pushSend(env, room) {
+async function pushSend(env, room, counts = {}) {
     const db = env.DB;
     // ntfy en pause après un refus : ses messages attendent, sans retenir
     // ceux du site qui les suivent dans la file.
@@ -2253,7 +2344,10 @@ async function pushSend(env, room) {
             return { topic: ntfyTopic(q), title: n.title, message: n.body || n.title,
                      click: `twitchunblock://live/${n.live.login}`, tags: ['red_circle'] };
         }));
-        results.forEach((r, i) => { if (r.status !== 429 && r.status !== 503) done.push(ntfyRows[i].id); });
+        results.forEach((r, i) => {
+            pushCount(counts, 'ntfy', r);
+            if (r.status !== 429 && r.status !== 503) done.push(ntfyRows[i].id);
+        });
         const refused = results.find((r) => r.status === 429);
         if (refused) await ntfyPause(env, refused.code);
     };
@@ -2261,6 +2355,7 @@ async function pushSend(env, room) {
         const n = notice(q);
         const status = await sendPush(env, q, { title: n.title, body: n.body, icon: n.live.icon || '',
                                                 tag: `live-${n.live.login}`, url: `/${n.live.login}` });
+        pushCount(counts, 'web', { status });
         // Abonnement expiré ou retiré par le navigateur : oublié.
         if (status === 404 || status === 410) gone.push(q.sid);
         if (status !== 429) done.push(q.id);

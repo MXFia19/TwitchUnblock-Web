@@ -27,6 +27,7 @@
       --ios: #d95926;
       --web: #3987e5;
       --grid: rgba(255, 255, 255, 0.06);
+      --warn: #f0b429;
     }
     * { box-sizing: border-box; }
     body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.45 Inter, system-ui, -apple-system, 'Segoe UI', sans-serif; -webkit-font-smoothing: antialiased; }
@@ -78,6 +79,9 @@
     .row { display: grid; grid-template-columns: 112px minmax(0, 1fr) 44px; align-items: center; gap: 10px; font-size: 13px; }
     .row .name { color: var(--muted); }
     .row .num { text-align: right; font-weight: 700; font-variant-numeric: tabular-nums; }
+    .row.wide { grid-template-columns: 112px minmax(0, 1fr) 80px; }
+    .push-line { margin: 8px 0 0; }
+    .push-warn { color: var(--warn); }
     .nums3 { display: flex; gap: 28px; flex-wrap: wrap; margin: 6px 0 14px; font-variant-numeric: tabular-nums; }
     .nums3 div { display: flex; flex-direction: column; }
     .nums3 b { font-size: 26px; font-weight: 800; }
@@ -239,6 +243,25 @@
       <h2 data-t="dvTitle"></h2>
       <p class="sub" id="dv-sub"></p>
       <div id="devices"></div>
+    </div>
+  </section>
+
+  <section class="grid2">
+    <div class="card">
+      <h2 data-t="puSentTitle"></h2>
+      <p class="sub" id="pu-sent-sub"></p>
+      <div class="legend"><span><i class="dot ios"></i><span data-t="puLegendApp"></span></span><span><i class="dot web"></i><span data-t="puLegendWeb"></span></span></div>
+      <div class="chart" id="chart-push"></div>
+      <p class="sub push-line" id="pu-week"></p>
+      <details>
+        <summary data-t="showTable"></summary>
+        <table id="table-push"></table>
+      </details>
+    </div>
+    <div class="card">
+      <h2 data-t="puTitle"></h2>
+      <p class="sub" data-t="puSub"></p>
+      <div id="push"></div>
     </div>
   </section>
 
@@ -409,6 +432,17 @@
       fbHookOk: 'Discord : dernier envoi réussi ({d})', fbHookFail: 'Discord : dernier envoi refusé ({d}) — {e}', fbHookMissing: 'Discord : secret FEEDBACK_WEBHOOK absent du Worker. À poser comme « Secret » (pas « Texte ») dans Cloudflare → Workers → test2 → Paramètres → Variables et secrets.', fbHookInvalid: 'Discord : FEEDBACK_WEBHOOK ne ressemble pas à une adresse de webhook (https://discord.com/api/webhooks/…).', fbHookNever: 'Discord : aucun envoi depuis la mise à jour.', fbHookTest: 'Tester l’envoi Discord', fbHookTestOk: 'Message de test envoyé : regarde le salon Discord.', fbHookTestFail: 'Échec du test : {e}',
       fbAllStatus: 'Tous les états', fbToAnswer: 'À répondre', fbAwait: 'réponse de la personne', fbThread: 'Conversation', fbHide: 'Masquer',
       fbReplyPh: 'Répondre (visible par la personne dans l’app ou sur le site)…', fbSend: 'Envoyer', fbPhotosPick: 'Photos (3 max)', fbYou: 'Toi', fbThem: 'La personne', fbStatusNow: 'État : {s}', fbSent: 'Réponse envoyée.', fbNoMatch: 'Aucun retour dans cet état.', fbNone: 'Aucun retour pour l’instant.', fbCount: '{n} retour(s)', fbClear: 'Tout effacer', fbConfirmClear: 'Effacer tous les retours ?', fbConfirmDel: 'Supprimer ce retour ?', fbBug: 'Bug', fbIdea: 'Idée', fbOther: 'Autre', fbContact: 'Contact :', fbWeb: 'Site', fbIos: 'App iOS',
+      puTitle: 'Notifications de live', puSub: 'Abonnés du site (Web Push) et de l’app iOS (ntfy), en ce moment. Que des nombres : aucune chaîne, aucun abonné.',
+      puSubs: 'abonnés', puChannels: 'chaînes surveillées', puLive: 'en live maintenant',
+      pu_ntfy: 'App iOS (ntfy)', pu_apple: 'Safari (Apple)', pu_google: 'Chrome, Android', pu_mozilla: 'Firefox', pu_microsoft: 'Edge', pu_other: 'Autre',
+      puNew: '{a} nouveaux abonnés aujourd’hui · {b} sur 7 jours', puAvg: '{n} chaînes suivies par abonné en moyenne',
+      puQueue: '{n} notification(s) en attente', puQueueOld: ' (la plus ancienne depuis {m} min)', puQueueNone: 'Aucune notification en attente.',
+      puRouteRelay: 'ntfy : envoyé par le relais du VPS', puRouteDirect: 'ntfy : envoyé directement par le Worker',
+      puQuota: 'Quota du jour', puQuotaNote: 'Messages publiés sur ntfy.sh depuis minuit UTC (sa remise à zéro), tests compris.', puSentToday: '{n} message(s) publié(s) aujourd’hui (offre payante : son propre plafond).',
+      puPaused: 'En pause jusqu’à {t} UTC : ntfy.sh a refusé des messages ({why}). Ils attendent dans la file (30 min au plus).', puWhyQuota: 'quota du jour atteint', puWhyRate: 'trop de requêtes',
+      puSentTitle: 'Notifications envoyées par jour', puSentSub: 'Envois réussis, tests compris.', puLegendApp: 'App iOS (ntfy)', puLegendWeb: 'Site (Web Push)',
+      puNone: 'Pas encore de données : le comptage commence avec cette mise à jour.',
+      puWeek: '7 derniers jours :', puWeekSent: '{n} envoyée(s)', puWeekLives: '{n} live(s) détecté(s)', puWeekTests: '{n} test(s)', puWeekFail: '{n} échec(s)', puWeekLimit: '{n} refus de ntfy.sh ou du service de push (429)', puWeekRelay: '{n} essai(s) avec le relais injoignable', puWeekGone: '{n} abonnement(s) expiré(s)',
       updated: 'Mis à jour à {t}', unavailable: 'Statistiques indisponibles ({e})',
     },
     en: {
@@ -454,6 +488,17 @@
       fbHookOk: 'Discord: last delivery succeeded ({d})', fbHookFail: 'Discord: last delivery refused ({d}) — {e}', fbHookMissing: 'Discord: the FEEDBACK_WEBHOOK secret is missing from the Worker. Add it as a “Secret” (not “Text”) in Cloudflare → Workers → test2 → Settings → Variables and Secrets.', fbHookInvalid: 'Discord: FEEDBACK_WEBHOOK doesn’t look like a webhook address (https://discord.com/api/webhooks/…).', fbHookNever: 'Discord: nothing sent since the update.', fbHookTest: 'Test Discord delivery', fbHookTestOk: 'Test message sent: check the Discord channel.', fbHookTestFail: 'Test failed: {e}',
       fbAllStatus: 'All statuses', fbToAnswer: 'Awaiting reply', fbAwait: 'reply from the person', fbThread: 'Conversation', fbHide: 'Hide',
       fbReplyPh: 'Reply (the person sees it in the app or on the website)…', fbSend: 'Send', fbPhotosPick: 'Photos (3 max)', fbYou: 'You', fbThem: 'The person', fbStatusNow: 'Status: {s}', fbSent: 'Reply sent.', fbNoMatch: 'No feedback with this status.', fbNone: 'No feedback yet.', fbCount: '{n} message(s)', fbClear: 'Clear all', fbConfirmClear: 'Delete all feedback?', fbConfirmDel: 'Delete this message?', fbBug: 'Bug', fbIdea: 'Idea', fbOther: 'Other', fbContact: 'Contact:', fbWeb: 'Website', fbIos: 'iOS app',
+      puTitle: 'Live notifications', puSub: 'Website (Web Push) and iOS app (ntfy) subscribers, right now. Numbers only: no channel, no subscriber.',
+      puSubs: 'subscribers', puChannels: 'channels watched', puLive: 'live right now',
+      pu_ntfy: 'iOS app (ntfy)', pu_apple: 'Safari (Apple)', pu_google: 'Chrome, Android', pu_mozilla: 'Firefox', pu_microsoft: 'Edge', pu_other: 'Other',
+      puNew: '{a} new subscribers today · {b} in 7 days', puAvg: '{n} channels followed per subscriber on average',
+      puQueue: '{n} notification(s) waiting', puQueueOld: ' (oldest for {m} min)', puQueueNone: 'No notification waiting.',
+      puRouteRelay: 'ntfy: sent by the VPS relay', puRouteDirect: 'ntfy: sent directly by the Worker',
+      puQuota: 'Today’s quota', puQuotaNote: 'Messages published to ntfy.sh since midnight UTC (when it resets), tests included.', puSentToday: '{n} message(s) published today (paid plan: its own cap).',
+      puPaused: 'Paused until {t} UTC: ntfy.sh refused messages ({why}). They wait in the queue (30 min at most).', puWhyQuota: 'daily quota reached', puWhyRate: 'too many requests',
+      puSentTitle: 'Notifications sent per day', puSentSub: 'Successful sends, tests included.', puLegendApp: 'iOS app (ntfy)', puLegendWeb: 'Website (Web Push)',
+      puNone: 'No data yet: counting starts with this update.',
+      puWeek: 'Last 7 days:', puWeekSent: '{n} sent', puWeekLives: '{n} live(s) detected', puWeekTests: '{n} test(s)', puWeekFail: '{n} failed', puWeekLimit: '{n} refused by ntfy.sh or the push service (429)', puWeekRelay: '{n} attempt(s) with the relay unreachable', puWeekGone: '{n} expired subscription(s)',
       updated: 'Updated at {t}', unavailable: 'Stats unavailable ({e})',
     },
     es: {
@@ -499,6 +544,17 @@
       fbHookOk: 'Discord: último envío correcto ({d})', fbHookFail: 'Discord: último envío rechazado ({d}) — {e}', fbHookMissing: 'Discord: falta el secreto FEEDBACK_WEBHOOK en el Worker. Añádelo como «Secret» (no «Text») en Cloudflare → Workers → test2 → Settings → Variables and Secrets.', fbHookInvalid: 'Discord: FEEDBACK_WEBHOOK no parece una dirección de webhook (https://discord.com/api/webhooks/…).', fbHookNever: 'Discord: nada enviado desde la actualización.', fbHookTest: 'Probar el envío a Discord', fbHookTestOk: 'Mensaje de prueba enviado: mira el canal de Discord.', fbHookTestFail: 'La prueba falló: {e}',
       fbAllStatus: 'Todos los estados', fbToAnswer: 'Por responder', fbAwait: 'respuesta de la persona', fbThread: 'Conversación', fbHide: 'Ocultar',
       fbReplyPh: 'Responder (la persona lo ve en la app o en la web)…', fbSend: 'Enviar', fbPhotosPick: 'Fotos (3 máx.)', fbYou: 'Tú', fbThem: 'La persona', fbStatusNow: 'Estado: {s}', fbSent: 'Respuesta enviada.', fbNoMatch: 'Ningún comentario con este estado.', fbNone: 'Aún no hay comentarios.', fbCount: '{n} mensaje(s)', fbClear: 'Borrar todo', fbConfirmClear: '¿Borrar todos los comentarios?', fbConfirmDel: '¿Borrar este mensaje?', fbBug: 'Error', fbIdea: 'Idea', fbOther: 'Otro', fbContact: 'Contacto:', fbWeb: 'Web', fbIos: 'App iOS',
+      puTitle: 'Notificaciones de directos', puSub: 'Suscriptores del sitio (Web Push) y de la app iOS (ntfy), ahora mismo. Solo números: ningún canal, ningún suscriptor.',
+      puSubs: 'suscriptores', puChannels: 'canales vigilados', puLive: 'en directo ahora',
+      pu_ntfy: 'App iOS (ntfy)', pu_apple: 'Safari (Apple)', pu_google: 'Chrome, Android', pu_mozilla: 'Firefox', pu_microsoft: 'Edge', pu_other: 'Otro',
+      puNew: '{a} suscriptores nuevos hoy · {b} en 7 días', puAvg: '{n} canales seguidos por suscriptor de media',
+      puQueue: '{n} notificación(es) en espera', puQueueOld: ' (la más antigua desde hace {m} min)', puQueueNone: 'Ninguna notificación en espera.',
+      puRouteRelay: 'ntfy: enviado por el relé del VPS', puRouteDirect: 'ntfy: enviado directamente por el Worker',
+      puQuota: 'Cuota del día', puQuotaNote: 'Mensajes publicados en ntfy.sh desde la medianoche UTC (cuando se reinicia), pruebas incluidas.', puSentToday: '{n} mensaje(s) publicado(s) hoy (plan de pago: su propio límite).',
+      puPaused: 'En pausa hasta las {t} UTC: ntfy.sh rechazó mensajes ({why}). Esperan en la cola (30 min como máximo).', puWhyQuota: 'cuota del día alcanzada', puWhyRate: 'demasiadas solicitudes',
+      puSentTitle: 'Notificaciones enviadas por día', puSentSub: 'Envíos correctos, pruebas incluidas.', puLegendApp: 'App iOS (ntfy)', puLegendWeb: 'Sitio (Web Push)',
+      puNone: 'Aún no hay datos: el recuento empieza con esta actualización.',
+      puWeek: 'Últimos 7 días:', puWeekSent: '{n} enviada(s)', puWeekLives: '{n} directo(s) detectado(s)', puWeekTests: '{n} prueba(s)', puWeekFail: '{n} fallo(s)', puWeekLimit: '{n} rechazo(s) de ntfy.sh o del servicio de push (429)', puWeekRelay: '{n} intento(s) con el relé inaccesible', puWeekGone: '{n} suscripción(es) caducada(s)',
       updated: 'Actualizado a las {t}', unavailable: 'Estadísticas no disponibles ({e})',
     },
   }
@@ -675,6 +731,62 @@
       + block(t('dvLangWeb'), d.lang?.web, langName, 'var(--web)')
       + block(t('dvDevWeb'), d.device?.web, devName, 'var(--web)')
     box.innerHTML = html || `<p class="sub">${esc(t('dvNone'))}</p>`
+  }
+
+  /** Notifications de live : état du moment (abonnés, chaînes, file, ntfy). */
+  const PUSH_SIDES = [['ntfy', 'var(--ios)'], ['apple', 'var(--web)'], ['google', 'var(--web)'], ['mozilla', 'var(--web)'], ['microsoft', 'var(--web)'], ['other', 'var(--web)']]
+  function pushNow(s) {
+    const p = s.push
+    const box = $('#push')
+    if (!p) { box.innerHTML = `<p class="sub">${esc(t('redeploy'))}</p>`; return }
+    const subs = (p.subs?.web || 0) + (p.subs?.ntfy || 0)
+    const cell = (n, label) => `<div><b>${fmt(n)}</b><span>${esc(label)}</span></div>`
+    let html = `<div class="nums3">${cell(subs, t('puSubs'))}${cell(p.channels, t('puChannels'))}${cell(p.live, t('puLive'))}</div>`
+    const list = PUSH_SIDES.map(([k, color]) => [k, k === 'ntfy' ? p.subs?.ntfy : p.services?.[k], color]).filter(([, n]) => n)
+    if (list.length) {
+      html += `<div class="rows">${list.map(([k, n, color]) => `
+        <div class="row"><span class="name">${esc(t('pu_' + k))}</span>
+          <span class="track"><i style="width:${(n / subs) * 100}%;background:${color}"></i></span>
+          <span class="num">${fmt(n)}</span></div>`).join('')}</div>`
+    }
+    const lines = [t('puNew', { a: fmt(p.subs?.today), b: fmt(p.subs?.week) })]
+    if (subs) lines.push(t('puAvg', { n: (p.follows / subs).toLocaleString(LOCALE, { maximumFractionDigits: 1 }) }))
+    const waiting = (p.queue?.web?.n || 0) + (p.queue?.ntfy?.n || 0)
+    const oldest = Math.min(...[p.queue?.web?.oldest, p.queue?.ntfy?.oldest].filter(Boolean))
+    lines.push(!waiting ? t('puQueueNone') : t('puQueue', { n: fmt(waiting) })
+      + (Number.isFinite(oldest) ? t('puQueueOld', { m: fmt(Math.max(0, Math.round((Date.now() - oldest) / 60000))) }) : ''))
+    html += lines.map((l) => `<p class="sub push-line">${esc(l)}</p>`).join('')
+    // ntfy : par où il part, le quota du jour de cette adresse, une pause.
+    const n = p.ntfy ?? {}
+    html += `<h3 class="subhead"><i class="dot ios"></i>${esc(t(n.route === 'relay' ? 'puRouteRelay' : 'puRouteDirect'))}</h3>`
+    if (n.quota) {
+      const used = n.sentToday || 0
+      html += `<div class="rows"><div class="row wide"><span class="name">${esc(t('puQuota'))}</span>
+          <span class="track"><i style="width:${Math.min(100, (used / n.quota) * 100)}%;background:${used >= n.quota * 0.8 ? 'var(--warn)' : 'var(--ios)'}"></i></span>
+          <span class="num">${fmt(used)} / ${fmt(n.quota)}</span></div></div>
+        <p class="sub push-line">${esc(t('puQuotaNote'))}</p>`
+    } else {
+      html += `<p class="sub">${esc(t('puSentToday', { n: fmt(n.sentToday) }))}</p>`
+    }
+    if (n.pausedUntil) {
+      const at = new Date(n.pausedUntil).toLocaleTimeString(LOCALE, { timeZone: 'UTC', hour: '2-digit', minute: '2-digit' })
+      html += `<p class="sub push-line push-warn">${esc(t('puPaused', { t: at, why: t(n.pauseCode === 42908 ? 'puWhyQuota' : 'puWhyRate') }))}</p>`
+    }
+    box.innerHTML = html
+  }
+
+  /** Notifications envoyées par jour (depuis le début du comptage). */
+  function chartPush(s) {
+    const p = s.push
+    $('#pu-sent-sub').textContent = t('puSentSub') + (p?.since ? ' ' + t('actSince', { d: dayLabel(p.since, { day: 'numeric', month: 'long' }) }) : '')
+    chartNew(p?.daily ?? [], { box: '#chart-push', table: '#table-push', a: 'ok_ntfy', b: 'ok_web', label: t('puSentTitle'), empty: t(p ? 'puNone' : 'redeploy') })
+    const w = p?.week ?? {}
+    const both = (k) => (w[k + '_web'] || 0) + (w[k + '_ntfy'] || 0)
+    const parts = [
+      ['puWeekSent', both('ok'), true], ['puWeekLives', w.lives], ['puWeekTests', w.test], ['puWeekFail', both('fail')],
+      ['puWeekLimit', both('limit')], ['puWeekRelay', w.relay_ntfy], ['puWeekGone', w.gone_web],
+    ].filter(([, n, always]) => always || n).map(([k, n]) => t(k, { n: fmt(n) }))
+    $('#pu-week').textContent = p?.since ? `${t('puWeek')} ${parts.join(' · ')}` : ''
   }
 
   function loyalty(s) {
@@ -1139,7 +1251,7 @@
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const s = await res.json()
       lastStats = s
-      tiles(s); kinds(s); chartNew(s.daily); chartActive(s); retention(s); health(s); devices(s)
+      tiles(s); kinds(s); chartNew(s.daily); chartActive(s); retention(s); health(s); devices(s); pushNow(s); chartPush(s)
       loyalty(s); platformReturning(s); versions(s)
       const at = s.generatedAt ? new Date(s.generatedAt) : new Date()
       $('#updated').textContent = t('updated', { t: at.toLocaleTimeString(LOCALE, { hour: '2-digit', minute: '2-digit' }) })
@@ -1153,7 +1265,7 @@
   let resizeTimer = null
   addEventListener('resize', () => {
     clearTimeout(resizeTimer)
-    resizeTimer = setTimeout(() => { if (lastStats) { chartNew(lastStats.daily); chartActive(lastStats) } }, 150)
+    resizeTimer = setTimeout(() => { if (lastStats) { chartNew(lastStats.daily); chartActive(lastStats); chartPush(lastStats) } }, 150)
   })
   $('#refresh').addEventListener('click', () => { load(); if (!$('#dev').hidden) { loadEntries(); loadAnnouncement(); loadFeedback() } })
   load()
