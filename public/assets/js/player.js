@@ -44,6 +44,19 @@ function isDirectSegment(u) {
   } catch { return false }
 }
 
+/** Adresse à demander pour une requête de lecture : adresses relatives du
+ *  proxy corrigées, et segments par le relais si le direct n'aboutit pas.
+ *  Sert aussi aux tuiles du multi-live. */
+export function liveRequestUrl(reqUrl, playlistUrl) {
+  let fixed = fixProxiedUrl(reqUrl, playlistUrl)
+  // Le relais qui a servi ces liens : celui du VPS, le Worker principal, ou
+  // un secours si le quota du principal est atteint.
+  if (segmentProxyOn() && isDirectSegment(fixed)) {
+    fixed = `${proxyBaseOf(playlistUrl) ?? API_URL}/api/proxy?url=${encodeURIComponent(fixed)}&isVod=false`
+  }
+  return fixed
+}
+
 // ── Son des passages coupés ─────────────────────────────────────────────
 // Twitch coupe le son des passages avec de la musique protégée : la playlist
 // pointe alors vers « N-muted.ts ». Un jour ou deux après la diffusion,
@@ -412,18 +425,11 @@ export class Player {
     if (token !== this.attachToken) return
 
     if (Hls?.isSupported()) {
-      // Le relais qui a servi ces liens : celui du VPS, le Worker principal,
-      // ou un secours si le quota du principal est atteint.
-      const relay = proxyBaseOf(url) ?? API_URL
       const hls = new Hls({
         // Rouvrir la requête avec l'adresse corrigée : c'est le point
         // d'accroche que hls.js offre pour réécrire une URL avant envoi.
         xhrSetup: (xhr, reqUrl) => {
-          let fixed = fixProxiedUrl(reqUrl, url)
-          // Secours : segments par le relais quand le direct n'aboutit pas.
-          if (segmentProxyOn() && isDirectSegment(fixed)) {
-            fixed = `${relay}/api/proxy?url=${encodeURIComponent(fixed)}&isVod=false`
-          }
+          const fixed = liveRequestUrl(reqUrl, url)
           if (fixed !== reqUrl) xhr.open('GET', fixed, true)
         },
         backBufferLength: 90,

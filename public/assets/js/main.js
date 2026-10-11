@@ -10,6 +10,7 @@ import { ChatView } from './chat/view.js'
 import { linkifyHtml } from './chat/message.js'
 import { Hermes } from './chat/hermes.js'
 import * as usage from './usage.js'
+import * as multi from './multi.js'
 import { CHANGELOG } from './changelog.js'
 import {
   $, $$, debounce, esc, formatClock, formatDuration, formatViewers, icon, isIOS, isMobile,
@@ -57,6 +58,7 @@ async function boot() {
   renderIcons()
   bindGlobal()
   setupPlayer()
+  setupMulti()
   renderContinue()
   renderRecentChannels()
   startLiveTicker()
@@ -130,6 +132,9 @@ function routeFrom(pathname, search = '') {
   const channel = api.cleanLogin(q.get('channel'))
   // « ?t=1h2m3s » : la VOD démarre à cet instant, comme sur Twitch.
   const at = twitchTime(q.get('t'))
+  // « ?multi=a,b » : une mosaïque de directs, partagée.
+  const multiParam = q.get('multi')
+  if (multiParam) return { multi: multiParam.split(',') }
   if (clip) return { clip }
   if (vod) return { vod, at }
   if (channel) return { channel, live: true }
@@ -169,6 +174,9 @@ function twitchTime(raw) {
 async function applyRoute(r, { initial = false } = {}) {
   routing = true
   try {
+    // Mosaïque de directs : ouverte par son adresse, fermée par toute autre.
+    if (r.multi) { multi.openWith(r.multi); return }
+    multi.close({ url: false })
     // « /xqc » : son direct au premier chargement (comme sur Twitch), ensuite
     // seulement si cette entrée d'historique était celle du lecteur.
     const live = r.channel && r.live && (initial || Boolean(history.state?.watch))
@@ -411,6 +419,12 @@ function bindGlobal() {
       renderRecentChannels()
       return
     }
+    // « + » d'une carte de live (ou de la page d'une chaîne) : multi-live.
+    const madd = e.target.closest('[data-multi-add]')
+    if (madd) {
+      e.stopPropagation()
+      return multi.toggle(madd.dataset.multiAdd, madd.dataset.multiName)
+    }
     // Pseudo et catégorie d'une carte : avant la carte elle-même (le direct).
     const catLink = e.target.closest('[data-category]')
     if (catLink) {
@@ -487,6 +501,17 @@ function bindGlobal() {
 
 const actions = {
   login: () => (session.login ? openSettings() : login()),
+  'multi-open': () => multi.open(),
+  'multi-clear': () => multi.clear(),
+  'multi-close': () => multi.close(),
+  'multi-share': () => {
+    const url = location.href
+    navigator.clipboard?.writeText(url).then(() => toast(t('copied'), 'success'), () => toast(url))
+  },
+  'multi-add-current': () => {
+    const w = state.watch
+    if (w?.kind === 'live') multi.add(w.login, w.info?.displayName || w.login)
+  },
   logout,
   settings: () => openSettings(),
   'refresh-discover': () => { loadFollowed(); loadTop(state.topLang) },
@@ -568,6 +593,7 @@ function tagsHtml(tags) {
 }
 
 function streamCard(s) {
+  const inMulti = multi.has(s.login)
   return `
     <a class="card stream-card" href="/${esc(s.login)}" data-live="${esc(s.login)}">
       <div class="thumb">
@@ -575,6 +601,7 @@ function streamCard(s) {
         <span class="pill live">${esc(t('live_now'))}</span>
         <span class="pill viewers">${icon('eye', 12)}${esc(formatViewers(s.viewers))}</span>
         ${s.startedAt ? `<span class="pill uptime" data-started="${esc(s.startedAt)}">${esc(uptimeSince(s.startedAt))}</span>` : ''}
+        <button class="madd${inMulti ? ' on' : ''}" type="button" data-multi-add="${esc(s.login)}" data-multi-name="${esc(s.name)}" title="${esc(t(inMulti ? 'multi_remove' : 'multi_add'))}">${icon(inMulti ? 'check' : 'plus', 16)}</button>
       </div>
       <div class="card-body">
         ${s.avatar ? `<img class="avatar sm" src="${esc(s.avatar)}" alt="" loading="lazy">` : `<span class="avatar sm placeholder">${esc((s.name || '?')[0])}</span>`}
@@ -1574,7 +1601,10 @@ function renderChannel(keyword = '') {
         </div>
         <p class="hero-title">${esc(live.title)}</p>
         ${live.game ? `<p class="hero-game">${icon('gamepad', 14)} ${gameLink(live.game.id, live.game.displayName)}</p>` : ''}
-        <button class="btn primary" type="button" data-live="${esc(login)}">${icon('play', 16)}<span>${esc(t('watch_live'))}</span></button>
+        <div class="hero-btns">
+          <button class="btn primary" type="button" data-live="${esc(login)}">${icon('play', 16)}<span>${esc(t('watch_live'))}</span></button>
+          <button class="btn ghost${multi.has(login) ? ' on' : ''}" type="button" data-multi-add="${esc(login)}" data-multi-name="${esc(name)}" title="${esc(t(multi.has(login) ? 'multi_remove' : 'multi_add'))}">${icon('grid', 16)}<span>${esc(t('multi_title'))}</span></button>
+        </div>
       </div>
       <img class="hero-thumb" src="${esc(live.previewImageURL)}" alt="" data-live="${esc(login)}">`
   } else {
@@ -1755,6 +1785,16 @@ function setupPlayer() {
  * Workers tombent : le lecteur retente alors comme avant. `false` = rien fait.
  */
 let lastWorkerSwitch = 0
+// ── Multi-live ───────────────────────────────────────────────────────────
+function setupMulti() {
+  multi.init({
+    // Un seul son à la fois : le lecteur se ferme.
+    onOpen: () => { if (!$('#watch').hidden) closeWatch({ url: false }) },
+    onWatch: (login) => openLive(login),
+    onUrl: (path, replace = false) => (path ? go(path, { watch: true, replace }) : go(pagePath(), { replace: true })),
+  })
+}
+
 function switchWorker(base) {
   const w = state.watch
   if (w?.kind !== 'live' && w?.kind !== 'vod') return false
@@ -1988,6 +2028,7 @@ function renderLiveInfo(info, links) {
       ${tagsHtml((s?.freeformTags ?? []).map((x) => x?.name).filter(Boolean))}
     </div>
     <div class="wi-actions">
+      <button class="btn ghost sm" type="button" data-action="multi-add-current" title="${esc(t('multi_add'))}">${icon('grid', 16)}<span>${esc(t('multi_title'))}</span></button>
       <button class="btn ghost sm" type="button" data-action="see-vods">${icon('film', 16)}<span>${esc(t('see_vods'))}</span></button>
       <button class="btn ghost sm" type="button" data-action="open-in">${icon('external', 16)}<span>${esc(t('open_in'))}</span></button>
     </div>`

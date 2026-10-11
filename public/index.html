@@ -225,6 +225,29 @@
     </div>
   </div>
 
+  <!-- ── Multi-live : sélection (barre du bas) et mosaïque ───────────── -->
+  <div class="multi-bar" id="multi-bar" hidden>
+    <span class="mb-icon" data-icon="grid" data-size="18"></span>
+    <span class="mb-count" id="multi-count"></span>
+    <div class="mb-list" id="multi-bar-list"></div>
+    <button class="btn primary sm" type="button" data-action="multi-open"><span data-icon="play" data-size="15"></span><span data-i18n="multi_watch"></span></button>
+    <button class="icon-btn sm" type="button" data-action="multi-clear" data-i18n-title="multi_clear" data-icon="x" data-size="18"></button>
+  </div>
+  <div class="multi" id="multi" hidden>
+    <header class="multi-head">
+      <span class="multi-logo" data-icon="grid" data-size="20"></span>
+      <strong data-i18n="multi_title"></strong>
+      <span class="multi-hint" data-i18n="multi_hint"></span>
+      <form class="multi-add" id="multi-add-form" autocomplete="off">
+        <input type="text" id="multi-add-input" data-i18n-ph="multi_add_ph" maxlength="25" enterkeyhint="go" spellcheck="false" autocapitalize="off" autocorrect="off">
+        <button class="icon-btn sm" type="submit" data-i18n-title="multi_add" data-icon="plus" data-size="18"></button>
+      </form>
+      <button class="icon-btn" type="button" data-action="multi-share" data-i18n-title="multi_share" data-icon="link" data-size="20"></button>
+      <button class="icon-btn" type="button" data-action="multi-close" data-i18n-title="close" data-icon="x" data-size="22"></button>
+    </header>
+    <div class="multi-grid" id="multi-grid"></div>
+  </div>
+
   <!-- ── Feuille (réglages, ouvrir dans…) ────────────────────────────── -->
   <div class="sheet-backdrop" id="sheet-backdrop" hidden></div>
   <div class="sheet" id="sheet" role="dialog" aria-modal="true" hidden></div>

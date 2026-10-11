@@ -42,6 +42,11 @@ Watch Twitch lives and VODs in your browser, no subscription needed, with the re
 - Mini player: playback keeps going while you browse
 - “Open in…” VLC, Outplayer, Infuse, or copy the stream link
 
+### Multi-live
+- Up to **four lives side by side**: the “+” on a live card (or “Multi-live” on a channel page and under the player) adds a stream, and a bar at the bottom shows your picks
+- Each tile picks its quality from its size; click a tile to hear it (or 1–4 on the keyboard, M to mute), double-click for fullscreen
+- Add a channel by name from the mosaic, open one with its chat in the regular player, and **share the mosaic's link** (`/?multi=xqc,pokimane`)
+
 ### Chat
 - Connected straight to Twitch IRC — no iframe
 - Twitch, **BTTV**, **FFZ** and **7TV** emotes, badges, username colours readable on a dark background
@@ -84,6 +89,7 @@ public/              The website, served as-is by Vercel (no build step)
     js/
       main.js        Navigation, home, streamer page, settings
       player.js      Video player (hls.js)
+      multi.js       Multi-live: up to four lives side by side
       api.js         Worker, Helix and GQL access — configuration at the top
       usage.js       Anonymous usage count
       i18n.js        Translations

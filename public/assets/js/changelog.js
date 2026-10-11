@@ -6,6 +6,15 @@
 
 export const CHANGELOG = [
   {
+    version: '2026.10.11b',
+    items: {
+      fr: ['Multi-live : regarde jusqu’à quatre directs côte à côte. Le bouton « + » d’une carte de live (ou « Multi-live » sur la page d’une chaîne et sous le lecteur) les ajoute ; un clic sur un direct lui donne le son, double-clic pour le plein écran. Le lien de la mosaïque se partage.'],
+      en: ['Multi-live: watch up to four streams side by side. The “+” button on a live card (or “Multi-live” on a channel page and under the player) adds them; click a stream to hear it, double-click for fullscreen. The mosaic’s link can be shared.'],
+      es: ['Multi-live: mira hasta cuatro directos uno al lado del otro. El botón «+» de una tarjeta de directo (o «Multi-live» en la página de un canal y bajo el reproductor) los añade; haz clic en un directo para oírlo, doble clic para pantalla completa. El enlace del mosaico se puede compartir.'],
+      ru: ['Мульти-просмотр: смотрите до четырёх трансляций рядом. Кнопка «+» на карточке трансляции (или «Мульти-просмотр» на странице канала и под плеером) добавляет их; щелчок по трансляции включает её звук, двойной щелчок — полный экран. Ссылкой на мозаику можно поделиться.'],
+    },
+  },
+  {
     version: '2026.10.11a',
     items: {
       fr: [
