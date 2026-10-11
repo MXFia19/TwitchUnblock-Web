@@ -95,6 +95,7 @@
     .kind .nums div { display: flex; flex-direction: column; }
     .kind .nums b { font-size: 26px; font-weight: 800; }
     .kind .nums span { color: var(--muted); font-size: 12px; }
+    .kind .fresh-line { margin: 12px 0 0; color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }
     .who { color: var(--muted); font-size: 13px; }
     .who b { color: var(--text); }
 
@@ -345,6 +346,7 @@
       pctOf: '{p} % des {n} identifiants',
       accounts: 'Comptes Twitch connectés', anonymous: 'Sans compte',
       kToday: "aujourd'hui", kWeek: '7 jours', kMonth: '30 jours', kBack: 'revenus',
+      kNew: "Nouveaux : {a} aujourd'hui · {b} sur 7 jours · {c} sur 30 jours",
       thDay: 'Jour', thVersion: 'Version', thActive: 'Actifs', thWho: 'Qui', thPlat: 'Plateformes', thFirst: 'Premier', thLast: 'Dernier', thDays: 'Jours',
       signedIn: 'Connecté :', listErr: 'Liste indisponible ({e})', entries: '{a} / {b} entrées',
       tagAcct: 'compte', tagAnon: 'anonyme', del: 'Supprimer',
@@ -381,6 +383,7 @@
       pctOf: '{p}% of {n} identifiers',
       accounts: 'Signed-in Twitch accounts', anonymous: 'No account',
       kToday: 'today', kWeek: '7 days', kMonth: '30 days', kBack: 'came back',
+      kNew: 'New: {a} today · {b} in 7 days · {c} in 30 days',
       thDay: 'Day', thVersion: 'Version', thActive: 'Active', thWho: 'Who', thPlat: 'Platforms', thFirst: 'First', thLast: 'Last', thDays: 'Days',
       signedIn: 'Signed in:', listErr: 'List unavailable ({e})', entries: '{a} / {b} entries',
       tagAcct: 'account', tagAnon: 'anonymous', del: 'Delete',
@@ -417,6 +420,7 @@
       pctOf: '{p} % de {n} identificadores',
       accounts: 'Cuentas de Twitch conectadas', anonymous: 'Sin cuenta',
       kToday: 'hoy', kWeek: '7 días', kMonth: '30 días', kBack: 'volvieron',
+      kNew: 'Nuevos: {a} hoy · {b} en 7 días · {c} en 30 días',
       thDay: 'Día', thVersion: 'Versión', thActive: 'Activos', thWho: 'Quién', thPlat: 'Plataformas', thFirst: 'Primero', thLast: 'Último', thDays: 'Días',
       signedIn: 'Conectado:', listErr: 'Lista no disponible ({e})', entries: '{a} / {b} entradas',
       tagAcct: 'cuenta', tagAnon: 'anónimo', del: 'Eliminar',
@@ -577,7 +581,8 @@
       if (!v) return `<div class="card kind"><h2>${title}</h2><p class="sub">${t('redeploy')}</p></div>`
       return `<div class="card kind"><h2>${title} <span class="tag ${tag}">${fmt(v.known)}</span></h2>
         <div class="nums"><div><b>${fmt(v.today)}</b><span>${t('kToday')}</span></div><div><b>${fmt(v.week)}</b><span>${t('kWeek')}</span></div>
-        <div><b>${fmt(v.month)}</b><span>${t('kMonth')}</span></div><div><b>${fmt(v.returning)}</b><span>${t('kBack')}</span></div></div></div>`
+        <div><b>${fmt(v.month)}</b><span>${t('kMonth')}</span></div><div><b>${fmt(v.returning)}</b><span>${t('kBack')}</span></div></div>
+        ${v.todayNew != null ? `<p class="fresh-line">${esc(t('kNew', { a: fmt(v.todayNew), b: fmt(v.weekNew), c: fmt(v.monthNew) }))}</p>` : ''}</div>`
     }
     $('#kinds').innerHTML = card(t('accounts'), 'acct', 'accounts') + card(t('anonymous'), '', 'anonymous')
   }
