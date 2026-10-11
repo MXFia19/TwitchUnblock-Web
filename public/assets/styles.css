@@ -757,6 +757,29 @@ a.card, a.cat-card { display: block; }
 .app-dot.infuse { background: #fc3c44; }
 .link-box { width: 100%; margin-top: 6px; padding: 10px 12px; border-radius: var(--r-control); background: var(--bg); border: 1px solid var(--line-strong); color: var(--purple); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; outline: none; }
 
+/* ── Télécharger une VOD ───────────────────────────────────────────────── */
+.dl-vod { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dl-block { display: flex; flex-direction: column; gap: 8px; margin: 12px 0; }
+.dl-label { font-size: 12px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+.segmented.dl-q { flex-wrap: wrap; }
+.segmented.dl-q button { padding: 6px 10px; }
+.dl-wait { display: grid; place-items: center; padding: 24px 0; }
+.dl-time { margin: 10px 0; }
+.dl-time-head { display: flex; align-items: center; gap: 10px; }
+.dl-time-head .dl-label { flex: 1; }
+.dl-time-head button { padding: 4px 2px; font-size: 13px; font-weight: 700; color: var(--purple); }
+.dl-time-head b { min-width: 64px; text-align: center; font-variant-numeric: tabular-nums; }
+.dl-time input[type='range'] { width: 100%; margin-top: 6px; accent-color: var(--primary); }
+.dl-presets { display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0 8px; }
+.dl-summary { margin: 6px 0 4px; font-weight: 700; }
+.dl-warn { margin: 8px 0; padding: 10px 12px; border-radius: var(--r-control); background: rgba(255, 79, 77, 0.1); color: var(--danger); font-size: 13px; line-height: 1.45; }
+.dl-note { margin-top: 10px; line-height: 1.45; }
+#dl-go { margin-top: 10px; }
+.dl-bar { height: 8px; margin: 14px 0 10px; border-radius: 999px; background: var(--surface); overflow: hidden; }
+.dl-bar span { display: block; height: 100%; background: var(--primary); transition: width 0.2s; }
+.dl-state { margin-bottom: 4px; font-weight: 700; }
+#dl-progress .btn { margin-top: 14px; }
+
 /* ── Multi-live ────────────────────────────────────────────────────────── */
 /* « + » des cartes de live : ajoute le direct à la mosaïque. */
 .thumb .madd {

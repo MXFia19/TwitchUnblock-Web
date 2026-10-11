@@ -39,6 +39,7 @@ Watch Twitch lives and VODs in your browser, no subscription needed, with the re
 - **Muted parts**: passages Twitch muted for copyrighted music show in orange on the progress bar, with a notice and a **Skip** button. For a day or two after a stream, Twitch's CDN still serves the original sound: the site loads it instead, automatically
 - **Live ended** screen, and **raids followed** automatically to the target channel (can be turned off)
 - VODs resume where you left off
+- **Download a VOD** or just a part of it (from one time to another, from where you are, the next 10 minutes) in the quality you pick: one `.ts` (or `.mp4`) file that plays in VLC, mpv or the Windows player. Parts muted for copyrighted music keep their original sound while Twitch still has it. Chrome and Edge write the file straight to disk; other browsers build it in memory (up to about 1.5 GB). Deleted VODs rebuilt from the CDN can be downloaded too
 - Mini player: playback keeps going while you browse
 - “Open in…” VLC, Outplayer, Infuse, or copy the stream link
 
@@ -90,6 +91,7 @@ public/              The website, served as-is by Vercel (no build step)
       main.js        Navigation, home, streamer page, settings
       player.js      Video player (hls.js)
       multi.js       Multi-live: up to four lives side by side
+      download.js    Download a VOD or a part of it
       api.js         Worker, Helix and GQL access — configuration at the top
       usage.js       Anonymous usage count
       i18n.js        Translations

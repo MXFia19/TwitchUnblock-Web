@@ -11,6 +11,7 @@ import { linkifyHtml } from './chat/message.js'
 import { Hermes } from './chat/hermes.js'
 import * as usage from './usage.js'
 import * as multi from './multi.js'
+import * as dl from './download.js'
 import { CHANGELOG } from './changelog.js'
 import {
   $, $$, debounce, esc, formatClock, formatDuration, formatViewers, icon, isIOS, isMobile,
@@ -59,6 +60,7 @@ async function boot() {
   bindGlobal()
   setupPlayer()
   setupMulti()
+  dl.init({ openSheet, closeSheet })
   renderContinue()
   renderRecentChannels()
   startLiveTicker()
@@ -507,6 +509,17 @@ const actions = {
   'multi-share': () => {
     const url = location.href
     navigator.clipboard?.writeText(url).then(() => toast(t('copied'), 'success'), () => toast(url))
+  },
+  'vod-download': () => {
+    const w = state.watch
+    if (w?.kind !== 'vod' || !w.links) return
+    dl.open({
+      id: w.id,
+      title: w.info?.title || $('#mini-title').textContent || `VOD ${w.id}`,
+      streamer: w.info?.owner?.displayName || w.login || '',
+      links: w.links,
+      position: player.video?.currentTime || 0,
+    })
   },
   'multi-add-current': () => {
     const w = state.watch
@@ -1574,6 +1587,13 @@ async function recoverAndPlay(card) {
     $('#watch-title').textContent = title || login
     $('#mini-title').textContent = title || login
     setWatchChannel(login)
+    // À télécharger avant qu'elle ne quitte le CDN.
+    $('#watch-info').innerHTML = `
+      <div class="wi-text"><h1 title="${esc(title || login)}">${esc(title || login)}</h1></div>
+      <div class="wi-actions">
+        <button class="btn ghost sm" type="button" data-action="vod-download">${icon('download', 16)}<span>${esc(t('dl_download'))}</span></button>
+        <button class="btn ghost sm" type="button" data-action="open-in">${icon('external', 16)}<span>${esc(t('open_in'))}</span></button>
+      </div>`
   } catch (e) {
     card.classList.add('gone')
     toast(t('recover_failed'), 'error')
@@ -2229,6 +2249,7 @@ async function openVod(id, preset, { keepPlaylist = false, at = null } = {}) {
     </div>
     <div class="wi-actions">
       ${token.login ? `<button class="btn ghost sm" type="button" data-action="see-vods">${icon('film', 16)}<span>${esc(t('see_vods'))}</span></button>` : ''}
+      <button class="btn ghost sm" type="button" data-action="vod-download">${icon('download', 16)}<span>${esc(t('dl_download'))}</span></button>
       <button class="btn ghost sm" type="button" data-action="open-in">${icon('external', 16)}<span>${esc(t('open_in'))}</span></button>
     </div>`
 }
@@ -2603,6 +2624,8 @@ function openFeedbackThread(id) {
 // ── Feuilles : ouvrir dans…, réglages ─────────────────────────────────────
 function openSheet(html) {
   const sheet = $('#sheet')
+  // Chaque feuille pose ses propres gestionnaires : ceux de la précédente partent.
+  sheet.onclick = sheet.oninput = sheet.onchange = null
   sheet.innerHTML = html
   renderIcons(sheet)
   $('#sheet-backdrop').hidden = false
