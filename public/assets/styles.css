@@ -972,6 +972,21 @@ html.multi-open { overflow: hidden; }
   transition: opacity 0.2s, transform 0.2s;
 }
 .toast.show { opacity: 1; transform: translate(-50%, 0); }
+/* Bandeau cliquable (réponse à un signalement) : comme un toast, avec une action. */
+.notice {
+  position: fixed; left: 50%; bottom: calc(24px + var(--safe-b)); z-index: 101;
+  display: flex; align-items: center; gap: 10px; width: min(460px, calc(100% - 24px));
+  padding: 10px 8px 10px 12px; border-radius: 14px;
+  background: var(--card-hi); border: 1px solid var(--line-strong); color: var(--text);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  opacity: 0; transform: translate(-50%, 16px); pointer-events: none; transition: opacity 0.2s, transform 0.2s;
+}
+.notice.show { opacity: 1; transform: translate(-50%, 0); pointer-events: auto; }
+.notice-ic { flex: none; display: grid; place-items: center; width: 34px; height: 34px; border-radius: 50%; color: #fff; background: var(--primary); }
+.notice-text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.notice-text b { font-size: 14px; }
+.notice-text small { color: var(--muted); font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 760px) { .notice { bottom: calc(74px + var(--safe-b)); } }
 .toast.error { border-color: rgba(255, 79, 77, 0.55); }
 .toast.success { border-color: rgba(0, 200, 120, 0.55); }
 

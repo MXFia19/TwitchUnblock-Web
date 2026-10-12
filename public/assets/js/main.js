@@ -2678,22 +2678,63 @@ function updateFeedbackBadges() {
 }
 
 /** État de toutes les discussions, en une requête (au plus toutes les 3 min
- *  sans `force`). Un retour effacé ou expiré disparaît de la liste. */
+ *  sans `force`). Un retour effacé ou expiré disparaît de la liste.
+ *  `notify` : annoncer par un bandeau une réponse arrivée entre-temps. */
 let fbCheckedAt = 0
-async function refreshFeedbackInbox(force = false) {
+async function refreshFeedbackInbox(force = false, notify = true) {
   const list = myFeedback()
   if (!list.length || (!force && Date.now() - fbCheckedAt < 3 * 60 * 1000)) return list
   fbCheckedAt = Date.now()
   try {
     const { items } = await api.feedbackThreads(list.map(({ id, token }) => ({ id, token })))
     const byId = new Map((items ?? []).map((i) => [i.id, i]))
+    const before = new Map(list.map((r) => [r.id, r.updatedAt || 0]))
     const next = list.filter((r) => !byId.get(r.id)?.gone).map((r) => {
       const it = byId.get(r.id)
       return it ? { ...r, status: it.status, updatedAt: it.updatedAt, lastFrom: it.lastFrom, thread: it.thread } : r
     })
     saveMyFeedback(next)
+    // Réponse (ou nouvel état) du développeur depuis la dernière lecture.
+    const fresh = next.filter((r) => fbUnread(r) && (r.updatedAt || 0) > (before.get(r.id) || 0))
+    if (notify && fresh.length) notifyFeedback(fresh[0])
     return next
   } catch { return list }
+}
+
+/** Bandeau « réponse à ton signalement » : le message du développeur (ou le
+ *  nouvel état), et un bouton vers « Mes signalements ». */
+function notifyFeedback(r) {
+  const last = [...(r.thread ?? [])].reverse().find((m) => m.f === 'a' && m.m)
+  showNotice({
+    title: t(last ? 'fb_notif_reply' : 'fb_notif_status'),
+    text: last ? last.m : t('fb_status_line', { s: t(`fb_status_${r.status || 'new'}`) }),
+    action: t('fb_notif_open'),
+    onAction: () => openMyFeedback(),
+  })
+}
+
+/** Bandeau cliquable en bas de l'écran, avec une action : plus visible
+ *  qu'un toast. Il s'efface seul au bout de 10 s. */
+function showNotice({ title, text = '', action = '', onAction }) {
+  let el = $('#notice')
+  if (!el) {
+    el = document.createElement('div')
+    el.id = 'notice'
+    el.className = 'notice'
+    el.setAttribute('role', 'status')
+    document.body.appendChild(el)
+  }
+  el.innerHTML = `<span class="notice-ic">${icon('inbox', 18)}</span>
+    <span class="notice-text"><b>${esc(title)}</b>${text ? `<small>${esc(text)}</small>` : ''}</span>
+    ${action ? `<button class="btn sm primary" type="button" data-notice-act>${esc(action)}</button>` : ''}
+    <button class="icon-btn xs" type="button" data-notice-close aria-label="${esc(t('close'))}">${icon('x', 14)}</button>`
+  el.onclick = (e) => {
+    if (e.target.closest('[data-notice-act]')) onAction?.()
+    if (e.target.closest('[data-notice-act], [data-notice-close]')) el.classList.remove('show')
+  }
+  setTimeout(() => el.classList.add('show'), 20)
+  clearTimeout(showNotice.timer)
+  showNotice.timer = setTimeout(() => el.classList.remove('show'), 10_000)
 }
 
 /** Image choisie ou collée → JPEG réduit (1600 px, ~500 Ko au plus), base64. */
@@ -2823,7 +2864,8 @@ function openMyFeedback() {
   openSheet(`
     <div class="sheet-head"><button class="icon-btn" type="button" data-fb-back>${icon('chevronLeft', 20)}</button><h2>${esc(t('fb_mine'))}</h2><button class="icon-btn" type="button" data-sheet-close>${icon('x', 20)}</button></div>
     <div class="sheet-section" id="fb-mine-list">${listHtml(myFeedback())}</div>`)
-  refreshFeedbackInbox(true).then((list) => { const box = $('#fb-mine-list'); if (box) box.innerHTML = listHtml(list) })
+  // Déjà sous les yeux : pas de bandeau pour une réponse arrivée à l'instant.
+  refreshFeedbackInbox(true, false).then((list) => { const box = $('#fb-mine-list'); if (box) box.innerHTML = listHtml(list) })
   $('#sheet').onclick = (e) => {
     if (e.target.closest('[data-sheet-close]')) return closeSheet()
     if (e.target.closest('[data-fb-back]')) return openFeedback()

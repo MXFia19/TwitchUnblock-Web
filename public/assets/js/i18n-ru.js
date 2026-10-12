@@ -342,6 +342,7 @@ export const RU = {
   minutes_ago: '{n} мин назад',
   hours_ago: '{n} ч назад',
   pin_left: 'ещё {n} мин',
+  fb_notif_reply: 'Ответ на ваше обращение', fb_notif_status: 'Статус вашего обращения изменился', fb_notif_open: 'Открыть',
   appearance: 'Оформление', background_theme: 'Фон', accent_color: 'Цвет акцента',
   bg_auto: 'Автоматически', bg_dark: 'Тёмный', bg_oled: 'Чёрный OLED', bg_slate: 'Сланцевый', bg_light: 'Светлый',
   accent_twitch: 'Фиолетовый Twitch', accent_blue: 'Синий', accent_green: 'Зелёный', accent_pink: 'Розовый', accent_orange: 'Оранжевый', accent_red: 'Красный', accent_teal: 'Бирюзовый',
