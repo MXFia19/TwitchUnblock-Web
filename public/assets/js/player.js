@@ -28,13 +28,32 @@ const HLS_SOURCES = [
 // protection renforcée, extensions, réseaux filtrés), ces requêtes
 // n'aboutissent jamais : on bascule alors sur le relais, et on s'en souvient
 // une semaine sur cet appareil.
+// Un seul raté suffisait (Wi-Fi qui décroche, mise en veille…) : l'appareil
+// passait ensuite une semaine sur le relais alors que le CDN répondait. Il
+// en faut maintenant trois de suite, appareil en ligne, sans un segment reçu
+// entre deux. Et sur le relais, le CDN est retenté en douce (une requête
+// HEAD, toutes les 10 min au plus) : s'il répond, retour au direct.
 const SEG_PROXY_KEY = 'tu_segment_proxy'
 const SEG_PROXY_DAYS = 7
+const SEG_PROXY_FAILS = 3
+const SEG_RECHECK_MS = 10 * 60 * 1000
 function segmentProxyOn() {
   try { return Number(localStorage.getItem(SEG_PROXY_KEY) || 0) > Date.now() } catch { return false }
 }
 function enableSegmentProxy() {
   try { localStorage.setItem(SEG_PROXY_KEY, String(Date.now() + SEG_PROXY_DAYS * 86400000)) } catch {}
+}
+let directRecheckAt = 0
+/** Sur le relais : le CDN répond-il de nouveau ? HEAD sur le segment demandé
+ *  (requête simple : pas de contrôle préalable CORS, rien de téléchargé). */
+function recheckDirect(url) {
+  if (Date.now() - directRecheckAt < SEG_RECHECK_MS) return
+  directRecheckAt = Date.now()
+  fetch(url, { method: 'HEAD', cache: 'no-store' }).then((r) => {
+    if (!r.ok) return
+    try { localStorage.removeItem(SEG_PROXY_KEY) } catch {}
+    console.info('[TwitchUnblock] Le CDN de Twitch répond : segments de nouveau en direct.')
+  }).catch(() => {})
 }
 /** Segment de direct servi en direct par le CDN (pas déjà relayé). */
 function isDirectSegment(u) {
@@ -52,6 +71,7 @@ export function liveRequestUrl(reqUrl, playlistUrl) {
   // Le relais qui a servi ces liens : celui du VPS, le Worker principal, ou
   // un secours si le quota du principal est atteint.
   if (segmentProxyOn() && isDirectSegment(fixed)) {
+    recheckDirect(fixed)
     fixed = `${proxyBaseOf(playlistUrl) ?? API_URL}/api/proxy?url=${encodeURIComponent(fixed)}&isVod=false`
   }
   return fixed
@@ -462,9 +482,11 @@ export class Player {
         ...(this.kind === 'live' ? { pLoader: prefetchPlaylistLoader(Hls, this), maxLiveSyncPlaybackRate: 1.1 } : {}),
       })
       this.hls = hls
+      this.directFails = 0
       hls.loadSource(url)
       hls.attachMedia(v)
       hls.on(Hls.Events.MANIFEST_PARSED, () => this.tryPlay())
+      hls.on(Hls.Events.FRAG_LOADED, () => { this.directFails = 0 })
       // En « Auto » (playlist maître), hls.js choisit le débit : on affiche
       // lequel, sinon on ne sait jamais ce qu'on regarde vraiment.
       hls.on(Hls.Events.LEVEL_SWITCHED, (_e, d) => {
@@ -473,10 +495,13 @@ export class Player {
         this.updateQualityLabel()
       })
       hls.on(Hls.Events.ERROR, (_e, data) => {
-        // Segment jamais arrivé (code 0 : bloqué avant d'atteindre Twitch) :
-        // les prochaines tentatives passent par le relais du Worker.
+        // Segments jamais arrivés (code 0 : bloqués avant d'atteindre
+        // Twitch), trois de suite et appareil en ligne : les prochaines
+        // tentatives passent par le relais du Worker.
         if (!segmentProxyOn() && data.type === Hls.ErrorTypes.NETWORK_ERROR
-            && /^frag/i.test(data.details || '') && !data.response?.code && isDirectSegment(data.frag?.url || data.url || '')) {
+            && /^frag/i.test(data.details || '') && !data.response?.code && isDirectSegment(data.frag?.url || data.url || '')
+            && navigator.onLine !== false && ++this.directFails >= SEG_PROXY_FAILS) {
+          this.directFails = 0
           enableSegmentProxy()
           console.info('[TwitchUnblock] Segments directs bloqués : passage par le relais.')
           if (data.fatal) { hls.startLoad(); return }

@@ -315,7 +315,11 @@ server's address gets ntfy.sh's free quota: 250 messages a day.
 `ALLOWED_ORIGINS` (in `docker-compose.yml`) lists the websites allowed to use
 the relay; other sites get a 403, so they can't use your bandwidth. Bandwidth:
 every VOD watched on the website goes through the server (about 1.5–3.5 GB per
-hour depending on quality); live video segments don't, only their playlists.
+hour depending on quality); live video segments don't, only their playlists —
+unless a browser can't reach Twitch's CDN (three segments in a row that never
+arrive): that device then sends them through the relay for a week, and goes
+back to direct as soon as the CDN answers again (checked every 10 minutes at
+most).
 
 **Oracle Cloud:** open ports 80 and 443 in two places — in the VCN's security
 list (*Networking → Virtual cloud networks → your VCN → Security lists →
