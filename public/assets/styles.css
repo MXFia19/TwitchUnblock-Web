@@ -34,6 +34,52 @@
 [hidden] { display: none !important; }
 
 html { -webkit-text-size-adjust: 100%; background: var(--bg); color-scheme: dark; }
+
+/* ── Thèmes (Réglages → Apparence) ─────────────────────────────────────── */
+/* Fonds de l'app (sombre par défaut, noir OLED, ardoise), et un fond clair. */
+:root[data-bg="oled"] { --bg: #000000; --card: #0e0e10; --card-hi: #141417; --surface: #1c1c1f; --surface-hi: #26262b; --line-strong: #2e2e33; }
+:root[data-bg="slate"] { --bg: #0f141c; --card: #171e29; --card-hi: #1d2531; --surface: #232c3a; --surface-hi: #2b3647; --line-strong: #35404f; --muted: #a7b1c2; }
+/* Couleurs d'accent de l'app : la principale, et sa version claire pour les
+   textes mis en avant (--purple, nom historique). */
+:root[data-accent="blue"] { --primary: #2f7cf6; --primary-hi: #5a98f8; --purple: #8ab8ff; }
+:root[data-accent="green"] { --primary: #10b981; --primary-hi: #34d399; --purple: #6ee7b7; }
+:root[data-accent="pink"] { --primary: #ec4899; --primary-hi: #f472b6; --purple: #f9a8d4; }
+:root[data-accent="orange"] { --primary: #f97316; --primary-hi: #fb923c; --purple: #fdba74; }
+:root[data-accent="red"] { --primary: #e5484d; --primary-hi: #ee6b6f; --purple: #ff9c9f; }
+:root[data-accent="teal"] { --primary: #06b6d4; --primary-hi: #22d3ee; --purple: #67e8f9; }
+/* Fond clair : texte foncé, et la couleur d'accent elle-même pour les
+   textes (sa version claire ne se lirait pas sur blanc). */
+:root[data-bg="light"] {
+  color-scheme: light;
+  --bg: #f3f3f6; --card: #ffffff; --card-hi: #f7f7fa; --surface: #eaeaf0; --surface-hi: #e0e0e8;
+  --line: rgba(0, 0, 0, 0.09); --line-strong: #d6d6de; --text: #18181c; --muted: #5f5f6b; --purple: var(--primary);
+}
+/* Ce qui était blanc sur fond sombre, sans passer par une variable. */
+:root[data-bg="light"] .segmented button.active, :root[data-bg="light"] .nav button.active { color: var(--text); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12); }
+:root[data-bg="light"] .icon-btn:hover, :root[data-bg="light"] .emote-cells button:hover, :root[data-bg="light"] .mb-chip button:hover { background: rgba(0, 0, 0, 0.06); }
+:root[data-bg="light"] .msg:hover { background: rgba(0, 0, 0, 0.035); }
+:root[data-bg="light"] .mention { background: rgba(0, 0, 0, 0.07); }
+:root[data-bg="light"] .mention.self { color: var(--text); background: color-mix(in srgb, var(--primary) 22%, transparent); }
+:root[data-bg="light"] .spinner { border-color: rgba(0, 0, 0, 0.12); border-top-color: var(--primary); }
+:root[data-bg="light"] .login-card p { color: var(--muted); }
+:root[data-bg="light"] .chat-mode { color: #8a6d00; background: rgba(230, 180, 0, 0.14); }
+:root[data-bg="light"] .fb-kind.bug, :root[data-bg="light"] .fb-status.refused { color: #c42b2b; }
+:root[data-bg="light"] .fb-status.accepted { color: #1d5fb8; }
+:root[data-bg="light"] .fb-status.progress { color: #8a6d00; }
+:root[data-bg="light"] .fb-status.done { color: #0b7a4c; }
+/* Le lecteur reste noir quel que soit le thème : lui, son menu, l'écran de
+   fin de live et le chat posé sur l'image en plein écran gardent la palette
+   sombre (sinon texte foncé sur fond noir). */
+:root[data-bg="light"] :is(.player, .watch-ended, .watch-body:fullscreen .chat) {
+  --bg: #0e0e10; --card: #18181b; --card-hi: #1f1f23; --surface: #26262c; --surface-hi: #303036;
+  --line: rgba(255, 255, 255, 0.08); --line-strong: #3a3a40; --text: #efeff1; --muted: #adadb8;
+  color: var(--text);
+}
+
+/* Réglages : pastilles des couleurs d'accent. */
+.accent-swatches { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 8px; }
+.accent-swatches .swatch { width: 30px; height: 30px; border-radius: 50%; background: var(--sw); border: 3px solid var(--card); box-shadow: 0 0 0 1px var(--line-strong); }
+.accent-swatches .swatch.on { box-shadow: 0 0 0 2px var(--sw); }
 html.watching { overflow: hidden; }
 body {
   font-family: Inter, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
@@ -106,7 +152,7 @@ input[type='search']::-webkit-search-cancel-button { filter: invert(1) opacity(0
   position: sticky; top: 0; z-index: 30;
   display: flex; align-items: center; gap: 16px;
   height: calc(64px + var(--safe-t)); padding: var(--safe-t) 24px 0;
-  background: rgba(14, 14, 16, 0.85);
+  background: color-mix(in srgb, var(--bg) 85%, transparent);
   backdrop-filter: saturate(160%) blur(14px);
   -webkit-backdrop-filter: saturate(160%) blur(14px);
   border-bottom: 1px solid var(--line);
@@ -167,7 +213,7 @@ input[type='search']::-webkit-search-cancel-button { filter: invert(1) opacity(0
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 30;
   display: none; grid-template-columns: repeat(4, 1fr);
   height: calc(62px + var(--safe-b)); padding-bottom: var(--safe-b);
-  background: rgba(14, 14, 16, 0.92);
+  background: color-mix(in srgb, var(--bg) 92%, transparent);
   backdrop-filter: saturate(160%) blur(14px);
   -webkit-backdrop-filter: saturate(160%) blur(14px);
   border-top: 1px solid var(--line);

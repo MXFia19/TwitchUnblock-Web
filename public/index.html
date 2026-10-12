@@ -19,6 +19,19 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <script>
+    // Thème choisi (Réglages → Apparence), posé avant le premier affichage :
+    // sinon la page s'affiche un instant en sombre avant de passer au clair.
+    (function () {
+      try {
+        var p = JSON.parse(localStorage.getItem('tu_prefs') || '{}')
+        var bg = p.themeBg || 'dark'
+        if (bg === 'auto') bg = matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark'
+        document.documentElement.dataset.bg = bg
+        if (p.themeAccent && p.themeAccent !== 'twitch') document.documentElement.dataset.accent = p.themeAccent
+      } catch (e) {}
+    })()
+  </script>
   <!-- Chemins absolus : la page est aussi servie sous /xqc, /videos/123… -->
   <link rel="stylesheet" href="/assets/styles.css">
 

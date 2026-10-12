@@ -43,10 +43,34 @@ let channelTimer = null
 let hermes = null
 let lastSave = 0
 
+// ── Thème (Réglages → Apparence) ───────────────────────────────────────────
+// Fond et couleur d'accent, comme dans l'app, plus un fond clair et un mode
+// qui suit l'appareil. Posés sur <html> (data-bg, data-accent) ; index.html
+// les applique dès le chargement, avant le premier affichage.
+const THEME_BGS = ['auto', 'dark', 'oled', 'slate', 'light']
+const THEME_ACCENTS = [['twitch', '9146ff'], ['blue', '2f7cf6'], ['green', '10b981'], ['pink', 'ec4899'], ['orange', 'f97316'], ['red', 'e5484d'], ['teal', '06b6d4']]
+const BG_COLORS = { dark: '#0e0e10', oled: '#000000', slate: '#0f141c', light: '#f3f3f6' }
+const lightScheme = matchMedia('(prefers-color-scheme: light)')
+
+const themeBg = () => (THEME_BGS.includes(store.prefs.themeBg) ? store.prefs.themeBg : 'dark')
+const themeAccent = () => (THEME_ACCENTS.some(([id]) => id === store.prefs.themeAccent) ? store.prefs.themeAccent : 'twitch')
+
+function applyTheme() {
+  const root = document.documentElement
+  const bg = themeBg() === 'auto' ? (lightScheme.matches ? 'light' : 'dark') : themeBg()
+  root.dataset.bg = bg
+  if (themeAccent() === 'twitch') delete root.dataset.accent
+  else root.dataset.accent = themeAccent()
+  document.querySelector('meta[name="theme-color"]')?.setAttribute('content', BG_COLORS[bg])
+  document.querySelector('meta[name="color-scheme"]')?.setAttribute('content', bg === 'light' ? 'light' : 'dark')
+}
+lightScheme.addEventListener?.('change', () => { if (themeBg() === 'auto') applyTheme() })
+
 // ── Démarrage ──────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', boot)
 
 async function boot() {
+  applyTheme()
   initLang(store.prefs.lang)
   loadHls()   // prêt avant le premier clic
   applyStatic()
@@ -2992,6 +3016,21 @@ function openSettings() {
       ${toggle('set-recent', t('show_recent'), p.showRecent !== false, t('show_recent_sub'))}
     </div>
     <div class="sheet-section">
+      <h3>${esc(t('appearance'))}</h3>
+      <div class="setting setting-col">
+        <span class="setting-text"><span>${esc(t('background_theme'))}</span></span>
+        <div class="segmented full langs" id="set-bg">
+          ${THEME_BGS.map((b) => `<button type="button" data-bg-choice="${b}" class="${themeBg() === b ? 'active' : ''}">${esc(t(`bg_${b}`))}</button>`).join('')}
+        </div>
+      </div>
+      <div class="setting setting-col">
+        <span class="setting-text"><span>${esc(t('accent_color'))}</span></span>
+        <div class="accent-swatches" id="set-accent">
+          ${THEME_ACCENTS.map(([id, hex]) => `<button type="button" class="swatch${themeAccent() === id ? ' on' : ''}" data-accent-choice="${id}" style="--sw:#${hex}" title="${esc(t(`accent_${id}`))}" aria-label="${esc(t(`accent_${id}`))}"></button>`).join('')}
+        </div>
+      </div>
+    </div>
+    <div class="sheet-section">
       <h3>${esc(t('player_settings'))}</h3>
       ${toggle('set-clickpause', t('click_pause'), p.clickPause !== false, t('click_pause_sub'))}
       <div class="setting setting-col">
@@ -3080,6 +3119,23 @@ function openSettings() {
   const sheet = $('#sheet')
   sheet.onclick = (e) => {
     if (e.target.closest('[data-sheet-close]')) return closeSheet()
+    // Apparence : fond et couleur d'accent, appliqués tout de suite.
+    const bgBtn = e.target.closest('[data-bg-choice]')
+    if (bgBtn) {
+      store.prefs.themeBg = bgBtn.dataset.bgChoice
+      store.savePrefs()
+      applyTheme()
+      for (const b of $$('[data-bg-choice]', sheet)) b.classList.toggle('active', b === bgBtn)
+      return
+    }
+    const accBtn = e.target.closest('[data-accent-choice]')
+    if (accBtn) {
+      store.prefs.themeAccent = accBtn.dataset.accentChoice
+      store.savePrefs()
+      applyTheme()
+      for (const b of $$('[data-accent-choice]', sheet)) b.classList.toggle('on', b === accBtn)
+      return
+    }
     const l = e.target.closest('[data-l]')?.dataset.l
     if (l) {
       // « Appareil » n'enregistre rien : la langue suivra l'appareil, y
