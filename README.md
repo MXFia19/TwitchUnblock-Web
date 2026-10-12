@@ -354,6 +354,11 @@ there.
 - Only the server owner and `DISCORD_ADMIN_IDS` speak for the developer;
   other members' messages stay on Discord. Keep the forum private anyway:
   reports can include contact details.
+- Reports from before the bridge (or whose delivery failed) get their post
+  too, oldest first: the original message with its screenshots, then the rest
+  of the conversation in one message, and the tag of their status. The bot
+  has the Worker publish them a few at a time, at startup and every 10
+  minutes; it never extends how long a report is kept.
 
 Setting it up:
 

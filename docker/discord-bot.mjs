@@ -11,7 +11,9 @@
 //    - l'étiquette d'état choisie (Reçu, Vu, Accepté, En cours, Fait,
 //      Refusé) devient l'état du retour ; le bot crée celles qui manquent ;
 //    - un changement fait ailleurs (/stats, l'app) arrive dans le post : le
-//      bot remet l'étiquette qui va avec.
+//      bot remet l'étiquette qui va avec ;
+//    - les retours d'avant le pont reçoivent leur post (le Worker les publie
+//      quelques-uns à la fois, le bot le relance jusqu'au bout).
 //  Seuls le propriétaire du serveur et DISCORD_ADMIN_IDS répondent au nom du
 //  développeur ; les messages des autres restent sur Discord.
 //
@@ -71,7 +73,7 @@ export function startDiscordBridge({
   api = api.replace(/\/+$/, '')
   const extraAdmins = new Set(admins)
   const st = {
-    forum: null, guild: null, owner: null, me: null, labels: {},
+    forum: null, forumType: null, guild: null, owner: null, me: null, labels: {},
     tagOf: new Map(),     // état → étiquette
     stateOf: new Map(),   // étiquette → état
     threads: new Map(),   // post du forum → étiquettes posées
@@ -87,6 +89,7 @@ export function startDiscordBridge({
   let acked = true
   let retries = 0
   let stopped = false
+  let backfilling = false
 
   // ── API de Discord et du Worker ─────────────────────────────────────────
   async function rest(method, path, body) {
@@ -274,6 +277,29 @@ export function startDiscordBridge({
     }
   }
 
+  /** Retours d'avant le pont : le Worker en publie quelques-uns par appel,
+   *  on rappelle jusqu'au bout (au rythme demandé par Discord). Seulement
+   *  dans un salon Forum : ailleurs, ils n'auraient pas de post à eux. */
+  async function backfill() {
+    if (backfilling || st.forumType !== FORUM) return
+    backfilling = true
+    let total = 0
+    try {
+      for (let round = 0; round < 500 && !stopped; round++) {
+        const r = await call({ action: 'backfill' })
+        total += r.done || 0
+        if (r.error) { log.warn(`Pont Discord : anciens retours — ${r.error}`); break }
+        if (!r.remaining || (!r.done && !r.retryAfter)) break
+        await sleep(r.retryAfter ? Math.ceil(r.retryAfter * 1000) + 500 : 2500)
+      }
+    } catch (e) {
+      log.warn(`Pont Discord : anciens retours non publiés (${e.message})`)
+    } finally {
+      backfilling = false
+      if (total) log.log(`Pont Discord : ${total} ancien(s) retour(s) publié(s) dans le forum`)
+    }
+  }
+
   // ── Événements ──────────────────────────────────────────────────────────
   async function onGuild(g) {
     st.owner = g.owner_id
@@ -282,6 +308,7 @@ export function startDiscordBridge({
       log.warn(`Pont Discord : salon ${st.forum} du webhook introuvable — le bot doit le voir (permissions du salon)`)
       return
     }
+    st.forumType = forum.type
     if (forum.type !== FORUM) log.warn('Pont Discord : le webhook n’est pas dans un salon Forum — les retours n’y ont pas de post à eux')
     await ensureTags(forum)
     for (const th of g.threads || []) {
@@ -293,6 +320,7 @@ export function startDiscordBridge({
       const s = await stateOf(id)
       if (s) await syncTags(id, s.status)
     }
+    backfill()
   }
 
   async function onThreadUpdate(d) {
@@ -479,8 +507,12 @@ export function startDiscordBridge({
           st.threads.clear()
           st.parents.clear()
           st.states.clear()
-          await ensureTags(await rest('GET', `/channels/${c.forum}`))
+          const forum = await rest('GET', `/channels/${c.forum}`)
+          st.forumType = forum?.type ?? null
+          await ensureTags(forum)
         }
+        // Retours dont l'envoi a raté (Discord injoignable…) : rattrapés.
+        backfill()
       } catch {}
     }, 10 * 60_000).unref?.()
   }

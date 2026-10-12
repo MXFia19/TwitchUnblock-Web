@@ -1263,14 +1263,96 @@ function notifyDiscord(env, ctx, entry, photos = [], opts = {}) {
 }
 
 /** Retour ↔ post Discord. `fresh` : nouveau post, noté dans le retour ;
- *  sinon le lien est seulement prolongé (gardé autant que le retour). */
-async function linkDiscordThread(env, key, thread, fresh) {
+ *  sinon le lien est seulement prolongé (gardé autant que le retour).
+ *  `ttl` : ce qui reste au retour (reprise des anciens : on ne le prolonge
+ *  pas). */
+async function linkDiscordThread(env, key, thread, fresh, ttl = FEEDBACK_TTL) {
     if (fresh) {
         const { value, metadata } = await store(env).getWithMetadata(key);
         if (!metadata) return;
-        await store(env).put(key, value, { metadata: { ...metadata, dt: thread }, expirationTtl: FEEDBACK_TTL });
+        await store(env).put(key, value, { metadata: { ...metadata, dt: thread }, expirationTtl: ttl });
     }
-    await store(env).put(`${FEEDBACK_DISCORD_PREFIX}${thread}`, key, { expirationTtl: FEEDBACK_TTL });
+    await store(env).put(`${FEEDBACK_DISCORD_PREFIX}${thread}`, key, { expirationTtl: ttl });
+}
+
+/** Clés d'un préfixe, avec leurs métadonnées et leur expiration (5000 au plus). */
+async function listStoreKeys(env, prefix) {
+    const out = [];
+    let cursor;
+    do {
+        const page = await store(env).list({ prefix, limit: 1000, cursor });
+        out.push(...page.keys);
+        cursor = page.list_complete ? undefined : page.cursor;
+    } while (cursor && out.length < 5000);
+    return out;
+}
+
+// ── Reprise des anciens retours ────────────────────────────────────────────
+// Retours d'avant le pont (ou dont l'envoi a raté) : un post chacun, du plus
+// ancien au plus récent — le message d'origine avec ses photos, puis la
+// suite de la discussion en un message. Quatre par appel : un Worker gratuit
+// a 50 sous-requêtes et 50 requêtes D1. Le bot du relais rappelle jusqu'au
+// bout, en respectant le délai que Discord demande (429). Un retour raté deux
+// fois est laissé de côté ; un retour de moins de 2 min est peut-être en
+// train de partir : il attend le passage suivant.
+const BACKFILL_BATCH = 4;
+async function backfillDiscord(env) {
+    const hook = String(env.FEEDBACK_WEBHOOK || '').trim();
+    const now = Date.now();
+    const todo = (await listStoreKeys(env, FEEDBACK_PREFIX))
+        .filter(({ metadata: m }) => m && !m.dt && (m.dtf || 0) < 2 && now - (m.u || m.at || 0) > 120000)
+        .sort((a, b) => (a.metadata.at || 0) - (b.metadata.at || 0));
+    let done = 0;
+    for (const { name, expiration } of todo.slice(0, BACKFILL_BATCH)) {
+        const ttl = expiration ? Math.max(60, Math.round(expiration - now / 1000)) : FEEDBACK_TTL;
+        const r = await backfillOne(env, hook, name, ttl);
+        if (r.notForum) return { error: 'Le webhook n’est pas dans un salon Forum', done, remaining: todo.length - done };
+        if (r.retryAfter) return { done, remaining: todo.length - done, retryAfter: r.retryAfter };
+        done++;
+    }
+    return { done, remaining: todo.length - done };
+}
+
+async function backfillOne(env, hook, key, ttl) {
+    const { value, metadata: m } = await store(env).getWithMetadata(key);
+    if (!m || m.dt) return { ok: true };
+    const thread = feedbackThread(value, m);
+    const first = thread[0] || { f: 'u', m: m.m, at: m.at };
+    const photos = [];
+    for (const n of (first.ph || []).slice(0, FEEDBACK_MAX_PHOTOS)) {
+        const p = await store(env).getWithMetadata(`${FEEDBACK_PHOTO_PREFIX}${key}_${n}`);
+        if (p.value) photos.push({ b64: p.value, type: p.metadata?.t || 'image/jpeg' });
+    }
+    const r = await postFeedbackToDiscord(hook, { ...m, m: first.m || m.m, u: first.at || m.at, dt: null }, photos,
+        { bot: Boolean(env.FEEDBACK_BOT_SECRET), requireThread: true });
+    if (r.notForum) return r;
+    if (r.status === 429) return { retryAfter: r.retryAfter || 5 };
+    if (!r.ok || !r.thread) {
+        await store(env).put(key, value, { metadata: { ...m, dtf: (m.dtf || 0) + 1 }, expirationTtl: ttl });
+        return { ok: false };
+    }
+    await linkDiscordThread(env, key, r.thread, true, ttl);
+    const rest = thread.slice(1);
+    if (rest.length) {
+        await discordHook(hook, { username: 'TwitchUnblock', allowed_mentions: { parse: [] }, embeds: [historyEmbed(rest)] }, [], { threadId: r.thread });
+    }
+    return { ok: true };
+}
+
+/** La suite d'une discussion d'avant le pont, en un message : qui, quand
+ *  (heure affichée par Discord dans le fuseau de chacun), quoi. Trop longue,
+ *  on garde la fin, la plus utile. */
+function historyEmbed(messages) {
+    const lines = messages.map((x) => {
+        const when = x.at ? ` · <t:${Math.floor(x.at / 1000)}:f>` : '';
+        if (x.s) return `📌 État : **${FEEDBACK_STATUS_LABELS[x.s] || x.s}**${when}`;
+        const who = x.f === 'a' ? '🛠️ **Toi**' : '👤 **La personne**';
+        const pics = x.ph?.length ? ` · 📷 ${x.ph.length}` : '';
+        return `${who}${when}${pics}\n${String(x.m || '').slice(0, 1500)}`;
+    });
+    let text = lines.join('\n\n');
+    if (text.length > 4000) text = `… (début dans /stats)\n${text.slice(-3950)}`;
+    return { title: '🗂️ Suite de la discussion (d’avant le pont Discord)', description: text, color: 0x6b7280 };
 }
 
 /** Plus de `max` requêtes dans l'heure pour cette adresse ? */
@@ -1482,7 +1564,7 @@ function readableInfo(text) {
  * dans le post du retour (`e.dt`), créé au premier envoi.
  * Rend { ok, status, detail, thread } : un refus de Discord n'est plus silencieux.
  */
-async function postFeedbackToDiscord(webhook, e, photos = [], { inReplyTo = null, test = false, bot = false } = {}) {
+async function postFeedbackToDiscord(webhook, e, photos = [], { inReplyTo = null, test = false, bot = false, requireThread = false } = {}) {
     const KINDS = { bug: '🐞 Bug', idea: '💡 Idée', other: '💬 Autre' };
     const COLORS = { bug: 0xeb0400, idea: 0x9147ff, other: 0x6b7280 };
     const kind = KINDS[e.k] || KINDS.other;
@@ -1506,7 +1588,7 @@ async function postFeedbackToDiscord(webhook, e, photos = [], { inReplyTo = null
     // Nom du post (salon forum) : genre et début du premier message.
     const first = String(inReplyTo ?? e.m ?? '').replace(/\s+/g, ' ').trim();
     const threadName = test ? 'Test du webhook' : `${kind} · ${first || '📷'}`.slice(0, 100);
-    return discordHook(webhook, payload, photoFiles(photos), { threadId: e.dt, threadName });
+    return discordHook(webhook, payload, photoFiles(photos), { threadId: e.dt, threadName, requireThread });
 }
 
 /** Photos d'un message en fichiers joints pour Discord. */
@@ -1522,7 +1604,7 @@ function photoFiles(photos) {
  * sans réglage : 220001 (forum : il faut un post), 220003 (salon texte :
  * pas de post), 10003 (post supprimé : un nouveau).
  */
-async function discordHook(webhook, payload, files = [], { threadId = null, threadName = null } = {}) {
+async function discordHook(webhook, payload, files = [], { threadId = null, threadName = null, requireThread = false } = {}) {
     const hook = String(webhook).trim();
     if (!/^https:\/\/(?:ptb\.|canary\.)?discord(?:app)?\.com\/api\/webhooks\//.test(hook)) return { ok: false, status: 0, detail: 'invalid' };
     const send = async (extra, thread) => {
@@ -1553,13 +1635,16 @@ async function discordHook(webhook, payload, files = [], { threadId = null, thre
         }
         if (!r) {
             r = await send(threadName ? { thread_name: threadName } : {});
-            if (r.res.status === 400 && r.data?.code === 220003) r = await send({});
-            else if (r.res.status === 400 && r.data?.code === 220001) r = await send({ thread_name: (threadName || 'TwitchUnblock').slice(0, 100) });
+            if (r.res.status === 400 && r.data?.code === 220003) {
+                // Salon texte : la reprise des anciens retours n'y écrit rien.
+                if (requireThread) return { ok: false, status: 400, detail: 'not forum', notForum: true };
+                r = await send({});
+            } else if (r.res.status === 400 && r.data?.code === 220001) r = await send({ thread_name: (threadName || 'TwitchUnblock').slice(0, 100) });
         }
         if (r.res.ok) return { ok: true, status: r.res.status, thread: r.inThread ? (r.data?.channel_id || null) : null };
         // Réponse de Discord (« Unknown Webhook », limite…), sans balises HTML.
         const detail = r.text.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 200);
-        return { ok: false, status: r.res.status, detail };
+        return { ok: false, status: r.res.status, detail, retryAfter: Number(r.data?.retry_after) || 0 };
     } catch (err) {
         // Discord injoignable : le retour reste dans D1.
         return { ok: false, status: 0, detail: String(err?.message || err).slice(0, 200) };
@@ -1620,6 +1705,8 @@ async function feedbackTeamUpdate(env, key, { message = '', photos = [], status 
 //     { action: 'state', thread }                   → { key, status, lastFrom }
 //     { action: 'reply', thread, message, photos? } → idem, après la réponse
 //     { action: 'status', thread, status }          → idem, après le changement
+//     { action: 'backfill' }                        → { done, remaining, retryAfter? }
+//                                                     (anciens retours, voir plus haut)
 async function handleFeedbackBot(request, env) {
     const secret = String(env.FEEDBACK_BOT_SECRET || '');
     if (secret.length < 16 || !env.DB) return jsonError('Pont Discord non configuré', 404);
@@ -1641,6 +1728,8 @@ async function handleFeedbackBot(request, env) {
         await store(env).put(FEEDBACK_BOT_KEY, '', { metadata: { at: Date.now(), forum: w.channel_id } });
         return jsonResponse({ forum: w.channel_id, guild: w.guild_id || null, labels: FEEDBACK_STATUS_LABELS });
     }
+
+    if (body.action === 'backfill') return jsonResponse(await backfillDiscord(env));
 
     const thread = String(body.thread || '');
     if (!/^\d{5,25}$/.test(thread)) return jsonError('Post invalide', 400);
@@ -1675,16 +1764,7 @@ async function handleFeedbackBot(request, env) {
 async function handleAdminFeedback(request, env, ctx) {
     const { denied } = await requireAdmin(request);
     if (denied) return denied;
-    const listAll = async (prefix) => {
-        const out = [];
-        let cursor;
-        do {
-            const page = await store(env).list({ prefix, limit: 1000, cursor });
-            out.push(...page.keys);
-            cursor = page.list_complete ? undefined : page.cursor;
-        } while (cursor && out.length < 5000);
-        return out;
-    };
+    const listAll = (prefix) => listStoreKeys(env, prefix);
     const summary = (key, m) => ({
         key, kind: m.k || 'other', message: m.m || '', contact: m.c || null, platform: m.p || '?',
         version: m.v || '?', info: m.i || null, at: m.at || 0,
