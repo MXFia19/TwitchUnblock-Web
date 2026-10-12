@@ -109,6 +109,7 @@ public/              The website, served as-is by Vercel (no build step)
 worker.js            Backend: Cloudflare Worker
 wrangler.toml        Worker configuration
 docker/relay.mjs     Video relay for your own server (same proxy as the Worker)
+docker/discord-bot.mjs  Discord bridge for feedback, run by the relay
 relay/               Its docker-compose.yml and Caddyfile (HTTPS)
 vercel.json          Website configuration on Vercel
 ```
@@ -198,7 +199,8 @@ Optional settings, in the Cloudflare dashboard under *Workers & Pages → your W
 
 | Name | Type | What it does |
 |---|---|---|
-| `FEEDBACK_WEBHOOK` | Secret | Discord webhook address: each bug report, idea and reply is posted there, screenshots attached. `/stats` shows whether the last delivery worked and has a **Test Discord delivery** button. |
+| `FEEDBACK_WEBHOOK` | Secret | Discord webhook address: each bug report, idea and reply is posted there, screenshots attached. In a **forum** channel, each report gets its own post, where its replies land too. `/stats` shows whether the last delivery worked and has a **Test Discord delivery** button. |
+| `FEEDBACK_BOT_SECRET` | Secret | Optional. Shared secret (32+ random characters) of the [Discord bridge](#discord-bridge-reply-to-feedback-from-discord): the same value goes in the relay's `.env`. Without it, the bridge's route is off. |
 | `ADMIN_TWITCH_IDS` | Text | Twitch user ID(s) of the site owner, comma-separated, for the developer tools on `/stats`. |
 | `SITE_ORIGINS` | Text | Website address(es) whose usage pings are counted, comma-separated. |
 | `NTFY_TOKEN` | Secret | Optional. Access token of a **paid** [ntfy](https://ntfy.sh) account, for the iOS app's live notifications: ntfy.sh counts free use per IP address (250 messages a day), which the Worker's shared Cloudflare addresses don't get — hence the relay below. A paid account is counted per account (2,500 a day for $6/month) and lets the Worker publish directly. A free account changes nothing. |
@@ -332,6 +334,54 @@ sudo netfilter-persistent save
 ```
 
 (Oracle Linux: `sudo firewall-cmd --permanent --add-service=http --add-service=https && sudo firewall-cmd --reload`.)
+
+### Discord bridge (reply to feedback from Discord)
+
+With a Discord **forum** channel and a small bot running inside the
+[video relay](#video-relay-on-your-own-server-vps), each bug report or idea
+gets its own post, where the person's replies land too. You answer by simply
+writing in the post — the person reads it in **My reports**, no account
+needed — and the report's status follows the post's tag. What you do from
+`/stats` or the app is copied into the post, so the whole conversation is
+there.
+
+- A message in a report's post is sent as your reply, screenshots included
+  (JPEG, PNG or WebP). The bot reacts ✅ once it's sent, ❌ with the reason
+  otherwise. Start a message with `//` for a private note: nothing is sent.
+- The status tags — Reçu, Vu, Accepté, En cours, Fait, Refusé (English names
+  work too: New, Seen, Accepted, In progress, Done, Declined) — set the
+  report's status. Replying to a "Reçu" report marks it "Vu".
+- Only the server owner and `DISCORD_ADMIN_IDS` speak for the developer;
+  other members' messages stay on Discord. Keep the forum private anyway:
+  reports can include contact details.
+
+Setting it up:
+
+1. **Forum channel**: create a private Forum channel, then *Edit channel →
+   Integrations → Webhooks → New webhook*. Put its URL in the Worker's
+   `FEEDBACK_WEBHOOK` secret. (A webhook in a text channel still works: one
+   message per report, without the bridge.)
+2. **Bot**: in the [Discord developer portal](https://discord.com/developers/applications),
+   *New Application → Bot*: *Reset Token* (keep it secret) and turn on
+   **Message Content Intent**. Invite it to your server with
+   `https://discord.com/oauth2/authorize?client_id=<application ID>&scope=bot&permissions=292057844816`
+   (view channels, send messages, send messages in threads, read message
+   history, add reactions, manage threads — to set the tags — and manage
+   channels — to create the status tags), then allow it in the private forum
+   (*Edit channel → Permissions*).
+3. **Shared secret**: a random string (`openssl rand -hex 32`), in the
+   Worker's `FEEDBACK_BOT_SECRET` secret **and** in the relay's `.env`.
+4. **Relay**: in its `.env`, `DISCORD_BOT_TOKEN=…` and `FEEDBACK_BOT_SECRET=…`
+   (for your own Worker, `FEEDBACK_WORKER=https://…`; for other people allowed
+   to answer, `DISCORD_ADMIN_IDS=<Discord IDs, comma-separated>`), then
+   `docker compose pull && docker compose up -d`. `docker logs
+   twitchunblock-relay` shows `Pont Discord : connecté` and `forum « … »
+   suivi`, and `/stats` shows the bot as running.
+
+The bot creates the missing status tags itself; without *manage channels*,
+create them by hand with those names (Discord allows 20 tags per forum and 5
+per post). It takes no new dependency: Discord's gateway over Node's built-in
+WebSocket, and its REST API over `fetch`.
 
 ### Locally
 ```bash

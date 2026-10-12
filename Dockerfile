@@ -21,6 +21,7 @@ COPY worker.js ./
 # Relais vidéo pour un VPS (relay/docker-compose.yml) : même proxy que le Worker.
 COPY worker.js ./worker.mjs
 COPY docker/relay.mjs ./relay.mjs
+COPY docker/discord-bot.mjs ./discord-bot.mjs
 COPY public ./public
 COPY docker/wrangler.docker.toml ./wrangler.docker.toml
 COPY docker/entrypoint.sh /entrypoint.sh

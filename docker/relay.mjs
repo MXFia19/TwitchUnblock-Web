@@ -27,6 +27,10 @@
 //    NTFY_WORKER      Worker dont ce serveur publie les notifications ntfy ;
 //                     sa clé publique est lue sur NTFY_WORKER/api/push/key.
 //                     Par défaut le Worker officiel ; vide = /ntfy coupée.
+//    DISCORD_BOT_TOKEN, FEEDBACK_BOT_SECRET, FEEDBACK_WORKER, DISCORD_ADMIN_IDS
+//                     pont Discord des retours (discord-bot.mjs) : répondre
+//                     aux retours et changer leur état depuis Discord. Sans
+//                     jeton, coupé.
 // ═══════════════════════════════════════════════════════════════════════════
 
 import http from 'node:http'
@@ -225,7 +229,21 @@ server.listen(PORT, () => {
     + (NTFY_WORKER ? ` — ntfy pour ${NTFY_WORKER}` : ''))
 })
 
+// ── Pont Discord des retours (facultatif) ─────────────────────────────────
+// Avec un jeton de bot : les retours se lisent, se répondent et changent
+// d'état dans un salon forum de Discord (voir discord-bot.mjs).
+const bridge = process.env.DISCORD_BOT_TOKEN?.trim()
+  ? (await import('./discord-bot.mjs')).startDiscordBridge({
+      token: process.env.DISCORD_BOT_TOKEN.trim(),
+      secret: (process.env.FEEDBACK_BOT_SECRET || '').trim(),
+      worker: (process.env.FEEDBACK_WORKER || NTFY_WORKER || 'https://test2.kurzmathis4.workers.dev').trim(),
+      admins: (process.env.DISCORD_ADMIN_IDS || '').split(',').map((s) => s.trim()).filter((s) => /^\d{5,25}$/.test(s)),
+      ...(process.env.DISCORD_API ? { api: process.env.DISCORD_API } : {}),
+      ...(process.env.DISCORD_GATEWAY ? { gateway: process.env.DISCORD_GATEWAY } : {}),
+    })
+  : null
+
 // Arrêt propre (docker stop) : on finit les réponses en cours.
 for (const sig of ['SIGTERM', 'SIGINT']) {
-  process.on(sig, () => server.close(() => process.exit(0)))
+  process.on(sig, () => { bridge?.stop(); server.close(() => process.exit(0)) })
 }
