@@ -13,6 +13,8 @@ const twitchSeen = new Map()
 
 let globalsPromise = null
 let loadedChannelId = null
+/** Emotes personnelles BTTV Pro : id Twitch de l'auteur → Map(nom → emote). */
+const personal = new Map()
 
 async function getJSON(url) {
   try {
@@ -93,9 +95,11 @@ function read7TV(arr) {
   return out
 }
 
-/** Le canal l'emporte sur le global : un streamer peut redéfinir une emote. */
-export function resolveEmote(name) {
-  return channel.get(name) ?? globals.get(name) ?? null
+/** Le canal l'emporte sur le global : un streamer peut redéfinir une emote.
+ *  `userId` : auteur du message, pour ses emotes personnelles BTTV Pro
+ *  (après celles de la chaîne, avant les globales). */
+export function resolveEmote(name, userId) {
+  return channel.get(name) ?? (userId ? personal.get(String(userId))?.get(name) : null) ?? globals.get(name) ?? null
 }
 
 export function twitchEmote(id, name) {
@@ -145,4 +149,77 @@ export function emoteCatalog() {
     return true
   })
   return { channel: chan, global }
+}
+// ── BetterTTV en direct ─────────────────────────────────────────────────────
+// Connexion en direct de BTTV (le protocole de son extension) : emotes
+// personnelles des abonnés Pro (« lookup_user », annoncées quand ils ouvrent
+// le chat ; pas de rattrapage pour ceux d'avant notre arrivée) et emotes
+// ajoutées, renommées ou retirées sur la chaîne pendant le live.
+let bttvSocket = null
+let bttvChannel = null
+let bttvRetry = 2000
+
+function bttvSend(name, data) {
+  if (bttvSocket?.readyState === 1) bttvSocket.send(JSON.stringify({ name, data }))
+}
+
+/** Suit la chaîne du chat en direct (une seule à la fois). */
+export function joinBttvLive(channelId) {
+  if (!channelId || bttvChannel === channelId) return
+  if (bttvChannel) bttvSend('part_channel', { name: `twitch:${bttvChannel}` })
+  bttvChannel = channelId
+  if (!bttvSocket || bttvSocket.readyState > 1) connectBttv()
+  else bttvSend('join_channel', { name: `twitch:${channelId}` })
+}
+
+export function leaveBttvLive(channelId) {
+  if (!bttvChannel || (channelId && channelId !== bttvChannel)) return
+  bttvSend('part_channel', { name: `twitch:${bttvChannel}` })
+  bttvChannel = null
+  const ws = bttvSocket
+  bttvSocket = null
+  ws?.close()
+}
+
+function connectBttv() {
+  let ws
+  try { ws = new WebSocket('wss://sockets.betterttv.net/ws') } catch { return }
+  bttvSocket = ws
+  ws.onopen = () => {
+    bttvRetry = 2000
+    if (bttvChannel) bttvSend('join_channel', { name: `twitch:${bttvChannel}` })
+  }
+  ws.onmessage = (ev) => onBttvEvent(ev.data)
+  ws.onclose = () => {
+    if (bttvSocket !== ws) return
+    bttvSocket = null
+    if (!bttvChannel) return
+    // Recul progressif : inutile de marteler un serveur absent.
+    setTimeout(() => { if (!bttvSocket && bttvChannel) connectBttv() }, bttvRetry)
+    bttvRetry = Math.min(60_000, bttvRetry * 2)
+  }
+}
+
+function onBttvEvent(raw) {
+  let evt
+  try { evt = JSON.parse(raw) } catch { return }
+  const d = evt?.data ?? {}
+  const chan = String(d.channel ?? '').split(':').pop()
+  if (evt.name === 'lookup_user') {
+    if (!d.pro || !d.providerId || !Array.isArray(d.emotes) || !d.emotes.length) return
+    const map = new Map(readBTTV(d.emotes).map((e) => [e.name, { ...e, personal: true }]))
+    if (!map.size) return
+    personal.delete(String(d.providerId))
+    personal.set(String(d.providerId), map)
+    if (personal.size > 500) personal.delete(personal.keys().next().value)
+  } else if ((evt.name === 'emote_create' || evt.name === 'emote_update') && chan === loadedChannelId && d.emote?.id) {
+    const old = [...channel.values()].find((e) => e.source === 'bttv' && e.id === d.emote.id)
+    const code = d.emote.code ?? old?.name
+    if (!code) return
+    if (old) channel.delete(old.name)
+    channel.set(code, { id: d.emote.id, name: code, url: `https://cdn.betterttv.net/emote/${d.emote.id}/2x`, source: 'bttv' })
+  } else if (evt.name === 'emote_delete' && chan === loadedChannelId && d.emoteId) {
+    const old = [...channel.values()].find((e) => e.source === 'bttv' && e.id === d.emoteId)
+    if (old) channel.delete(old.name)
+  }
 }

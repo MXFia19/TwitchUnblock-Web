@@ -57,7 +57,7 @@ export async function fetchPinned(login) {
     color: readableColor(msg.sender?.chatColor) ?? '#bf94ff',
     badges: (msg.sender?.displayBadges ?? [])
       .filter((b) => b?.imageURL && /^https:\/\//.test(b.imageURL))
-      .map((b) => ({ set: String(b.setID ?? ''), url: b.imageURL })),
+      .map((b) => ({ set: String(b.setID ?? ''), version: String(b.version ?? ''), url: b.imageURL })),
     // Épinglé par l'auteur lui-même (le cas le plus courant) : inutile de
     // répéter son nom.
     pinnedBy: node.pinnedBy?.login && node.pinnedBy.login !== login_ ? node.pinnedBy.displayName ?? '' : '',

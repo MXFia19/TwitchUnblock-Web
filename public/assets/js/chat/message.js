@@ -57,8 +57,9 @@ export function linkifyHtml(text) {
   }).join('')
 }
 
-/** Découpe un segment de texte libre en liens, mentions, emotes tierces et mots. */
-export function tokenizeSegment(segment) {
+/** Découpe un segment de texte libre en liens, mentions, emotes tierces et
+ *  mots. `userId` : auteur, pour ses emotes personnelles BTTV Pro. */
+export function tokenizeSegment(segment, userId) {
   const out = []
   for (const word of segment.split(' ')) {
     if (!word) continue
@@ -68,7 +69,7 @@ export function tokenizeSegment(segment) {
     } else if (word.startsWith('@') && word.length > 1) {
       out.push({ kind: 'mention', value: word.slice(1) })
     } else {
-      const emote = resolveEmote(word)
+      const emote = resolveEmote(word, userId)
       out.push(emote ? { kind: 'emote', emote } : { kind: 'text', value: word })
     }
   }
@@ -117,15 +118,16 @@ export function fromIRC(irc, historical = false) {
   // Les emotes Twitch sont données par position : on découpe autour d'elles,
   // et seuls les intervalles restants passent par la tokenisation par mot.
   const ranges = parseEmoteRanges(irc.tags.emotes ?? '', text)
+  const author = irc.tags['user-id'] ?? ''
   const tokens = []
   let cursor = 0
   for (const r of ranges) {
     if (r.start < cursor) continue
-    if (r.start > cursor) tokens.push(...tokenizeSegment(text.slice(cursor, r.start)))
+    if (r.start > cursor) tokens.push(...tokenizeSegment(text.slice(cursor, r.start), author))
     tokens.push({ kind: 'emote', emote: twitchEmote(r.id, text.slice(r.start, r.end)) })
     cursor = r.end
   }
-  if (cursor < text.length) tokens.push(...tokenizeSegment(text.slice(cursor)))
+  if (cursor < text.length) tokens.push(...tokenizeSegment(text.slice(cursor), author))
 
   const login = irc.tags.login || prefixNick(irc) || ''
   const displayName = irc.tags['display-name'] || login

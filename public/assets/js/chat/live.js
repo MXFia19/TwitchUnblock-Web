@@ -11,7 +11,7 @@
 import { parseIRC, prefixNick, ircText, unescapeTag } from './irc.js'
 import { fromIRC, noticeMessages, systemMessage, selfMessage } from './message.js'
 import { loadChannelBadges, loadGlobalBadges } from './badges.js'
-import { loadChannelEmotes, loadGlobalEmotes } from './emotes.js'
+import { joinBttvLive, leaveBttvLive, loadChannelEmotes, loadGlobalEmotes } from './emotes.js'
 
 const IRC_URL = 'wss://irc-ws.chat.twitch.tv:443'
 
@@ -70,6 +70,8 @@ export class LiveChat {
       loadChannelEmotes(this.o.channelId, this.o.channel),
     ])
     if (gen !== this.generation) return
+    // BTTV en direct : emotes personnelles (Pro), emotes ajoutées en live.
+    joinBttvLive(this.o.channelId)
     if (this.o.loadRecent) this.loadRecent(gen)
     this.connect(gen)
   }
@@ -136,6 +138,7 @@ export class LiveChat {
   stop() {
     this.closed = true
     this.generation += 1
+    leaveBttvLive(this.o.channelId)
     clearInterval(this.pingTimer)
     clearTimeout(this.retryTimer)
     this.ws?.close()

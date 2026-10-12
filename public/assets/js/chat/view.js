@@ -10,12 +10,61 @@ import { LiveChat } from './live.js'
 import { fetchPinned } from './pinned.js'
 import { fetchBotCommands } from './botcmds.js'
 import { VodChat } from './vod.js'
-import { parseBadgeTag } from './badges.js'
+import { badgeInfo, parseBadgeTag } from './badges.js'
 import { emoteCatalog, suggestEmotes } from './emotes.js'
 import { linkifyHtml, plainText, systemMessage } from './message.js'
 import { clipSlugFrom, gql } from '../api.js'
 import { lang, t } from '../i18n.js'
 import { $, debounce, esc, formatClock, icon, toast } from '../util.js'
+
+// ── Drops de la chaîne ─────────────────────────────────────────────────────
+// Campagne active (GQL public, sans compte) : une carte à fermer en haut du
+// chat, comme dans l'app Twitch. Fermée, elle ne revient pas pour la même
+// campagne.
+const DROPS_QUERY = `query($l: String!) { user(login: $l) { channel { viewerDropCampaigns {
+  id name endAt detailsURL game { displayName }
+  timeBasedDrops { name requiredMinutesWatched benefitEdges { benefit { name imageAssetURL } } }
+} } } }`
+const DROPS_DISMISSED = 'tu_drops_dismissed'
+
+function dismissedDrops() {
+  try { return JSON.parse(localStorage.getItem(DROPS_DISMISSED) || '[]') } catch { return [] }
+}
+
+/** Première campagne en cours, pas encore fermée : sa première récompense
+ *  et le temps de visionnage qu'elle demande. */
+function pickCampaign(list) {
+  const gone = new Set(dismissedDrops())
+  for (const c of list ?? []) {
+    if (!c?.id || gone.has(c.id)) continue
+    const end = Date.parse(c.endAt)
+    if (Number.isFinite(end) && end < Date.now()) continue
+    const drops = (c.timeBasedDrops ?? []).slice()
+      .sort((a, b) => (a.requiredMinutesWatched ?? 0) - (b.requiredMinutesWatched ?? 0))
+    const first = drops[0]
+    const benefit = first?.benefitEdges?.[0]?.benefit
+    return {
+      id: c.id,
+      name: c.name ?? '',
+      game: c.game?.displayName ?? '',
+      endsAt: Number.isFinite(end) ? end : null,
+      details: /^https:\/\//.test(c.detailsURL ?? '') ? c.detailsURL : '',
+      reward: benefit?.name ?? first?.name ?? '',
+      image: /^https:\/\//.test(benefit?.imageAssetURL ?? '') ? benefit.imageAssetURL : '',
+      minutes: first?.requiredMinutesWatched ?? 0,
+      more: Math.max(0, drops.length - 1),
+    }
+  }
+  return null
+}
+
+/** Image plus grande que celle du chat, quand la source la propose. */
+function largeEmote(url, source) {
+  if (source === 'twitch') return url.replace('/2.0', '/3.0')
+  if (source === 'bttv') return url.replace(/\/2x$/, '/3x')
+  if (source === '7tv') return url.replace('/2x.webp', '/4x.webp')
+  return url
+}
 
 /** « 10 min », « 24 h », « 7 j » dans la langue du site. */
 function durationLabel(min) {
@@ -93,11 +142,13 @@ export class ChatView {
       </header>
       <div class="bot-cmds" hidden role="dialog"></div>
       <div class="chat-pinned" hidden role="region"></div>
+      <div class="chat-drops" hidden role="region"></div>
       <div class="chat-events"></div>
       <button class="pin-chip" type="button" hidden>${icon('pin', 13)}<span data-i18n="pinned_short">${esc(t('pinned_short'))}</span></button>
       <div class="chat-list" role="log" aria-live="off" tabindex="0"></div>
       <button class="chat-resume" type="button" hidden>${icon('arrowDown', 14)}<span></span></button>
       <div class="chat-empty" hidden></div>
+      <div class="chat-info" hidden role="dialog"></div>
       <footer class="chat-composer" hidden>
         <div class="chat-suggest" role="listbox" hidden></div>
         <div class="emote-picker" hidden>
@@ -140,6 +191,8 @@ export class ChatView {
       rules: $('.chat-rules', this.root),
       pinned: $('.chat-pinned', this.root),
       pinBtn: $('.pin-chip', this.root),
+      drops: $('.chat-drops', this.root),
+      info: $('.chat-info', this.root),
       events: $('.chat-events', this.root),
     }
 
@@ -152,6 +205,30 @@ export class ChatView {
     }
     this.el.resume.addEventListener('click', () => this.scrollToBottom(true))
     this.el.list.addEventListener('click', (e) => this.onListClick(e))
+    // Fiche d'une emote ou d'un badge : copier, ajouter au message, fermer.
+    this.el.info.addEventListener('click', async (e) => {
+      if (e.target.closest('[data-ci-close]')) { this.el.info.hidden = true; return }
+      const copy = e.target.closest('[data-ci-copy]')
+      if (copy) {
+        try {
+          await navigator.clipboard.writeText(copy.dataset.ciCopy)
+          $('span', copy).textContent = t('chat_info_copied')
+        } catch { /* presse-papiers refusé : le nom reste sélectionnable */ }
+        return
+      }
+      const ins = e.target.closest('[data-ci-insert]')
+      if (ins) { this.insertText(ins.dataset.ciInsert); this.el.info.hidden = true; this.el.input.focus() }
+    })
+    document.addEventListener('pointerdown', (e) => {
+      if (this.el.info.hidden || this.el.info.contains(e.target) || e.target.closest?.('img.emote, img.badge')) return
+      this.el.info.hidden = true
+    })
+    this.el.drops.addEventListener('click', (e) => {
+      if (!e.target.closest('[data-drops-close]')) return
+      const id = this.el.drops.dataset.id
+      try { localStorage.setItem(DROPS_DISMISSED, JSON.stringify([...dismissedDrops().filter((x) => x !== id), id].slice(-100))) } catch {}
+      this.renderDrops(null)
+    })
     $('.chat-hide', this.root).addEventListener('click', () => this.o.onHide?.())
     // Masqué, le message épinglé reste à portée : une punaise dans l'en-tête.
     this.el.pinBtn.addEventListener('click', () => {
@@ -161,6 +238,8 @@ export class ChatView {
     })
     this.el.pinned.addEventListener('click', (e) => {
       if (e.target.closest('a')) return
+      const img = e.target.closest('img.emote, img.badge')
+      if (img) { this.showInfo(img); return }
       // Pseudo mentionné dans le message épinglé : même fiche que dans la liste.
       const mention = e.target.closest('[data-user]')
       if (mention) { this.onListClick(e); return }
@@ -232,6 +311,7 @@ export class ChatView {
     })
     this.client.start()
     this.startPinned(channel)
+    this.startDrops(channel)
     this.loadChatSettings(channel)
   }
 
@@ -315,6 +395,80 @@ export class ChatView {
     this.pinTimer = setInterval(load, 20_000)
   }
 
+  // ── Drops de la chaîne ─────────────────────────────────────────────────
+  /** Lue à l'ouverture puis toutes les 10 minutes : une campagne peut
+   *  commencer pendant le live. */
+  startDrops(channel) {
+    clearInterval(this.dropsTimer)
+    this.renderDrops(null)
+    let first = true
+    const load = async () => {
+      // Onglet en arrière-plan : inutile de relire (la première lecture a lieu).
+      if (document.hidden && !first) return
+      first = false
+      let list = null
+      try { list = (await gql(DROPS_QUERY, { l: channel }))?.user?.channel?.viewerDropCampaigns } catch { return }
+      if (this.mode !== 'live' || this.channel !== channel) return
+      this.renderDrops(pickCampaign(list))
+    }
+    load()
+    this.dropsTimer = setInterval(load, 600_000)
+  }
+
+  renderDrops(c) {
+    const box = this.el.drops
+    if (!c) { box.hidden = true; box.innerHTML = ''; delete box.dataset.id; return }
+    const head = c.reward && c.minutes ? t('drops_notice_title', { m: c.minutes, r: c.reward }) : c.name
+    const sub = [c.name, c.game].filter(Boolean).join(' · ') + (c.more ? ` · ${t('drops_notice_more', { n: c.more })}` : '')
+    const ends = c.endsAt
+      ? new Date(c.endsAt).toLocaleString(lang(), { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
+      : ''
+    box.innerHTML = `${c.image ? `<img src="${esc(c.image)}" alt="" loading="lazy">` : `<span class="drops-ic">${icon('sparkles', 18)}</span>`}
+      <div class="drops-body">
+        <strong>${esc(head)}</strong>
+        <span class="muted">${esc(sub)}</span>
+        <span class="drops-meta">${ends ? `<span>${esc(t('drops_notice_ends', { d: ends }))}</span>` : ''}${c.details ? `<a href="${esc(c.details)}" target="_blank" rel="noopener noreferrer">${esc(t('drops_notice_details'))}</a>` : ''}</span>
+      </div>
+      <button class="icon-btn xs" type="button" data-drops-close aria-label="${esc(t('close'))}">${icon('x', 14)}</button>`
+    box.dataset.id = c.id
+    box.hidden = false
+  }
+
+  // ── Fiche d'une emote ou d'un badge ────────────────────────────────────
+  /** Image en grand, nom exact (à copier), source ; pour un badge, son titre
+   *  et sa description. */
+  showInfo(img) {
+    let html
+    if (img.classList.contains('badge')) {
+      const [set, version] = String(img.dataset.badge ?? '').split('/')
+      const info = set ? badgeInfo(set, version) : null
+      const title = info?.title || String(set ?? '').replace(/_/g, ' ')
+      html = `<img class="ci-img ci-badge" src="${esc(img.src)}" alt="">
+        <strong class="ci-title">${esc(title)}</strong>
+        ${info?.description && info.description !== info.title ? `<p class="ci-src">${esc(info.description)}</p>` : ''}
+        <p class="ci-src">${esc(t('chat_info_badge'))}</p>`
+    } else {
+      const name = img.alt
+      const source = img.dataset.emoteSrc ?? ''
+      const label = {
+        twitch: t('emote_src_twitch'),
+        bttv: img.dataset.personal ? t('emote_src_bttv_personal') : 'BetterTTV',
+        ffz: 'FrankerFaceZ',
+        '7tv': '7TV',
+      }[source] ?? ''
+      const canInsert = !this.el.composer.hidden && !this.el.input.disabled
+      html = `<img class="ci-img" src="${esc(largeEmote(img.src, source))}" alt="${esc(name)}">
+        <strong class="ci-name">${esc(name)}</strong>
+        ${label ? `<p class="ci-src">${esc(label)}</p>` : ''}
+        <div class="ci-btns">
+          <button class="btn sm primary" type="button" data-ci-copy="${esc(name)}">${icon('copy', 15)}<span>${esc(t('chat_info_copy'))}</span></button>
+          ${canInsert ? `<button class="btn sm" type="button" data-ci-insert="${esc(name)}"><span>${esc(t('chat_info_insert'))}</span></button>` : ''}
+        </div>`
+    }
+    this.el.info.innerHTML = `<button class="icon-btn xs ci-close" type="button" data-ci-close aria-label="${esc(t('close'))}">${icon('x', 14)}</button>${html}`
+    this.el.info.hidden = false
+  }
+
   renderPinned(pin, force = false) {
     const box = this.el.pinned
     const changed = force || pin?.id !== this.pin?.id
@@ -333,7 +487,7 @@ export class ChatView {
 
     box.classList.remove('open', 'can-open')
     box.style.height = ''
-    const badges = pin.badges.map((b) => `<img class="badge" src="${esc(b.url)}" alt="" title="${esc(b.set)}">`).join('')
+    const badges = pin.badges.map((b) => `<img class="badge" src="${esc(b.url)}" alt="" title="${esc(badgeInfo(b.set, b.version)?.title || b.set)}" data-badge="${esc(b.version ? `${b.set}/${b.version}` : b.set)}">`).join('')
     box.innerHTML = `<div class="pin-panel">
       <div class="pin-row">
         <span class="pin-ic">${icon('pin', 14)}</span>
@@ -503,6 +657,9 @@ export class ChatView {
     this.el.rules.hidden = true
     clearInterval(this.pinTimer)
     clearTimeout(this.pinExpiry)
+    clearInterval(this.dropsTimer)
+    this.renderDrops(null)
+    this.el.info.hidden = true
     clearInterval(this.raidTimer)
     clearInterval(this.predTimer)
     clearTimeout(this.predHide)
@@ -730,7 +887,7 @@ export class ChatView {
     html += `<span class="msg-time">${esc(time)}</span>`
     m.badgeList ??= parseBadgeTag(m.badgeTag)
     // Une image en échec garderait sa place, vide, et décalerait le pseudo.
-    for (const b of m.badgeList) html += `<img class="badge" src="${esc(b.url)}" alt="" title="${esc(b.set)}" onerror="this.remove()">`
+    for (const b of m.badgeList) html += `<img class="badge" src="${esc(b.url)}" alt="" title="${esc(b.title || b.set)}" data-badge="${esc(b.id)}" onerror="this.remove()">`
     html += `<button class="msg-name" type="button" style="color:${esc(m.color)}">${esc(m.displayName)}</button>`
     html += m.isAction ? ' ' : '<span class="msg-colon">: </span>'
     html += `<span class="msg-body"${m.isAction ? ` style="color:${esc(m.color)}"` : ''}>${this.renderTokens(m.tokens, me)}</span>`
@@ -742,7 +899,7 @@ export class ChatView {
     return tokens.map((tk) => {
       switch (tk.kind) {
         case 'emote':
-          return `<img class="emote" src="${esc(tk.emote.url)}" alt="${esc(tk.emote.name)}" title="${esc(tk.emote.name)}" loading="lazy" decoding="async" onerror="this.replaceWith(this.alt)">`
+          return `<img class="emote" src="${esc(tk.emote.url)}" alt="${esc(tk.emote.name)}" title="${esc(tk.emote.name)}" data-emote-src="${esc(tk.emote.source ?? '')}"${tk.emote.personal ? ' data-personal="1"' : ''} loading="lazy" decoding="async" onerror="this.replaceWith(this.alt)">`
         case 'mention': {
           const self = me && tk.value.toLowerCase() === me ? ' self' : ''
           return `<span class="mention${self}" data-user="${esc(tk.value.toLowerCase())}">@${esc(tk.value)}</span>`
@@ -1009,6 +1166,9 @@ export class ChatView {
 
   // ── Fiche utilisateur ──────────────────────────────────────────────────
   onListClick(e) {
+    // Emote ou badge : sa fiche (nom exact, source, copier).
+    const img = e.target.closest('img.emote, img.badge')
+    if (img) return this.showInfo(img)
     const clip = e.target.closest('[data-clip-link]')
     if (clip && this.o.onOpenClip) { e.preventDefault(); return this.o.onOpenClip(clip.dataset.clipLink) }
     const open = e.target.closest('[data-open-channel]')

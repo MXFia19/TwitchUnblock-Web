@@ -584,6 +584,31 @@ a.card, a.cat-card { display: block; }
   background: var(--card-hi); border-bottom: 1px solid var(--line);
 }
 .pin-panel { position: relative; padding: 6px 6px 6px 10px; background: var(--card-hi); }
+/* Drops de la chaîne : carte à fermer sous l'épinglé. */
+.chat-drops { flex: none; display: flex; align-items: flex-start; gap: 10px; padding: 8px 8px 8px 12px; background: var(--card-hi); border-bottom: 1px solid var(--line); }
+.chat-drops[hidden] { display: none; }
+.chat-drops > img, .chat-drops .drops-ic { flex: none; width: 34px; height: 34px; object-fit: contain; display: grid; place-items: center; color: var(--purple); }
+.chat-drops .drops-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.chat-drops strong { font-size: 13px; line-height: 1.3; }
+.chat-drops .muted { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-drops .drops-meta { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 11px; color: var(--muted); }
+.chat-drops .drops-meta a { color: var(--purple); font-weight: 700; }
+/* Emotes et badges : un clic ouvre leur fiche. */
+.chat-list img.emote, .chat-list img.badge, .chat-pinned img.emote, .chat-pinned img.badge { cursor: pointer; }
+.chat-info {
+  position: absolute; left: 10px; right: 10px; bottom: 70px; z-index: 30;
+  display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 18px 16px 16px;
+  border-radius: 14px; background: var(--surface); border: 1px solid var(--line);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45); text-align: center;
+}
+.chat-info[hidden] { display: none; }
+.chat-info .ci-close { position: absolute; top: 6px; right: 6px; }
+.chat-info .ci-img { height: 64px; max-width: 100%; object-fit: contain; }
+.chat-info .ci-badge { height: 44px; }
+.chat-info .ci-name { font: 700 18px/1.25 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; user-select: all; word-break: break-all; }
+.chat-info .ci-title { font-size: 16px; }
+.chat-info .ci-src { margin: 0; font-size: 12px; color: var(--muted); }
+.chat-info .ci-btns { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin-top: 6px; }
 /* Déplié : par-dessus la liste, sans la pousser. */
 .chat-pinned.open { overflow: visible; z-index: 6; }
 .chat-pinned.open .pin-panel { position: absolute; top: 0; left: 0; right: 0; border-bottom: 1px solid var(--line-strong); box-shadow: 0 10px 24px rgba(0, 0, 0, 0.5); }
