@@ -6,6 +6,51 @@
 
 export const CHANGELOG = [
   {
+    version: '2026.10.12a',
+    items: {
+      fr: [
+        'Thèmes : fond clair, sombre, noir OLED ou ardoise (ou celui de ton appareil), et sept couleurs d’accent, comme dans l’app (Réglages → Apparence).',
+        'Épingle tes streamers préférés : la punaise sur leur carte (ou au bout de leur ligne hors ligne) les met en tête des suivies.',
+        'Chat : une carte annonce les drops de la chaîne (récompense, temps de visionnage, échéance, détails) ; une fois fermée, elle ne revient pas.',
+        'Chat : clique sur une emote ou un badge pour voir son nom exact et d’où il vient (Twitch, BetterTTV, FrankerFaceZ, 7TV), le copier ou l’ajouter à ton message.',
+        'Emotes BetterTTV : les emotes personnelles des abonnés BTTV Pro s’affichent dès que BTTV les annonce, et celles ajoutées à la chaîne pendant le live apparaissent tout de suite.',
+        'Direct : jamais à moins de 4 secondes du direct (plus près, la lecture pouvait se figer), même en avançant ou avec « Direct ».',
+        'Mes signalements : un bandeau te prévient quand le développeur répond.',
+        'Réglages : le choix de la langue ne déborde plus sur téléphone.',
+      ],
+      en: [
+        'Themes: light, dark, OLED black or slate background (or your device’s), and seven accent colors, like in the app (Settings → Appearance).',
+        'Pin your favourite streamers: the pin on their card (or at the end of their offline row) puts them at the top of Following.',
+        'Chat: a card announces the channel’s drops (reward, watch time, end date, details); once dismissed, it doesn’t come back.',
+        'Chat: click an emote or a badge to see its exact name and where it comes from (Twitch, BetterTTV, FrankerFaceZ, 7TV), copy it or add it to your message.',
+        'BetterTTV emotes: personal emotes of BTTV Pro users show up once BTTV announces them, and emotes added to the channel during the stream appear right away.',
+        'Live: never closer than 4 seconds to the edge (closer, playback could freeze), even when skipping ahead or pressing Live.',
+        'My reports: a banner lets you know when the developer replies.',
+        'Settings: the language picker no longer overflows on phones.',
+      ],
+      es: [
+        'Temas: fondo claro, oscuro, negro OLED o pizarra (o el de tu dispositivo), y siete colores de acento, como en la app (Ajustes → Apariencia).',
+        'Fija a tus streamers favoritos: la chincheta de su tarjeta (o al final de su fila desconectada) los pone arriba en Seguidos.',
+        'Chat: una tarjeta anuncia los drops del canal (recompensa, tiempo de visionado, fin, detalles); una vez cerrada, no vuelve.',
+        'Chat: haz clic en un emote o una insignia para ver su nombre exacto y de dónde viene (Twitch, BetterTTV, FrankerFaceZ, 7TV), copiarlo o añadirlo a tu mensaje.',
+        'Emotes de BetterTTV: los emotes personales de los suscriptores BTTV Pro aparecen en cuanto BTTV los anuncia, y los añadidos al canal durante el directo aparecen al momento.',
+        'Directo: nunca a menos de 4 segundos del directo (más cerca, la reproducción podía congelarse), incluso al avanzar o con «Directo».',
+        'Mis reportes: un aviso te informa cuando el desarrollador responde.',
+        'Ajustes: la elección del idioma ya no se desborda en el móvil.',
+      ],
+      ru: [
+        'Темы: светлый, тёмный, чёрный OLED или сланцевый фон (или как на устройстве) и семь цветов акцента, как в приложении (Настройки → Оформление).',
+        'Закрепляйте любимых стримеров: булавка на их карточке (или в конце строки офлайн) поднимает их наверх подписок.',
+        'Чат: карточка сообщает о дропсах канала (награда, время просмотра, окончание, подробности); закрытая, она больше не появляется.',
+        'Чат: щёлкните по эмоуту или значку, чтобы увидеть точное название и источник (Twitch, BetterTTV, FrankerFaceZ, 7TV), скопировать его или добавить в сообщение.',
+        'Эмоуты BetterTTV: личные эмоуты подписчиков BTTV Pro появляются, как только BTTV их объявляет, а эмоуты, добавленные на канал во время трансляции, — сразу.',
+        'Трансляции: никогда ближе 4 секунд к прямому эфиру (ближе воспроизведение могло зависать), даже при перемотке вперёд или кнопке «В эфир».',
+        'Мои обращения: баннер сообщает, когда разработчик отвечает.',
+        'Настройки: выбор языка больше не выходит за край экрана на телефоне.',
+      ],
+    },
+  },
+  {
     version: '2026.10.11b',
     items: {
       fr: ['Chat : les modes du salon (followers uniquement et depuis combien de temps, abonnés, mode lent…) s’affichent au-dessus du champ, les règles de la chaîne s’acceptent avant le premier message, et un message refusé par Twitch est retiré avec la raison.', 'Réglages experts : si le Worker de TwitchUnblock tombe, le site peut passer par le tien (déployé depuis le dépôt du site), en premier pour la lecture, ou pour tout.', 'Catégories : filtre les lives par langue (toutes, ou une seule), un choix gardé pour toutes les catégories.', 'Direct : choisis l’ordre des sources (Réglages → Lecteur). Si une source ne répond pas, la suivante prend le relais ; en choisir une dans le menu ⚙ du lecteur la met en tête.', 'Luminous Europe : « Source » donnait un écran noir sur les chaînes qui diffusent en multi-encodage (gotaga…) ; chaque qualité y garde maintenant son nom (1080p60…).', 'Mes signalements : nouvel état « Vu », quand ton message a été lu.', 'Notifications de live : une notification quand une chaîne que tu suis passe en live, même site fermé (Réglages → Notifications). Sur iPhone et iPad, ajoute d’abord le site à l’écran d’accueil.', 'Les VODs au nouveau format de Twitch retrouvent elles aussi le son d’origine des passages coupés.', 'Télécharge une VOD, ou juste un passage (de tel instant à tel autre, depuis là où tu en es, les 10 minutes suivantes), dans la qualité de ton choix : bouton « Télécharger » sous la vidéo. Les passages coupés pour musique protégée gardent leur son d’origine tant que Twitch l’a encore. Chrome et Edge l’écrivent directement sur le disque.', 'Multi-live : regarde jusqu’à quatre directs côte à côte. Le bouton « + » d’une carte de live (ou « Multi-live » sur la page d’une chaîne et sous le lecteur) les ajoute ; un clic sur un direct lui donne le son, double-clic pour le plein écran. Sur grand écran, son chat s’affiche à droite. Le lien de la mosaïque se partage.'],

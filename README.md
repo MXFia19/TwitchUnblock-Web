@@ -15,6 +15,7 @@ Watch Twitch lives and VODs in your browser, no subscription needed, with the re
 ### Home
 - **Top streams**, France or worldwide — no login required
 - **Followed channels** once logged in with Twitch, with profile pictures
+- **Pinned streamers**: the pin on a followed channel's card (or at the end of its offline row) keeps it at the top of Following
 - **Continue watching**: VODs you started, with their progress bar
 - Live durations and viewer counts kept up to date
 - **Stream tags** under every live (language, DropsEnabled…), like on Twitch
@@ -33,7 +34,7 @@ Watch Twitch lives and VODs in your browser, no subscription needed, with the re
 - Custom controls built around the chat: fullscreen keeps both the video **and** the chat, laid over it
 - Quality picker, including “Auto”, which shows the bitrate actually in use
 - Playback speed, ±10 s, double-tap on mobile, keyboard shortcuts
-- Picture in picture, “back to live” button, live latency
+- Picture in picture, “back to live” button, live latency — never under 4 seconds behind the edge (closer, playback freezes): the target follows how long Twitch takes to publish each segment, and skipping ahead or “back to live” stop there too
 - **Ad-free lives, in the source order you pick**: Luminous Asia, an Albania proxy (TTV.LOL), Luminous Europe and official Twitch (with ads), tried one after the other until one answers. Reorder them in Settings → Player; picking a source from the player's ⚙ menu (which shows the one in use) moves it to the top. Channels that stream with multiple encodes (Enhanced Broadcasting) keep each quality's own name on every source
 - **Theatre mode** (T), keyboard shortcuts anywhere on the page (? lists them)
 - **VOD chapters**: game changes marked on the progress bar
@@ -52,9 +53,11 @@ Watch Twitch lives and VODs in your browser, no subscription needed, with the re
 
 ### Chat
 - Connected straight to Twitch IRC — no iframe
-- Twitch, **BTTV**, **FFZ** and **7TV** emotes, badges, username colours readable on a dark background
+- Twitch, **BTTV**, **FFZ** and **7TV** emotes, badges, username colours readable on a dark background. BetterTTV's live connection adds the personal emotes of BTTV Pro users (once BTTV announces them) and the emotes added to the channel during the stream
+- **Click an emote or a badge**: its exact name and source, copy it or add it to your message; badges show their title (“3-Month Subscriber”…), also as a tooltip
 - Recent messages loaded on arrival: you never land in an empty chat
 - **Pinned message**: compact banner with badges, emotes, who pinned it and a countdown — collapse it to a chip
+- **Drops card**: when the channel runs a drops campaign, a card under the pinned message shows the reward, the watch time, the end date and a link to the details; dismissed, it stays away for that campaign
 - **Predictions** live (read-only), incoming **raids** and **announcements** highlighted
 - Your name and **chosen words highlighted**; **filters**: hide bots, `!commands`, muted words, hide someone
 - Chat once logged in: emote and username autocomplete, emote picker, replies
@@ -65,10 +68,11 @@ Watch Twitch lives and VODs in your browser, no subscription needed, with the re
 - **VOD chat**, replayed in sync with the video
 
 ### Everything else
+- **Themes** (Settings → Appearance): light, dark, OLED black or slate background — or your device's — and the app's seven accent colors, applied before the page shows
 - French, English, Spanish and Russian — follows your device language by default. The Russian translation was made with AI: the settings say so, with a button to report a mistake
 - **Twitch-style links**: replace `twitch.tv` with the site's address — `/xqc`, `/xqc/clips`, `/xqc/about`, `/videos/123?t=1h2m3s`, `/directory/category/just-chatting` — and the browser's back/forward buttons move between pages
 - Streams, VODs, clips, categories and channels are real links: middle-click or Ctrl/Cmd + click opens them in a new tab
-- **Bug reports & ideas** from the top bar, the settings or the player, screenshots included (pick them or paste with Ctrl+V). **My reports** shows where each one stands (received, seen, accepted, in progress, done, declined) and the developer's reply, and lets you answer back — updated on its own
+- **Bug reports & ideas** from the top bar, the settings or the player, screenshots included (pick them or paste with Ctrl+V). **My reports** shows where each one stands (received, seen, accepted, in progress, done, declined) and the developer's reply, and lets you answer back — updated on its own; a banner tells you when the developer replies
 - **Switch account** in the settings; after logging out, Twitch asks which account to use instead of signing the old one back in
 - History and progress synced across devices when logged in
 - **Live notifications**: a notification when a channel you follow goes live, even with the site closed (Settings → Notifications, with a test button). On iPhone and iPad, add the site to the Home Screen first (iOS 16.4 or later)
