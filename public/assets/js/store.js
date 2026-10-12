@@ -25,7 +25,8 @@ const DEFAULT_PREFS = {
   lang: null,
   topLang: null,
   homeList: false,   // accueil en liste (façon Twitch) plutôt qu'en grille
-  localFollows: [],  // chaînes suivies sans compte Twitch (sur cet appareil)     // langue du top des lives ; null = celle de l'appareil
+  localFollows: [],  // chaînes suivies sans compte Twitch (sur cet appareil)
+  pinned: [],        // streamers épinglés en tête des suivis (logins en minuscules)     // langue du top des lives ; null = celle de l'appareil
   timestamps: false,
   keepDeleted: true,
   loadHistory: true,

@@ -794,6 +794,23 @@ a.card, a.cat-card { display: block; }
 .thumb .madd:hover, .thumb .madd.on { background: var(--primary); }
 .thumb .madd.on, .card:hover .madd, .card:focus-within .madd { opacity: 1; }
 @media (hover: none) { .thumb .madd { opacity: 1; } }
+/* Épingle des chaînes suivies : à gauche du « + », visible une fois épinglée. */
+.thumb .mpin {
+  position: absolute; right: 42px; bottom: 6px; width: 30px; height: 30px; border-radius: 50%;
+  display: grid; place-items: center; background: rgba(0, 0, 0, 0.72); color: #fff;
+  opacity: 0; transition: opacity 0.15s, background 0.15s;
+}
+.thumb .mpin:hover, .thumb .mpin.on { background: var(--primary); }
+.thumb .mpin.on, .card:hover .mpin, .card:focus-within .mpin { opacity: 1; }
+@media (hover: none) { .thumb .mpin { opacity: 1; } }
+.offline-row .opin {
+  margin-left: auto; flex: none; width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center;
+  color: var(--muted); opacity: 0; transition: opacity 0.15s, color 0.15s, background 0.15s;
+}
+.offline-row .opin:hover { color: var(--text); background: var(--surface); }
+.offline-row .opin.on { color: var(--primary); opacity: 1; }
+.offline-row:hover .opin, .offline-row:focus-within .opin { opacity: 1; }
+@media (hover: none) { .offline-row .opin { opacity: 1; } }
 .hero-btns { display: flex; flex-wrap: wrap; gap: 8px; }
 .hero-btns .btn.on { border-color: var(--purple); color: var(--purple); }
 

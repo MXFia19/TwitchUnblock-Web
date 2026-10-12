@@ -434,6 +434,13 @@ function bindGlobal() {
       e.stopPropagation()
       return multi.toggle(madd.dataset.multiAdd, madd.dataset.multiName)
     }
+    // Épingle d'une chaîne suivie : en tête des suivies.
+    const pin = e.target.closest('[data-pin]')
+    if (pin) {
+      e.preventDefault()
+      e.stopPropagation()
+      return togglePin(pin.dataset.pin)
+    }
     // Pseudo et catégorie d'une carte : avant la carte elle-même (le direct).
     const catLink = e.target.closest('[data-category]')
     if (catLink) {
@@ -614,7 +621,15 @@ function tagsHtml(tags) {
   return tags?.length ? `<div class="tags">${tags.slice(0, 10).map((x) => `<span class="tag">${esc(x)}</span>`).join('')}</div>` : ''
 }
 
-function streamCard(s) {
+/** Épingle d'une chaîne suivie (carte ou ligne hors ligne). */
+function pinButton(login, cls) {
+  const on = isPinned(login)
+  const label = esc(t(on ? 'unpin_streamer' : 'pin_streamer'))
+  return `<button class="${cls}${on ? ' on' : ''}" type="button" data-pin="${esc(login)}" title="${label}" aria-label="${label}">${icon('pin', 15)}</button>`
+}
+
+/** `pinnable` : chaîne suivie, qu'on peut épingler en tête des suivies. */
+function streamCard(s, { pinnable = false } = {}) {
   const inMulti = multi.has(s.login)
   return `
     <a class="card stream-card" href="/${esc(s.login)}" data-live="${esc(s.login)}">
@@ -623,6 +638,7 @@ function streamCard(s) {
         <span class="pill live">${esc(t('live_now'))}</span>
         <span class="pill viewers">${icon('eye', 12)}${esc(formatViewers(s.viewers))}</span>
         ${s.startedAt ? `<span class="pill uptime" data-started="${esc(s.startedAt)}">${esc(uptimeSince(s.startedAt))}</span>` : ''}
+        ${pinnable ? pinButton(s.login, 'mpin') : ''}
         <button class="madd${inMulti ? ' on' : ''}" type="button" data-multi-add="${esc(s.login)}" data-multi-name="${esc(s.name)}" title="${esc(t(inMulti ? 'multi_remove' : 'multi_add'))}">${icon(inMulti ? 'check' : 'plus', 16)}</button>
       </div>
       <div class="card-body">
@@ -833,10 +849,12 @@ async function loadFollowed({ silent = false } = {}) {
     try {
       const channels = await api.getChannelsByLogins(local)
       if (session.token) return
-      const live = channels.filter((c) => c.stream).map((c) => c.stream).sort((a, b) => b.viewers - a.viewers)
-      const offline = channels.filter((c) => !c.stream)
-      grid.innerHTML = (live.length ? live.map(streamCard).join('') : noLiveFollowed(offline.length)) + loginCard(true)
-      renderOffline(offline, live.length > 0)
+      state.followedView = {
+        live: channels.filter((c) => c.stream).map((c) => c.stream),
+        offline: channels.filter((c) => !c.stream),
+        after: loginCard(true),
+      }
+      paintFollowed()
       syncPush()
     } catch {
       if (!silent) { grid.innerHTML = emptyState(t('err_loading'), 'refresh'); offlineFailed() }
@@ -862,11 +880,10 @@ async function loadFollowed({ silent = false } = {}) {
     const known = new Set(streams.map((s) => s.login.toLowerCase()))
     const extra = (channels ?? []).filter((c) => c.stream && !known.has(c.login.toLowerCase())).map((c) => c.stream)
     // Mêlés et triés par audience, comme sur Twitch (pas relégués en bas).
-    const live = [...streams, ...extra].sort((a, b) => b.viewers - a.viewers)
     const offline = channels ? channels.filter((c) => !c.stream) : null
-    grid.innerHTML = live.length ? live.map(streamCard).join('') : noLiveFollowed(offline?.length ?? 0)
-    if (offline) renderOffline(offline, live.length > 0)
-    else if (!silent) offlineFailed()
+    state.followedView = { live: [...streams, ...extra], offline }
+    paintFollowed()
+    if (!offline && !silent) offlineFailed()
     // Notifications de live : la liste complète, seulement si elle a pu être lue.
     if (logins) syncPush()
   } catch (err) {
@@ -900,16 +917,53 @@ function noLiveFollowed(offlineCount) {
 
 /** Onglet « Hors ligne » : les chaînes suivies hors ligne, pour ouvrir leur
  *  page (VODs, clips, diffusions supprimées) sans chercher. */
+// ── Streamers épinglés ─────────────────────────────────────────────────
+// En tête des suivies, en live comme hors ligne, dans l'ordre où on les a
+// épinglés. Sur cet appareil (préférences).
+const pinnedLogins = () => store.prefs.pinned ?? []
+const isPinned = (login) => pinnedLogins().includes(String(login).toLowerCase())
+
+/** Ordre imposé par l'épinglage ; null si aucun des deux n'est épinglé. */
+function pinOrder(a, b) {
+  const pins = pinnedLogins()
+  const pa = pins.indexOf(String(a).toLowerCase())
+  const pb = pins.indexOf(String(b).toLowerCase())
+  if (pa < 0 && pb < 0) return null
+  if (pa < 0) return 1
+  if (pb < 0) return -1
+  return pa - pb
+}
+
+function togglePin(login) {
+  const l = String(login).toLowerCase()
+  const pins = pinnedLogins()
+  store.prefs.pinned = pins.includes(l) ? pins.filter((x) => x !== l) : [...pins, l]
+  store.savePrefs()
+  paintFollowed()
+}
+
+/** Suivies (lives et hors ligne) depuis les listes gardées par loadFollowed :
+ *  épinglées d'abord, puis par audience. */
+function paintFollowed() {
+  const v = state.followedView
+  const grid = $('#followed-grid')
+  if (!v || !grid) return
+  const live = v.live.slice().sort((a, b) => pinOrder(a.login, b.login) ?? (b.viewers - a.viewers))
+  grid.innerHTML = (live.length ? live.map((s) => streamCard(s, { pinnable: true })).join('') : noLiveFollowed(v.offline?.length ?? 0)) + (v.after ?? '')
+  if (v.offline) renderOffline(v.offline, live.length > 0)
+}
+
 function renderOffline(list, anyLive = false) {
   const box = $('#followed-offline')
   if (!box) return
-  list = list.slice().sort((a, b) => a.name.localeCompare(b.name, lang()))
+  list = list.slice().sort((a, b) => pinOrder(a.login, b.login) ?? a.name.localeCompare(b.name, lang()))
   $('#offline-count').textContent = list.length ? String(list.length) : ''
   box.innerHTML = list.length ? `
     <div class="offline-list">${list.map((c) => `
       <a class="offline-row" href="/${esc(c.login)}" data-channel="${esc(c.login)}">
         ${c.avatar ? `<img class="avatar sm" src="${esc(c.avatar)}" alt="" loading="lazy">` : `<span class="avatar sm placeholder">${esc((c.name || '?')[0])}</span>`}
         <span class="offline-text"><span>${esc(c.name)}</span>${c.lastEnd ? `<small class="muted">${esc(offlineFor(null, 0, c.lastEnd))} · ${esc(offlineDate(null, 0, c.lastEnd))}</small>` : ''}</span>
+        ${pinButton(c.login, 'opin')}
       </a>`).join('')}</div>`
     : emptyState(t(anyLive ? 'offline_all_live' : 'offline_none'), anyLive ? 'radio' : 'heart')
 }
