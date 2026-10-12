@@ -1249,7 +1249,7 @@ function renderTour() {
       <div class="tour-badge">${icon('twitch', 34)}</div>
       <h2>${esc(t('tour_welcome_title'))}</h2>
       <p>${esc(t('tour_welcome_text'))}</p>
-      <div class="segmented full tour-langs">
+      <div class="segmented full langs tour-langs">
         <button type="button" data-tour-lang="auto" class="${store.prefs.lang ? '' : 'active'}">${esc(t('lang_auto'))}</button>
         ${LANGS.map((l) => `<button type="button" data-tour-lang="${l.id}" class="${store.prefs.lang === l.id ? 'active' : ''}">${esc(l.label)}</button>`).join('')}
       </div>
@@ -2920,7 +2920,7 @@ function openSettings() {
     </div>
     <div class="sheet-section">
       <h3>${esc(t('language'))}</h3>
-      <div class="segmented full" id="set-lang">
+      <div class="segmented full langs" id="set-lang">
         <button type="button" data-l="auto" class="${p.lang ? '' : 'active'}">${esc(t('lang_auto'))}</button>
         ${LANGS.map((l) => `<button type="button" data-l="${l.id}" class="${p.lang === l.id ? 'active' : ''}">${esc(l.label)}</button>`).join('')}
       </div>

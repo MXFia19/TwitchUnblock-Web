@@ -117,6 +117,13 @@ function unmuteLoader(Hls, player) {
 // segment complet (LIVE_BEHIND_COMPLETE) au lieu de 4 s.
 const LIVE_BEHIND_COMPLETE = 2.5
 const PREFETCH_TAG = '#EXT-X-TWITCH-PREFETCH:'
+// Plancher : le retard affiché (heure − horodatage de l'image, liveDelay) ne
+// passe jamais sous 4 s — en dessous, la lecture cale (retour
+// d'utilisateurs). Ce retard, c'est notre distance au dernier segment
+// complet plus le délai de Twitch avant de publier un segment, qui change
+// d'une chaîne à l'autre : la cible de hls.js est relevée d'autant
+// (holdLiveFloor), et un passage sous le seuil recule aussitôt.
+const MIN_LIVE_DELAY = 4
 
 function prefetchPlaylistLoader(Hls, player) {
   const Base = Hls.DefaultConfig.loader
@@ -580,8 +587,9 @@ export class Player {
       if (!v.seekable.length) return
       const start = v.seekable.start(0)
       // Bord sans les segments annoncés d'avance : ils ne sont pas encore là.
+      // Avancer s'arrête au plancher du retard (MIN_LIVE_DELAY).
       const end = v.seekable.end(v.seekable.length - 1) - (this.prefetchAhead || 0)
-      v.currentTime = Math.max(start, Math.min(end - 1.5, v.currentTime + delta))
+      v.currentTime = Math.max(start, Math.min(end - Math.max(1.5, this.behindTarget ?? LIVE_BEHIND_COMPLETE), v.currentTime + delta))
     } else {
       const d = Number.isFinite(v.duration) ? v.duration : Infinity
       v.currentTime = Math.max(0, Math.min(d - 1, v.currentTime + delta))
@@ -632,9 +640,35 @@ export class Player {
 
   goLive() {
     const v = this.video
+    // liveSyncPosition suit la cible relevée par holdLiveFloor.
     if (this.hls?.liveSyncPosition) v.currentTime = this.hls.liveSyncPosition
-    else if (v.seekable.length) v.currentTime = Math.max(0, v.seekable.end(v.seekable.length - 1) - 4)
+    else if (v.seekable.length) v.currentTime = Math.max(0, v.seekable.end(v.seekable.length - 1) - MIN_LIVE_DELAY - 2)
     if (v.paused) this.tryPlay()
+  }
+
+  /** Tient le retard affiché au-dessus de MIN_LIVE_DELAY (voir plus haut),
+   *  toutes les 2 s pendant la lecture d'un direct. */
+  holdLiveFloor() {
+    const v = this.video
+    if (this.kind !== 'live' || !this.hls || v.paused) return
+    const now = Date.now()
+    if (now - (this.floorCheckAt || 0) < 2000) return
+    this.floorCheckAt = now
+    const total = this.liveDelay()
+    const behind = this.chatDelay()
+    if (!(total > 0) || !(behind > 0)) return
+    // Délai de publication de Twitch = retard total − distance au bord.
+    const publish = Math.max(0, total - behind)
+    const want = Math.min(8, Math.max(LIVE_BEHIND_COMPLETE, MIN_LIVE_DELAY + 0.5 - publish))
+    if (Math.abs(want - (this.behindTarget ?? LIVE_BEHIND_COMPLETE)) > 0.4) {
+      this.behindTarget = want
+      this.hls.config.liveSyncDuration = (this.prefetchAhead || 0) + want
+    }
+    // Déjà sous le seuil : on recule tout de suite (une fois toutes les 8 s).
+    if (total < MIN_LIVE_DELAY - 0.2 && now - (this.floorSeekAt || 0) > 8000) {
+      this.floorSeekAt = now
+      v.currentTime = Math.max(0, v.currentTime - (MIN_LIVE_DELAY + 0.5 - total))
+    }
   }
 
   toggleMute() {
@@ -701,6 +735,7 @@ export class Player {
       this.el.live.title = atEdge ? '' : t('go_live')
       const lat = this.liveDelay()
       this.el.latency.textContent = lat > 0 ? `${lat.toFixed(1)} s` : ''
+      this.holdLiveFloor()
     }
     if (this.kind === 'vod') this.updateMutedNote(cur)
     this.o.onTime?.(cur, v.duration)
@@ -721,8 +756,9 @@ export class Player {
     const ahead = added * dur
     if (ahead !== this.prefetchAhead && this.hls) {
       this.prefetchAhead = ahead
-      // Cible comptée depuis le bord annoncé, segments d'avance compris.
-      this.hls.config.liveSyncDuration = ahead + LIVE_BEHIND_COMPLETE
+      // Cible comptée depuis le bord annoncé, segments d'avance compris
+      // (relevée par holdLiveFloor si le retard affiché passait sous 4 s).
+      this.hls.config.liveSyncDuration = ahead + (this.behindTarget ?? LIVE_BEHIND_COMPLETE)
     }
     return out.join('\n')
   }

@@ -96,6 +96,10 @@ input[type='search']::-webkit-search-cancel-button { filter: invert(1) opacity(0
 .segmented button.active { background: var(--surface); color: #fff; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3); }
 .segmented.full { display: flex; }
 .segmented.full button { flex: 1; }
+/* Langues (cinq choix avec « Appareil ») : sur un écran étroit, elles passent
+   sur deux lignes au lieu de déborder (« Русский » sortait du cadre). */
+.segmented.langs { display: grid; grid-template-columns: repeat(auto-fit, minmax(84px, 1fr)); }
+.segmented.langs button { padding: 6px 8px; white-space: nowrap; }
 
 /* ── Barre du haut ─────────────────────────────────────────────────────── */
 .topbar {
