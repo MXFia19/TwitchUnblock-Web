@@ -29,6 +29,7 @@ export default {
     async scheduled(event, env, ctx) {
         applyEnvConfig(env);
         ctx.waitUntil(pushTick(env).catch((e) => console.error(e)));
+        ctx.waitUntil(relayWatch(env, new Date(event?.scheduledTime || Date.now())).catch((e) => console.error(e)));
     },
 
     async fetch(request, env, ctx) {
@@ -1240,9 +1241,9 @@ const FEEDBACK_HOOK_KEY = 'fbmeta_webhook';
 const FEEDBACK_DISCORD_PREFIX = 'fbdc_';
 // Dernier signe de vie du bot Discord du relais, affiché dans /stats.
 const FEEDBACK_BOT_KEY = 'fbmeta_bot';
-// États tels qu'écrits sur Discord : ce sont aussi les étiquettes du forum
-// que le bot pose (et crée s'il en manque).
-const FEEDBACK_STATUS_LABELS = { new: 'Reçu', seen: 'Vu', accepted: 'Accepté', progress: 'En cours', done: 'Fait', refused: 'Refusé' };
+// États tels qu'écrits sur Discord (en anglais : la communauté l'est surtout) :
+// ce sont aussi les étiquettes du forum que le bot pose (et crée ou renomme).
+const FEEDBACK_STATUS_LABELS = { new: 'New', seen: 'Seen', accepted: 'Accepted', progress: 'In progress', done: 'Done', refused: 'Declined' };
 
 /** Envoie vers Discord si le secret est posé, et note le résultat. En salon
  *  forum, le post du retour est gardé avec lui (`dt`), et l'inverse
@@ -1306,7 +1307,7 @@ async function backfillDiscord(env) {
     for (const { name, expiration } of todo.slice(0, BACKFILL_BATCH)) {
         const ttl = expiration ? Math.max(60, Math.round(expiration - now / 1000)) : FEEDBACK_TTL;
         const r = await backfillOne(env, hook, name, ttl);
-        if (r.notForum) return { error: 'Le webhook n’est pas dans un salon Forum', done, remaining: todo.length - done };
+        if (r.notForum) return { error: 'The webhook isn’t in a Forum channel', done, remaining: todo.length - done };
         if (r.retryAfter) return { done, remaining: todo.length - done, retryAfter: r.retryAfter };
         done++;
     }
@@ -1345,14 +1346,14 @@ async function backfillOne(env, hook, key, ttl) {
 function historyEmbed(messages) {
     const lines = messages.map((x) => {
         const when = x.at ? ` · <t:${Math.floor(x.at / 1000)}:f>` : '';
-        if (x.s) return `📌 État : **${FEEDBACK_STATUS_LABELS[x.s] || x.s}**${when}`;
-        const who = x.f === 'a' ? '🛠️ **Toi**' : '👤 **La personne**';
+        if (x.s) return `📌 Status: **${FEEDBACK_STATUS_LABELS[x.s] || x.s}**${when}`;
+        const who = x.f === 'a' ? '🛠️ **You**' : '👤 **User**';
         const pics = x.ph?.length ? ` · 📷 ${x.ph.length}` : '';
         return `${who}${when}${pics}\n${String(x.m || '').slice(0, 1500)}`;
     });
     let text = lines.join('\n\n');
-    if (text.length > 4000) text = `… (début dans /stats)\n${text.slice(-3950)}`;
-    return { title: '🗂️ Suite de la discussion (d’avant le pont Discord)', description: text, color: 0x6b7280 };
+    if (text.length > 4000) text = `… (start in /stats)\n${text.slice(-3950)}`;
+    return { title: '🗂️ Earlier conversation (before the Discord bridge)', description: text, color: 0x6b7280 };
 }
 
 /** Plus de `max` requêtes dans l'heure pour cette adresse ? */
@@ -1510,6 +1511,7 @@ async function handleFeedbackReply(request, env, ctx) {
     const photos = cleanPhotos(body.photos);
     if (!message && !photos.length) return jsonError('Message vide', 400);
     const { meta, thread } = found;
+    if (meta.bl) return jsonError('This conversation was closed by the developer', 403);
     if (thread.length >= FEEDBACK_MAX_MESSAGES) return jsonError('Discussion trop longue', 409);
 
     const now = Date.now();
@@ -1565,29 +1567,30 @@ function readableInfo(text) {
  * Rend { ok, status, detail, thread } : un refus de Discord n'est plus silencieux.
  */
 async function postFeedbackToDiscord(webhook, e, photos = [], { inReplyTo = null, test = false, bot = false, requireThread = false } = {}) {
-    const KINDS = { bug: '🐞 Bug', idea: '💡 Idée', other: '💬 Autre' };
+    const KINDS = { bug: '🐞 Bug', idea: '💡 Idea', other: '💬 Other' };
     const COLORS = { bug: 0xeb0400, idea: 0x9147ff, other: 0x6b7280 };
     const kind = KINDS[e.k] || KINDS.other;
-    const fields = [{ name: 'Plateforme', value: `${e.p === 'ios' ? 'App iOS' : 'Site'} · ${e.v}`, inline: true }];
+    const PLACES = { ios: 'iOS app', discord: 'Discord', web: 'Website' };
+    const fields = [{ name: 'Platform', value: `${PLACES[e.p] || PLACES.web} · ${e.v}`, inline: true }];
     if (e.c) fields.push({ name: 'Contact', value: e.c, inline: true });
-    if (inReplyTo) fields.push({ name: 'En réponse à', value: inReplyTo.slice(0, 300) });
-    else if (e.i) fields.push({ name: 'Infos', value: readableInfo(e.i).slice(0, 1000) });
+    if (inReplyTo) fields.push({ name: 'In reply to', value: inReplyTo.slice(0, 300) });
+    else if (e.i) fields.push({ name: 'Info', value: readableInfo(e.i).slice(0, 1000) });
     const payload = {
         username: 'TwitchUnblock',
         allowed_mentions: { parse: [] },
         embeds: [{
-            title: inReplyTo ? `↩️ Réponse · ${kind}` : kind,
+            title: inReplyTo ? `↩️ Reply · ${kind}` : kind,
             description: (e.m || '📷').slice(0, 4000),
             color: COLORS[e.k] ?? COLORS.other,
             fields,
             // Avec le bot du relais, on répond dans le post même.
-            footer: { text: bot ? 'Réponds dans ce post (« // » devant : note privée) ou depuis /stats' : 'Répondre depuis /stats' },
+            footer: { text: bot ? 'Reply in this post (start with // for a private note) or from /stats' : 'Reply from /stats' },
             timestamp: new Date(e.u || e.at).toISOString(),
         }],
     };
     // Nom du post (salon forum) : genre et début du premier message.
     const first = String(inReplyTo ?? e.m ?? '').replace(/\s+/g, ' ').trim();
-    const threadName = test ? 'Test du webhook' : `${kind} · ${first || '📷'}`.slice(0, 100);
+    const threadName = test ? 'Webhook test' : `${kind} · ${first || '📷'}`.slice(0, 100);
     return discordHook(webhook, payload, photoFiles(photos), { threadId: e.dt, threadName, requireThread });
 }
 
@@ -1655,14 +1658,16 @@ async function discordHook(webhook, payload, files = [], { threadId = null, thre
  *  Discord du retour, pour que la discussion y soit entière ; le bot du
  *  relais y relit l'état pour son étiquette. Ce que fait le bot n'y est pas
  *  recopié : c'est déjà sur Discord. */
-function echoTeamToDiscord(env, ctx, meta, { message = '', photos = [], status = null }) {
-    if (!env.FEEDBACK_WEBHOOK || !meta?.dt) return;
-    const content = status
-        ? `📌 État : **${FEEDBACK_STATUS_LABELS[status] || status}** (depuis /stats ou l'app)`
-        : `💬 **Ta réponse** (depuis /stats ou l'app)${message ? `\n${message}` : ''}`;
+function echoTeamToDiscord(env, ctx, meta, { message = '', photos = [], status = null, note = null }) {
+    if (!env.FEEDBACK_WEBHOOK || !meta?.dt) return Promise.resolve();
+    const content = note
+        || (status
+            ? `📌 Status: **${FEEDBACK_STATUS_LABELS[status] || status}** (from /stats or the app)`
+            : `💬 **Your reply** (from /stats or the app)${message ? `\n${message}` : ''}`);
     const payload = { username: 'TwitchUnblock', allowed_mentions: { parse: [] }, content: content.slice(0, 2000) };
     const job = discordHook(env.FEEDBACK_WEBHOOK, payload, photoFiles(photos), { threadId: meta.dt }).catch(() => {});
     if (ctx?.waitUntil) ctx.waitUntil(job);
+    return job;
 }
 
 /**
@@ -1671,20 +1676,20 @@ function echoTeamToDiscord(env, ctx, meta, { message = '', photos = [], status =
  * { metadata, thread } à jour (`unchanged` : état déjà celui-là), ou
  * { error, code }.
  */
-async function feedbackTeamUpdate(env, key, { message = '', photos = [], status = null }) {
+async function feedbackTeamUpdate(env, key, { message = '', photos = [], status = null, extra = null, follow = true }) {
     const { value, metadata } = await store(env).getWithMetadata(key);
-    if (!metadata) return { error: 'Retour introuvable', code: 404 };
+    if (!metadata) return { error: 'Retour introuvable', en: 'Report not found', code: 404 };
     const thread = feedbackThread(value, metadata);
-    if (thread.length >= FEEDBACK_MAX_MESSAGES) return { error: 'Discussion trop longue', code: 409 };
+    if (thread.length >= FEEDBACK_MAX_MESSAGES) return { error: 'Discussion trop longue', en: 'Conversation too long', code: 409 };
     const now = Date.now();
-    const next = { ...metadata, u: now, r: 'a', sa: now };
+    const next = { ...metadata, u: now, r: 'a', sa: now, ...(extra || {}) };
     if (status !== null) {
-        if (!FEEDBACK_STATUSES.includes(status)) return { error: 'État inconnu', code: 400 };
+        if (!FEEDBACK_STATUSES.includes(status)) return { error: 'État inconnu', en: 'Unknown status', code: 400 };
         if (status === (metadata.s || 'new')) return { metadata, thread, unchanged: true };
         thread.push({ f: 'a', s: status, at: now });
         next.s = status;
     } else {
-        if (!message && !photos.length) return { error: 'Message vide', code: 400 };
+        if (!message && !photos.length) return { error: 'Message vide', en: 'Empty message', code: 400 };
         const ph = await saveFeedbackPhotos(env, key, photos, metadata.ph || 0);
         thread.push({ f: 'a', m: message, at: now, ...(ph.length ? { ph } : {}) });
         next.n = (metadata.n || 1) + 1;
@@ -1692,6 +1697,10 @@ async function feedbackTeamUpdate(env, key, { message = '', photos = [], status 
     }
     await store(env).put(key, JSON.stringify(thread), { metadata: next, expirationTtl: FEEDBACK_TTL });
     if (next.dt) await linkDiscordThread(env, key, next.dt, false);
+    // Doublons fusionnés (/merge) : ils suivent l'état de celui-ci.
+    if (follow && status !== null && Array.isArray(next.dups)) {
+        for (const dup of next.dups.slice(0, 20)) await feedbackTeamUpdate(env, dup, { status, follow: false });
+    }
     return { metadata: next, thread };
 }
 
@@ -1707,53 +1716,321 @@ async function feedbackTeamUpdate(env, key, { message = '', photos = [], status 
 //     { action: 'status', thread, status }          → idem, après le changement
 //     { action: 'backfill' }                        → { done, remaining, retryAfter? }
 //                                                     (anciens retours, voir plus haut)
+//   Outils du bot (voir plus bas) : get / set (sa mémoire), create /
+//   userReply (/bug sur Discord, réponses en message privé), deliver,
+//   delete, block, merge, fix / released (« c'est en ligne »), summary,
+//   health, announce. Messages d'erreur en anglais : le bot les affiche.
 async function handleFeedbackBot(request, env) {
     const secret = String(env.FEEDBACK_BOT_SECRET || '');
-    if (secret.length < 16 || !env.DB) return jsonError('Pont Discord non configuré', 404);
+    if (secret.length < 16 || !env.DB) return jsonError('Discord bridge not configured', 404);
     if (request.method !== 'POST') return jsonError('Method Not Allowed', 405);
     // Empreintes comparées : la durée de la comparaison n'apprend rien du secret.
     if (await sha256hex(request.headers.get('Authorization') || '') !== await sha256hex(`Bearer ${secret}`)) {
-        return jsonError('Accès refusé', 403);
+        return jsonError('Access denied', 403);
     }
     let body;
-    try { body = await request.json(); } catch (e) { return jsonError('JSON invalide', 400); }
+    try { body = await request.json(); } catch (e) { return jsonError('Bad JSON', 400); }
 
     if (body.action === 'config') {
         const hook = String(env.FEEDBACK_WEBHOOK || '').trim();
-        if (!/^https:\/\/(?:ptb\.|canary\.)?discord(?:app)?\.com\/api\/webhooks\//.test(hook)) return jsonError('FEEDBACK_WEBHOOK absent ou invalide', 409);
+        if (!/^https:\/\/(?:ptb\.|canary\.)?discord(?:app)?\.com\/api\/webhooks\//.test(hook)) return jsonError('FEEDBACK_WEBHOOK missing or invalid', 409);
         const res = await fetch(hook).catch(() => null);
         const w = res?.ok ? await res.json().catch(() => null) : null;
-        if (!w?.channel_id) return jsonError(`Webhook illisible (HTTP ${res?.status || 0})`, 502);
+        if (!w?.channel_id) return jsonError(`Webhook unreadable (HTTP ${res?.status || 0})`, 502);
         // Signe de vie (toutes les 10 min) : /stats dit si le bot tourne.
         await store(env).put(FEEDBACK_BOT_KEY, '', { metadata: { at: Date.now(), forum: w.channel_id } });
         return jsonResponse({ forum: w.channel_id, guild: w.guild_id || null, labels: FEEDBACK_STATUS_LABELS });
     }
 
     if (body.action === 'backfill') return jsonResponse(await backfillDiscord(env));
+    const general = await feedbackBotTool(env, body);
+    if (general) return general;
 
     const thread = String(body.thread || '');
-    if (!/^\d{5,25}$/.test(thread)) return jsonError('Post invalide', 400);
+    if (!/^\d{5,25}$/.test(thread)) return jsonError('Bad post ID', 400);
     const key = await store(env).get(`${FEEDBACK_DISCORD_PREFIX}${thread}`);
-    if (!key || !FEEDBACK_KEY_RE.test(key)) return jsonError('Post inconnu', 404);
-    const { metadata } = await store(env).getWithMetadata(key);
-    if (!metadata) return jsonError('Retour introuvable', 404);
-    const state = (m) => ({ key, status: m.s || 'new', lastFrom: m.r || 'u' });
+    if (!key || !FEEDBACK_KEY_RE.test(key)) return jsonError('Unknown post', 404);
+    const { value, metadata } = await store(env).getWithMetadata(key);
+    if (!metadata) return jsonError('Report not found', 404);
+    const state = (m) => ({
+        key, status: m.s || 'new', lastFrom: m.r || 'u',
+        fix: m.fx || null, blocked: Boolean(m.bl), discord: Boolean(m.du), mergedInto: m.mg || null,
+    });
 
     if (body.action === 'state') return jsonResponse(state(metadata));
     if (body.action === 'status') {
         const r = await feedbackTeamUpdate(env, key, { status: String(body.status || '') });
-        return r.error ? jsonError(r.error, r.code) : jsonResponse({ ok: true, ...state(r.metadata) });
+        return r.error ? jsonError(r.en, r.code) : jsonResponse({ ok: true, ...state(r.metadata) });
     }
     if (body.action === 'reply') {
         const message = cleanText(body.message, 2000);
         const photos = cleanPhotos(body.photos);
-        if (!message && !photos.length) return jsonError('Message vide', 400);
-        // Répondre depuis Discord, c'est l'avoir vu : « Reçu » passe à « Vu ».
+        if (!message && !photos.length) return jsonError('Empty message', 400);
+        // Répondre depuis Discord, c'est l'avoir vu : « Nouveau » passe à « Vu ».
         if ((metadata.s || 'new') === 'new') await feedbackTeamUpdate(env, key, { status: 'seen' });
         const r = await feedbackTeamUpdate(env, key, { message, photos });
-        return r.error ? jsonError(r.error, r.code) : jsonResponse({ ok: true, ...state(r.metadata) });
+        if (r.error) return jsonError(r.en, r.code);
+        // Réponse rapide « corrigé » : passe à « Fait » dans la foulée.
+        if (body.status && FEEDBACK_STATUSES.includes(body.status)) {
+            const s = await feedbackTeamUpdate(env, key, { status: body.status });
+            if (!s.error) return jsonResponse({ ok: true, ...state(s.metadata) });
+        }
+        return jsonResponse({ ok: true, ...state(r.metadata) });
     }
-    return jsonError('Action inconnue', 400);
+    // Réponses du développeur pas encore envoyées en message privé à qui a
+    // écrit depuis Discord (/bug) ; notées comme envoyées.
+    if (body.action === 'deliver') {
+        if (!metadata.du) return jsonResponse({ du: null, items: [] });
+        const thread = feedbackThread(value, metadata);
+        const from = Math.max(1, Number(metadata.dd) || 1);
+        const items = thread.slice(from)
+            .filter((x) => x.f === 'a' && (x.m || (x.s && x.s !== 'seen')))
+            .map((x) => ({ m: x.m || null, s: x.s || null, label: x.s ? FEEDBACK_STATUS_LABELS[x.s] || x.s : null, ph: x.ph?.length || 0 }));
+        if (thread.length > from) await store(env).put(key, value, { metadata: { ...metadata, dd: thread.length }, expirationTtl: FEEDBACK_TTL });
+        return jsonResponse({ du: metadata.du, key, excerpt: String(metadata.m || '').slice(0, 80), items });
+    }
+    if (body.action === 'delete') {
+        await store(env).delete(key);
+        for (const k of (await listStoreKeys(env, `${FEEDBACK_PHOTO_PREFIX}${key}_`)).slice(0, 200)) await store(env).delete(k.name);
+        await store(env).delete(`${FEEDBACK_DISCORD_PREFIX}${thread}`);
+        return jsonResponse({ ok: true, key });
+    }
+    if (body.action === 'block') {
+        const meta = { ...metadata, bl: true };
+        await store(env).put(key, value, { metadata: meta, expirationTtl: FEEDBACK_TTL });
+        return jsonResponse({ ok: true, ...state(meta) });
+    }
+    if (body.action === 'merge') {
+        // Lien du post (…/channels/<serveur>/<post>) ou son numéro.
+        const into = String(body.into || '').match(/(\d{5,25})\D*$/)?.[1];
+        const target = into && await store(env).get(`${FEEDBACK_DISCORD_PREFIX}${into}`);
+        if (!target || !FEEDBACK_KEY_RE.test(target) || target === key) return jsonError('Other report not found', 404);
+        const other = await store(env).getWithMetadata(target);
+        if (!other.metadata) return jsonError('Other report not found', 404);
+        const r = await feedbackTeamUpdate(env, key, { message: FEEDBACK_MERGED_MESSAGE, extra: { mg: target } });
+        if (r.error) return jsonError(r.en, r.code);
+        if ((other.metadata.s || 'new') !== (r.metadata.s || 'new')) await feedbackTeamUpdate(env, key, { status: other.metadata.s || 'new', follow: false });
+        const dups = [...new Set([...(other.metadata.dups || []), key])].slice(-20);
+        await store(env).put(target, other.value, { metadata: { ...other.metadata, dups }, expirationTtl: FEEDBACK_TTL });
+        return jsonResponse({ ok: true, key, into: target, intoThread: other.metadata.dt || null });
+    }
+    // Où partira le correctif : la personne sera prévenue à sa sortie.
+    if (body.action === 'fix') {
+        const p = String(body.platform || '');
+        if (!['ios', 'web', 'both', 'none'].includes(p)) return jsonError('Bad platform', 400);
+        const meta = { ...metadata };
+        if (p === 'none') delete meta.fx;
+        else meta.fx = { p, at: Date.now(), done: {} };
+        await store(env).put(key, value, { metadata: meta, expirationTtl: FEEDBACK_TTL });
+        const { metadata: versions } = await store(env).getWithMetadata(FEEDBACK_VERSIONS_KEY);
+        return jsonResponse({ ok: true, ...state(meta), versions: versions || {} });
+    }
+    return jsonError('Unknown action', 400);
+}
+
+// ── Outils du bot qui ne visent pas un post ────────────────────────────────
+const FEEDBACK_VERSIONS_KEY = 'fbmeta_versions';
+const FEEDBACK_MERGED_MESSAGE = "Thanks! Someone reported the same thing, so I'm following it up there — you'll get the news here too.";
+const FEEDBACK_LIVE_MESSAGES = {
+    ios: (v) => `Good news: the fix is out in the app (version ${v}). Update TwitchUnblock from your source, then let me know if anything's still wrong.`,
+    web: (v) => `Good news: the fix is live on the website (version ${v}). Reload the page, then let me know if anything's still wrong.`,
+};
+const BOT_STORE_PREFIX = 'dcbot_';
+const discordReportHits = new Map();
+
+/** Rend une réponse si l'action est l'une des siennes, sinon null. */
+async function feedbackBotTool(env, body) {
+    switch (body.action) {
+        // Mémoire du bot (réglages, versions vues, brouillons) : petites
+        // valeurs JSON sous `dcbot_<clé>`, gardées ou pour `ttl` secondes.
+        case 'get': {
+            const k = String(body.key || '');
+            if (!/^[a-z0-9_:-]{1,60}$/.test(k)) return jsonError('Bad key', 400);
+            let value = null;
+            try { value = JSON.parse(await store(env).get(BOT_STORE_PREFIX + k) || 'null'); } catch (e) {}
+            return jsonResponse({ value });
+        }
+        case 'set': {
+            const k = String(body.key || '');
+            const text = JSON.stringify(body.value ?? null);
+            if (!/^[a-z0-9_:-]{1,60}$/.test(k) || text.length > 20000) return jsonError('Bad key or value too big', 400);
+            const ttl = Number(body.ttl) || 0;
+            await store(env).put(BOT_STORE_PREFIX + k, text, ttl > 0 ? { expirationTtl: Math.max(60, ttl) } : {});
+            return jsonResponse({ ok: true });
+        }
+        // /bug et /idea sur Discord : le même retour que depuis l'app ; les
+        // réponses partent en message privé (deliver), pas de jeton à garder.
+        case 'create': {
+            const du = String(body.user?.id || '');
+            if (!/^\d{5,25}$/.test(du)) return jsonError('Bad Discord user', 400);
+            if (overLimit(discordReportHits, du, 5)) return jsonError('Too many reports — try again in an hour', 429);
+            const message = cleanText(body.message, 2000);
+            if (message.length < 5) return jsonError('Message too short', 400);
+            const now = Date.now();
+            const key = `${FEEDBACK_PREFIX}${now.toString(36)}_${crypto.randomUUID().slice(0, 8)}`;
+            const token = (crypto.randomUUID() + crypto.randomUUID()).replace(/-/g, '').slice(0, 48);
+            const entry = {
+                k: FEEDBACK_KINDS.includes(body.kind) ? body.kind : 'other',
+                m: message,
+                c: `@${cleanText(body.user?.name, 40) || du} (Discord)`,
+                p: 'discord',
+                v: cleanText(body.where, 60) || 'Discord',
+                i: null,
+                at: now, s: 'new', u: now, r: 'u', n: 1, ph: 0,
+                h: await sha256hex(token), du, dd: 1,
+            };
+            await store(env).put(key, JSON.stringify([{ f: 'u', m: message, at: now }]), { metadata: entry, expirationTtl: FEEDBACK_TTL });
+            const r = await notifyDiscord(env, null, entry, [], { key });
+            return jsonResponse({ ok: true, key, thread: r?.thread || null });
+        }
+        case 'userReply': {
+            const key = String(body.key || '');
+            if (!FEEDBACK_KEY_RE.test(key)) return jsonError('Bad report', 400);
+            const { value, metadata: m } = await store(env).getWithMetadata(key);
+            if (!m?.du || m.du !== String(body.du || '')) return jsonError('Report not found', 404);
+            if (m.bl) return jsonError('This conversation was closed by the developer', 403);
+            const message = cleanText(body.message, 2000);
+            if (!message) return jsonError('Empty message', 400);
+            const thread = feedbackThread(value, m);
+            if (thread.length >= FEEDBACK_MAX_MESSAGES) return jsonError('Conversation too long', 409);
+            const now = Date.now();
+            thread.push({ f: 'u', m: message, at: now });
+            const next = { ...m, u: now, r: 'u', n: (m.n || 1) + 1 };
+            await store(env).put(key, JSON.stringify(thread), { metadata: next, expirationTtl: FEEDBACK_TTL });
+            await notifyDiscord(env, null, { ...next, m: message }, [], { key, inReplyTo: m.m });
+            return jsonResponse({ ok: true });
+        }
+        case 'released':
+            return jsonResponse(await feedbackReleased(env, { ios: body.ios, web: body.web }));
+        // Résumé du matin : retours en attente de réponse, nouveaux, ouverts.
+        case 'summary': {
+            const now = Date.now();
+            const list = (await listStoreKeys(env, FEEDBACK_PREFIX)).map(({ name, metadata }) => ({ key: name, m: metadata || {} }));
+            const finished = (m) => m.s === 'done' || m.s === 'refused';
+            const awaiting = list.filter(({ m }) => m.r === 'u' && !m.bl && !m.mg && !(finished(m) && m.r === 'a'))
+                .sort((a, b) => (a.m.u || 0) - (b.m.u || 0))
+                .map(({ key, m }) => ({ key, thread: m.dt || null, kind: m.k || 'other', excerpt: String(m.m || '').replace(/\s+/g, ' ').slice(0, 70), since: m.u || m.at || 0 }));
+            return jsonResponse({
+                awaiting: awaiting.slice(0, 15),
+                awaitingCount: awaiting.length,
+                open: list.filter(({ m }) => !finished(m) && !m.mg).length,
+                new24h: list.filter(({ m }) => now - (m.at || 0) < 86400000).length,
+                total: list.length,
+            });
+        }
+        // État des notifications et du webhook, pour les alertes du bot.
+        case 'health': {
+            let pause = null;
+            try { pause = JSON.parse(await store(env).get('push_ntfy_pause') || 'null'); } catch (e) {}
+            const route = ntfyRoute(env);
+            const { metadata: hook } = await store(env).getWithMetadata(FEEDBACK_HOOK_KEY);
+            return jsonResponse({
+                ntfy: pause && pause.via === route && pause.until > Date.now() ? { until: pause.until, code: Number(pause.code) || 0 } : null,
+                webhook: hook || null,
+            });
+        }
+        // /announce : le bandeau du développeur dans l'app et sur le site.
+        case 'announce': {
+            announcementCache = null;
+            if (body.clear === true) {
+                await store(env).delete(ANNOUNCEMENT_KEY);
+                return jsonResponse({ ok: true, announcement: null });
+            }
+            const title = cleanText(body.title, 80);
+            const message = cleanText(body.message, 500);
+            if (!title && !message) return jsonError('A title or a message is needed', 400);
+            const link = cleanText(body.link, 300);
+            if (link && !/^https:\/\/[^\s]+$/i.test(link)) return jsonError('Link: https:// only', 400);
+            const hours = Math.min(24 * 30, Math.max(1 / 60, Number(body.hours) || 24));
+            const ttl = Math.round(hours * 3600);
+            const announcement = { id: Date.now().toString(36), title, message, link: link || null, until: Date.now() + ttl * 1000, createdAt: Date.now() };
+            await store(env).put(ANNOUNCEMENT_KEY, JSON.stringify(announcement), { expirationTtl: Math.max(60, ttl) });
+            return jsonResponse({ ok: true, announcement });
+        }
+    }
+    return null;
+}
+
+/**
+ * Nouvelle version en ligne (le bot lit l'app sur GitHub et le site sur
+ * Vercel) : chaque retour dont le correctif l'attendait (`fx`, choisi sur
+ * Discord en passant à « Done ») reçoit « c'est en ligne », ses doublons
+ * aussi, et son post Discord le note. La première fois, on retient
+ * seulement les versions.
+ */
+async function feedbackReleased(env, versions) {
+    const { metadata: known } = await store(env).getWithMetadata(FEEDBACK_VERSIONS_KEY);
+    const prev = known || {};
+    const next = { ...prev };
+    const shipped = [];
+    for (const p of ['ios', 'web']) {
+        const v = cleanText(versions?.[p], 40);
+        if (!v || v === prev[p]) continue;
+        next[p] = v;
+        if (prev[p]) shipped.push({ p, v });
+    }
+    if (JSON.stringify(next) !== JSON.stringify(prev)) await store(env).put(FEEDBACK_VERSIONS_KEY, '', { metadata: next });
+    let notified = 0;
+    if (shipped.length) {
+        const waiting = (await listStoreKeys(env, FEEDBACK_PREFIX)).filter(({ metadata: m }) => m?.fx);
+        for (const { name } of waiting.slice(0, 30)) {
+            for (const { p, v } of shipped) {
+                const { metadata: m } = await store(env).getWithMetadata(name);
+                if (!m?.fx || !(m.fx.p === p || m.fx.p === 'both') || m.fx.done?.[p]) continue;
+                const message = FEEDBACK_LIVE_MESSAGES[p](v);
+                const fx = { ...m.fx, done: { ...(m.fx.done || {}), [p]: v } };
+                const r = await feedbackTeamUpdate(env, name, { message, extra: { fx } });
+                if (r.error) continue;
+                notified++;
+                const where = p === 'ios' ? `the app ${v}` : `the website ${v}`;
+                await echoTeamToDiscord(env, null, r.metadata, { note: `🚀 **Live in ${where}** — the user was told:\n${message}` });
+                for (const dup of (m.dups || []).slice(0, 20)) {
+                    const d = await feedbackTeamUpdate(env, dup, { message, follow: false });
+                    if (!d.error) { notified++; await echoTeamToDiscord(env, null, d.metadata, { note: `🚀 **Live in ${where}** — the user was told.` }); }
+                }
+            }
+        }
+    }
+    return { versions: next, shipped, notified };
+}
+
+// ── Surveillance du relais (facultative) ───────────────────────────────────
+// Toutes les 5 min, si ALERT_WEBHOOK (webhook d'un salon Discord privé) est
+// posé : le relais du VPS répond-il (/health), et son bot Discord s'est-il
+// annoncé (toutes les 10 min) ? Prévenu au changement seulement : panne,
+// puis retour. Le bot ne peut pas le dire lui-même : il tourne dans le relais.
+const RELAY_WATCH_KEY = 'fbmeta_relaywatch';
+async function relayWatch(env, now = new Date()) {
+    const hook = String(env.ALERT_WEBHOOK || '').trim();
+    const relay = String(env.NTFY_RELAY || '').trim().replace(/\/+$/, '');
+    if (!hook || !relay || !env.DB || now.getUTCMinutes() % 5) return;
+    const { metadata: prev } = await store(env).getWithMetadata(RELAY_WATCH_KEY);
+    const st = { relayDown: 0, botDown: 0, fails: 0, ...(prev || {}) };
+    const before = JSON.stringify(st);
+    let ok = false;
+    try { ok = (await fetch(`${relay}/health`, { signal: AbortSignal.timeout(10000) })).ok; } catch (e) { /* injoignable */ }
+    const t0 = now.getTime();
+    const msgs = [];
+    st.fails = ok ? 0 : st.fails + 1;
+    if (st.fails >= 2 && !st.relayDown) {
+        st.relayDown = t0;
+        msgs.push(`⚠️ **Relay unreachable** (<${relay}>): the video relay, ntfy notifications and the Discord bot are down.`);
+    }
+    if (ok && st.relayDown) {
+        msgs.push(`✅ **Relay is back** after ${Math.max(1, Math.round((t0 - st.relayDown) / 60000))} min.`);
+        st.relayDown = 0;
+    }
+    if (ok && env.FEEDBACK_BOT_SECRET) {
+        const { metadata: bot } = await store(env).getWithMetadata(FEEDBACK_BOT_KEY);
+        const silent = !bot?.at || t0 - bot.at > 25 * 60000;
+        if (silent && !st.botDown) {
+            st.botDown = t0;
+            msgs.push(`⚠️ **Discord bot silent** ${bot?.at ? `since <t:${Math.floor(bot.at / 1000)}:R>` : '(never checked in)'} — token, intents or the relay's .env?`);
+        }
+        if (!silent && st.botDown) { msgs.push('✅ **Discord bot is back.**'); st.botDown = 0; }
+    }
+    for (const content of msgs) await discordHook(hook, { username: 'TwitchUnblock', allowed_mentions: { parse: [] }, content });
+    if (JSON.stringify(st) !== before) await store(env).put(RELAY_WATCH_KEY, '', { metadata: st });
 }
 
 // GET  /api/admin/feedback          — les retours, du plus récent au plus ancien.
@@ -1815,7 +2092,7 @@ async function handleAdminFeedback(request, env, ctx) {
 
         // Test de l'envoi vers Discord depuis /stats.
         if (body.testWebhook === true) {
-            const r = await notifyDiscord(env, null, { k: 'other', m: '✅ Test du webhook depuis /stats : les retours arrivent bien ici.', p: 'web', v: 'test', at: Date.now() }, [], { test: true });
+            const r = await notifyDiscord(env, null, { k: 'other', m: '✅ Webhook test from /stats: reports arrive here.', p: 'web', v: 'test', at: Date.now() }, [], { test: true });
             const { metadata } = await store(env).getWithMetadata(FEEDBACK_HOOK_KEY);
             return jsonResponse({ ok: Boolean(metadata?.ok), webhook: { configured: Boolean(env.FEEDBACK_WEBHOOK), last: metadata || null } });
         }

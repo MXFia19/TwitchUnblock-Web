@@ -31,7 +31,7 @@ services:
       # Worker dont le relais publie les notifications ntfy de l'app iOS
       # (ntfy.sh refuse les adresses de Cloudflare). Vide = coupé.
       NTFY_WORKER: "${NTFY_WORKER-https://test2.kurzmathis4.workers.dev}"
-      # Pont Discord des retours (README, « Discord bridge ») : jeton du bot,
+      # Bot Discord (README, « Discord bot ») : jeton du bot,
       # secret partagé avec le Worker (FEEDBACK_BOT_SECRET, même valeur),
       # Worker des retours, autres comptes Discord autorisés à répondre.
       # Sans jeton, coupé.
@@ -39,6 +39,12 @@ services:
       FEEDBACK_BOT_SECRET: "${FEEDBACK_BOT_SECRET-}"
       FEEDBACK_WORKER: "${FEEDBACK_WORKER-https://test2.kurzmathis4.workers.dev}"
       DISCORD_ADMIN_IDS: "${DISCORD_ADMIN_IDS-}"
+      # Facultatif : Workers de secours surveillés (séparés par des virgules ;
+      # vide = celui de l'instance officielle), heure et fuseau du résumé du
+      # matin (9 h, Europe/Paris).
+      FALLBACK_WORKERS: "${FALLBACK_WORKERS-}"
+      SUMMARY_TZ: "${SUMMARY_TZ-}"
+      SUMMARY_HOUR: "${SUMMARY_HOUR-}"
     logging:
       driver: json-file
       options: { max-size: "10m", max-file: "3" }

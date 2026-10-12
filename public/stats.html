@@ -1064,7 +1064,7 @@
         <div class="fb-meta">
           <span class="tag ${esc(f.kind)}">${esc(t(FB_KINDS[f.kind] || 'fbOther'))}</span>
           <span class="st ${esc(f.status)}">${esc(t('fbStatus_' + f.status))}</span>
-          <span>${esc(f.platform === 'ios' ? t('fbIos') : t('fbWeb'))} · ${esc(f.version)}</span>
+          <span>${esc(f.platform === 'ios' ? t('fbIos') : f.platform === 'discord' ? 'Discord' : t('fbWeb'))} · ${esc(f.version)}</span>
           <span>${esc(new Date(f.at).toLocaleString(LOCALE, { dateStyle: 'medium', timeStyle: 'short' }))}</span>
           ${f.contact ? `<span>${esc(t('fbContact'))} <b>${esc(f.contact)}</b></span>` : ''}
           ${f.count > 1 ? `<span>💬 ${fmt(f.count)}</span>` : ''}

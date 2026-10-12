@@ -240,6 +240,10 @@ const bridge = process.env.DISCORD_BOT_TOKEN?.trim()
       admins: (process.env.DISCORD_ADMIN_IDS || '').split(',').map((s) => s.trim()).filter((s) => /^\d{5,25}$/.test(s)),
       ...(process.env.DISCORD_API ? { api: process.env.DISCORD_API } : {}),
       ...(process.env.DISCORD_GATEWAY ? { gateway: process.env.DISCORD_GATEWAY } : {}),
+      // Workers de secours surveillés, heure et fuseau du résumé du matin.
+      ...(process.env.FALLBACK_WORKERS ? { fallbacks: process.env.FALLBACK_WORKERS.split(',').map((s) => s.trim()).filter(Boolean) } : {}),
+      ...(process.env.SUMMARY_TZ ? { summaryTz: process.env.SUMMARY_TZ.trim() } : {}),
+      ...(Number.isInteger(Number(process.env.SUMMARY_HOUR)) && process.env.SUMMARY_HOUR ? { summaryHour: Number(process.env.SUMMARY_HOUR) } : {}),
     })
   : null
 
