@@ -2664,6 +2664,9 @@ function saveMyFeedback(list) {
   updateFeedbackBadges()
 }
 const fbUnread = (r) => r.lastFrom === 'a' && (r.updatedAt || 0) > (r.seen || 0)
+// Terminé (fait ou refusé), dernier mot au développeur : plus rien n'est
+// attendu, il n'est plus relu tout seul. Une réponse d'ici le remet au suivi.
+const fbClosed = (r) => (r.status === 'done' || r.status === 'refused') && r.lastFrom === 'a'
 
 /** Pastille « nouvelle réponse » sur chaque bouton de retour. */
 function updateFeedbackBadges() {
@@ -2677,16 +2680,18 @@ function updateFeedbackBadges() {
   }
 }
 
-/** État de toutes les discussions, en une requête (au plus toutes les 3 min
- *  sans `force`). Un retour effacé ou expiré disparaît de la liste.
+/** État des discussions encore suivies, en une requête (au plus toutes les
+ *  3 min sans `force`) : un retour terminé (fbClosed) n'est plus relu. Un
+ *  retour effacé ou expiré disparaît de la liste.
  *  `notify` : annoncer par un bandeau une réponse arrivée entre-temps. */
 let fbCheckedAt = 0
 async function refreshFeedbackInbox(force = false, notify = true) {
   const list = myFeedback()
-  if (!list.length || (!force && Date.now() - fbCheckedAt < 3 * 60 * 1000)) return list
+  const followed = list.filter((r) => !fbClosed(r))
+  if (!followed.length || (!force && Date.now() - fbCheckedAt < 3 * 60 * 1000)) return list
   fbCheckedAt = Date.now()
   try {
-    const { items } = await api.feedbackThreads(list.map(({ id, token }) => ({ id, token })))
+    const { items } = await api.feedbackThreads(followed.map(({ id, token }) => ({ id, token })))
     const byId = new Map((items ?? []).map((i) => [i.id, i]))
     const before = new Map(list.map((r) => [r.id, r.updatedAt || 0]))
     const next = list.filter((r) => !byId.get(r.id)?.gone).map((r) => {
@@ -2916,7 +2921,8 @@ function openFeedbackThread(id) {
     $('#fb-thread-status').innerHTML = fbStatus(r.status)
     scrollEnd()
   }
-  // Version à jour (réponse arrivée depuis la dernière vérification).
+  // Version à jour (réponse arrivée depuis la dernière vérification) — même
+  // terminé : il a pu être rouvert entre-temps.
   api.feedbackThreads([{ id, token: rec.token }]).then(({ items }) => {
     const it = items?.[0]
     if (it?.gone) { toast(t('fb_gone')); saveMyFeedback(myFeedback().filter((r) => r.id !== id)); return openMyFeedback() }
@@ -2934,6 +2940,9 @@ function openFeedbackThread(id) {
   fbThreadTimer = setInterval(async () => {
     if (!chat.isConnected) return clearInterval(fbThreadTimer)
     if (document.hidden) return
+    // Terminé : plus relu, jusqu'à une réponse d'ici.
+    const current = myFeedback().find((r) => r.id === id)
+    if (!current || fbClosed(current)) return
     try {
       const { items } = await api.feedbackThreads([{ id, token: rec.token }])
       const it = items?.[0]
