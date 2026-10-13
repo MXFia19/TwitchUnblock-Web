@@ -807,15 +807,17 @@ export function startDiscordBridge({
   async function watchHealth() {
     const prev = (await kvGet('alerts').catch(() => null)) || {}
     const next = { ...prev }
+    // La racine répond sans base de données (un Worker de secours n'en a
+    // pas : /api/push/key y vaut 503) et passe en 429 au quota du jour.
     const probe = async (base) => {
       try {
-        const r = await fetch(`${base}/api/push/key`, { signal: AbortSignal.timeout(15_000) })
+        const r = await fetch(`${base}/`, { signal: AbortSignal.timeout(15_000) })
         return r.ok ? null : `HTTP ${r.status}${r.status === 429 ? ' — daily request quota reached?' : ''}`
       } catch {
         return 'unreachable'
       }
     }
-    const checks = [['main', 'Main Worker', worker], ...fallbacks.map((f, n) => [`fallback${n}`, 'Fallback Worker', f])]
+    const checks = [['w:main', 'Main Worker', worker], ...fallbacks.map((f, n) => [`w:fb${n}`, 'Fallback Worker', f])]
     for (const [id, name, base] of checks) {
       const problem = await probe(base)
       if (problem && !prev[id]) { await alert(`⚠️ **${name} failing**: ${problem}\n<${base}>`); next[id] = Date.now() }
