@@ -34,9 +34,9 @@ export function loadGlobalEmotes() {
       getJSON('https://api.frankerfacez.com/v1/set/global'),
       getJSON('https://7tv.io/v3/emote-sets/global'),
     ])
-    for (const e of readBTTV(bttv)) globals.set(e.name, e)
-    for (const e of readFFZSets(ffz?.sets)) globals.set(e.name, e)
-    for (const e of read7TV(stv?.emotes)) globals.set(e.name, e)
+    for (const e of readBTTV(bttv, 'global')) globals.set(e.name, e)
+    for (const e of readFFZSets(ffz?.sets, 'global')) globals.set(e.name, e)
+    for (const e of read7TV(stv?.emotes, 'global')) globals.set(e.name, e)
   })()
   return globalsPromise
 }
@@ -57,42 +57,83 @@ export async function loadChannelEmotes(channelId, login) {
   // Une réponse tardive d'une chaîne quittée entre-temps est ignorée.
   if (loadedChannelId !== channelId) return
 
-  for (const e of readBTTV(bttv?.channelEmotes)) channel.set(e.name, e)
-  for (const e of readBTTV(bttv?.sharedEmotes)) channel.set(e.name, e)
-  for (const e of readFFZSets(ffz?.sets)) channel.set(e.name, e)
-  for (const e of read7TV(stv?.emote_set?.emotes)) channel.set(e.name, e)
+  for (const e of readBTTV(bttv?.channelEmotes, 'channel', login)) channel.set(e.name, e)
+  for (const e of readBTTV(bttv?.sharedEmotes, 'channel')) channel.set(e.name, e)
+  for (const e of readFFZSets(ffz?.sets, 'channel')) channel.set(e.name, e)
+  for (const e of read7TV(stv?.emote_set?.emotes, 'channel')) channel.set(e.name, e)
 }
 
-function readBTTV(arr) {
+// Pour la fiche d'une emote, en plus de l'image : `scope` (global, channel,
+// personal), `by` (auteur), `orig` (nom d'origine 7TV, quand la chaîne l'a
+// renommée), `zw` (7TV : se superpose à l'emote précédente), `mod` (BTTV et
+// FFZ : modificateur comme w! ou ffzW — ce n'est PAS un zero-width) et
+// `large` (plus grande image servie). Tout est déjà dans les réponses : rien
+// de plus à télécharger.
+
+/** `login` : auteur des emotes propres à la chaîne (channelEmotes), que BTTV
+ *  ne nomme pas ; les emotes partagées portent le nom de leur auteur. */
+function readBTTV(arr, scope, login) {
   if (!Array.isArray(arr)) return []
   return arr
     .filter((o) => typeof o?.id === 'string' && typeof o?.code === 'string')
-    .map((o) => ({ id: o.id, name: o.code, url: `https://cdn.betterttv.net/emote/${o.id}/2x`, source: 'bttv' }))
+    .map((o) => ({
+      id: o.id, name: o.code, url: `https://cdn.betterttv.net/emote/${o.id}/2x`, source: 'bttv', scope,
+      by: o.user?.displayName || o.user?.name || login || undefined, mod: Boolean(o.modifier),
+    }))
 }
 
-function readFFZSets(sets) {
+const absURL = (u) => (u.startsWith('//') ? `https:${u}` : u)
+
+function readFFZSets(sets, scope) {
   if (!sets || typeof sets !== 'object') return []
   const out = []
   for (const set of Object.values(sets)) {
     if (!Array.isArray(set?.emoticons)) continue
     for (const o of set.emoticons) {
-      const raw = o?.urls?.['2'] ?? o?.urls?.['1']
+      // Une emote animée l'est dans `animated` (WebP) : `urls` n'en garde
+      // qu'une image fixe.
+      const raw = o?.animated?.['2'] ?? o?.urls?.['2'] ?? o?.urls?.['1']
       if (typeof o?.name !== 'string' || typeof raw !== 'string') continue
-      out.push({ id: String(o.id), name: o.name, url: raw.startsWith('//') ? `https:${raw}` : raw, source: 'ffz' })
+      const large = o.animated?.['4'] ?? o.urls?.['4']
+      out.push({
+        id: String(o.id), name: o.name, url: absURL(raw), source: 'ffz', scope,
+        large: typeof large === 'string' ? absURL(large) : undefined,
+        by: o.owner?.display_name || o.owner?.name || undefined, mod: Boolean(o.modifier),
+      })
     }
   }
   return out
 }
 
-function read7TV(arr) {
+function read7TV(arr, scope) {
   if (!Array.isArray(arr)) return []
   const out = []
   for (const o of arr) {
     const host = o?.data?.host?.url
     if (typeof o?.id !== 'string' || typeof o?.name !== 'string' || typeof host !== 'string') continue
-    out.push({ id: o.id, name: o.name, url: `https:${host}/2x.webp`, source: '7tv' })
+    const orig = o.data.name
+    out.push({
+      id: o.id, name: o.name, url: `https:${host}/2x.webp`, source: '7tv', scope,
+      large: `https:${host}/4x.webp`,
+      by: o.data.owner?.display_name || undefined,
+      orig: typeof orig === 'string' && orig !== o.name ? orig : undefined,
+      // Drapeau actif dans ce jeu d'emotes (data.flags n'est que le réglage
+      // conseillé par l'auteur).
+      zw: ((o.flags ?? 0) & 1) === 1,
+    })
   }
   return out
+}
+
+/** Emote BTTV, FFZ ou 7TV par sa source et son id, pour sa fiche : chaîne,
+ *  emotes personnelles, puis globales. */
+export function findEmote(source, id) {
+  if (!source || !id) return null
+  const match = (e) => e.source === source && e.id === id
+  for (const e of channel.values()) if (match(e)) return e
+  for (const map of personal.values()) for (const e of map.values()) if (match(e)) return e
+  for (const e of globals.values()) if (match(e)) return e
+  return null
 }
 
 /** Le canal l'emporte sur le global : un streamer peut redéfinir une emote.
@@ -207,7 +248,7 @@ function onBttvEvent(raw) {
   const chan = String(d.channel ?? '').split(':').pop()
   if (evt.name === 'lookup_user') {
     if (!d.pro || !d.providerId || !Array.isArray(d.emotes) || !d.emotes.length) return
-    const map = new Map(readBTTV(d.emotes).map((e) => [e.name, { ...e, personal: true }]))
+    const map = new Map(readBTTV(d.emotes, 'personal').map((e) => [e.name, { ...e, personal: true }]))
     if (!map.size) return
     personal.delete(String(d.providerId))
     personal.set(String(d.providerId), map)
@@ -217,7 +258,10 @@ function onBttvEvent(raw) {
     const code = d.emote.code ?? old?.name
     if (!code) return
     if (old) channel.delete(old.name)
-    channel.set(code, { id: d.emote.id, name: code, url: `https://cdn.betterttv.net/emote/${d.emote.id}/2x`, source: 'bttv' })
+    channel.set(code, {
+      id: d.emote.id, name: code, url: `https://cdn.betterttv.net/emote/${d.emote.id}/2x`, source: 'bttv', scope: 'channel',
+      by: d.emote.user?.displayName || d.emote.user?.name || old?.by, mod: old?.mod ?? false,
+    })
   } else if (evt.name === 'emote_delete' && chan === loadedChannelId && d.emoteId) {
     const old = [...channel.values()].find((e) => e.source === 'bttv' && e.id === d.emoteId)
     if (old) channel.delete(old.name)

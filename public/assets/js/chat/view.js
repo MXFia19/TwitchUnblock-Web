@@ -11,7 +11,7 @@ import { fetchPinned } from './pinned.js'
 import { fetchBotCommands } from './botcmds.js'
 import { VodChat } from './vod.js'
 import { badgeInfo, parseBadgeTag } from './badges.js'
-import { emoteCatalog, suggestEmotes } from './emotes.js'
+import { emoteCatalog, findEmote, suggestEmotes } from './emotes.js'
 import { linkifyHtml, plainText, systemMessage } from './message.js'
 import { clipSlugFrom, gql } from '../api.js'
 import { lang, t } from '../i18n.js'
@@ -58,12 +58,39 @@ function pickCampaign(list) {
   return null
 }
 
-/** Image plus grande que celle du chat, quand la source la propose. */
+/** Image plus grande que celle du chat, quand la source la propose (FFZ :
+ *  `large`, lue avec l'emote). */
 function largeEmote(url, source) {
   if (source === 'twitch') return url.replace('/2.0', '/3.0')
   if (source === 'bttv') return url.replace(/\/2x$/, '/3x')
   if (source === '7tv') return url.replace('/2x.webp', '/4x.webp')
   return url
+}
+
+/** Page de l'emote chez sa source (« Voir sur … »). */
+const EMOTE_PAGES = {
+  bttv: ['BetterTTV', (id) => `https://betterttv.com/emotes/${id}`],
+  ffz: ['FrankerFaceZ', (id) => `https://www.frankerfacez.com/emoticon/${id}`],
+  '7tv': ['7TV', (id) => `https://7tv.app/emotes/${id}`],
+}
+
+// Fiche d'une emote Twitch : type, chaîne propriétaire (en direct ou non) et
+// emotes d'abonné du même niveau, comme sur twitch.tv. GQL public, sans
+// compte. Une emote modifiée (_BW, _HF) répond aussi, avec son propre type.
+const EMOTE_INFO_QUERY = `query($id: ID!) { emote(id: $id) { id token type subscriptionTier
+  owner { id login displayName profileImageURL(width: 70) stream { id } subscriptionProducts { tier emotes { id token } } } } }`
+/** Réponses de Twitch (emote: null compris), jamais les erreurs réseau : une
+ *  panne passagère ne doit pas priver la fiche de ses infos pour la séance. */
+const emoteInfoCache = new Map()
+
+async function twitchEmoteInfo(id) {
+  if (emoteInfoCache.has(id)) return emoteInfoCache.get(id)
+  const data = await gql(EMOTE_INFO_QUERY, { id })
+  if (!data) return null
+  const info = data.emote ?? null
+  emoteInfoCache.set(id, info)
+  if (emoteInfoCache.size > 300) emoteInfoCache.delete(emoteInfoCache.keys().next().value)
+  return info
 }
 
 /** « 10 min », « 24 h », « 7 j » dans la langue du site. */
@@ -127,6 +154,8 @@ export class ChatView {
     /** Messages du direct mis en attente pour coller à l'image. */
     this.delayed = []
     this.delayTimer = null
+    /** Fiche d'emote affichée : protège des réponses tardives. */
+    this.infoSeq = 0
     this.build()
   }
 
@@ -208,6 +237,9 @@ export class ChatView {
     // Fiche d'une emote ou d'un badge : copier, ajouter au message, fermer.
     this.el.info.addEventListener('click', async (e) => {
       if (e.target.closest('[data-ci-close]')) { this.el.info.hidden = true; return }
+      // Chaîne propriétaire : la délégation globale de [data-channel]
+      // (main.js) ouvre sa page ; la fiche, elle, se referme.
+      if (e.target.closest('[data-channel]')) { this.el.info.hidden = true; return }
       const copy = e.target.closest('[data-ci-copy]')
       if (copy) {
         try {
@@ -271,6 +303,14 @@ export class ChatView {
       const b = e.target.closest('[data-emote]')
       if (b) this.insertText(b.dataset.emote)
     })
+    // Clic droit (appui long sur Android) : la fiche de l'emote ; le clic
+    // simple insère toujours.
+    this.el.grid.addEventListener('contextmenu', (e) => {
+      const b = e.target.closest('[data-emote]')
+      if (!b) return
+      e.preventDefault()
+      this.showInfo(b)
+    })
     this.el.suggest.addEventListener('mousedown', (e) => {
       const b = e.target.closest('[data-i]')
       if (b) { e.preventDefault(); this.applySuggestion(Number(b.dataset.i)) }
@@ -279,7 +319,12 @@ export class ChatView {
     this.el.login.addEventListener('click', () => this.o.onLogin())
     this.el.card.addEventListener('click', (e) => this.onCardClick(e))
     document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape') { this.hideCard(); this.hidePicker() }
+      if (e.key !== 'Escape') return
+      // La fiche d'une emote d'abord : elle peut couvrir la fiche
+      // utilisateur ou le sélecteur, qui restent ouverts dessous.
+      if (!this.el.info.hidden) { this.el.info.hidden = true; return }
+      this.hideCard()
+      this.hidePicker()
     })
 
     this.applyPrefs()
@@ -435,38 +480,105 @@ export class ChatView {
   }
 
   // ── Fiche d'une emote ou d'un badge ────────────────────────────────────
-  /** Image en grand, nom exact (à copier), source ; pour un badge, son titre
-   *  et sa description. */
-  showInfo(img) {
+  /** Image en grand, nom exact (à copier), source et portée, auteur ; pour
+   *  une emote Twitch, son type et sa chaîne (lus à part) ; pour un badge,
+   *  son titre et sa description. `el` : l'image d'une emote ou d'un badge
+   *  (chat, épinglé, fiche utilisateur) ou une case du sélecteur. */
+  showInfo(el) {
+    // Une réponse lente d'une fiche précédente ne doit pas remplir celle-ci.
+    const seq = ++this.infoSeq
     let html
-    if (img.classList.contains('badge')) {
-      const [set, version] = String(img.dataset.badge ?? '').split('/')
+    let small = ''
+    let twitchId = null
+    if (el.classList.contains('badge')) {
+      const [set, version] = String(el.dataset.badge ?? '').split('/')
       const info = set ? badgeInfo(set, version) : null
       const title = info?.title || String(set ?? '').replace(/_/g, ' ')
-      html = `<img class="ci-img ci-badge" src="${esc(img.src)}" alt="">
+      small = el.src
+      // Taille /3 (72 px) : la /2 du chat (36 px) est floue à 44 px.
+      html = `<img class="ci-img ci-badge" src="${esc(small.replace(/\/2$/, '/3'))}" alt="">
         <strong class="ci-title">${esc(title)}</strong>
         ${info?.description && info.description !== info.title ? `<p class="ci-src">${esc(info.description)}</p>` : ''}
         <p class="ci-src">${esc(t('chat_info_badge'))}</p>`
     } else {
-      const name = img.alt
-      const source = img.dataset.emoteSrc ?? ''
-      const label = {
-        twitch: t('emote_src_twitch'),
-        bttv: img.dataset.personal ? t('emote_src_bttv_personal') : 'BetterTTV',
-        ffz: 'FrankerFaceZ',
-        '7tv': '7TV',
-      }[source] ?? ''
-      const canInsert = !this.el.composer.hidden && !this.el.input.disabled
-      html = `<img class="ci-img" src="${esc(largeEmote(img.src, source))}" alt="${esc(name)}">
+      const pic = el.tagName === 'IMG' ? el : $('img', el)
+      const name = el.dataset.emote ?? pic?.alt ?? ''
+      const source = el.dataset.emoteSrc ?? ''
+      const id = el.dataset.emoteId ?? ''
+      small = pic?.src ?? ''
+      const e = source && source !== 'twitch' ? findEmote(source, id) : null
+      const personal = Boolean(el.dataset.personal || e?.personal)
+      const brand = { bttv: 'BetterTTV', ffz: 'FrankerFaceZ', '7tv': '7TV' }[source]
+      const scope = { global: t('emote_scope_global'), channel: t('emote_scope_channel') }[e?.scope]
+      const label = source === 'twitch' ? t('emote_src_twitch')
+        : source === 'bttv' && personal ? t('emote_src_bttv_personal')
+          : brand ? [brand, scope].filter(Boolean).join(' · ') : ''
+      const lines = [
+        e?.by && t('emote_by', { u: e.by }),
+        e?.orig && t('emote_original', { n: e.orig }),
+        e?.zw && t('emote_zero_width'),
+        e?.mod && t('emote_modifier'),
+      ].filter(Boolean)
+      const page = EMOTE_PAGES[source]
+      // Hors connexion, le champ est caché : « Ajouter » y écrirait en vain.
+      const canInsert = !this.el.composer.hidden && !this.el.inputRow.hidden && !this.el.input.disabled
+      if (source === 'twitch' && id) twitchId = id
+      html = `<img class="ci-img" src="${esc(e?.large ?? largeEmote(small, source))}" alt="${esc(name)}">
         <strong class="ci-name">${esc(name)}</strong>
-        ${label ? `<p class="ci-src">${esc(label)}</p>` : ''}
+        ${label ? `<p class="ci-src ci-type">${esc(label)}</p>` : ''}
+        ${lines.map((l) => `<p class="ci-src">${esc(l)}</p>`).join('')}
+        ${twitchId ? '<div class="ci-twitch"></div>' : ''}
+        ${page && id ? `<a class="ci-link" href="${esc(page[1](encodeURIComponent(id)))}" target="_blank" rel="noopener noreferrer">${esc(t('emote_view_on', { p: page[0] }))}${icon('external', 12)}</a>` : ''}
         <div class="ci-btns">
           <button class="btn sm primary" type="button" data-ci-copy="${esc(name)}">${icon('copy', 15)}<span>${esc(t('chat_info_copy'))}</span></button>
           ${canInsert ? `<button class="btn sm" type="button" data-ci-insert="${esc(name)}"><span>${esc(t('chat_info_insert'))}</span></button>` : ''}
         </div>`
     }
     this.el.info.innerHTML = `<button class="icon-btn xs ci-close" type="button" data-ci-close aria-label="${esc(t('close'))}">${icon('x', 14)}</button>${html}`
+    // Grande image absente (FFZ sans taille 4, badge sans /3) : celle du chat.
+    const big = $('.ci-img', this.el.info)
+    if (big && small) big.addEventListener('error', () => { if (big.src !== small) big.src = small }, { once: true })
+    this.el.info.scrollTop = 0
     this.el.info.hidden = false
+    if (twitchId) this.fillTwitchInfo(twitchId, seq)
+  }
+
+  /** Type, chaîne propriétaire et emotes d'abonné du même niveau d'une emote
+   *  Twitch. Sans réponse (Twitch bloqué, schéma changé), la fiche reste
+   *  telle quelle, sans message d'erreur. */
+  async fillTwitchInfo(id, seq) {
+    let info
+    try { info = await twitchEmoteInfo(id) } catch { return }
+    if (!info || seq !== this.infoSeq || this.el.info.hidden) return
+    const box = $('.ci-twitch', this.el.info)
+    if (!box) return
+    const tier = /^TIER_(\d)$/.exec(info.subscriptionTier ?? '')?.[1]
+    // Seuls ces types sont vérifiés : pour un autre, aucune ligne plutôt
+    // qu'une valeur brute.
+    const type = info.type === 'GLOBALS' || info.type === 'SMILIES' ? t('emote_type_global')
+      : info.type === 'SUBSCRIPTIONS' && tier ? `Twitch · ${t('emote_type_sub', { n: tier })}`
+        : info.type === 'CHANNEL_POINTS' ? `Twitch · ${t('emote_type_points')}` : ''
+    const typeLine = $('.ci-type', this.el.info)
+    if (type && typeLine) typeLine.textContent = type
+    const o = info.owner
+    if (!o?.login) return
+    const name = o.displayName || o.login
+    const avatar = /^https:\/\//.test(o.profileImageURL ?? '') ? `<img src="${esc(o.profileImageURL)}" alt="" loading="lazy">` : ''
+    // Vrai lien vers la page de la chaîne : la délégation de main.js réduit
+    // le lecteur (ou ferme le multi-live) et l'ouvre, même hors ligne.
+    let html = `<a class="ci-owner" href="/${encodeURIComponent(o.login)}" data-channel="${esc(o.login)}">${avatar}
+      <strong>${esc(name)}</strong>${o.stream ? `<span class="pill live sm">${esc(t('live_now'))}</span>` : ''}
+      <span class="ci-owner-go">${esc(t('see_channel'))}${icon('chevronRight', 14)}</span></a>`
+    if (info.type === 'SUBSCRIPTIONS' && tier) {
+      // Comme Twitch : les emotes du même niveau (« 63 autres » = 64 au niveau 1).
+      const same = (o.subscriptionProducts ?? []).find((p) => String(p?.tier) === `${tier}000`)?.emotes ?? []
+      const others = same.filter((x) => x?.id && x.id !== info.id).slice(0, 8)
+      if (same.length) html += `<p class="ci-src">${esc(t('emote_sub_count', { c: name, n: same.length }))}</p>`
+      if (others.length) {
+        html += `<div class="ci-more">${others.map((x) => `<img src="https://static-cdn.jtvnw.net/emoticons/v2/${encodeURIComponent(x.id)}/static/dark/2.0" alt="${esc(x.token ?? '')}" title="${esc(x.token ?? '')}" loading="lazy" onerror="this.remove()">`).join('')}</div>`
+      }
+    }
+    box.innerHTML = html
   }
 
   renderPinned(pin, force = false) {
@@ -899,7 +1011,7 @@ export class ChatView {
     return tokens.map((tk) => {
       switch (tk.kind) {
         case 'emote':
-          return `<img class="emote" src="${esc(tk.emote.url)}" alt="${esc(tk.emote.name)}" title="${esc(tk.emote.name)}" data-emote-src="${esc(tk.emote.source ?? '')}"${tk.emote.personal ? ' data-personal="1"' : ''} loading="lazy" decoding="async" onerror="this.replaceWith(this.alt)">`
+          return `<img class="emote" src="${esc(tk.emote.url)}" alt="${esc(tk.emote.name)}" title="${esc(tk.emote.name)}" data-emote-src="${esc(tk.emote.source ?? '')}" data-emote-id="${esc(tk.emote.id ?? '')}"${tk.emote.personal ? ' data-personal="1"' : ''} loading="lazy" decoding="async" onerror="this.replaceWith(this.alt)">`
         case 'mention': {
           const self = me && tk.value.toLowerCase() === me ? ' self' : ''
           return `<span class="mention${self}" data-user="${esc(tk.value.toLowerCase())}">@${esc(tk.value)}</span>`
@@ -1160,7 +1272,7 @@ export class ChatView {
     const section = (title, list) => list.length ? `
       <div class="emote-section">${esc(title)}</div>
       <div class="emote-cells">${list.slice(0, 400).map((e) =>
-        `<button type="button" data-emote="${esc(e.name)}" title="${esc(e.name)}"><img src="${esc(e.url)}" alt="${esc(e.name)}" loading="lazy" decoding="async"></button>`).join('')}</div>` : ''
+        `<button type="button" data-emote="${esc(e.name)}" data-emote-src="${esc(e.source ?? '')}" data-emote-id="${esc(e.id ?? '')}" title="${esc(e.name)}"><img src="${esc(e.url)}" alt="${esc(e.name)}" loading="lazy" decoding="async"></button>`).join('')}</div>` : ''
     this.el.grid.innerHTML = section(t('emotes_channel'), filter(channel)) + section(t('emotes_global'), filter(global))
   }
 
@@ -1252,6 +1364,9 @@ export class ChatView {
   }
 
   onCardClick(e) {
+    // Emote d'un message de la fiche : sa fiche, par-dessus.
+    const img = e.target.closest('img.emote, img.badge')
+    if (img) return this.showInfo(img)
     const act = e.target.closest('[data-act]')?.dataset.act
     if (!act) return
     const card = this.el.card

@@ -58,7 +58,7 @@ Watch Twitch lives and VODs in your browser, no subscription needed, with the re
 ### Chat
 - Connected straight to Twitch IRC — no iframe
 - Twitch, **BTTV**, **FFZ** and **7TV** emotes, badges, username colours readable on a dark background. BetterTTV's live connection adds the personal emotes of BTTV Pro users (once BTTV announces them) and the emotes added to the channel during the stream
-- **Click an emote or a badge**: its exact name and source, copy it or add it to your message; badges show their title (“3-Month Subscriber”…), also as a tooltip
+- **Click an emote or a badge** (in the chat, the pinned message or someone's card; right-click in the emote picker): a sharp, larger image, its exact name and source, copy it or add it to your message. Twitch emotes show their type (global, tier 1–3 sub emote, channel points) and the channel they belong to — live or not, one click opens its page — with that tier's other sub emotes; BTTV, FFZ and 7TV emotes show whether they're global or the channel's, who made them, their original name, zero-width (7TV) and modifier emotes, and a link to their page. Badges show their title (“3-Month Subscriber”…), also as a tooltip. Animated FFZ emotes now move, in the chat too
 - Recent messages loaded on arrival: you never land in an empty chat
 - **Pinned message**: compact banner with badges, emotes, who pinned it and a countdown — collapse it to a chip
 - **Drops card**: when the channel runs a drops campaign, a card under the pinned message shows the reward, the watch time, the end date and a link to the details; dismissed, it stays away for that campaign

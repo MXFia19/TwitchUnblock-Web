@@ -494,6 +494,9 @@ function bindGlobal() {
     if (chanLink) {
       // Depuis le lecteur (pseudo) : réduit en mini-lecteur pour voir la page.
       if (chanLink.closest('#watch')) minimizeWatch({ url: false })
+      // Depuis le chat du multi-live (fiche d'une emote) : la mosaïque, fixe
+      // au-dessus de tout, cacherait la page.
+      if (chanLink.closest('#multi')) multi.close({ url: false })
       // L'adresse de la chaîne vient avec elle (searchChannel).
       setTab('channel', { url: false })
       $('#channel-input').value = chanLink.dataset.channel

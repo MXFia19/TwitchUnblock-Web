@@ -354,6 +354,8 @@ export const RU = {
   drops_notice_title: 'Смотрите {m} мин, чтобы получить {r}', drops_notice_ends: 'До {d}', drops_notice_details: 'Подробнее', drops_notice_more: '+{n} награды',
   chat_info_copy: 'Скопировать название', chat_info_copied: 'Скопировано', chat_info_insert: 'Добавить в сообщение', chat_info_badge: 'Значок',
   emote_src_twitch: 'Эмоут Twitch', emote_src_bttv_personal: 'BetterTTV · личный эмоут (Pro)',
+  emote_scope_global: 'Глобальный эмоут', emote_scope_channel: 'Эмоут канала', emote_by: 'Автор: {u}', emote_original: 'Исходное название: {n}', emote_zero_width: 'Накладывается на предыдущий эмоут', emote_modifier: 'Модификатор: меняет вид другого эмоута', emote_view_on: 'Открыть на {p}',
+  emote_type_global: 'Глобальный эмоут Twitch', emote_type_sub: 'Эмоут подписчика · уровень {n}', emote_type_points: 'Эмоут за баллы канала', emote_sub_count: 'Эмоуты подписчиков {c}: {n}',
   settings: 'Настройки',
   language: 'Язык',
   lang_auto: 'Как на устройстве',

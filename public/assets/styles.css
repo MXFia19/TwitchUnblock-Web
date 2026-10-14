@@ -642,14 +642,33 @@ a.card, a.cat-card { display: block; }
 .chat-drops .drops-meta { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 11px; color: var(--muted); }
 .chat-drops .drops-meta a { color: var(--purple); font-weight: 700; }
 /* Emotes et badges : un clic ouvre leur fiche. */
-.chat-list img.emote, .chat-list img.badge, .chat-pinned img.emote, .chat-pinned img.badge { cursor: pointer; }
+.chat-list img.emote, .chat-list img.badge, .chat-pinned img.emote, .chat-pinned img.badge,
+.user-card img.emote, .user-card img.badge { cursor: pointer; }
+/* Plus haute qu'avant (chaîne, autres emotes) : elle défile dans un petit
+   chat, comme celui du multi-live, au lieu d'en déborder. */
 .chat-info {
   position: absolute; left: 10px; right: 10px; bottom: 70px; z-index: 30;
   display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 18px 16px 16px;
+  max-height: calc(100% - 90px); overflow-y: auto; overscroll-behavior: contain;
   border-radius: 14px; background: var(--surface); border: 1px solid var(--line);
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45); text-align: center;
 }
+.chat-info > * { flex-shrink: 0; }
 .chat-info[hidden] { display: none; }
+.chat-info .ci-twitch { display: flex; flex-direction: column; align-items: center; gap: 6px; max-width: 100%; }
+.chat-info .ci-twitch:empty { display: none; }
+.chat-info .ci-owner {
+  display: flex; align-items: center; gap: 8px; max-width: 100%; padding: 6px 10px 6px 6px;
+  border-radius: 999px; background: var(--card-hi); color: var(--text); font-size: 13px;
+}
+.chat-info .ci-owner:hover { background: var(--surface-hi); }
+.chat-info .ci-owner img { width: 28px; height: 28px; border-radius: 50%; flex-shrink: 0; }
+.chat-info .ci-owner strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-info .ci-owner .pill { flex-shrink: 0; }
+.chat-info .ci-owner-go { display: inline-flex; align-items: center; gap: 2px; flex-shrink: 0; color: var(--purple); font-size: 12px; font-weight: 700; }
+.chat-info .ci-more { display: flex; flex-wrap: wrap; justify-content: center; gap: 4px; }
+.chat-info .ci-more img { height: 28px; max-width: 56px; object-fit: contain; }
+.chat-info .ci-link { display: inline-flex; align-items: center; gap: 4px; color: var(--purple); font-size: 12px; font-weight: 700; }
 .chat-info .ci-close { position: absolute; top: 6px; right: 6px; }
 .chat-info .ci-img { height: 64px; max-width: 100%; object-fit: contain; }
 .chat-info .ci-badge { height: 44px; }
