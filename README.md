@@ -32,7 +32,7 @@ Watch Twitch lives and VODs in your browser, no subscription needed, with the re
 
 ### Player
 - Custom controls built around the chat: fullscreen keeps both the video **and** the chat, laid over it
-- Quality picker, including “Auto”, which shows the bitrate actually in use; on lives, Auto starts at up to 720p and climbs back up when the connection allows
+- Quality picker, including “Auto”, which shows the bitrate actually in use; Auto usually starts higher than before (up to 720p, lives and VODs) and, on lives, climbs back up when the connection allows
 - Playback speed, ±10 s, double-tap on mobile, keyboard shortcuts
 - Picture in picture, “back to live” button, live latency — never under 4 seconds behind the edge (closer, playback freezes): the target follows how long Twitch takes to publish each segment, and skipping ahead or “back to live” stop there too. Lives never change playback speed to catch up (the sound drifted away from the picture): the player makes a small jump instead, and never after you rewound on purpose
 - **Ad-free lives, in the source order you pick**: Luminous Asia, an Albania proxy (TTV.LOL), Luminous Europe and official Twitch (with ads), tried one after the other until one answers. Reorder them in Settings → Player; picking a source from the player's ⚙ menu (which shows the one in use) moves it to the top. Channels that stream with multiple encodes (Enhanced Broadcasting) keep each quality's own name on every source

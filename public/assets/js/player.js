@@ -139,6 +139,10 @@ function unmuteLoader(Hls, player) {
 // rythme de l'encodeur, et hls.js en concluait que la connexion ne valait
 // que le débit de la qualité jouée — il descendait palier par palier jusqu'en
 // 360p sans jamais remonter (essai du 14/10, caedrel : 1080p → 360p en 74 s).
+// En « Auto », les 4 s ne s'appliquent pas telles quelles : hls.js ne vise
+// jamais plus près que bord − durée cible déclarée (6 s chez Twitch, borne de
+// liveSyncPosition). Le retard affiché y tourne autour de 6 à 7 s : la marge
+// d'un segment, qui évite les calages.
 const LIVE_BEHIND_COMPLETE = 2.5
 const LIVE_BEHIND_PLAIN = 4
 const PREFETCH_TAG = '#EXT-X-TWITCH-PREFETCH:'
@@ -749,7 +753,9 @@ export class Player {
   }
 
   /** Distance minimale au dernier segment complet : plus courte quand les
-   *  segments annoncés d'avance sont demandés (qualité fixe). */
+   *  segments annoncés d'avance sont demandés (qualité fixe). En « Auto »,
+   *  hls.js vise de toute façon bord − 6 s au plus près (voir plus haut) :
+   *  les 4 s ne bornent alors que l'avance à la main (+10 s). */
   minBehind() {
     return this.prefetchAhead ? LIVE_BEHIND_COMPLETE : LIVE_BEHIND_PLAIN
   }
@@ -799,6 +805,10 @@ export class Player {
     // Dérive : trop loin de la cible pendant LIVE_DRIFT_MS → retour au
     // direct, sauf après un recul voulu. Une pause longue y revient aussi.
     const lag = this.liveLag()
+    // Revenu près de la cible sans Direct ni +10 s (hls.js recale lui-même
+    // une lecture sortie de la fenêtre du direct) : le recul voulu est fini,
+    // sinon plus aucune dérive n'était rattrapée de la séance.
+    if (this.holdingBehind && lag < 3) this.holdingBehind = false
     if (this.holdingBehind || !(lag > LIVE_DRIFT)) this.driftSince = 0
     else {
       this.driftSince ||= now
