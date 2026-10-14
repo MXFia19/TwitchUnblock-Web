@@ -69,6 +69,7 @@ export class LiveChat {
     /** Compte banni de ce chat : on le lit sans le compte (justinfan). */
     this.readOnly = Boolean(o.token && o.login) && READ_ONLY.has(readOnlyKey(o.login, o.channel))
     this.lastRejoin = 0
+    this.rejoinTimer = null
   }
 
   async start() {
@@ -94,11 +95,21 @@ export class LiveChat {
     // BTTV en direct : emotes personnelles (Pro), emotes ajoutées en live.
     joinBttvLive(this.o.channelId)
     if (this.o.loadRecent) this.loadRecent(gen)
-    this.connect(gen)
+    // « Réessayer avec mon compte » cliqué pendant l'attente (le bandeau
+    // s'affiche dès l'ouverture) : la connexion est déjà partie.
+    if (!this.ws) this.connect(gen)
   }
 
   connect(gen = this.generation) {
     if (this.closed || gen !== this.generation) return
+    // Une seule socket à la fois : une précédente encore ouverte, ignorée par
+    // le garde-fou de trame, ne répondrait plus aux PING ; sa fermeture par
+    // Twitch relancerait alors une connexion en double.
+    const old = this.ws
+    if (old && old.readyState <= WebSocket.OPEN) {
+      old.onopen = old.onmessage = old.onclose = null
+      try { old.close() } catch { /* déjà fermée */ }
+    }
     this.emit('status', 'connecting')
     let ws
     try {
@@ -178,6 +189,7 @@ export class LiveChat {
     this.connected = false
     this.canSend = false
     clearTimeout(this.retryTimer)
+    clearTimeout(this.rejoinTimer)
     this.connect(this.generation)
   }
 
@@ -188,6 +200,7 @@ export class LiveChat {
     this.readOnly = true
     READ_ONLY.add(readOnlyKey(this.o.login, this.o.channel))
     this.canSend = false
+    clearTimeout(this.rejoinTimer)
     // Message envoyé juste avant (affiché d'avance) : il n'est pas parti.
     const recent = this.lastSelf && Date.now() - this.lastSelf.at < 20_000 ? this.lastSelf.id : null
     this.lastSelf = null
@@ -207,9 +220,16 @@ export class LiveChat {
 
   /** PART ou CLEARCHAT sans durée à notre nom : un ban probable, mais pas sûr
    *  (Shared Chat, PART d'une coupure). On se reconnecte avec le compte et la
-   *  réponse de Twitch au JOIN décide. */
+   *  réponse de Twitch au JOIN décide. Un second signal trop proche du
+   *  précédent est reporté, pas jeté : un vrai ban qui suit de près une
+   *  reconnexion (Shared Chat) laisserait sinon le chat muet. */
   rejoin() {
-    if (Date.now() - this.lastRejoin < REJOIN_GAP) return
+    const wait = REJOIN_GAP - (Date.now() - this.lastRejoin)
+    if (wait > 0) {
+      clearTimeout(this.rejoinTimer)
+      this.rejoinTimer = setTimeout(() => this.rejoin(), wait)
+      return
+    }
     this.lastRejoin = Date.now()
     this.reopen()
   }
@@ -227,6 +247,7 @@ export class LiveChat {
     leaveBttvLive(this.o.channelId)
     clearInterval(this.pingTimer)
     clearTimeout(this.retryTimer)
+    clearTimeout(this.rejoinTimer)
     this.ws?.close()
     this.ws = null
     this.connected = false

@@ -1288,8 +1288,9 @@ export class ChatView {
       if (e.target.closest('a')) return
       const b = e.target.closest('[data-cmd]')
       if (!b) return
-      // On peut écrire : la commande va dans le champ ; sinon elle est copiée.
-      if (!this.el.composer.hidden && this.o.session().canChat) {
+      // On peut écrire : la commande va dans le champ ; sinon (pas de compte,
+      // lecture seule d'un banni, connexion en cours) elle est copiée.
+      if (!this.el.composer.hidden && !this.el.inputRow.hidden && !this.el.input.disabled) {
         box.hidden = true
         this.insertText(b.dataset.cmd)
       } else {
