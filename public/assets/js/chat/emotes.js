@@ -16,20 +16,30 @@ let loadedChannelId = null
 /** Emotes personnelles BTTV Pro : id Twitch de l'auteur → Map(nom → emote). */
 const personal = new Map()
 
+/** Réponse JSON, ou null (refus, par exemple chaîne absente de BTTV), ou
+ *  undefined quand la requête n'a pas abouti (délai, réseau, corps
+ *  illisible) : celle-là sera refaite au prochain chargement du chat. */
 async function getJSON(url) {
-  // Abandon après 8 s : sans délai, une API qui ne répond pas (réseau
-  // filtré) gardait la requête ouverte des minutes durant.
+  // Abandon après 8 s sans réponse : sans délai, une API injoignable
+  // (réseau filtré) gardait la requête ouverte des minutes durant. Le délai
+  // ne couvre que l'attente de la réponse : un gros jeu 7TV lu lentement
+  // n'est pas coupé en route.
   const ctrl = new AbortController()
   const timer = setTimeout(() => ctrl.abort(), 8000)
+  let res
   try {
-    const res = await fetch(url, { signal: ctrl.signal })
-    if (!res.ok) return null
-    return await res.json()
+    res = await fetch(url, { signal: ctrl.signal })
   } catch {
     // Une source tierce indisponible ne doit pas empêcher le chat de tourner.
-    return null
+    return undefined
   } finally {
     clearTimeout(timer)
+  }
+  if (!res.ok) return null
+  try {
+    return await res.json()
+  } catch {
+    return undefined
   }
 }
 
@@ -43,6 +53,9 @@ export function loadGlobalEmotes() {
     for (const e of readBTTV(bttv, 'global')) globals.set(e.name, e)
     for (const e of readFFZSets(ffz?.sets, 'global')) globals.set(e.name, e)
     for (const e of read7TV(stv?.emotes, 'global')) globals.set(e.name, e)
+    // Une API injoignable cette fois : réessayée au prochain chargement,
+    // au lieu de rester sans ses emotes toute la séance.
+    if ([bttv, ffz, stv].includes(undefined)) globalsPromise = null
   })()
   return globalsPromise
 }
@@ -67,6 +80,8 @@ export async function loadChannelEmotes(channelId, login) {
   for (const e of readBTTV(bttv?.sharedEmotes, 'channel')) channel.set(e.name, e)
   for (const e of readFFZSets(ffz?.sets, 'channel')) channel.set(e.name, e)
   for (const e of read7TV(stv?.emote_set?.emotes, 'channel')) channel.set(e.name, e)
+  // Même chose pour la chaîne : rechargée au prochain démarrage du chat.
+  if ([bttv, ffz, stv].includes(undefined)) loadedChannelId = null
 }
 
 // Pour la fiche d'une emote, en plus de l'image : `scope` (global, channel,

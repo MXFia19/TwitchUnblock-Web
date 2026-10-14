@@ -412,7 +412,7 @@ export class Player {
       <div class="p-flash" aria-hidden="true"></div>
       <button class="p-unmute" type="button" hidden>${icon('mute', 16)}<span></span></button>
       <div class="p-mutednote" hidden>${icon('mute', 15)}<span class="p-mutednote-text"></span><button type="button" class="p-mutednote-skip">${icon('skipForward', 13)}<span></span></button></div>
-      <div class="p-adbreak" hidden role="status"><b class="p-adbreak-title"></b><span class="p-adbreak-sub"></span><span class="p-adbreak-hint"></span></div>
+      <div class="p-adbreak" hidden role="status"><b class="p-adbreak-title"></b><span class="p-adbreak-sub" aria-live="off"></span><span class="p-adbreak-hint"></span></div>
       <div class="p-ui">
         <div class="p-shade"></div>
         <button class="p-big" type="button" aria-label="play">${icon('play', 30)}</button>
@@ -1195,14 +1195,16 @@ export class Player {
     if (!end) { this.endAdBreak(); return }
     const v = this.video
     if (!this.adBreak) {
-      this.adBreak = { end }
       // Comptée une fois (/stats), même si le bandeau se rouvre (pause,
       // autre qualité, autre Worker) pendant la même pause pub.
-      if (!this.adSeen.some((s) => s.start <= end && at <= s.end + 1000)) {
-        this.adSeen.push({ start: at, end })
+      let seen = this.adSeen.find((s) => s.start <= end && at <= s.end + 1000)
+      if (!seen) {
+        seen = { start: at, end }
+        this.adSeen.push(seen)
         if (this.adSeen.length > AD_KEEP) this.adSeen.shift()
         this.o.onAdBreak?.()
       }
+      this.adBreak = { end, seen }
       console.info(`[TwitchUnblock] Direct : pause pub de la chaîne, ${Math.round((end - at) / 1000)} s.`)
       this.el.adTitle.textContent = t('ad_break_title')
       this.el.adHint.textContent = t('ad_break_site_hint')
@@ -1210,7 +1212,10 @@ export class Player {
       // Son coupé seulement s'il ne l'était pas déjà ; rétabli à la fin.
       if (!this.adKeepSound && !v.muted) { this.adMuted = true; v.muted = true }
     }
-    this.adBreak.end = end   // une pub de plus enchaînée : fin repoussée
+    // Une pub de plus enchaînée : fin repoussée, y compris pour le compte
+    // (un bandeau rouvert dans la partie ajoutée n'est pas recompté).
+    this.adBreak.end = end
+    this.adBreak.seen.end = Math.max(this.adBreak.seen.end, end)
     const sub = t('ad_break_sub', { n: Math.max(1, Math.ceil((end - at) / 1000)) })
     if (this.el.adSub.textContent !== sub) this.el.adSub.textContent = sub
     // Secours : plus rien n'arrive (ni image ni playlist : flux arrêté,
