@@ -109,6 +109,20 @@ function durationLabel(min) {
   try { return new Intl.NumberFormat(lang(), { style: 'unit', unit, unitDisplay: 'short' }).format(n) } catch { return `${min} min` }
 }
 
+/** Durée d'une exclusion (secondes, jusqu'à deux semaines) : les deux unités
+ *  les plus grandes, « 10 min », « 1 h 30 min », « 13 j 21 h ». */
+function secondsLabel(total) {
+  const units = [['day', 86400], ['hour', 3600], ['minute', 60], ['second', 1]]
+  const first = units.findIndex(([, n]) => total >= n)
+  const parts = []
+  for (const [unit, n] of units.slice(Math.max(0, first), Math.max(0, first) + 2)) {
+    const v = Math.floor(total / n) % (unit === 'day' ? Infinity : unit === 'hour' ? 24 : 60)
+    if (!v) continue
+    try { parts.push(new Intl.NumberFormat(lang(), { style: 'unit', unit, unitDisplay: 'short' }).format(v)) } catch { parts.push(`${v} ${unit[0]}`) }
+  }
+  return parts.join(' ') || `${Math.round(total)} s`
+}
+
 // Règles du chat acceptées, par chaîne (redemandées si elles changent) ;
 // en mémoire aussi, quand le navigateur refuse le stockage.
 const RULES_KEY = 'tu_chat_rules'
@@ -204,6 +218,7 @@ export class ChatView {
           <button class="icon-btn sm chat-send" type="button" aria-label="send">${icon('send', 18)}</button>
         </div>
         <button class="chat-login" type="button" hidden></button>
+        <div class="chat-banned" role="status" hidden><span></span><button class="btn sm ghost" type="button"></button></div>
       </footer>
       <div class="user-card" hidden role="dialog"></div>`
 
@@ -223,6 +238,7 @@ export class ChatView {
       suggest: $('.chat-suggest', this.root),
       replying: $('.chat-replying', this.root),
       login: $('.chat-login', this.root),
+      banned: $('.chat-banned', this.root),
       card: $('.user-card', this.root),
       inputRow: $('.chat-input-row', this.root),
       modes: $('.chat-modes', this.root),
@@ -330,6 +346,8 @@ export class ChatView {
     })
     $('button', this.el.replying).addEventListener('click', () => this.setReply(null))
     this.el.login.addEventListener('click', () => this.o.onLogin())
+    // Banni de ce chat : retente avec le compte (Twitch ne signale aucun déban).
+    $('button', this.el.banned).addEventListener('click', () => this.client?.retryWithAccount?.())
     this.el.card.addEventListener('click', (e) => this.onCardClick(e))
     document.addEventListener('keydown', (e) => {
       if (e.key !== 'Escape') return
@@ -357,7 +375,6 @@ export class ChatView {
     this.authFailed = false
     this.el.title.textContent = t('chat')
     this.setStatus('connecting')
-    this.refreshComposer()
     const s = this.o.session()
     this.client = new LiveChat({
       channel,
@@ -367,6 +384,8 @@ export class ChatView {
       loadRecent: this.o.prefs.loadHistory,
       onEvent: (type, payload) => this.onEvent(type, payload),
     })
+    // Compte déjà refusé dans ce chat pendant la séance : le bandeau tout de suite.
+    this.refreshComposer()
     this.client.start()
     this.startPinned(channel)
     this.startDrops(channel)
@@ -877,18 +896,38 @@ export class ChatView {
         break
       case 'rejected': {
         // Message refusé par Twitch : retiré du chat, la raison à sa place.
-        if (payload.id) {
-          for (const n of this.el.list.querySelectorAll(`[data-id="${CSS.escape(payload.id)}"]`)) n.remove()
-          this.messages = this.messages.filter((m) => m.id !== payload.id)
-          // Pas encore affiché : retiré de la file aussi.
-          this.queue = (this.queue ?? []).filter((m) => m.id !== payload.id)
-          this.delayed = this.delayed.filter((d) => d.msg.id !== payload.id)
-        }
+        this.dropOwn(payload.id)
         const f = this.modes.followers
         this.enqueue(systemMessage(t(payload.key, { d: f > 0 ? durationLabel(f) : '', t: payload.text })))
         break
       }
+      case 'readonly':
+        // Twitch refuse le compte dans ce chat (banni) : le client continue
+        // sans lui. Un message parti juste avant n'a pas été envoyé.
+        this.dropOwn(payload.id)
+        this.enqueue(systemMessage(t('chat_ban_switched')))
+        this.setReply(null)
+        this.hidePicker()
+        this.hideSuggestions()
+        this.refreshComposer()
+        break
+      case 'readonly-off':
+        this.refreshComposer()
+        break
+      case 'timeout':
+        this.enqueue(systemMessage(t('chat_timed_out', { d: secondsLabel(payload.seconds) })))
+        break
     }
+  }
+
+  /** Retire un message envoyé (affiché d'avance) que Twitch n'a pas pris. */
+  dropOwn(id) {
+    if (!id) return
+    for (const n of this.el.list.querySelectorAll(`[data-id="${CSS.escape(id)}"]`)) n.remove()
+    this.messages = this.messages.filter((m) => m.id !== id)
+    // Pas encore affiché : retiré de la file aussi.
+    this.queue = (this.queue ?? []).filter((m) => m.id !== id)
+    this.delayed = this.delayed.filter((d) => d.msg.id !== id)
   }
 
   setStatus(state) {
@@ -1093,6 +1132,16 @@ export class ChatView {
     this.el.composer.hidden = false
     this.authFailed ||= rescope
     const s = this.o.session()
+    // Banni de ce chat : lu sans le compte, ni champ ni « Connecte-toi ».
+    const banned = Boolean(this.client?.readOnly)
+    this.el.banned.hidden = !banned
+    if (banned) {
+      $('span', this.el.banned).textContent = t('chat_ban_banner')
+      $('button', this.el.banned).textContent = t('chat_ban_retry')
+      this.el.inputRow.hidden = true
+      this.el.login.hidden = true
+      return
+    }
     // Le champ s'affiche dès que le jeton a les droits, sans attendre la
     // fin de la connexion : sinon « Connecte-toi pour écrire » clignotait
     // à chaque ouverture pour quelqu'un de déjà connecté.

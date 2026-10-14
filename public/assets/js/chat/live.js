@@ -24,11 +24,19 @@ const REJECTIONS = {
   msg_subsonly: 'chat_rej_subs', msg_emoteonly: 'chat_rej_emotes', msg_slowmode: 'chat_rej_slow',
   msg_r9k: 'chat_rej_unique', msg_duplicate: 'chat_rej_duplicate',
   msg_verified_email: 'chat_rej_verified', msg_requires_verified_phone_number: 'chat_rej_verified',
-  msg_timedout: 'chat_rej_timeout', msg_banned: 'chat_rej_banned',
+  msg_timedout: 'chat_rej_timeout',
   msg_rejected: 'chat_rej_automod', msg_rejected_mandatory: 'chat_rej_automod',
   msg_ratelimit: 'chat_rej_ratelimit', msg_channel_suspended: 'chat_rej_suspended', msg_suspended: 'chat_rej_suspended',
 }
 const CAPS = 'twitch.tv/tags twitch.tv/commands twitch.tv/membership'
+
+/** Couples « compte#chaîne » refusés par Twitch (banni) pendant la séance :
+ *  le chat du multi-live, recréé à chaque changement de son, et une
+ *  réouverture de la chaîne repartent directement en lecture seule. */
+const READ_ONLY = new Set()
+const readOnlyKey = (login, channel) => `${String(login).toLowerCase()}#${String(channel).toLowerCase()}`
+/** Écart minimal entre deux reconnexions sur un signal de ban ambigu (ms). */
+const REJOIN_GAP = 5000
 
 export class LiveChat {
   /**
@@ -58,6 +66,9 @@ export class LiveChat {
     this.modes = {}
     /** Dernier message envoyé, affiché d'avance : retiré si Twitch le refuse. */
     this.lastSelf = null
+    /** Compte banni de ce chat : on le lit sans le compte (justinfan). */
+    this.readOnly = Boolean(o.token && o.login) && READ_ONLY.has(readOnlyKey(o.login, o.channel))
+    this.lastRejoin = 0
   }
 
   async start() {
@@ -102,7 +113,7 @@ export class LiveChat {
       if (gen !== this.generation) return ws.close()
       ws.send(`CAP REQ :${CAPS}`)
       const { token, login } = this.o
-      if (token && login) {
+      if (token && login && !this.readOnly) {
         ws.send(`PASS oauth:${token}`)
         ws.send(`NICK ${login.toLowerCase()}`)
       } else {
@@ -115,7 +126,13 @@ export class LiveChat {
       if (gen !== this.generation) return
       // Twitch agrège plusieurs commandes dans une même trame.
       ws.lastSeen = Date.now()
-      for (const line of String(ev.data).split('\r\n')) if (line) this.handle(line)
+      for (const line of String(ev.data).split('\r\n')) {
+        // Bascule (reopen) au milieu de la trame : la fin appartient à la
+        // socket fermée. Sans cet arrêt, un CLEARCHAT et un PART reçus
+        // ensemble rouvriraient deux fois.
+        if (this.ws !== ws) break
+        if (line) this.handle(line)
+      }
     }
 
     ws.onclose = () => {
@@ -143,6 +160,65 @@ export class LiveChat {
     this.retryTimer = setTimeout(() => this.connect(gen), this.retryDelay)
     // Recul progressif, plafonné : inutile de marteler un serveur absent.
     this.retryDelay = Math.min(this.retryDelay * 2, 30_000)
+  }
+
+  /**
+   * Rouvre la connexion dans la même génération : l'historique robotty en
+   * cours n'est pas jeté, pas d'éclair « Chat déconnecté », et le recul
+   * des tentatives n'est pas touché. L'ancienne socket est détachée avant
+   * d'être fermée : rien de ce qu'elle reçoit encore n'est traité.
+   */
+  reopen() {
+    const old = this.ws
+    if (old) {
+      old.onopen = old.onmessage = old.onclose = null
+      try { old.close() } catch { /* déjà fermée */ }
+    }
+    this.ws = null
+    this.connected = false
+    this.canSend = false
+    clearTimeout(this.retryTimer)
+    this.connect(this.generation)
+  }
+
+  /** Twitch refuse le compte dans ce salon (NOTICE msg_banned) : on continue
+   *  sans lui, en lecture seule, comme un spectateur déconnecté. */
+  enterReadOnly() {
+    if (this.readOnly) return
+    this.readOnly = true
+    READ_ONLY.add(readOnlyKey(this.o.login, this.o.channel))
+    this.canSend = false
+    // Message envoyé juste avant (affiché d'avance) : il n'est pas parti.
+    const recent = this.lastSelf && Date.now() - this.lastSelf.at < 20_000 ? this.lastSelf.id : null
+    this.lastSelf = null
+    this.emit('readonly', { id: recent })
+    this.reopen()
+  }
+
+  /** « Réessayer avec mon compte » : Twitch ne signale aucun déban sur l'IRC,
+   *  c'est la réponse au JOIN qui tranche (msg_banned → lecture seule). */
+  retryWithAccount() {
+    if (!this.readOnly) return
+    READ_ONLY.delete(readOnlyKey(this.o.login, this.o.channel))
+    this.readOnly = false
+    this.emit('readonly-off')
+    this.reopen()
+  }
+
+  /** PART ou CLEARCHAT sans durée à notre nom : un ban probable, mais pas sûr
+   *  (Shared Chat, PART d'une coupure). On se reconnecte avec le compte et la
+   *  réponse de Twitch au JOIN décide. */
+  rejoin() {
+    if (Date.now() - this.lastRejoin < REJOIN_GAP) return
+    this.lastRejoin = Date.now()
+    this.reopen()
+  }
+
+  /** Ligne IRC qui vise le compte connecté (jamais en lecture seule : la
+   *  connexion anonyme voit les exclusions de tout le monde). */
+  isSelf(who) {
+    const { token, login } = this.o
+    return Boolean(token && login && !this.readOnly && who && who.toLowerCase() === login.toLowerCase())
   }
 
   stop() {
@@ -194,13 +270,14 @@ export class LiveChat {
         break
       case 'ROOMSTATE':
         // Arrive juste après le JOIN : c'est le vrai signal « on est dedans ».
+        // Pas avant : un compte banni reçoit GLOBALUSERSTATE, puis le refus
+        // du JOIN, et le champ s'activait le temps de ce refus.
         this.emit('status', 'connected')
         this.applyModes(irc.tags)
         break
       case 'GLOBALUSERSTATE':
         this.myColor = irc.tags.color || null
-        this.canSend = Boolean(this.o.token)
-        this.emit('status', 'connected')
+        this.canSend = Boolean(this.o.token) && !this.readOnly
         break
       case 'PING':
         this.ws?.send('PONG :tmi.twitch.tv')
@@ -236,6 +313,12 @@ export class LiveChat {
         // où il était affiché d'avance comme envoyé, et la raison s'affiche
         // dans la langue du site.
         const msgId = irc.tags['msg-id'] || ''
+        // Compte banni de la chaîne : Twitch refuse le JOIN (ou un envoi).
+        // Pas un simple refus de message : le chat entier serait muet.
+        if (msgId === 'msg_banned' && this.o.token && this.o.login && !this.readOnly) {
+          this.enterReadOnly()
+          break
+        }
         const key = REJECTIONS[msgId] || (msgId.startsWith('msg_') ? 'chat_rej_generic' : null)
         if (key) {
           const recent = this.lastSelf && Date.now() - this.lastSelf.at < 20_000 ? this.lastSelf.id : null
@@ -260,6 +343,8 @@ export class LiveChat {
       }
       case 'PART': {
         const who = irc.tags.login ?? prefixNick(irc)
+        // Twitch nous sort du salon (ban en plein direct, ou coupure).
+        if (this.isSelf(who)) { this.rejoin(); break }
         if (who) this.present.delete(who)
         break
       }
@@ -270,8 +355,16 @@ export class LiveChat {
       }
       case 'CLEARCHAT': {
         const target = irc.params[irc.params.length - 1]
-        if (target && !target.startsWith('#')) this.emit('moderate', { user: target.toLowerCase() })
-        else this.emit('clear')
+        if (target && !target.startsWith('#')) {
+          this.emit('moderate', { user: target.toLowerCase() })
+          if (this.isSelf(target)) {
+            // Exclusion temporaire : on reste dans le salon, une ligne le dit.
+            // Sans durée, c'est un ban : la reconnexion le confirme.
+            const duration = irc.tags['ban-duration']
+            if (duration == null || duration === '') this.rejoin()
+            else if (Number(duration) > 0) this.emit('timeout', { seconds: Number(duration) })
+          }
+        } else this.emit('clear')
         break
       }
     }

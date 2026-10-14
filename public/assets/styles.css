@@ -62,7 +62,7 @@ html { -webkit-text-size-adjust: 100%; background: var(--bg); color-scheme: dark
 :root[data-bg="light"] .mention.self { color: var(--text); background: color-mix(in srgb, var(--primary) 22%, transparent); }
 :root[data-bg="light"] .spinner { border-color: rgba(0, 0, 0, 0.12); border-top-color: var(--primary); }
 :root[data-bg="light"] .login-card p { color: var(--muted); }
-:root[data-bg="light"] .chat-mode { color: #8a6d00; background: rgba(230, 180, 0, 0.14); }
+:root[data-bg="light"] .chat-mode, :root[data-bg="light"] .chat-banned { color: #8a6d00; background: rgba(230, 180, 0, 0.14); }
 :root[data-bg="light"] .fb-kind.bug, :root[data-bg="light"] .fb-status.refused { color: #c42b2b; }
 :root[data-bg="light"] .fb-status.accepted { color: #1d5fb8; }
 :root[data-bg="light"] .fb-status.progress { color: #8a6d00; }
@@ -1444,6 +1444,11 @@ html.touring { overflow: hidden; }
 /* Chat : modes du salon et règles à accepter */
 .chat-modes { display: flex; flex-wrap: wrap; gap: 4px; padding: 0 2px 6px; }
 .chat-mode { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 999px; font-size: 11.5px; font-weight: 600; color: #fde68a; background: rgba(230, 230, 25, 0.12); }
+/* Banni de ce chat : lu sans le compte, à la place du champ. */
+.chat-banned { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; padding: 6px 6px 6px 12px; border-radius: var(--r-control); font-size: 13px; font-weight: 600; color: #fde68a; background: rgba(230, 230, 25, 0.12); }
+/* Colonne étroite (multi-live) : le bouton passe sous le texte. */
+.chat-banned span { flex: 1 1 150px; min-width: 0; }
+.chat-banned .btn { flex: none; max-width: 100%; color: inherit; }
 .chat-rules { margin: 0 0 8px; padding: 12px; border-radius: var(--r-control); background: var(--card-hi); border: 1px solid var(--line-strong); font-size: 13px; max-height: 45vh; overflow-y: auto; }
 .chat-rules b { display: block; margin-bottom: 6px; }
 .chat-rules .rule { margin: 3px 0; white-space: pre-wrap; }
