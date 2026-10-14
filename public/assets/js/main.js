@@ -1166,6 +1166,9 @@ async function loadTop(language, { silent = false } = {}) {
     const code = language === 'all' ? null : topLangCode()
     const page = await api.getTopStreams(code)
     if (state.topLang !== language) return
+    // « Charger plus » cliqué pendant la relecture silencieuse : elle ne
+    // remplace pas le top qu'il agrandit.
+    if (silent && topExtended()) return
     state.top = { code, items: page.items, cursor: page.cursor, locked: page.locked, pages: 1 }
     grid.innerHTML = page.items.length ? page.items.map(streamCard).join('') : emptyState(t('no_live'))
     $('#top-more').innerHTML = moreHtml(page, 'top-more')
@@ -1178,7 +1181,8 @@ async function loadTop(language, { silent = false } = {}) {
  *  lives bougent d'une page à l'autre). */
 async function loadTopMore() {
   const top = state.top
-  if (!top?.cursor) return
+  if (!top?.cursor || top.loading) return
+  top.loading = true
   const btn = $('#top-more button')
   if (btn) btn.disabled = true
   try {
@@ -1189,19 +1193,25 @@ async function loadTopMore() {
     top.items.push(...added)
     top.cursor = page.cursor
     top.locked = page.locked
-    top.pages++
+    // Rien d'ajouté (panne : le curseur reste) : le top n'est pas agrandi,
+    // les relectures automatiques continuent.
+    if (added.length) top.pages++
+    else if (page.cursor) toast(t('err_loading'), 'error')
     $('#top-grid').insertAdjacentHTML('beforeend', added.map(streamCard).join(''))
     $('#top-more').innerHTML = moreHtml(top, 'top-more')
   } catch {
     if (btn) btn.disabled = false
+  } finally {
+    top.loading = false
   }
 }
 
-/** Top agrandi par « Charger plus » : les relectures automatiques le
- *  remettraient à 24 lives et feraient disparaître les cartes ajoutées.
- *  Seuls « Actualiser » et le choix de la langue le remettent à zéro. */
+/** Top agrandi par « Charger plus », ou en train de l'être : les relectures
+ *  automatiques le remettraient à 24 lives et feraient disparaître les
+ *  cartes ajoutées. Seuls « Actualiser » et le choix de la langue le
+ *  remettent à zéro. */
 function topExtended() {
-  return (state.top?.pages ?? 1) > 1
+  return (state.top?.pages ?? 1) > 1 || Boolean(state.top?.loading)
 }
 
 /**

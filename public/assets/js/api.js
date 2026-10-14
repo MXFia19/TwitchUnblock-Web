@@ -254,14 +254,22 @@ export async function gql(query, variables = {}) {
 /** Page suivante d'une liste, avec le Client-ID Android (voir
  *  GQL_NEXT_CLIENT_ID). Twitch signale un refus en HTTP 200 : la liste
  *  vaut null et `errors` dit « failed integrity check ». On le distingue
- *  donc d'une fin de liste : { data, refused }. Une erreur HTTP ou réseau
- *  lève, comme gql(). */
+ *  donc d'une fin de liste : { data, refused }. Une erreur 4xx (Client-ID
+ *  fermé, requête rejetée) reviendrait à l'identique à chaque clic : c'est
+ *  un refus aussi. Une panne réseau, une 408, une 429 ou une 5xx lèvent,
+ *  comme gql(). */
 async function gqlNext(query, variables = {}) {
-  const res = await json('https://gql.twitch.tv/gql', {
-    method: 'POST',
-    headers: { 'Client-ID': GQL_NEXT_CLIENT_ID, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ query, variables }),
-  })
+  let res
+  try {
+    res = await json('https://gql.twitch.tv/gql', {
+      method: 'POST',
+      headers: { 'Client-ID': GQL_NEXT_CLIENT_ID, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query, variables }),
+    })
+  } catch (e) {
+    if (e?.status >= 400 && e.status < 500 && e.status !== 408 && e.status !== 429) return { data: null, refused: true }
+    throw e
+  }
   const refused = (res?.errors ?? []).some((e) => e?.extensions?.code === 'IntegrityCheckFailed' || /failed integrity check/i.test(e?.message ?? ''))
   return { data: res?.data ?? null, refused }
 }
