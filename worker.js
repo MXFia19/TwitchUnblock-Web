@@ -2830,12 +2830,16 @@ async function pushCheckLives(env, now, counts = {}) {
     const db = env.DB;
 
     // Qui est en live, parmi les chaînes suivies (par tranches, à tour de
-    // rôle au-delà de PUSH_GQL_PER_RUN × 100 chaînes).
+    // rôle au-delà de PUSH_GQL_PER_RUN × 100 chaînes). La fenêtre avance
+    // de PUSH_GQL_PER_RUN tranches à chaque vérification, pas d'une seule :
+    // avec 20 tranches, une chaîne attendait jusqu'à 8 vérifications sans
+    // être lue (~18 min) ; c'est au plus une maintenant (~4 min), jusqu'à
+    // 2 × PUSH_GQL_PER_RUN tranches. Autant de requêtes qu'avant.
     const rows = (await db.prepare('SELECT login, stream FROM push_live').all()).results || [];
     const known = new Map(rows.map((r) => [r.login, r.stream]));
     const logins = [...known.keys()];
     const batches = Math.ceil(logins.length / 100);
-    const first = batches > PUSH_GQL_PER_RUN ? Math.floor(now / 120000) % batches : 0;
+    const first = batches > PUSH_GQL_PER_RUN ? (Math.floor(now / 120000) * PUSH_GQL_PER_RUN) % batches : 0;
     const changes = [];
     const started = [];
     for (let k = 0; k < Math.min(batches, PUSH_GQL_PER_RUN); k++) {
