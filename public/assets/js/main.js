@@ -856,6 +856,7 @@ async function enablePush() {
   try {
     if (await Notification.requestPermission() !== 'granted') { toast(t('push_denied'), 'error'); return false }
     await sendPush(await subscribePush(), pushChannels())
+    pushLost = false
     toast(t('push_on'), 'success')
     return true
   } catch (e) {
@@ -865,7 +866,24 @@ async function enablePush() {
   }
 }
 
+// Synchros et désactivation passent l'une après l'autre (file de promesses).
+let pushSyncing = Promise.resolve()
+// Abonnement perdu et pas repris : la ligne d'état le dit, et le nouvel
+// essai attend une heure (sinon un essai par minute, rafraîchissement de
+// l'accueil compris, chacun avec une requête au Worker).
+let pushLost = false
+let pushResubFailed = 0
+
 async function disablePush() {
+  savePushState({ on: false })
+  pushLost = false
+  // Après une synchro en cours : elle a pu reprendre un abonnement et
+  // réécrire on: true pendant qu'on coupait.
+  pushSyncing = pushSyncing.then(disablePushNow, disablePushNow)
+  return pushSyncing
+}
+
+async function disablePushNow() {
   savePushState({ on: false })
   const sub = await pushSubscription().catch(() => null)
   if (!sub) return
@@ -876,8 +894,9 @@ async function disablePush() {
 /** Chaînes suivies ou langue changées, abonnement perdu ou remplacé (ou au
  *  plus tard chaque jour) : renvoyés au Worker. L'abonnement est relu AVANT
  *  le filtre du jour : sinon un abonnement perdu laissait l'interrupteur
- *  allumé sans plus rien recevoir. Les appels passent l'un après l'autre. */
-let pushSyncing = Promise.resolve()
+ *  allumé sans plus rien recevoir. Les appels passent l'un après l'autre.
+ *  Avec un compte, seulement une fois ses suivis lus : le Worker remplace
+ *  toute la liste. */
 function syncPush() {
   pushSyncing = pushSyncing.then(syncPushNow, syncPushNow)
   return pushSyncing
@@ -887,13 +906,20 @@ async function syncPushNow() {
   if (!pushOn()) return
   const channels = pushChannels()
   const s = pushState()
+  let sub = await pushSubscription().catch(() => null)
   // Perdu : on en reprend un, sans redemander la permission (déjà accordée).
   // Safari peut l'exiger d'un geste : l'essai échoue alors sans dégât.
-  const sub = await pushSubscription().catch(() => null) ?? await subscribePush().catch(() => null)
-  if (!sub) return
+  if (!sub && pushOn() && Date.now() - pushResubFailed > 3600000) {
+    sub = await subscribePush().catch(() => null)
+    pushResubFailed = sub ? 0 : Date.now()
+  }
+  // Coupées entre-temps : disablePush passe après nous et désabonne.
+  if (!pushOn()) return
+  if (!sub) { pushLost = true; refreshPushUi(); return }
   if (pushHash(channels) === s.hash && sub.endpoint === s.ep && Date.now() - (s.at || 0) < 86400000) return
   try {
     await sendPush(sub, channels)
+    pushLost = false
     refreshPushUi()
   } catch {}
 }
@@ -903,6 +929,7 @@ async function syncPushNow() {
  *  d'avant ce nombre retombe sur le calcul local). */
 function pushStatusText() {
   if (!pushOn()) return ''
+  if (pushLost) return t('push_lost')
   const n = pushState().n ?? pushChannels().length
   return t(n ? 'push_active' : 'push_no_channels', { n })
 }
@@ -3816,8 +3843,11 @@ function openSettings() {
       store.prefs.lang = l === 'auto' ? null : l
       setLang(l === 'auto' ? deviceLang() : l)
       store.savePrefs()
-      // Les notifications partent dans la langue du site.
-      syncPush()
+      // Les notifications partent dans la langue du site. Avec un compte,
+      // pas d'ici : ses suivis ne sont peut-être pas lus (autre onglet, échec)
+      // et le Worker garderait les seuls suivis locaux. refreshTexts relit
+      // l'accueil, dont la synchro emporte la langue (elle est dans le hash).
+      if (!session.token) syncPush()
       applyStatic()
       renderAccount()
       refreshTexts()
