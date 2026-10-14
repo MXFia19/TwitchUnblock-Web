@@ -270,6 +270,8 @@ async function adoptToken(token, { silent = false } = {}) {
     if (!silent) toast(t('session_expired'), 'error')
     else toast(t('session_expired'))
     renderAccount()
+    // Comme logout() : les suivis du compte perdu ne protègent plus du masquage.
+    if (state.accountFollows?.length) { state.accountFollows = []; refreshHidden() }
     return
   }
   store.token = token
@@ -314,6 +316,9 @@ function logout() {
   // sans elle, il reconnectait aussitôt le compte dont il se souvient.
   try { localStorage.setItem(api.FORCE_VERIFY_KEY, '1') } catch {}
   renderAccount()
+  // Les suivis de l'ancien compte ne protègent plus rien du masquage.
+  state.accountFollows = []
+  refreshHidden()
   state.loaded.followed = 0
   loadFollowed()
   chat?.sessionChanged()
@@ -936,9 +941,13 @@ async function loadFollowed({ silent = false } = {}) {
       api.getFollowedStreams(session.userId),
       api.getFollowedLogins(session.userId).catch(() => null),
     ])
+    if (session.token !== token) return   // déconnecté entre-temps : logout() a vidé la liste
+    const before = (state.accountFollows ?? []).join(',')
     state.accountFollows = logins ?? []
-    // Une chaîne suivie sur Twitch n'est jamais masquée du top.
-    if (hiddenChannels().length) paintTop()
+    // Une chaîne suivie sur Twitch n'est jamais masquée du top, ni masquable
+    // (pas d'œil barré) : le top, souvent peint avant cette liste, est repeint
+    // dès qu'elle change, qu'il y ait des masqués ou non.
+    if (state.accountFollows.join(',') !== before) paintTop()
     const all = [...new Set([...(logins ?? []), ...local])]
     const channels = await api.getChannelsByLogins(all).catch(() => null)
     if (session.token !== token) return   // déconnecté entre-temps
