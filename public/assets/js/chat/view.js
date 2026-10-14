@@ -80,15 +80,24 @@ const EMOTE_PAGES = {
 const EMOTE_INFO_QUERY = `query($id: ID!) { emote(id: $id) { id token type subscriptionTier
   owner { id login displayName profileImageURL(width: 70) stream { id } subscriptionProducts { tier emotes { id token } } } } }`
 /** Réponses de Twitch (emote: null compris), jamais les erreurs réseau : une
- *  panne passagère ne doit pas priver la fiche de ses infos pour la séance. */
+ *  panne passagère ne doit pas priver la fiche de ses infos pour la séance.
+ *  { info, at } : au-delà de 5 min, on redemande (la chaîne a pu démarrer ou
+ *  finir son direct). */
 const emoteInfoCache = new Map()
+const EMOTE_INFO_TTL = 5 * 60_000
 
 async function twitchEmoteInfo(id) {
-  if (emoteInfoCache.has(id)) return emoteInfoCache.get(id)
-  const data = await gql(EMOTE_INFO_QUERY, { id })
-  if (!data) return null
+  const hit = emoteInfoCache.get(id)
+  if (hit && Date.now() - hit.at < EMOTE_INFO_TTL) return hit.info
+  const data = await gql(EMOTE_INFO_QUERY, { id }).catch(() => null)
+  if (!data) {
+    // Pas de réponse : l'ancienne sert encore, sans la pastille « En direct ».
+    const old = hit?.info
+    return old?.owner ? { ...old, owner: { ...old.owner, stream: null } } : old ?? null
+  }
   const info = data.emote ?? null
-  emoteInfoCache.set(id, info)
+  emoteInfoCache.delete(id)
+  emoteInfoCache.set(id, { info, at: Date.now() })
   if (emoteInfoCache.size > 300) emoteInfoCache.delete(emoteInfoCache.keys().next().value)
   return info
 }
@@ -238,8 +247,12 @@ export class ChatView {
     this.el.info.addEventListener('click', async (e) => {
       if (e.target.closest('[data-ci-close]')) { this.el.info.hidden = true; return }
       // Chaîne propriétaire : la délégation globale de [data-channel]
-      // (main.js) ouvre sa page ; la fiche, elle, se referme.
-      if (e.target.closest('[data-channel]')) { this.el.info.hidden = true; return }
+      // (main.js) ouvre sa page ; la fiche, elle, se referme. Ctrl, Cmd ou
+      // Maj + clic ouvrent un autre onglet : on reste ici, la fiche aussi.
+      if (e.target.closest('[data-channel]')) {
+        if (!(e.ctrlKey || e.metaKey || e.shiftKey || e.altKey || e.button !== 0)) this.el.info.hidden = true
+        return
+      }
       const copy = e.target.closest('[data-ci-copy]')
       if (copy) {
         try {
@@ -798,6 +811,9 @@ export class ChatView {
     this.hideCard()
     this.hidePicker()
     this.hideSuggestions()
+    // Chat du multi-live replié : une fiche restée ouverte, invisible,
+    // retiendrait l'Échap de la mosaïque (multi.js).
+    this.el.info.hidden = true
   }
 
   /** La session a changé (connexion, déconnexion) : on reconnecte le live. */

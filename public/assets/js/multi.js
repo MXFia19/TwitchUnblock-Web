@@ -89,6 +89,9 @@ export function init(o) {
   document.addEventListener('keydown', (e) => {
     if (!isOpen() || e.ctrlKey || e.metaKey || e.altKey) return
     if (e.target.closest?.('input, textarea, [contenteditable]')) return
+    // Une fiche ouverte dans le chat (emote, utilisateur, sélecteur) se ferme
+    // d'abord, par l'Échap du chat (posé après celui-ci) : la mosaïque reste.
+    if (e.key === 'Escape' && $('#multi-chat').querySelector('.chat-info:not([hidden]), .user-card:not([hidden]), .emote-picker:not([hidden])')) return
     if (e.key === 'Escape' && !document.fullscreenElement) return close()
     const n = Number(e.key)
     if (n >= 1 && n <= list.length) return setAudible(list[n - 1].login)
