@@ -29,7 +29,8 @@ const state = {
   tab: 'discover',
   topLang: 'local',       // 'local' (langue choisie) ou 'all'
   loaded: { followed: 0, top: 0 },
-  channel: null,          // { login, info, videos }
+  channel: null,          // { login, info, videos, vodsAfter, vodsMore, vodsRefused }
+  top: null,              // { code, items, cursor, locked, pages } : top affiché
   watch: null,            // { kind, login?, id?, info, links }
   vodMeta: new Map(),     // id → { title, thumb, streamer }
 }
@@ -422,7 +423,7 @@ function setTab(tab, { url = true } = {}) {
   if (tab === 'discover') {
     const stale = (k) => Date.now() - state.loaded[k] > 90_000
     if (stale('followed')) loadFollowed()
-    if (stale('top')) loadTop(state.topLang)
+    if (stale('top') && !topExtended()) loadTop(state.topLang)
     renderContinue()
   }
   if (tab === 'channel') renderRecentChannels()
@@ -572,6 +573,8 @@ const actions = {
   'cat-streams-more': () => cat.current && openCategory(cat.current, { more: true }),
   'cat-back': () => closeCategory(),
   'clips-more': () => loadChannelClips(state.clipPeriod, { more: true }),
+  'top-more': () => loadTopMore(),
+  'vods-more': () => loadMoreVods(),
   'cat-follow': (e) => {
     const c = cat.current
     if (!c) return
@@ -1060,8 +1063,8 @@ async function loadCategories({ more = false } = {}) {
   }
 }
 
-/** « Charger plus », ou l'invitation à se connecter quand seul le compte
- *  Twitch permet d'aller au-delà des 100 premiers (voir api.servePage). */
+/** « Charger plus », ou l'invitation à se connecter quand Twitch refuse la
+ *  suite sans compte et que seul Helix peut la donner (voir api.servePage). */
 function moreHtml(page, action) {
   if (page?.cursor) return `<button class="btn ghost" type="button" data-action="${action}">${esc(t('load_more'))}</button>`
   return page?.locked ? `<p class="muted small">${esc(t('more_needs_login'))}</p>` : ''
@@ -1157,14 +1160,48 @@ async function loadTop(language, { silent = false } = {}) {
   state.loaded.top = Date.now()
   for (const b of $$('#top-seg [data-lang]')) b.classList.toggle('active', b.dataset.lang === language)
   const grid = $('#top-grid')
-  if (!silent) grid.innerHTML = skeleton(8)
+  // Un « Charger plus » en cours n'ajoute rien à la liste qui repart.
+  if (!silent) { grid.innerHTML = skeleton(8); $('#top-more').innerHTML = ''; state.top = null }
   try {
-    const streams = await api.getTopStreams(language === 'all' ? null : topLangCode())
+    const code = language === 'all' ? null : topLangCode()
+    const page = await api.getTopStreams(code)
     if (state.topLang !== language) return
-    grid.innerHTML = streams.length ? streams.map(streamCard).join('') : emptyState(t('no_live'))
+    state.top = { code, items: page.items, cursor: page.cursor, locked: page.locked, pages: 1 }
+    grid.innerHTML = page.items.length ? page.items.map(streamCard).join('') : emptyState(t('no_live'))
+    $('#top-more').innerHTML = moreHtml(page, 'top-more')
   } catch {
     if (!silent) grid.innerHTML = emptyState(t('err_loading'), 'refresh')
   }
+}
+
+/** « Charger plus » du top : 30 lives de plus, ajoutés sans doublon (les
+ *  lives bougent d'une page à l'autre). */
+async function loadTopMore() {
+  const top = state.top
+  if (!top?.cursor) return
+  const btn = $('#top-more button')
+  if (btn) btn.disabled = true
+  try {
+    const page = await api.getTopStreams(top.code, top.cursor)
+    if (state.top !== top) return
+    const known = new Set(top.items.map((s) => s.login))
+    const added = page.items.filter((s) => !known.has(s.login))
+    top.items.push(...added)
+    top.cursor = page.cursor
+    top.locked = page.locked
+    top.pages++
+    $('#top-grid').insertAdjacentHTML('beforeend', added.map(streamCard).join(''))
+    $('#top-more').innerHTML = moreHtml(top, 'top-more')
+  } catch {
+    if (btn) btn.disabled = false
+  }
+}
+
+/** Top agrandi par « Charger plus » : les relectures automatiques le
+ *  remettraient à 24 lives et feraient disparaître les cartes ajoutées.
+ *  Seuls « Actualiser » et le choix de la langue le remettent à zéro. */
+function topExtended() {
+  return (state.top?.pages ?? 1) > 1
 }
 
 /**
@@ -1180,7 +1217,7 @@ function startLiveTicker() {
     }
     if (state.tab !== 'discover' || document.hidden || !$('#watch').hidden && !$('#watch').classList.contains('minimized')) return
     const now = Date.now()
-    if (now - state.loaded.top > 60_000) loadTop(state.topLang, { silent: true })
+    if (now - state.loaded.top > 60_000 && !topExtended()) loadTop(state.topLang, { silent: true })
     if (session.userId && now - state.loaded.followed > 60_000) loadFollowed({ silent: true })
   }, 1000)
 }
@@ -1555,7 +1592,7 @@ async function searchChannel(raw, { tab } = {}) {
   }
   if (tab) state.channelTab = tab
   else if (state.channel?.login !== login) state.channelTab = 'vods'
-  state.channel = { login, info, videos: videos?.videos ?? [] }
+  state.channel = { login, info, videos: videos?.videos ?? [], vodsAfter: videos?.after ?? null, vodsMore: Boolean(videos?.more), vodsRefused: false }
   store.addHistory(login, 'channel', info?.displayName || login, { avatar: info?.profileImageURL || videos?.avatar || '' })
   pushSync()
   renderRecentChannels()
@@ -1696,14 +1733,15 @@ async function loadUnlisted(login) {
 
 /** Diffusions sans VOD listée. Une VOD les couvre si sa vignette porte leur
  *  id de diffusion, ou si elle commence à la même heure (vignette « en cours
- *  de traitement »). Le Worker renvoie 100 VODs au plus : une diffusion plus
- *  ancienne que la dernière reste de côté, sa VOD est peut-être au-delà. */
+ *  de traitement »). Les VODs arrivent par pages de 100 : tant que Twitch
+ *  en a d'autres, une diffusion plus ancienne que la dernière chargée reste
+ *  de côté, sa VOD est peut-être dans la suite. */
 function unlistedStreams() {
   const ch = state.channel
   const streams = state.recoverCache?.get(ch?.login)?.streams ?? []
   if (!streams.length) return []
   const dated = ch.videos.map((v) => ({ v, t: Date.parse(v.publishedAt) })).filter((x) => Number.isFinite(x.t))
-  const oldest = ch.videos.length >= 100 && dated.length ? Math.min(...dated.map((x) => x.t)) : -Infinity
+  const oldest = ch.vodsMore && dated.length ? Math.min(...dated.map((x) => x.t)) : -Infinity
   // Le direct en cours a sa propre page : pas une VOD perdue.
   const liveStart = Date.parse(ch.info?.stream?.createdAt)
   return streams.filter((s) => {
@@ -1755,6 +1793,42 @@ function renderVodGrid() {
   }
   const hint = $('#unlisted-hint')
   if (hint) hint.hidden = !unlisted.length
+  const more = $('#channel-vods-more')
+  if (more) more.innerHTML = vodsMoreHtml(ch)
+}
+
+/** Sous les VODs : « Charger plus » tant que Twitch en a d'autres. S'il
+ *  refuse la suite (ou si seul le Worker a répondu, qui ne sait pas la
+ *  donner), un mot pour le dire : se connecter n'y changerait rien, il n'y
+ *  a pas de secours Helix pour les VODs. */
+function vodsMoreHtml(ch) {
+  if (ch.vodsAfter && !ch.vodsRefused) return `<button class="btn ghost" type="button" data-action="vods-more"${ch.vodsLoading ? ' disabled' : ''}>${esc(t('load_more'))}</button>`
+  return ch.vodsMore ? `<p class="muted small">${esc(t('more_unavailable'))}</p>` : ''
+}
+
+/** 100 VODs de plus (Client-ID Android, sans compte), fusionnées et triées
+ *  avec les non listées par renderVodGrid. */
+async function loadMoreVods() {
+  const ch = state.channel
+  if (!ch?.vodsAfter || ch.vodsRefused || ch.vodsLoading) return
+  ch.vodsLoading = true
+  const btn = $('#channel-vods-more button')
+  if (btn) btn.disabled = true
+  const page = await api.getChannelVideosAfter(ch.login, ch.vodsAfter).catch(() => null)
+  ch.vodsLoading = false
+  // Une autre chaîne ouverte entre-temps : cette page n'est pas la sienne.
+  if (state.channel !== ch) return
+  if (!page) {
+    toast(t('err_loading'), 'error')
+  } else if (page.refused) {
+    ch.vodsRefused = true
+  } else {
+    const known = new Set(ch.videos.map((v) => v.id))
+    ch.videos.push(...page.videos.filter((v) => !known.has(v.id)))
+    ch.vodsAfter = page.after
+    ch.vodsMore = page.more
+  }
+  renderVodGrid()
 }
 
 /** Reconstruit une VOD non listée puis la lit. Si le CDN ne la sert plus,
@@ -1853,6 +1927,7 @@ function renderChannel(keyword = '') {
       <p class="muted filter-count" id="vod-filter-count" hidden></p>
       <p class="muted small unlisted-hint" id="unlisted-hint" hidden>${icon('eyeOff', 14)}<span>${esc(t('unlisted_hint'))}</span></p>
       <div class="grid vods" id="channel-vods"></div>
+      <div class="load-more" id="channel-vods-more"></div>
     </section>
     <section class="block" data-cpanel="highlights" ${tab === 'highlights' ? '' : 'hidden'}>
       <div class="grid vods" id="channel-highlights"></div>

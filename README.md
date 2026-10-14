@@ -13,18 +13,19 @@ Watch Twitch lives and VODs in your browser, no subscription needed, with the re
 ## Features
 
 ### Home
-- **Top streams**, France or worldwide — no login required
+- **Top streams**, France or worldwide — no login required, with “Load more” (30 at a time; the extra cards stay put during the background refresh)
 - **Followed channels** once logged in with Twitch, with profile pictures
 - **Pinned streamers**: the pin on a followed channel's card (or at the end of its offline row) keeps it at the top of Following
 - **Continue watching**: VODs you started, with their progress bar
 - Live durations and viewer counts kept up to date
 - **Stream tags** under every live (language, DropsEnabled…), like on Twitch
 - **Categories**: every game and the ones you follow, then the lives in each — filterable by language (all, or a single one), a choice kept for every category
+- **Past the first 100 without an account**: “Load more” keeps going for categories, a category's lives, a channel's clips and its VODs. The first page uses Twitch's web Client-ID as before; the next ones use the public Client-ID of Twitch's Android app, which Twitch doesn't ask an integrity token from (the technique of the Xtra app). If Twitch refuses it, logged-in users carry on through Helix, others see a short message
 
 ### Streamer
 - Search with suggestions as you type
 - Live status (title, game, viewers, uptime), or how long the channel has been offline
-- Every past broadcast, filterable by keyword or date
+- Every past broadcast, filterable by keyword or date — 100 at a time with “Load more”, fetched from the browser (the Worker route is only a fallback for the first page)
 - **Unlisted & deleted broadcasts**: streams whose VOD is hidden or was deleted show up among the VODs as “Unlisted VOD”, rebuilt from Twitch's CDN as long as it still has them (stream IDs from `vodvod.top`, third party)
 - **Clips**: the most viewed over 24 h, 7 days, 30 days or all time — played in the site, with the original chat replayed
 - **About** tab: description, followers, social links and the streamer's panels

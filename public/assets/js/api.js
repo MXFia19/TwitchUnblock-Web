@@ -210,6 +210,12 @@ export const APP_GITHUB_URL = 'https://github.com/MXFia19/TwitchUnblock'
 export const DISCORD_URL = 'https://discord.gg/cEsMRdxsVq'
 export const HELIX_CLIENT_ID = CFG.twitchClientId || 'uyvqdqrz614y5wx5l4kev6c4ln7u9a'
 export const GQL_CLIENT_ID = 'kimne78kx3ncx6brgo4mv6wki5h1ko'
+/** Client-ID public de l'app Android de Twitch (la technique d'Xtra). Twitch
+ *  n'exige le jeton d'intégrité dès la 2e page d'une liste que pour le
+ *  Client-ID web (vérifié le 2026-10-14). Seulement pour les pages suivantes
+ *  des listes (gqlNext) : jamais avec un jeton, jamais pour les jetons de
+ *  lecture, les fiches ou le chat, qui restent sur GQL_CLIENT_ID. */
+const GQL_NEXT_CLIENT_ID = 'kd1unb4b3q4t58fwlpcbzcbnm76a8fp'
 /** Seule adresse de retour déclarée chez Twitch : elle ne doit pas changer. */
 export const REDIRECT_URI = CFG.redirectUri || 'https://test2-fawn-eta.vercel.app/'
 /** `chat:read` / `chat:edit` en plus de l'ancien périmètre : sans eux, l'IRC
@@ -244,6 +250,26 @@ export async function gql(query, variables = {}) {
   })
   return data?.data ?? null
 }
+
+/** Page suivante d'une liste, avec le Client-ID Android (voir
+ *  GQL_NEXT_CLIENT_ID). Twitch signale un refus en HTTP 200 : la liste
+ *  vaut null et `errors` dit « failed integrity check ». On le distingue
+ *  donc d'une fin de liste : { data, refused }. Une erreur HTTP ou réseau
+ *  lève, comme gql(). */
+async function gqlNext(query, variables = {}) {
+  const res = await json('https://gql.twitch.tv/gql', {
+    method: 'POST',
+    headers: { 'Client-ID': GQL_NEXT_CLIENT_ID, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ query, variables }),
+  })
+  const refused = (res?.errors ?? []).some((e) => e?.extensions?.code === 'IntegrityCheckFailed' || /failed integrity check/i.test(e?.message ?? ''))
+  return { data: res?.data ?? null, refused }
+}
+
+/** Curseur de la suite d'une liste GQL : celui de la dernière arête, et
+ *  seulement si Twitch dit qu'il y a une suite (sans suite, les curseurs
+ *  des clips sont nuls ; un `after` nul redonnerait la page 1). */
+const nextCursor = (conn) => (conn?.pageInfo?.hasNextPage && conn.edges?.at(-1)?.cursor) || null
 
 /** Infos d'une chaîne : identité, et le live en cours s'il y en a un. */
 export async function getChannelInfo(login) {
@@ -328,18 +354,52 @@ export async function getCategoryBySlug(slug) {
   return data?.game ? catFrom(data.game) : null
 }
 
-// Pagination. En GQL public, Twitch exige un jeton d'intégrité dès la 2e page
-// (« failed integrity check », requête persistée comprise) : « Charger plus »
-// ne ramenait rien. On prend donc d'un coup les 100 premiers (le maximum
-// accepté), servis par tranches ; au-delà, seul Helix sait continuer, avec
-// le compte Twitch. Le « curseur » est un objet opaque :
-//   { rest: à servir, seen: déjà vus, more: Twitch en a d'autres, after: curseur Helix }
+// Pagination. On prend d'un coup les 100 premiers (le maximum accepté) avec
+// le Client-ID web, servis par tranches. Avec lui, Twitch exige un jeton
+// d'intégrité dès la 2e page (« failed integrity check ») : la suite passe
+// donc par gqlNext (Client-ID Android), sans compte. Si Twitch la refuse,
+// Helix continue avec le compte Twitch ; sans compte, la liste s'arrête là.
+// Le « curseur » est un objet opaque :
+//   { rest: à servir, seen: déjà vus, more: Twitch en a d'autres,
+//     next: curseur GQL de la suite, blocked: suite GQL refusée,
+//     after: curseur Helix }
 function servePage(c, step) {
   const items = c.rest.slice(0, step)
   const rest = c.rest.slice(step)
-  const helixNext = c.more && Boolean(store.token)
+  const canGql = Boolean(c.next && !c.blocked)
+  const later = c.more && (canGql || Boolean(store.token))
   // `locked` : Twitch en a d'autres, mais il faut le compte pour les voir.
-  return { items, cursor: rest.length || helixNext ? { ...c, rest } : null, locked: !rest.length && c.more && !store.token }
+  return { items, cursor: rest.length || later ? { ...c, rest } : null, locked: !rest.length && c.more && !canGql && !store.token }
+}
+
+/** Page suivante sans compte, sans ce qui est déjà affiché : les lives
+ *  bougent et l'ordre diffère un peu d'un Client-ID à l'autre, une page peut
+ *  n'avoir que des doublons — jusqu'à 3 pages pour trouver du neuf, comme
+ *  helixMore. `fetchNext(after)` rend { items, next, refused }.
+ *  Refus : la liste est marquée bloquée (on ne rejoue pas une requête
+ *  refusée à chaque clic), puis `helixFrom(c)` repart du début avec le
+ *  compte ; sans compte, la page est verrouillée. Panne réseau : le curseur
+ *  reste, et « Charger plus » avec lui. */
+async function gqlMore(c, fetchNext, keyOf, step, helixFrom = null) {
+  let next = c.next
+  let refused = false
+  const fresh = []
+  try {
+    for (let i = 0; i < 3 && fresh.length < step && next; i++) {
+      const r = await fetchNext(next)
+      if (r.refused) { refused = true; break }
+      next = r.next
+      for (const x of r.items) {
+        const k = keyOf(x)
+        if (k && !c.seen.has(k)) { c.seen.add(k); fresh.push(x) }
+      }
+    }
+  } catch { /* panne : on garde le dernier curseur reçu */ }
+  if (refused) {
+    const blocked = { ...c, rest: fresh, next: null, blocked: true }
+    return !fresh.length && store.token && helixFrom ? helixFrom(blocked) : servePage(blocked, step)
+  }
+  return servePage({ ...c, rest: fresh, next, more: Boolean(next) }, step)
 }
 
 /** Page Helix suivante, sans ce qui est déjà affiché (Helix repart du début :
@@ -366,15 +426,24 @@ async function helixMore(c, path, convert, keyOf, step) {
 
 const catFromHelix = (g) => ({ id: g.id, name: g.name, box: String(g.box_art_url ?? '').replace('{width}', '285').replace('{height}', '380'), viewers: null })
 
-/** Catégories les plus regardées. { items, cursor } */
+const TOP_CATS_Q = `query($after: Cursor) { games(first: 100, after: $after) { edges { cursor node { ${CAT_FIELDS} } } pageInfo { hasNextPage } } }`
+const topCatsFrom = (data) => ({ items: (data?.games?.edges ?? []).filter((e) => e?.node).map((e) => catFrom(e.node)), next: nextCursor(data?.games) })
+
+/** Catégories les plus regardées. { items, cursor, locked } (voir servePage) */
 export async function getTopCategories(cursor = null) {
+  const helixFrom = (c) => helixMore(c, 'games/top', catFromHelix, (x) => x.id, 40)
   let page
   if (cursor?.rest?.length) page = servePage(cursor, 40)
-  else if (cursor) page = await helixMore(cursor, 'games/top', catFromHelix, (x) => x.id, 40)
+  else if (cursor?.next && !cursor.blocked) {
+    page = await gqlMore(cursor, async (after) => {
+      const r = await gqlNext(TOP_CATS_Q, { after })
+      return { ...topCatsFrom(r.data), refused: r.refused }
+    }, (x) => x.id, 40, helixFrom)
+  } else if (cursor) page = await helixFrom(cursor)
   else {
-    const data = await gql(`query { games(first: 100) { edges { node { ${CAT_FIELDS} } } pageInfo { hasNextPage } } }`)
-    const items = (data?.games?.edges ?? []).map((e) => catFrom(e.node))
-    page = servePage({ rest: items, seen: new Set(items.map((x) => x.id)), more: Boolean(data?.games?.pageInfo?.hasNextPage), after: null }, 40)
+    const data = await gql(TOP_CATS_Q, { after: null })
+    const { items, next } = topCatsFrom(data)
+    page = servePage({ rest: items, seen: new Set(items.map((x) => x.id)), more: Boolean(data?.games?.pageInfo?.hasNextPage), next, after: null }, 40)
   }
   // Helix ne donne pas l'audience : complétée par GQL, en une requête.
   const missing = page.items.filter((x) => x.viewers == null).map((x) => x.id)
@@ -405,16 +474,26 @@ export async function getCategoriesByIds(ids) {
  *  `language` (« fr », « zh_hk »). { items, cursor } (voir servePage) */
 export async function getCategoryStreams(id, cursor = null, language = null) {
   const helixLang = language ? `&language=${encodeURIComponent(language.toLowerCase().replace('_', '-'))}` : ''
+  const helixFrom = (c) => helixMore(c, `streams?game_id=${encodeURIComponent(id)}${helixLang}`, streamFromHelix, (s) => s.login, 30)
+  // Même requête pour la page 1 (Client-ID web) et la suite (gqlNext), avec
+  // les mêmes langues.
+  const q = `query($id: ID!, $langs: [Language!], $after: Cursor) { game(id: $id) { streams(first: 100, after: $after, options: { broadcasterLanguages: $langs }) {
+      edges { cursor node { title viewersCount createdAt previewImageURL(width: 440, height: 248) game { id displayName } freeformTags { name }
+        broadcaster { login displayName profileImageURL(width: 50) } } } pageInfo { hasNextPage } } } }`
+  const vars = (after) => ({ id, langs: language ? [language.toUpperCase().replace('-', '_')] : null, after })
+  const from = (data) => ({ items: (data?.game?.streams?.edges ?? []).map((e) => streamFromGQL(e?.node)).filter((s) => s.login), next: nextCursor(data?.game?.streams) })
   let page
   if (cursor?.rest?.length) page = servePage(cursor, 30)
-  else if (cursor) page = await helixMore(cursor, `streams?game_id=${encodeURIComponent(id)}${helixLang}`, streamFromHelix, (s) => s.login, 30)
+  else if (cursor?.next && !cursor.blocked) {
+    page = await gqlMore(cursor, async (after) => {
+      const r = await gqlNext(q, vars(after))
+      return { ...from(r.data), refused: r.refused }
+    }, (s) => s.login, 30, helixFrom)
+  } else if (cursor) page = await helixFrom(cursor)
   else {
-    const data = await gql(`query($id: ID!, $langs: [Language!]) { game(id: $id) { streams(first: 100, options: { broadcasterLanguages: $langs }) {
-      edges { node { title viewersCount createdAt previewImageURL(width: 440, height: 248) game { id displayName } freeformTags { name }
-        broadcaster { login displayName profileImageURL(width: 50) } } } pageInfo { hasNextPage } } } }`,
-    { id, langs: language ? [language.toUpperCase().replace('-', '_')] : null })
-    const items = (data?.game?.streams?.edges ?? []).map((e) => streamFromGQL(e.node)).filter((s) => s.login)
-    page = servePage({ rest: items, seen: new Set(items.map((s) => s.login)), more: Boolean(data?.game?.streams?.pageInfo?.hasNextPage), after: null }, 30)
+    const data = await gql(q, vars(null))
+    const { items, next } = from(data)
+    page = servePage({ rest: items, seen: new Set(items.map((s) => s.login)), more: Boolean(data?.game?.streams?.pageInfo?.hasNextPage), next, after: null }, 30)
   }
   // Helix ne donne pas les photos de profil : complétées en une requête.
   const missing = page.items.filter((s) => !s.avatar).map((s) => s.login)
@@ -453,19 +532,49 @@ export function streamFromHelix(s) {
   }
 }
 
-/** Top des lives, sans connexion : la requête GQL est publique. L'ancien
- *  site passait par Helix et réservait donc l'accueil aux comptes connectés. */
-export async function getTopStreams(language) {
-  const data = await gql(`query($n: Int!, $langs: [Language!]) {
-    streams(first: $n, options: { broadcasterLanguages: $langs }) {
-      edges { node {
+const TOP_STREAMS_Q = `query($n: Int!, $langs: [Language!], $after: Cursor) {
+    streams(first: $n, after: $after, options: { broadcasterLanguages: $langs }) {
+      edges { cursor node {
         title viewersCount createdAt previewImageURL(width: 440, height: 248) freeformTags { name }
         broadcaster { login displayName profileImageURL(width: 50) }
         game { id displayName }
       } }
+      pageInfo { hasNextPage }
     }
-  }`, { n: 24, langs: language ? [language.toUpperCase()] : null })
-  return (data?.streams?.edges ?? []).map((e) => streamFromGQL(e.node)).filter((s) => s.login)
+  }`
+const topStreamsFrom = (data) => ({ items: (data?.streams?.edges ?? []).map((e) => streamFromGQL(e?.node)).filter((s) => s.login), next: nextCursor(data?.streams) })
+
+/** Page suivante du top des lives, sans compte (gqlNext) : 30 lives, le
+ *  plafond de Twitch pour `streams`. { items, next, refused } ; lève sur une
+ *  panne réseau. Sert à « Charger plus » et à compléter le top. */
+export async function getTopStreamsAfter(language, after) {
+  const r = await gqlNext(TOP_STREAMS_Q, { n: 30, langs: language ? [language.toUpperCase()] : null, after })
+  return { ...topStreamsFrom(r.data), refused: r.refused }
+}
+
+/** Top des lives, sans connexion : la requête GQL est publique. L'ancien
+ *  site passait par Helix et réservait donc l'accueil aux comptes connectés.
+ *  24 lives d'abord, puis par 30 avec `cursor` (voir servePage).
+ *  { items, cursor, locked } */
+export async function getTopStreams(language, cursor = null) {
+  const helixLang = language ? `?language=${encodeURIComponent(language.toLowerCase().replace('_', '-'))}` : ''
+  const helixFrom = (c) => helixMore(c, `streams${helixLang}`, streamFromHelix, (s) => s.login, 30)
+  let page
+  if (cursor?.rest?.length) page = servePage(cursor, 30)
+  else if (cursor?.next && !cursor.blocked) page = await gqlMore(cursor, (after) => getTopStreamsAfter(language, after), (s) => s.login, 30, helixFrom)
+  else if (cursor) page = await helixFrom(cursor)
+  else {
+    const data = await gql(TOP_STREAMS_Q, { n: 24, langs: language ? [language.toUpperCase()] : null, after: null })
+    const { items, next } = topStreamsFrom(data)
+    page = servePage({ rest: items, seen: new Set(items.map((s) => s.login)), more: Boolean(data?.streams?.pageInfo?.hasNextPage), next, after: null }, 24)
+  }
+  // Helix ne donne pas les photos de profil : complétées en une requête.
+  const missing = page.items.filter((s) => !s.avatar).map((s) => s.login)
+  if (missing.length) {
+    const avatars = await getAvatars(missing)
+    for (const s of page.items) if (!s.avatar) s.avatar = avatars[s.login] ?? ''
+  }
+  return page
 }
 
 /** Photos de profil d'une liste de chaînes, en une requête. */
@@ -628,8 +737,45 @@ async function feedbackPost(path, body) {
   return res.json()
 }
 
-export function getChannelVideos(login) {
-  return workerJson(`/api/get-channel-videos?name=${encodeURIComponent(login)}`)
+// VODs d'une chaîne : en GQL depuis le navigateur, comme les autres listes.
+// La route du Worker ne sait pas donner la suite (curseur de fin nul pour
+// les vidéos, Client-ID web) ; elle ne sert plus que de repli pour la
+// page 1, et elle épargne une requête Worker par page de chaîne.
+const CHANNEL_VODS_Q = `query($l: String!, $after: Cursor) { user(login: $l) { profileImageURL(width: 70)
+  videos(first: 100, type: ARCHIVE, sort: TIME, after: $after) {
+    edges { cursor node { id title publishedAt lengthSeconds viewCount previewThumbnailURL(height: 180, width: 320) } }
+    pageInfo { hasNextPage }
+  } } }`
+const vodsFrom = (conn) => ({
+  videos: (conn?.edges ?? []).map((e) => e?.node).filter((v) => v?.id),
+  after: nextCursor(conn),
+  more: Boolean(conn?.pageInfo?.hasNextPage),
+})
+
+/** Les 100 dernières VODs d'une chaîne : { videos, avatar, pagination,
+ *  after, more } — `after` pour la suite (getChannelVideosAfter), `more`
+ *  si Twitch en a d'autres. null si la chaîne n'existe pas. Twitch
+ *  injoignable depuis le navigateur : la route du Worker, sans suite. */
+export async function getChannelVideos(login) {
+  let data
+  try {
+    data = await gql(CHANNEL_VODS_Q, { l: login, after: null })
+  } catch {
+    const w = await workerJson(`/api/get-channel-videos?name=${encodeURIComponent(login)}`)
+    return { ...w, after: null, more: Boolean(w?.pagination?.hasNextPage) }
+  }
+  const u = data?.user
+  if (!u) return null
+  const page = vodsFrom(u.videos)
+  return { ...page, avatar: u.profileImageURL ?? '', pagination: { hasNextPage: page.more } }
+}
+
+/** VODs suivantes, sans compte (gqlNext) : { videos, after, more, refused }.
+ *  Lève sur une panne réseau. */
+export async function getChannelVideosAfter(login, after) {
+  const r = await gqlNext(CHANNEL_VODS_Q, { l: login, after })
+  const page = vodsFrom(r.data?.user?.videos)
+  return { ...page, more: page.more || r.refused, refused: r.refused }
 }
 
 // ── Récupération de VODs supprimées ──────────────────────────────────────────
@@ -765,27 +911,37 @@ const clipFromHelix = (c) => ({
 })
 
 /** Clips les plus vus d'une chaîne sur la période, par tranches de 24.
- *  { items, cursor } — même pagination que les catégories (servePage) :
- *  Twitch refuse la page 2 en GQL public, on prend donc les 100 premiers ;
- *  au-delà, Helix continue avec le compte (il lui faut l'id de la chaîne). */
+ *  { items, cursor, locked } — même pagination que les catégories
+ *  (servePage) : les 100 premiers, puis la suite sans compte (gqlNext) ;
+ *  si Twitch la refuse, Helix continue avec le compte (il lui faut l'id
+ *  de la chaîne). */
 export async function getClips(login, period = 'LAST_WEEK', cursor = null, broadcasterId = null) {
-  if (cursor?.rest?.length) return servePage(cursor, 24)
-  if (cursor) {
-    if (!cursor.broadcasterId) return { items: [], cursor: null }
+  const helixFrom = (c) => {
+    if (!c.broadcasterId) return { items: [], cursor: null }
     const days = CLIP_PERIOD_DAYS[period]
     const now = new Date()
     // Sans date de fin, Helix s'arrête une semaine après le début.
     const range = days ? `&started_at=${new Date(now - days * 86_400_000).toISOString()}&ended_at=${now.toISOString()}` : ''
-    return helixMore(cursor, `clips?broadcaster_id=${encodeURIComponent(cursor.broadcasterId)}${range}`, clipFromHelix, (c) => c.slug, 24)
+    return helixMore(c, `clips?broadcaster_id=${encodeURIComponent(c.broadcasterId)}${range}`, clipFromHelix, (x) => x.slug, 24)
   }
-  const data = await gql(`query($l: String!, $p: ClipsPeriod) {
-    user(login: $l) { clips(first: 100, criteria: { period: $p, sort: VIEWS_DESC }) { edges { node {
+  const q = `query($l: String!, $p: ClipsPeriod, $after: Cursor) {
+    user(login: $l) { clips(first: 100, after: $after, criteria: { period: $p, sort: VIEWS_DESC }) { edges { cursor node {
       slug title viewCount durationSeconds createdAt thumbnailURL(width: 480, height: 272)
       curator { displayName }
     } } pageInfo { hasNextPage } } }
-  }`, { l: login, p: period })
-  const items = (data?.user?.clips?.edges ?? []).map((e) => e.node).filter((c) => c?.slug)
-  return servePage({ rest: items, seen: new Set(items.map((c) => c.slug)), more: Boolean(data?.user?.clips?.pageInfo?.hasNextPage), after: null, broadcasterId }, 24)
+  }`
+  const from = (data) => ({ items: (data?.user?.clips?.edges ?? []).map((e) => e?.node).filter((c) => c?.slug), next: nextCursor(data?.user?.clips) })
+  if (cursor?.rest?.length) return servePage(cursor, 24)
+  if (cursor?.next && !cursor.blocked) {
+    return gqlMore(cursor, async (after) => {
+      const r = await gqlNext(q, { l: login, p: period, after })
+      return { ...from(r.data), refused: r.refused }
+    }, (c) => c.slug, 24, helixFrom)
+  }
+  if (cursor) return helixFrom(cursor)
+  const data = await gql(q, { l: login, p: period, after: null })
+  const { items, next } = from(data)
+  return servePage({ rest: items, seen: new Set(items.map((c) => c.slug)), more: Boolean(data?.user?.clips?.pageInfo?.hasNextPage), next, after: null, broadcasterId }, 24)
 }
 
 /** Fiche « À propos » d'une chaîne : description, followers, réseaux et
