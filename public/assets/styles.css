@@ -194,6 +194,26 @@ input[type='search']::-webkit-search-cancel-button { filter: invert(1) opacity(0
 .feedback-card-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .feedback-card-text small { color: var(--muted); font-size: 12.5px; font-weight: 500; }
 .feedback-card > svg { flex: none; color: var(--muted); }
+/* Réglages → Installer l'app : même gabarit, mais aux couleurs de l'accent choisi. */
+.install-card {
+  display: flex; flex-direction: column; gap: 10px; padding: 12px 14px;
+  border-radius: var(--r-control); border: 1px solid rgba(191, 148, 255, 0.35);
+  border-color: color-mix(in srgb, var(--primary) 35%, transparent);
+  background: rgba(145, 70, 255, 0.10);
+  background: color-mix(in srgb, var(--primary) 10%, transparent);
+}
+.install-card-head { display: flex; align-items: center; gap: 12px; }
+.install-card-ic {
+  flex: none; display: grid; place-items: center; width: 34px; height: 34px; border-radius: 10px; color: var(--purple);
+  background: rgba(145, 70, 255, 0.22);
+  background: color-mix(in srgb, var(--primary) 22%, transparent);
+}
+.install-card-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.install-card-text small { color: var(--muted); font-size: 12.5px; font-weight: 500; line-height: 1.4; }
+.install-card .btn { align-self: flex-start; }
+.install-steps { padding-left: 18px; font-size: 13px; line-height: 1.45; display: flex; flex-direction: column; gap: 6px; }
+.push-status { margin: 2px 0 8px; line-height: 1.45; }
+.push-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 14px; }
 .whats-new-actions { display: flex; flex-direction: column; gap: 8px; }
 .whats-new-actions .btn { width: 100%; justify-content: center; }
 .account-btn {

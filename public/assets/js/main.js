@@ -50,7 +50,7 @@ let lastSave = 0
 // les applique dès le chargement, avant le premier affichage.
 const THEME_BGS = ['auto', 'dark', 'oled', 'slate', 'light']
 const THEME_ACCENTS = [['twitch', '9146ff'], ['blue', '2f7cf6'], ['green', '10b981'], ['pink', 'ec4899'], ['orange', 'f97316'], ['red', 'e5484d'], ['teal', '06b6d4']]
-const BG_COLORS = { dark: '#0e0e10', oled: '#000000', slate: '#0f141c', light: '#f3f3f6' }
+const BG_COLORS = { dark: '#0e0e10', oled: '#000000', slate: '#0f141c', light: '#f3f3f6' }   // copie dans index.html
 const lightScheme = matchMedia('(prefers-color-scheme: light)')
 
 const themeBg = () => (THEME_BGS.includes(store.prefs.themeBg) ? store.prefs.themeBg : 'dark')
@@ -92,7 +92,7 @@ async function boot() {
   usage.ping(store.prefs.shareUsage)
   setInterval(() => usage.ping(store.prefs.shareUsage), 15 * 60 * 1000)
   // Installable comme une app (et la coque s'ouvre hors ligne).
-  if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
+  if (shellInstallable()) {
     navigator.serviceWorker.register('/sw.js').catch(() => {})
     // Notification de live touchée, site déjà ouvert : on y ouvre le direct.
     navigator.serviceWorker.addEventListener('message', (e) => {
@@ -810,7 +810,8 @@ function pushState() { try { return JSON.parse(localStorage.getItem(PUSH_STATE) 
 function savePushState(s) { try { localStorage.setItem(PUSH_STATE, JSON.stringify(s)) } catch {} }
 const pushOn = () => pushSupported() && Notification.permission === 'granted' && pushState().on === true
 const pushChannels = () => [...new Set([...(state.accountFollows ?? []), ...localFollows()])].slice(0, 500)
-const pushHash = (list) => list.slice().sort().join(',')
+// La langue en fait partie : la changer change celle des notifications.
+const pushHash = (list) => `${lang()}:${list.slice().sort().join(',')}`
 
 function b64uBytes(s) {
   const t = s.replace(/-/g, '+').replace(/_/g, '/')
@@ -823,21 +824,38 @@ async function pushSubscription() {
   return reg ? reg.pushManager.getSubscription() : null
 }
 
+/** Abonnement du navigateur à son service de push : l'actuel, sinon un neuf
+ *  (la permission doit déjà être accordée). */
+async function subscribePush() {
+  const reg = await Promise.race([navigator.serviceWorker.ready,
+    new Promise((_, reject) => setTimeout(() => reject(new Error('service worker')), 10000))])
+  const sub = await reg.pushManager.getSubscription()
+  if (sub) return sub
+  const key = await api.pushKey()
+  return reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64uBytes(key) })
+}
+
+/** Abonnement et chaînes envoyés au Worker. Il renvoie le nombre de chaînes
+ *  qu'il retient vraiment (noms valides, plafond) : c'est celui qu'on montre. */
+async function sendPush(sub, channels) {
+  const r = await api.pushSubscribe(sub.toJSON(), channels, lang())
+  savePushState({
+    on: true, hash: pushHash(channels), at: Date.now(), ep: sub.endpoint,
+    n: Number.isFinite(r?.channels) ? r.channels : channels.length,
+  })
+}
+
 async function enablePush() {
   if (!pushSupported()) {
-    toast(t(isIOS && !isStandalone() ? 'push_ios_install' : 'push_unsupported'), 'error')
+    const ios = isIOS && !isStandalone()
+    toast(t(ios ? 'push_ios_install' : 'push_unsupported'), 'error')
+    // L'interrupteur est dans la même feuille que les étapes d'installation.
+    if (ios) actions['install-how']()
     return false
   }
   try {
     if (await Notification.requestPermission() !== 'granted') { toast(t('push_denied'), 'error'); return false }
-    const reg = await Promise.race([navigator.serviceWorker.ready,
-      new Promise((_, reject) => setTimeout(() => reject(new Error('service worker')), 10000))])
-    const key = await api.pushKey()
-    const sub = await reg.pushManager.getSubscription()
-      ?? await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64uBytes(key) })
-    const channels = pushChannels()
-    await api.pushSubscribe(sub.toJSON(), channels, lang())
-    savePushState({ on: true, hash: pushHash(channels), at: Date.now() })
+    await sendPush(await subscribePush(), pushChannels())
     toast(t('push_on'), 'success')
     return true
   } catch (e) {
@@ -855,19 +873,49 @@ async function disablePush() {
   await sub.unsubscribe().catch(() => {})
 }
 
-/** Chaînes suivies changées (ou au plus tard chaque jour) : renvoyées au Worker. */
-async function syncPush() {
+/** Chaînes suivies ou langue changées, abonnement perdu ou remplacé (ou au
+ *  plus tard chaque jour) : renvoyés au Worker. L'abonnement est relu AVANT
+ *  le filtre du jour : sinon un abonnement perdu laissait l'interrupteur
+ *  allumé sans plus rien recevoir. Les appels passent l'un après l'autre. */
+let pushSyncing = Promise.resolve()
+function syncPush() {
+  pushSyncing = pushSyncing.then(syncPushNow, syncPushNow)
+  return pushSyncing
+}
+
+async function syncPushNow() {
   if (!pushOn()) return
   const channels = pushChannels()
-  const hash = pushHash(channels)
   const s = pushState()
-  if (hash === s.hash && Date.now() - (s.at || 0) < 86400000) return
-  const sub = await pushSubscription().catch(() => null)
+  // Perdu : on en reprend un, sans redemander la permission (déjà accordée).
+  // Safari peut l'exiger d'un geste : l'essai échoue alors sans dégât.
+  const sub = await pushSubscription().catch(() => null) ?? await subscribePush().catch(() => null)
   if (!sub) return
+  if (pushHash(channels) === s.hash && sub.endpoint === s.ep && Date.now() - (s.at || 0) < 86400000) return
   try {
-    await api.pushSubscribe(sub.toJSON(), channels, lang())
-    savePushState({ on: true, hash, at: Date.now() })
+    await sendPush(sub, channels)
+    refreshPushUi()
   } catch {}
+}
+
+/** Ligne d'état des notifications : actives sur cet appareil, et pour
+ *  combien de chaînes (le nombre retenu par le Worker ; un abonnement
+ *  d'avant ce nombre retombe sur le calcul local). */
+function pushStatusText() {
+  if (!pushOn()) return ''
+  const n = pushState().n ?? pushChannels().length
+  return t(n ? 'push_active' : 'push_no_channels', { n })
+}
+
+function refreshPushUi() {
+  const on = pushOn()
+  const test = $('#push-test')
+  if (test) test.hidden = !on
+  const status = $('#push-status')
+  if (status) {
+    status.hidden = !on
+    status.textContent = pushStatusText()
+  }
 }
 
 async function togglePush(input) {
@@ -875,8 +923,7 @@ async function togglePush(input) {
   const on = input.checked ? await enablePush() : (await disablePush(), false)
   input.checked = on
   input.disabled = false
-  const test = $('#push-test')
-  if (test) test.hidden = !on
+  refreshPushUi()
 }
 
 async function testPush() {
@@ -889,6 +936,110 @@ async function testPush() {
     toast(t('push_failed'), 'error')
   }
 }
+
+// ── Installer l'app (PWA) ──────────────────────────────────────────────────
+// Le site s'installe déjà (manifeste + service worker), mais rien ne le
+// disait. Réglages → « Installer l'app » donne les étapes selon l'appareil,
+// et un bouton quand le navigateur propose son invite (Chrome, Edge : après
+// un peu d'usage seulement, d'où les étapes écrites dans tous les cas).
+const PWA_INSTALLED = 'tu_pwa_installed'   // hors de tu_prefs : la sauvegarde ne l'emporte pas ailleurs
+let installEvt = null
+function pwaInstalledFlag() { try { return localStorage.getItem(PWA_INSTALLED) === '1' } catch { return false } }
+function setPwaInstalledFlag(on) { try { on ? localStorage.setItem(PWA_INSTALLED, '1') : localStorage.removeItem(PWA_INSTALLED) } catch {} }
+// Même condition que l'enregistrement du service worker (boot) : sans lui
+// (Docker en HTTP sur le réseau local), ni installation ni notifications.
+function shellInstallable() {
+  return 'serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')
+}
+
+window.addEventListener('beforeinstallprompt', (e) => {
+  // Hors d'Android seulement : là-bas, la mini-barre d'installation de
+  // Chrome reste (notre bouton est rangé dans les Réglages).
+  if (!/Android/i.test(navigator.userAgent)) e.preventDefault()
+  installEvt = e
+  // Chrome ne le propose plus une fois l'app installée : désinstallée depuis.
+  setPwaInstalledFlag(false)
+  refreshInstallUi()
+})
+window.addEventListener('appinstalled', () => {
+  installEvt = null
+  setPwaInstalledFlag(true)
+  toast(t('install_done'), 'success')
+  refreshInstallUi()
+})
+
+/** Ce que la carte doit montrer, ou null pour rien. L'onglet d'où l'on a
+ *  installé n'est pas en standalone : le drapeau évite d'y remontrer les étapes. */
+function installKind() {
+  if (isStandalone()) return 'installed'
+  if (!shellInstallable()) return null
+  if (installEvt) return 'prompt'
+  if (pwaInstalledFlag()) return 'already'
+  if (isIOS) return 'ios'
+  const ua = navigator.userAgent
+  // Chrome, Firefox, Samsung Internet… : chacun depuis son menu, d'où des étapes neutres.
+  if (/Android/i.test(ua)) return 'android'
+  if (/Firefox\//.test(ua)) return 'firefox'
+  if (/Macintosh/.test(ua) && /Safari\//.test(ua) && !/Chrome|Chromium|Edg\/|OPR\//.test(ua)) return 'safari'
+  return 'desktop'
+}
+
+const INSTALL_STEPS = {
+  ios: ['install_ios_1', 'install_ios_2', 'install_ios_3', 'install_ios_4'],
+  android: ['install_android_1', 'install_android_2'],
+  desktop: ['install_desktop'],
+  safari: ['install_safari_mac'],
+  firefox: ['install_firefox'],
+}
+
+function installStepsHtml(keys) {
+  return keys.length > 1
+    ? `<ol class="install-steps">${keys.map((k) => `<li>${esc(t(k))}</li>`).join('')}</ol>`
+    : `<p class="muted small">${esc(t(keys[0]))}</p>`
+}
+
+function installCardHtml() {
+  const kind = installKind()
+  if (!kind || kind === 'installed') return ''
+  let body
+  if (kind === 'prompt') {
+    // Les étapes restent en dessous : si l'invite échoue, on sait quoi faire.
+    body = `<button class="btn primary sm" type="button" data-action="install-app">${icon('download', 15)}<span>${esc(t('install_btn'))}</span></button>
+      ${installStepsHtml(/Android/i.test(navigator.userAgent) ? INSTALL_STEPS.android : INSTALL_STEPS.desktop)}`
+  } else if (kind === 'already') {
+    body = `<p class="muted small">${esc(t('install_already'))}</p>`
+  } else {
+    body = installStepsHtml(INSTALL_STEPS[kind])
+  }
+  return `<div class="sheet-section" id="install-card">
+      <div class="install-card">
+        <div class="install-card-head">
+          <span class="install-card-ic">${icon('download', 18)}</span>
+          <span class="install-card-text"><b>${esc(t('install_title'))}</b><small>${esc(t('install_sub'))}</small></span>
+        </div>
+        ${body}
+      </div>
+    </div>`
+}
+
+function refreshInstallUi() {
+  const el = $('#install-card')
+  if (!el) return
+  const html = installCardHtml()
+  if (html) el.outerHTML = html
+  else el.remove()
+}
+
+actions['install-app'] = () => {
+  const e = installEvt
+  if (!e) return
+  installEvt = null
+  // Appelé tout de suite dans le clic : le navigateur exige ce geste.
+  let shown
+  try { shown = e.prompt() } catch { refreshInstallUi(); return }
+  Promise.resolve(shown).then(() => e.userChoice).catch(() => {}).finally(refreshInstallUi)
+}
+actions['install-how'] = () => $('#install-card')?.scrollIntoView({ block: 'center', behavior: 'smooth' })
 
 /** Grille de cartes ou liste façon Twitch, au choix (bouton + réglage). */
 function applyLayout() {
@@ -1664,7 +1815,9 @@ const TOUR = [
   { sel: '.topbar-actions', tab: 'categories', icon: 'settings', title: 'tour_settings_title', text: 'tour_settings_text' },
   { card: 'player', tab: 'discover' },
 ]
-const TOUR_TIPS = [['play', 'tour_tip_keys'], ['clock', 'tour_tip_seek'], ['chevronDown', 'tour_tip_mini'], ['sparkles', 'tour_tip_app']]
+const TOUR_TIPS = [['play', 'tour_tip_keys'], ['clock', 'tour_tip_seek'], ['chevronDown', 'tour_tip_mini'], ['sparkles', 'tour_tip_app'], ['download', 'tour_tip_install']]
+// L'astuce d'installation, seulement là où la carte des Réglages a des étapes à montrer.
+const tourTips = () => TOUR_TIPS.filter(([, k]) => k !== 'tour_tip_install' || !['installed', 'already', null].includes(installKind()))
 const tour = { step: -1, el: null }
 
 function startTour() {
@@ -1735,7 +1888,7 @@ function renderTour() {
     pop.innerHTML = `
       <div class="tour-badge">${icon('play', 34)}</div>
       <h2>${esc(t('tour_player_title'))}</h2>
-      <ul class="tour-tips">${TOUR_TIPS.map(([ic, k]) => `<li>${icon(ic, 18)}<span>${esc(t(k))}</span></li>`).join('')}</ul>
+      <ul class="tour-tips">${tourTips().map(([ic, k]) => `<li>${icon(ic, 18)}<span>${esc(t(k))}</span></li>`).join('')}</ul>
       <button class="btn primary full" type="button" data-tour="next">${esc(t('tour_done'))}</button>`
   } else {
     pop.innerHTML = `
@@ -3506,6 +3659,7 @@ function openSettings() {
         ${icon('chevronRight', 16)}
       </button>
     </div>
+    ${installCardHtml()}
     <div class="sheet-section">
       <h3>${esc(t('language'))}</h3>
       <div class="segmented full langs" id="set-lang">
@@ -3557,7 +3711,11 @@ function openSettings() {
     <div class="sheet-section">
       <h3>${esc(t('push_title'))}</h3>
       ${toggle('set-push', t('push_live'), pushOn(), t(isIOS && !isStandalone() ? 'push_live_sub_ios' : 'push_live_sub'))}
-      <button class="btn ghost sm" type="button" id="push-test" data-action="push-test" ${pushOn() ? '' : 'hidden'}>${icon('send', 15)}<span>${esc(t('push_test'))}</span></button>
+      <p class="muted small push-status" id="push-status" ${pushOn() ? '' : 'hidden'}>${esc(pushStatusText())}</p>
+      <div class="push-actions">
+        <button class="btn ghost sm" type="button" id="push-test" data-action="push-test" ${pushOn() ? '' : 'hidden'}>${icon('send', 15)}<span>${esc(t('push_test'))}</span></button>
+        ${isIOS && !isStandalone() && installKind() ? `<button class="link-btn" type="button" data-action="install-how">${esc(t('install_how'))}</button>` : ''}
+      </div>
     </div>
     <div class="sheet-section">
       <h3>${esc(t('chat_settings'))}</h3>
@@ -3658,6 +3816,8 @@ function openSettings() {
       store.prefs.lang = l === 'auto' ? null : l
       setLang(l === 'auto' ? deviceLang() : l)
       store.savePrefs()
+      // Les notifications partent dans la langue du site.
+      syncPush()
       applyStatic()
       renderAccount()
       refreshTexts()

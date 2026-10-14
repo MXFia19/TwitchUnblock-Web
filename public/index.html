@@ -9,9 +9,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black">
   <meta name="color-scheme" content="dark">
-  <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="black">
   <meta name="apple-mobile-web-app-title" content="TwitchUnblock">
   <meta name="description" content="Regarder les lives et VODs Twitch sans abonnement, avec le chat.">
   <title>TwitchUnblock</title>
@@ -29,6 +27,13 @@
         if (bg === 'auto') bg = matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark'
         document.documentElement.dataset.bg = bg
         if (p.themeAccent && p.themeAccent !== 'twitch') document.documentElement.dataset.accent = p.themeAccent
+        // Barre de titre de l'app installée et barre du navigateur : la
+        // couleur du fond (mêmes valeurs que BG_COLORS dans main.js).
+        var colors = { dark: '#0e0e10', oled: '#000000', slate: '#0f141c', light: '#f3f3f6' }
+        var tc = document.querySelector('meta[name="theme-color"]')
+        if (tc && colors[bg]) tc.setAttribute('content', colors[bg])
+        var cs = document.querySelector('meta[name="color-scheme"]')
+        if (cs) cs.setAttribute('content', bg === 'light' ? 'light' : 'dark')
       } catch (e) {}
     })()
   </script>

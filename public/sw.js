@@ -50,6 +50,17 @@ self.addEventListener('push', (e) => {
   }))
 })
 
+// Abonnement remplacé par le navigateur (Firefox surtout) : on en reprend un
+// avec la même clé. La page remarque le nouvel abonnement à la visite
+// suivante (adresse différente) et le renvoie au Worker avec les chaînes.
+self.addEventListener('pushsubscriptionchange', (e) => {
+  const key = e.oldSubscription?.options?.applicationServerKey
+  if (!key) return
+  e.waitUntil(self.registration.pushManager.getSubscription()
+    .then((sub) => sub ?? self.registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key }))
+    .catch(() => {}))
+})
+
 self.addEventListener('notificationclick', (e) => {
   e.notification.close()
   const url = new URL(e.notification.data?.url || '/', self.location.origin).href
