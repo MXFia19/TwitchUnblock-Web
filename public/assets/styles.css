@@ -876,6 +876,25 @@ a.card, a.cat-card { display: block; }
 .thumb .mpin:hover, .thumb .mpin.on { background: var(--primary); }
 .thumb .mpin.on, .card:hover .mpin, .card:focus-within .mpin { opacity: 1; }
 @media (hover: none) { .thumb .mpin { opacity: 1; } }
+/* Œil barré des cartes de découverte (top, lives d'une catégorie) : à la
+   place de l'épingle, qui n'est que sur les chaînes suivies. */
+.thumb .mhide {
+  position: absolute; right: 42px; bottom: 6px; width: 30px; height: 30px; border-radius: 50%;
+  display: grid; place-items: center; background: rgba(0, 0, 0, 0.72); color: #fff;
+  opacity: 0; transition: opacity 0.15s, background 0.15s;
+}
+.thumb .mhide:hover { background: var(--primary); }
+.card:hover .mhide, .card:focus-within .mhide { opacity: 1; }
+@media (hover: none) { .thumb .mhide { opacity: 1; } }
+/* « N masqués ici · Gérer » sous une liste ; « Masquée · Réafficher ». */
+.hidden-foot { display: flex; justify-content: center; margin: 14px 0 0; }
+.hidden-foot:empty, .hide-slot:empty { display: none; }
+.hero-id:has(.hide-slot:not(:empty)) { flex-wrap: wrap; }
+.suggest-hidden { display: inline-flex; color: var(--muted); }
+.hidden-list-title { margin: 12px 0 8px; font-size: 13px; font-weight: 600; }
+.hidden-chips { margin-bottom: 12px; }
+.hidden-chips .chip { height: 32px; padding-left: 12px; font-size: 13px; cursor: default; }
+.hidden-empty { margin-top: 8px; }
 .offline-row .opin {
   margin-left: auto; flex: none; width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center;
   color: var(--muted); opacity: 0; transition: opacity 0.15s, color 0.15s, background 0.15s;
@@ -1331,7 +1350,18 @@ html.touring { overflow: hidden; }
 /* Catégories */
 .cat-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 18px 14px; margin-top: 6px; }
 .cat-card { cursor: pointer; min-width: 0; outline: none; }
-.cat-box { aspect-ratio: 3 / 4; border-radius: 12px; overflow: hidden; background: var(--surface); }
+.cat-box { position: relative; aspect-ratio: 3 / 4; border-radius: 12px; overflow: hidden; background: var(--surface); }
+/* Œil barré d'une catégorie : en haut à droite ; allumé si elle est déjà
+   masquée (résultats d'une recherche, carte atténuée). */
+.cat-box .chide {
+  position: absolute; top: 6px; right: 6px; width: 30px; height: 30px; border-radius: 50%;
+  display: grid; place-items: center; background: rgba(0, 0, 0, 0.72); color: #fff;
+  opacity: 0; transition: opacity 0.15s, background 0.15s;
+}
+.cat-box .chide:hover, .cat-box .chide.on { background: var(--primary); }
+.cat-card:hover .chide, .cat-card:focus-within .chide, .cat-box .chide.on { opacity: 1; }
+@media (hover: none) { .cat-box .chide { opacity: 1; } }
+.cat-card.is-hidden img, .cat-card.is-hidden h3, .cat-card.is-hidden .meta { opacity: 0.5; }
 .cat-box img { width: 100%; height: 100%; object-fit: cover; display: block; transition: transform 0.2s; }
 .cat-card:hover .cat-box img, .cat-card:focus-visible .cat-box img { transform: scale(1.04); }
 .cat-card h3 { margin: 8px 0 2px; font-size: 14px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

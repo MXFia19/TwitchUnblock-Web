@@ -49,6 +49,10 @@ const DEFAULT_PREFS = {
   // 'audio' — mêmes valeurs que l'app iOS dans la sauvegarde.
   qualityPref: 'auto',
   vodSpeed: 1,       // vitesse des VODs, retenue d'une VOD à l'autre
+  // Masqués du top et des catégories, plus récents d'abord ; `at` en
+  // millisecondes, comme l'app iOS (sauvegarde : clé racine `hidden`).
+  hiddenChannels: [],    // { login (minuscules), name, at }, 500 au plus
+  hiddenCategories: [],  // { id, name, box, at }, 200 au plus
 }
 
 /** Réglages enregistrés, avec la qualité d'avant le réglage « Qualité

@@ -20,6 +20,7 @@ Watch Twitch lives and VODs in your browser, no subscription needed, with the re
 - Live durations and viewer counts kept up to date
 - **Stream tags** under every live (language, DropsEnabled…), like on Twitch
 - **Categories**: every game and the ones you follow, then the lives in each — filterable by language (all, or a single one), a choice kept for every category
+- **Hide channels and categories**: the crossed-out eye on a Top or category card hides that channel (or its category) from Top, the category grid and a category's lives, with “Undo”. Top tops itself up from the next page of Twitch's top so it doesn't get shorter, and a “N hidden here · Manage” line leads to the list in Settings. What you follow or pin, and the categories you follow, are never hidden; search, a channel's page and a category opened directly still show everything (“Hidden · Show again”). Stored on this device and included in the backup export/import, in the same format as the iOS app
 - **Past the first 100 without an account**: “Load more” keeps going for categories, a category's lives, a channel's clips and its VODs. The first page uses Twitch's web Client-ID as before; the next ones use the public Client-ID of Twitch's Android app, which Twitch doesn't ask an integrity token from (the technique of the Xtra app). If Twitch refuses it, logged-in users carry on through Helix, others see a short message
 
 ### Streamer

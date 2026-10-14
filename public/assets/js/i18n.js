@@ -98,6 +98,11 @@ const STRINGS = {
     lang_ai_note: 'Traduction faite avec l’IA, pas encore relue : si une phrase sonne faux, dis-le-nous.', lang_ai_report: 'Signaler une erreur de traduction',
     switch_account: 'Changer de compte', switch_account_sub: 'Sur la page Twitch, choisis « Ce n’est pas vous ? » pour te connecter avec un autre compte.',
     vod_muted_here: 'Son coupé par Twitch (musique protégée)', vod_muted_skip: 'Passer', vod_unmuted: 'Son d’origine rétabli sur les passages coupés',
+    hide_channel: 'Masquer cette chaîne', hide_category: 'Masquer la catégorie « {c} »', hide_this_category: 'Masquer cette catégorie', hide_menu: 'Masquer…',
+    unhide: 'Réafficher', unhide_all: 'Tout réafficher', unhide_all_done: 'Tout est réaffiché', undo: 'Annuler', hidden_badge: 'Masquée',
+    hidden_title: 'Chaînes et catégories masquées', hidden_sub: 'Elles n’apparaissent plus dans le top ni dans les catégories. La recherche les trouve toujours, et ce que tu suis n’est jamais masqué.',
+    hidden_channels_n: 'Chaînes ({n})', hidden_categories_n: 'Catégories ({n})', hidden_empty: 'Rien de masqué. Clique sur l’œil barré d’une carte du top ou d’une catégorie.', hidden_footer: '{n} masqué(s) ici · Gérer',
+    hidden_channel_done: '{u} n’apparaîtra plus dans le top ni les catégories', hidden_category_done: '« {c} » n’apparaîtra plus dans le top ni la grille',
   },
   en: {
     nav_discover: 'Discover', nav_channel: 'Streamer', nav_link: 'Link / ID',
@@ -189,6 +194,11 @@ const STRINGS = {
     lang_ai_note: 'Translated with AI, not yet reviewed: if something sounds off, let us know.', lang_ai_report: 'Report a translation mistake',
     switch_account: 'Switch account', switch_account_sub: 'On the Twitch page, pick “Not you?” to sign in with another account.',
     vod_muted_here: 'Sound muted by Twitch (copyrighted music)', vod_muted_skip: 'Skip', vod_unmuted: 'Original sound restored on muted parts',
+    hide_channel: 'Hide this channel', hide_category: 'Hide the “{c}” category', hide_this_category: 'Hide this category', hide_menu: 'Hide…',
+    unhide: 'Show again', unhide_all: 'Show all again', unhide_all_done: 'Everything is shown again', undo: 'Undo', hidden_badge: 'Hidden',
+    hidden_title: 'Hidden channels and categories', hidden_sub: 'They no longer show up in Top or in categories. Search still finds them, and what you follow is never hidden.',
+    hidden_channels_n: 'Channels ({n})', hidden_categories_n: 'Categories ({n})', hidden_empty: 'Nothing hidden. Click the crossed-out eye on a Top or category card.', hidden_footer: '{n} hidden here · Manage',
+    hidden_channel_done: '{u} won’t show up in Top or categories anymore', hidden_category_done: '“{c}” won’t show up in Top or the grid anymore',
   },
   es: {
     nav_discover: 'Descubrir', nav_channel: 'Streamer', nav_link: 'Enlace / ID',
@@ -280,6 +290,11 @@ const STRINGS = {
     lang_ai_note: 'Traducido con IA, aún sin revisar: si algo suena raro, avísanos.', lang_ai_report: 'Reportar un error de traducción',
     switch_account: 'Cambiar de cuenta', switch_account_sub: 'En la página de Twitch, elige «¿No eres tú?» para iniciar sesión con otra cuenta.',
     vod_muted_here: 'Sonido silenciado por Twitch (música protegida)', vod_muted_skip: 'Saltar', vod_unmuted: 'Sonido original restaurado en las partes silenciadas',
+    hide_channel: 'Ocultar este canal', hide_category: 'Ocultar la categoría «{c}»', hide_this_category: 'Ocultar esta categoría', hide_menu: 'Ocultar…',
+    unhide: 'Volver a mostrar', unhide_all: 'Volver a mostrar todo', unhide_all_done: 'Todo vuelve a mostrarse', undo: 'Deshacer', hidden_badge: 'Fuera de las listas',
+    hidden_title: 'Canales y categorías ocultos', hidden_sub: 'Ya no aparecen en el top ni en las categorías. La búsqueda los sigue encontrando, y lo que sigues nunca se oculta.',
+    hidden_channels_n: 'Canales ({n})', hidden_categories_n: 'Categorías ({n})', hidden_empty: 'Nada oculto. Haz clic en el ojo tachado de una tarjeta del top o de una categoría.', hidden_footer: '{n} oculto(s) aquí · Gestionar',
+    hidden_channel_done: '{u} ya no aparecerá en el top ni en las categorías', hidden_category_done: '«{c}» ya no aparecerá en el top ni en la cuadrícula',
   },
 }
 

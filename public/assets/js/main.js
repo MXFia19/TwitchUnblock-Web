@@ -466,6 +466,19 @@ function bindGlobal() {
       e.stopPropagation()
       return togglePin(pin.dataset.pin)
     }
+    // Œil barré d'une carte du top ou d'une catégorie, et « Réafficher »
+    // (réglages, page d'une chaîne, en-tête d'une catégorie) : avant la
+    // carte elle-même.
+    const hide = e.target.closest('[data-hide-channel], [data-hide-cat], [data-unhide-channel], [data-unhide-cat]')
+    if (hide) {
+      e.preventDefault()
+      e.stopPropagation()
+      const d = hide.dataset
+      if (d.hideChannel) return askHide(d)
+      if (d.hideCat) return hideCategory(d.hideCat, d.hideCatName, d.hideCatBox)
+      if (d.unhideChannel) return unhideChannel(d.unhideChannel)
+      return unhideCategory(d.unhideCat)
+    }
     // Pseudo et catégorie d'une carte : avant la carte elle-même (le direct).
     const catLink = e.target.closest('[data-category]')
     if (catLink) {
@@ -580,12 +593,21 @@ const actions = {
     if (!c) return
     const list = followedCats()
     store.prefs.followedCategories = isCatFollowed(c.id) ? list.filter((x) => x.id !== c.id) : [{ id: c.id, name: c.name, box: c.box }, ...list].slice(0, 200)
+    // Suivre une catégorie la retire des masquées.
+    if (isCatFollowed(c.id)) store.prefs.hiddenCategories = hiddenCats().filter((x) => x.id !== c.id)
     store.savePrefs()
     const b = e.target.closest('[data-action="cat-follow"]')
     const on = isCatFollowed(c.id)
     b.classList.toggle('on', on)
     b.innerHTML = `${icon('heart', 15)}<span>${esc(t(on ? 'following' : 'follow'))}</span>`
+    // Ses lives repassent dans le top, le bouton « Masquer » s'en va.
+    refreshHidden()
   },
+  'manage-hidden': () => {
+    openSettings()
+    requestAnimationFrame(() => $('#set-hidden')?.scrollIntoView({ block: 'start' }))
+  },
+  'unhide-all': () => unhideAll(),
   'whats-new': () => showWhatsNew(CHANGELOG, 'changelog'),
   feedback: () => openFeedback(),
   'feedback-bug': () => openFeedback('bug'),
@@ -655,8 +677,20 @@ function pinButton(login, cls) {
   return `<button class="${cls}${on ? ' on' : ''}" type="button" data-pin="${esc(login)}" title="${label}" aria-label="${label}">${icon('pin', 15)}</button>`
 }
 
-/** `pinnable` : chaîne suivie, qu'on peut épingler en tête des suivies. */
-function streamCard(s, { pinnable = false } = {}) {
+/** Œil barré d'une carte de découverte (top, lives d'une catégorie), à la
+ *  place de l'épingle : jamais sur une chaîne suivie ou épinglée. La
+ *  catégorie n'est proposée que si `hideCat` et qu'elle n'est pas suivie. */
+function hideButton(s, hideCat) {
+  if (followedOrPinned(s.login)) return ''
+  const label = esc(t('hide_menu'))
+  const game = hideCat && s.gameId && !isCatFollowed(s.gameId)
+  return `<button class="mhide" type="button" data-hide-channel="${esc(s.login)}" data-hide-name="${esc(s.name)}"${game
+    ? ` data-hide-game="${esc(s.gameId)}" data-hide-game-name="${esc(s.game)}"` : ''} title="${label}" aria-label="${label}">${icon('eyeOff', 15)}</button>`
+}
+
+/** `pinnable` : chaîne suivie, qu'on peut épingler en tête des suivies.
+ *  `hideable` : carte de découverte, qu'on peut masquer (voir hideButton). */
+function streamCard(s, { pinnable = false, hideable = false, hideCat = true } = {}) {
   const inMulti = multi.has(s.login)
   return `
     <a class="card stream-card" href="/${esc(s.login)}" data-live="${esc(s.login)}">
@@ -665,7 +699,7 @@ function streamCard(s, { pinnable = false } = {}) {
         <span class="pill live">${esc(t('live_now'))}</span>
         <span class="pill viewers">${icon('eye', 12)}${esc(formatViewers(s.viewers))}</span>
         ${s.startedAt ? `<span class="pill uptime" data-started="${esc(s.startedAt)}">${esc(uptimeSince(s.startedAt))}</span>` : ''}
-        ${pinnable ? pinButton(s.login, 'mpin') : ''}
+        ${pinnable ? pinButton(s.login, 'mpin') : hideable ? hideButton(s, hideCat) : ''}
         <button class="madd${inMulti ? ' on' : ''}" type="button" data-multi-add="${esc(s.login)}" data-multi-name="${esc(s.name)}" title="${esc(t(inMulti ? 'multi_remove' : 'multi_add'))}">${icon(inMulti ? 'check' : 'plus', 16)}</button>
       </div>
       <div class="card-body">
@@ -747,10 +781,13 @@ function toggleLocalFollow(login) {
   const l = String(login).toLowerCase()
   const list = localFollows()
   store.prefs.localFollows = list.includes(l) ? list.filter((x) => x !== l) : [l, ...list].slice(0, 300)
+  // Suivre une chaîne la retire des masquées.
+  if (!list.includes(l)) store.prefs.hiddenChannels = hiddenChannels().filter((x) => x.login !== l)
   store.savePrefs()
   state.loaded.followed = 0
   // Sans compte (sinon la liste du compte n'est pas encore connue ici).
   if (!session.token) syncPush()
+  refreshHidden()
 }
 
 // ── Notifications de live (site installé, Web Push) ────────────────────────
@@ -900,6 +937,8 @@ async function loadFollowed({ silent = false } = {}) {
       api.getFollowedLogins(session.userId).catch(() => null),
     ])
     state.accountFollows = logins ?? []
+    // Une chaîne suivie sur Twitch n'est jamais masquée du top.
+    if (hiddenChannels().length) paintTop()
     const all = [...new Set([...(logins ?? []), ...local])]
     const channels = await api.getChannelsByLogins(all).catch(() => null)
     if (session.token !== token) return   // déconnecté entre-temps
@@ -995,6 +1034,197 @@ function renderOffline(list, anyLive = false) {
     : emptyState(t(anyLive ? 'offline_all_live' : 'offline_none'), anyLive ? 'radio' : 'heart')
 }
 
+// ── Chaînes et catégories masquées ─────────────────────────────────────
+// Elles sortent des listes de découverte : le top, la grille « Toutes »
+// des catégories et les lives d'une catégorie. Ce qu'on suit (compte ou
+// appareil), ce qu'on épingle et les catégories suivies ne sont jamais
+// masqués ; la recherche, la page d'une chaîne et une catégorie ouverte
+// directement montrent tout. Sur cet appareil (préférences) ; l'export les
+// emporte, au même format que l'app iOS (clé racine `hidden`).
+const HIDDEN_MAX_CHANNELS = 500
+const HIDDEN_MAX_CATS = 200
+const hiddenChannels = () => (Array.isArray(store.prefs.hiddenChannels) ? store.prefs.hiddenChannels : [])
+const hiddenCats = () => (Array.isArray(store.prefs.hiddenCategories) ? store.prefs.hiddenCategories : [])
+const isChannelHidden = (login) => hiddenChannels().some((x) => x.login === String(login).toLowerCase())
+const isCatHidden = (id) => Boolean(id) && hiddenCats().some((x) => x.id === String(id))
+/** Suivie (compte ou appareil) ou épinglée : jamais masquée. */
+const followedOrPinned = (login) => isLocallyFollowed(login) || isPinned(login) || (state.accountFollows ?? []).includes(String(login).toLowerCase())
+/** Lives d'une catégorie ouverte : seule la chaîne compte (la catégorie
+ *  elle-même, masquée ou non, reste consultable). */
+const showsChannel = (login) => followedOrPinned(login) || !isChannelHidden(login)
+/** Top : ni la chaîne ni la catégorie masquées — une catégorie suivie
+ *  l'emporte sur son masquage, comme dans la grille. */
+const showsStream = (s) => followedOrPinned(s.login) || (!isChannelHidden(s.login) && (isCatFollowed(s.gameId) || !isCatHidden(s.gameId)))
+const showsCat = (c) => isCatFollowed(c.id) || !isCatHidden(c.id)
+
+const cleanHiddenChannel = (x) => {
+  const login = typeof x?.login === 'string' && /^[a-zA-Z0-9_]{1,25}$/.test(x.login) ? x.login.toLowerCase() : null
+  if (!login || typeof x.at !== 'number' || !Number.isFinite(x.at) || x.at < 0) return null
+  return { login, name: typeof x.name === 'string' && x.name.trim() ? x.name.trim().slice(0, 100) : login, at: Math.round(x.at) }
+}
+const cleanHiddenCat = (x) => {
+  const id = (typeof x?.id === 'string' || typeof x?.id === 'number') && /^\d+$/.test(String(x.id)) ? String(x.id) : null
+  if (!id || typeof x.at !== 'number' || !Number.isFinite(x.at) || x.at < 0) return null
+  return {
+    id,
+    name: typeof x.name === 'string' && x.name.trim() ? x.name.trim().slice(0, 100) : id,
+    box: typeof x.box === 'string' && x.box.startsWith('https://') ? x.box : '',
+    at: Math.round(x.at),
+  }
+}
+
+/** Réunit deux listes de masqués (sauvegarde, annulation) : par clé, le
+ *  `at` le plus récent l'emporte ; plus récents d'abord, `max` au plus.
+ *  `incoming` est validé par `clean`. */
+function mergeHidden(mine, incoming, clean, keyOf, max) {
+  const byKey = new Map(mine.map((x) => [keyOf(x), x]))
+  for (const raw of Array.isArray(incoming) ? incoming : []) {
+    const x = clean(raw)
+    if (!x) continue
+    const cur = byKey.get(keyOf(x))
+    if (!cur || x.at > (cur.at ?? 0)) byKey.set(keyOf(x), x)
+  }
+  return [...byKey.values()].sort((a, b) => (b.at ?? 0) - (a.at ?? 0)).slice(0, max)
+}
+
+/** Œil barré d'une carte de live : la chaîne, ou sa catégorie (petite
+ *  feuille) quand elle est connue et proposée. */
+function askHide(d) {
+  const login = d.hideChannel
+  const name = d.hideName || login
+  const gameId = d.hideGame
+  const gameName = d.hideGameName || gameId
+  if (!gameId) return hideChannel(login, name)
+  openSheet(`
+    <div class="sheet-head"><h2>${esc(t('hide_menu'))}</h2><button class="icon-btn" type="button" data-sheet-close>${icon('x', 20)}</button></div>
+    <div class="sheet-group">
+      <button class="sheet-row" type="button" data-hide-pick="channel">${icon('user', 18)}<span>${esc(t('hide_channel'))}</span><small class="muted">${esc(name)}</small></button>
+      <button class="sheet-row" type="button" data-hide-pick="category">${icon('gamepad', 18)}<span>${esc(t('hide_category', { c: gameName }))}</span></button>
+      <button class="sheet-row" type="button" data-sheet-close>${icon('x', 18)}<span>${esc(t('cancel'))}</span></button>
+    </div>`)
+  $('#sheet').onclick = (e) => {
+    if (e.target.closest('[data-sheet-close]')) return closeSheet()
+    const pick = e.target.closest('[data-hide-pick]')?.dataset.hidePick
+    if (!pick) return
+    closeSheet()
+    if (pick === 'channel') hideChannel(login, name)
+    else hideCategory(gameId, gameName)
+  }
+}
+
+function hideChannel(login, name) {
+  const l = String(login).toLowerCase()
+  if (!/^[a-z0-9_]{1,25}$/.test(l) || followedOrPinned(l)) return
+  const label = String(name || l).slice(0, 100)
+  store.prefs.hiddenChannels = [{ login: l, name: label, at: Date.now() }, ...hiddenChannels().filter((x) => x.login !== l)].slice(0, HIDDEN_MAX_CHANNELS)
+  store.savePrefs()
+  refreshHidden()
+  showNotice({ title: t('hidden_channel_done', { u: label }), action: t('undo'), icon: 'eyeOff', onAction: () => unhideChannel(l) })
+}
+
+function hideCategory(id, name, box = '') {
+  id = String(id)
+  if (!/^\d+$/.test(id) || isCatFollowed(id)) return
+  const label = String(name || id).slice(0, 100)
+  store.prefs.hiddenCategories = [{ id, name: label, box: String(box || '').startsWith('https://') ? box : '', at: Date.now() },
+    ...hiddenCats().filter((x) => x.id !== id)].slice(0, HIDDEN_MAX_CATS)
+  store.savePrefs()
+  refreshHidden()
+  showNotice({ title: t('hidden_category_done', { c: label }), action: t('undo'), icon: 'eyeOff', onAction: () => unhideCategory(id) })
+}
+
+function unhideChannel(login) {
+  const l = String(login).toLowerCase()
+  store.prefs.hiddenChannels = hiddenChannels().filter((x) => x.login !== l)
+  store.savePrefs()
+  refreshHidden()
+}
+
+function unhideCategory(id) {
+  store.prefs.hiddenCategories = hiddenCats().filter((x) => x.id !== String(id))
+  store.savePrefs()
+  refreshHidden()
+}
+
+/** « Tout réafficher » : sans confirmation, comme les autres actions du
+ *  site, mais avec « Annuler » pendant 10 s. */
+function unhideAll() {
+  const channels = hiddenChannels()
+  const cats = hiddenCats()
+  if (!channels.length && !cats.length) return
+  store.prefs.hiddenChannels = []
+  store.prefs.hiddenCategories = []
+  store.savePrefs()
+  refreshHidden()
+  showNotice({
+    title: t('unhide_all_done'),
+    action: t('undo'),
+    icon: 'eyeOff',
+    onAction: () => {
+      // Réunies à ce qui aurait été masqué entre-temps.
+      store.prefs.hiddenChannels = mergeHidden(hiddenChannels(), channels, cleanHiddenChannel, (x) => x.login, HIDDEN_MAX_CHANNELS)
+      store.prefs.hiddenCategories = mergeHidden(hiddenCats(), cats, cleanHiddenCat, (x) => x.id, HIDDEN_MAX_CATS)
+      store.savePrefs()
+      refreshHidden()
+    },
+  })
+}
+
+/** Ligne « N masqués ici · Gérer » sous une liste (rien si aucun). */
+function hiddenFoot(sel, n) {
+  const el = $(sel)
+  if (el) el.innerHTML = n > 0 ? `<button class="btn ghost sm" type="button" data-action="manage-hidden">${icon('eyeOff', 15)}<span>${esc(t('hidden_footer', { n }))}</span></button>` : ''
+}
+
+/** « Masquée · Réafficher » d'une chaîne (page de la chaîne). */
+function channelHiddenBadge(login) {
+  return isChannelHidden(login) && !followedOrPinned(login)
+    ? `<button class="btn ghost sm" type="button" data-unhide-channel="${esc(login)}">${icon('eyeOff', 15)}<span>${esc(t('hidden_badge'))} · ${esc(t('unhide'))}</span></button>`
+    : ''
+}
+
+/** En-tête d'une catégorie ouverte : l'œil barré, ou « Masquée ·
+ *  Réafficher » ; rien si elle est suivie. */
+function catHideButton(c) {
+  if (isCatFollowed(c.id)) return ''
+  if (isCatHidden(c.id)) return `<button class="btn ghost sm" type="button" data-unhide-cat="${esc(c.id)}">${icon('eyeOff', 15)}<span>${esc(t('hidden_badge'))} · ${esc(t('unhide'))}</span></button>`
+  const label = esc(t('hide_this_category'))
+  return `<button class="icon-btn sm" type="button" data-hide-cat="${esc(c.id)}" data-hide-cat-name="${esc(c.name)}" data-hide-cat-box="${esc(c.box ?? '')}" title="${label}" aria-label="${label}">${icon('eyeOff', 18)}</button>`
+}
+
+/** Section des réglages : les masqués, chacun avec son ✕. */
+function hiddenSectionInner() {
+  const channels = hiddenChannels()
+  const cats = hiddenCats()
+  const chip = (attr, key, name) => `<span class="chip"><span>${esc(name)}</span><button type="button" ${attr}="${esc(key)}" title="${esc(t('unhide'))}" aria-label="${esc(t('unhide'))} · ${esc(name)}">${icon('x', 14)}</button></span>`
+  return `
+    <h3>${esc(t('hidden_title'))}</h3>
+    <p class="muted small">${esc(t('hidden_sub'))}</p>
+    ${!channels.length && !cats.length ? `<p class="muted small hidden-empty">${esc(t('hidden_empty'))}</p>` : `
+      ${channels.length ? `<p class="hidden-list-title">${esc(t('hidden_channels_n', { n: channels.length }))}</p>
+        <div class="chips hidden-chips">${channels.map((x) => chip('data-unhide-channel', x.login, x.name || x.login)).join('')}</div>` : ''}
+      ${cats.length ? `<p class="hidden-list-title">${esc(t('hidden_categories_n', { n: cats.length }))}</p>
+        <div class="chips hidden-chips">${cats.map((x) => chip('data-unhide-cat', x.id, x.name || x.id)).join('')}</div>` : ''}
+      <button class="btn ghost sm" type="button" data-action="unhide-all">${icon('eye', 15)}<span>${esc(t('unhide_all'))}</span></button>`}`
+}
+
+/** Après un masquage ou un réaffichage (ou un suivi) : tout ce qui en
+ *  dépend est repeint, sans recharger les listes. */
+function refreshHidden() {
+  paintTop()
+  fillTop()
+  paintCats()
+  if (cat.current) {
+    paintCatStreams()
+    const slot = $('#cat-hide-slot')
+    if (slot) slot.innerHTML = catHideButton(cat.current)
+  }
+  const ch = $('#channel-hidden-slot')
+  if (ch) ch.innerHTML = channelHiddenBadge(ch.dataset.login)
+  const set = $('#set-hidden')
+  if (set) set.innerHTML = hiddenSectionInner()
+}
+
 // ── Sous-onglets de l'accueil : Suivies | Top | Hors ligne ───────────────
 const HOME_TABS = ['followed', 'top', 'offline']
 function applyHomeTab() {
@@ -1012,16 +1242,24 @@ function setHomeTab(tab) {
 }
 
 // ── Catégories ─────────────────────────────────────────────────────────
-const cat = { tab: 'all', items: [], cursor: null, q: '', loaded: 0, current: null, streamsCursor: null, locked: false }
+const cat = { tab: 'all', items: [], cursor: null, q: '', loaded: 0, ready: false, current: null, streams: null, streamsCursor: null, locked: false }
 const followedCats = () => store.prefs.followedCategories ?? []
 /** Jaquette en 285×380 quelle que soit la taille enregistrée (les catégories
  *  suivies gardent l'adresse en 188×250 des versions précédentes). */
 const boxArt = (u) => String(u || '').replace(/-\d+x\d+(\.(?:jpe?g|png|webp))$/i, '-285x380$1')
 const isCatFollowed = (id) => followedCats().some((c) => c.id === id)
 
-function catCard(c) {
-  return `<a class="cat-card" href="/directory/category/${esc(encodeURIComponent(c.slug || c.id))}" data-cat="${esc(c.id)}" data-cat-name="${esc(c.name)}" data-cat-slug="${esc(c.slug ?? '')}" data-cat-box="${esc(c.box)}">
-    <div class="cat-box"><img src="${esc(boxArt(c.box))}" alt="" loading="lazy" decoding="async"></div>
+/** `hideable` : grille « Toutes » — œil barré pour la masquer, ou, si elle
+ *  l'est déjà (résultats d'une recherche), carte atténuée et œil pour la
+ *  réafficher. Rien sur une catégorie suivie. */
+function catCard(c, { hideable = false } = {}) {
+  const can = hideable && !isCatFollowed(c.id)
+  const hidden = can && isCatHidden(c.id)
+  const btn = !can ? ''
+    : hidden ? `<button class="chide on" type="button" data-unhide-cat="${esc(c.id)}" title="${esc(t('unhide'))}" aria-label="${esc(t('unhide'))}">${icon('eyeOff', 15)}</button>`
+    : `<button class="chide" type="button" data-hide-cat="${esc(c.id)}" data-hide-cat-name="${esc(c.name)}" data-hide-cat-box="${esc(c.box ?? '')}" title="${esc(t('hide_this_category'))}" aria-label="${esc(t('hide_this_category'))}">${icon('eyeOff', 15)}</button>`
+  return `<a class="cat-card${hidden ? ' is-hidden' : ''}" href="/directory/category/${esc(encodeURIComponent(c.slug || c.id))}" data-cat="${esc(c.id)}" data-cat-name="${esc(c.name)}" data-cat-slug="${esc(c.slug ?? '')}" data-cat-box="${esc(c.box)}">
+    <div class="cat-box"><img src="${esc(boxArt(c.box))}" alt="" loading="lazy" decoding="async">${btn}</div>
     <h3 title="${esc(c.name)}">${esc(c.name)}</h3>
     ${c.viewers != null ? `<p class="meta">${icon('eye', 12)} ${esc(formatViewers(c.viewers))}</p>` : ''}
   </a>`
@@ -1032,20 +1270,23 @@ async function loadCategories({ more = false } = {}) {
   for (const b of $$('#cat-seg [data-cat-tab]')) b.classList.toggle('active', b.dataset.catTab === cat.tab)
   $('#cat-search-wrap').hidden = cat.tab !== 'all'
   $('#cat-more').innerHTML = ''
+  $('#cat-hidden').innerHTML = ''
   if (cat.tab === 'followed') {
     const list = followedCats()
     if (!list.length) { grid.innerHTML = emptyState(t('cat_followed_empty_web'), 'heart'); return }
-    grid.innerHTML = list.map(catCard).join('')
+    grid.innerHTML = list.map((c) => catCard(c)).join('')
     // Audience à jour, triées de la plus regardée à la moins regardée.
     try {
       const fresh = await api.getCategoriesByIds(list.map((c) => c.id))
       if (cat.tab !== 'followed') return
       const byId = Object.fromEntries(fresh.map((c) => [c.id, c]))
-      grid.innerHTML = list.map((c) => byId[c.id] ?? c).sort((a, b) => (b.viewers ?? 0) - (a.viewers ?? 0)).map(catCard).join('')
+      grid.innerHTML = list.map((c) => byId[c.id] ?? c).sort((a, b) => (b.viewers ?? 0) - (a.viewers ?? 0)).map((c) => catCard(c)).join('')
     } catch {}
     return
   }
   if (!more) grid.innerHTML = skeleton(12, 'cat')
+  // Pas de repeinte (masquage) pendant le chargement ni après un échec.
+  cat.ready = false
   try {
     if (cat.q) {
       cat.items = await api.searchCategories(cat.q); cat.cursor = null
@@ -1056,11 +1297,22 @@ async function loadCategories({ more = false } = {}) {
       cat.locked = page.locked
     }
     cat.loaded = Date.now()
-    grid.innerHTML = cat.items.length ? cat.items.map(catCard).join('') : emptyState(t('no_result'), 'search')
+    cat.ready = true
+    paintCats()
     if (!cat.q) $('#cat-more').innerHTML = moreHtml({ cursor: cat.cursor, locked: cat.locked }, 'cat-more')
   } catch {
     grid.innerHTML = emptyState(t('err_loading'), 'refresh')
   }
+}
+
+/** Grille « Toutes » : sans les catégories masquées (les suivies restent).
+ *  Pendant une recherche, tout est montré, les masquées atténuées. Les
+ *  pages de 40 tirées de 100 restent pleines à quelques cartes près. */
+function paintCats() {
+  if (cat.tab !== 'all' || !cat.ready) return
+  const list = cat.q ? cat.items : cat.items.filter(showsCat)
+  $('#cat-grid').innerHTML = list.length ? list.map((c) => catCard(c, { hideable: true })).join('') : emptyState(t('no_result'), 'search')
+  hiddenFoot('#cat-hidden', cat.items.length - list.length)
 }
 
 /** « Charger plus », ou l'invitation à se connecter quand Twitch refuse la
@@ -1087,6 +1339,7 @@ async function openCategory(c, { more = false } = {}) {
           <select id="cat-lang" aria-label="${esc(t('cat_lang'))}">${catLangOptions(store.prefs.catLang)}</select>
         </label>
         <button class="btn ghost sm follow-local${on ? ' on' : ''}" type="button" data-action="cat-follow">${icon('heart', 15)}<span>${esc(t(on ? 'following' : 'follow'))}</span></button>
+        <span class="hide-slot" id="cat-hide-slot">${catHideButton(c)}</span>
       </div>
       <div class="grid${store.prefs.homeList ? ' as-list' : ''}" id="cat-streams">${skeleton(8)}</div>
       <div class="load-more" id="cat-streams-more"></div>`
@@ -1097,19 +1350,28 @@ async function openCategory(c, { more = false } = {}) {
       openCategory(c)
     })
     window.scrollTo({ top: 0 })
+    cat.streams = null
   }
   try {
     const page = await api.getCategoryStreams(c.id, more ? cat.streamsCursor : null, catLangCode())
     if (cat.current !== c) return
     cat.streamsCursor = page.cursor
-    const grid = $('#cat-streams')
-    const html = page.items.map(streamCard).join('')
-    if (more) grid.insertAdjacentHTML('beforeend', html)
-    else grid.innerHTML = html || emptyState(t('no_live'))
+    // Lives bruts gardés : un masquage repeint la grille sans recharger.
+    cat.streams = more ? [...(cat.streams ?? []), ...page.items] : page.items
+    paintCatStreams()
     $('#cat-streams-more').innerHTML = moreHtml(page, 'cat-streams-more')
   } catch {
     if (!more) $('#cat-streams').innerHTML = emptyState(t('err_loading'), 'refresh')
   }
+}
+
+/** Lives d'une catégorie ouverte, sans les chaînes masquées (la catégorie
+ *  elle-même reste consultable, même masquée). */
+function paintCatStreams() {
+  const grid = $('#cat-streams')
+  if (!grid || !cat.streams) return
+  const list = cat.streams.filter((s) => showsChannel(s.login))
+  grid.innerHTML = list.length ? list.map((s) => streamCard(s, { hideable: true, hideCat: false })).join('') : emptyState(t('no_live'))
 }
 
 function closeCategory() {
@@ -1145,6 +1407,8 @@ function setupCategories() {
   })
   $('#cat-grid').addEventListener('click', (e) => {
     if (e.ctrlKey || e.metaKey || e.shiftKey || e.altKey || e.button !== 0) return
+    // L'œil d'une carte : géré par bindGlobal (cet écouteur passe avant).
+    if (e.target.closest('[data-hide-cat], [data-unhide-cat]')) return
     const c = e.target.closest('[data-cat]')
     if (c) openCategory({ id: c.dataset.cat, name: c.dataset.catName, slug: c.dataset.catSlug, box: c.dataset.catBox })
   })
@@ -1161,7 +1425,7 @@ async function loadTop(language, { silent = false } = {}) {
   for (const b of $$('#top-seg [data-lang]')) b.classList.toggle('active', b.dataset.lang === language)
   const grid = $('#top-grid')
   // Un « Charger plus » en cours n'ajoute rien à la liste qui repart.
-  if (!silent) { grid.innerHTML = skeleton(8); $('#top-more').innerHTML = ''; state.top = null }
+  if (!silent) { grid.innerHTML = skeleton(8); $('#top-more').innerHTML = ''; $('#top-hidden').innerHTML = ''; state.top = null }
   try {
     const code = language === 'all' ? null : topLangCode()
     const page = await api.getTopStreams(code)
@@ -1169,12 +1433,86 @@ async function loadTop(language, { silent = false } = {}) {
     // « Charger plus » cliqué pendant la relecture silencieuse : elle ne
     // remplace pas le top qu'il agrandit.
     if (silent && topExtended()) return
-    state.top = { code, items: page.items, cursor: page.cursor, locked: page.locked, pages: 1 }
-    grid.innerHTML = page.items.length ? page.items.map(streamCard).join('') : emptyState(t('no_live'))
+    const top = { code, items: page.items, cursor: page.cursor, locked: page.locked, pages: 1, extra: [] }
+    // Des lives masqués : le complément d'abord, pour ne peindre qu'une fois.
+    if (topNeedsExtra(top)) {
+      top.extra = await topExtraFor(top)
+      if (state.topLang !== language || (silent && topExtended())) return
+    }
+    state.top = top
+    paintTop()
     $('#top-more').innerHTML = moreHtml(page, 'top-more')
   } catch {
     if (!silent) grid.innerHTML = emptyState(t('err_loading'), 'refresh')
   }
+}
+
+// ── Top et lives masqués ────────────────────────────────────────────────
+// Le top est la seule liste courte (24 lives, puis 30 par « Charger plus ») :
+// quand des lives y sont masqués, la suite du top le complète.
+const TOP_SHOWN = 24
+const topExtra = new Map()   // langue (code, ou 'all') → { at, items, pending }
+
+/** Lives du top à afficher : ceux de Twitch, dans son ordre, sans les
+ *  masqués ; s'il en manque pour faire 24, ceux du complément, sans doublon
+ *  et seulement sous l'audience du dernier live du top. */
+function topShown(top) {
+  const out = top.items.filter(showsStream)
+  if (out.length >= TOP_SHOWN || !top.extra?.length) return out
+  const seen = new Set(top.items.map((s) => s.login))
+  const floor = top.items.at(-1)?.viewers ?? Infinity
+  const add = top.extra.filter((s) => s.login && !seen.has(s.login) && seen.add(s.login) && s.viewers <= floor && showsStream(s))
+  return [...out, ...add.sort((a, b) => b.viewers - a.viewers).slice(0, TOP_SHOWN - out.length)]
+}
+
+/** Complément utile : des lives du top sont masqués et il en reste moins
+ *  de 24. Hors de ce cas, rien ne change (aucune requête de plus). */
+const topNeedsExtra = (top) => top.items.some((s) => !showsStream(s)) && top.items.filter(showsStream).length < TOP_SHOWN
+
+/** Complément du top : sa page suivante (api.getTopStreamsAfter, Client-ID
+ *  Android), gardée 5 min par langue — le top est relu chaque minute. Un
+ *  refus de Twitch vaut une liste vide pour 5 min ; une panne n'est pas
+ *  retenue. Ne lève jamais. */
+function topExtraFor(top) {
+  const key = top.code ?? 'all'
+  const c = topExtra.get(key)
+  if (c?.pending) return c.pending
+  if (c && Date.now() - c.at < 5 * 60_000) return Promise.resolve(c.items)
+  const after = top.cursor?.next
+  if (!after || top.cursor.blocked) return Promise.resolve(c?.items ?? [])
+  const old = c?.items ?? []
+  const pending = api.getTopStreamsAfter(top.code, after)
+    .then((r) => {
+      const items = r.refused ? [] : r.items
+      topExtra.set(key, { at: Date.now(), items })
+      return items
+    })
+    .catch(() => {
+      topExtra.set(key, { at: 0, items: old })
+      return old
+    })
+  topExtra.set(key, { at: c?.at ?? 0, items: old, pending })
+  return pending
+}
+
+function paintTop() {
+  const top = state.top
+  const grid = $('#top-grid')
+  if (!top || !grid) return
+  const shown = topShown(top)
+  grid.innerHTML = shown.length ? shown.map((s) => streamCard(s, { hideable: true })).join('') : emptyState(t('no_live'))
+  hiddenFoot('#top-hidden', top.items.filter((s) => !showsStream(s)).length)
+}
+
+/** Après un masquage : le complément, s'il devient utile et manque encore. */
+function fillTop() {
+  const top = state.top
+  if (!top || top.extra?.length || !topNeedsExtra(top)) return
+  topExtraFor(top).then((items) => {
+    if (state.top !== top || !items.length) return
+    top.extra = items
+    paintTop()
+  })
 }
 
 /** « Charger plus » du top : 30 lives de plus, ajoutés sans doublon (les
@@ -1197,7 +1535,8 @@ async function loadTopMore() {
     // les relectures automatiques continuent.
     if (added.length) top.pages++
     else if (page.cursor) toast(t('err_loading'), 'error')
-    $('#top-grid').insertAdjacentHTML('beforeend', added.map(streamCard).join(''))
+    // Repeint en entier : les lives du complément rejoignent leur place.
+    paintTop()
     $('#top-more').innerHTML = moreHtml(top, 'top-more')
   } catch {
     if (btn) btn.disabled = false
@@ -1541,6 +1880,7 @@ function renderSuggest() {
     <button type="button" class="suggest-row${i === suggestIndex ? ' active' : ''}" data-pick="${esc(s.login)}">
       ${s.profileImageURL ? `<img class="avatar xs" src="${esc(s.profileImageURL)}" alt="">` : `<span class="avatar xs placeholder">${icon('user', 14)}</span>`}
       <span class="suggest-name">${esc(s.displayName || s.login)}</span>
+      ${isChannelHidden(s.login) ? `<span class="suggest-hidden" title="${esc(t('hidden_badge'))}">${icon('eyeOff', 14)}</span>` : ''}
       ${s.stream ? `<span class="pill live sm">${esc(formatViewers(s.stream.viewersCount))}</span>` : ''}
     </button>`).join('')
   box.hidden = false
@@ -1923,6 +2263,7 @@ function renderChannel(keyword = '') {
         ${avatar ? `<img class="avatar lg${live ? ' ring' : ''}" src="${esc(avatar)}" alt="">` : ''}
         <div><h2>${esc(name)}</h2><p class="muted">@${esc(login)}</p></div>
         <button class="btn ghost sm follow-local${isLocallyFollowed(login) ? ' on' : ''}" type="button" data-action="follow-local" data-follow="${esc(login)}" title="${esc(t('follow_local_sub'))}">${followLocalInner(isLocallyFollowed(login))}</button>
+        <span class="hide-slot" id="channel-hidden-slot" data-login="${esc(login)}">${channelHiddenBadge(login)}</span>
       </div>
       ${status}
     </section>
@@ -2814,7 +3155,7 @@ function notifyFeedback(r) {
 
 /** Bandeau cliquable en bas de l'écran, avec une action : plus visible
  *  qu'un toast. Il s'efface seul au bout de 10 s. */
-function showNotice({ title, text = '', action = '', onAction }) {
+function showNotice({ title, text = '', action = '', onAction, icon: iconName = 'inbox' }) {
   let el = $('#notice')
   if (!el) {
     el = document.createElement('div')
@@ -2823,7 +3164,7 @@ function showNotice({ title, text = '', action = '', onAction }) {
     el.setAttribute('role', 'status')
     document.body.appendChild(el)
   }
-  el.innerHTML = `<span class="notice-ic">${icon('inbox', 18)}</span>
+  el.innerHTML = `<span class="notice-ic">${icon(iconName, 18)}</span>
     <span class="notice-text"><b>${esc(title)}</b>${text ? `<small>${esc(text)}</small>` : ''}</span>
     ${action ? `<button class="btn sm primary" type="button" data-notice-act>${esc(action)}</button>` : ''}
     <button class="icon-btn xs" type="button" data-notice-close aria-label="${esc(t('close'))}">${icon('x', 14)}</button>`
@@ -3172,6 +3513,7 @@ function openSettings() {
       ${toggle('set-homelist', t('home_list'), p.homeList, t('home_list_sub'))}
       ${toggle('set-recent', t('show_recent'), p.showRecent !== false, t('show_recent_sub'))}
     </div>
+    <div class="sheet-section" id="set-hidden">${hiddenSectionInner()}</div>
     <div class="sheet-section">
       <h3>${esc(t('appearance'))}</h3>
       <div class="setting setting-col">
@@ -3372,10 +3714,12 @@ function openSettings() {
 const BACKUP_FORMAT = 'twitchunblock-backup'
 // Réglages exportés : tout sauf ce qui dépend de l'appareil.
 const BACKUP_SKIP = new Set(['volume', 'muted', 'chatOpen'])
+// Exportés à part, hors de `settings` (listes validées à l'import).
+const BACKUP_OWN = new Set(['localFollows', 'followedCategories', 'hiddenChannels', 'hiddenCategories'])
 
 function exportData() {
   const p = store.prefs
-  const settings = Object.fromEntries(Object.entries(p).filter(([k]) => !BACKUP_SKIP.has(k) && k !== 'localFollows' && k !== 'followedCategories'))
+  const settings = Object.fromEntries(Object.entries(p).filter(([k]) => !BACKUP_SKIP.has(k) && !BACKUP_OWN.has(k)))
   const data = {
     format: BACKUP_FORMAT,
     version: 1,
@@ -3384,6 +3728,8 @@ function exportData() {
     follows: [...(p.localFollows ?? [])],
     accountFollows: [...(state.accountFollows ?? [])],
     followedCategories: [...(p.followedCategories ?? [])],
+    // Même forme que l'app iOS ; `at` en millisecondes.
+    hidden: { channels: [...hiddenChannels()], categories: [...hiddenCats()] },
     settings,
   }
   const a = document.createElement('a')
@@ -3419,12 +3765,21 @@ async function importData(file) {
   }
   p.followedCategories = [...cats.values()].slice(0, 200)
 
+  // Masqués (app ou site) : validés, réunis aux nôtres (le `at` le plus
+  // récent l'emporte). Ce qu'on suit maintenant n'y reste pas.
+  const hid = data.hidden && typeof data.hidden === 'object' ? data.hidden : {}
+  const follows = new Set(p.localFollows)
+  p.hiddenChannels = mergeHidden(hiddenChannels(), hid.channels, cleanHiddenChannel, (x) => x.login, HIDDEN_MAX_CHANNELS)
+    .filter((x) => !follows.has(x.login))
+  p.hiddenCategories = mergeHidden(hiddenCats(), hid.categories, cleanHiddenCat, (x) => x.id, HIDDEN_MAX_CATS)
+    .filter((x) => !cats.has(x.id))
+
   // Réglages : seulement les clés connues du site, du même type que la
   // valeur actuelle. Une sauvegarde de l'app iOS apporte les réglages
   // communs (langue, filtres du chat…), qu'elle exporte sous ces noms-là.
   if (data.settings && typeof data.settings === 'object' && !Array.isArray(data.settings)) {
     for (const [k, v] of Object.entries(data.settings)) {
-      if (BACKUP_SKIP.has(k) || !(k in p) || k === 'localFollows' || k === 'followedCategories') continue
+      if (BACKUP_SKIP.has(k) || !(k in p) || BACKUP_OWN.has(k)) continue
       const cur = p[k]
       if (cur === null || typeof cur === typeof v || (Array.isArray(cur) && Array.isArray(v))) p[k] = v
     }
@@ -3442,6 +3797,7 @@ async function importData(file) {
   applyLayout()
   chat.applyPrefs()
   loadFollowed()
+  refreshHidden()
   toast(t('import_done', { n: added }), 'success')
   openSettings()
 }
