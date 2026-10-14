@@ -418,7 +418,7 @@ export function startDiscordBridge({
     }
     return { ok, skipped }
   }
-  const skippedNote = (n) => (n ? ` (${plural(n, 'file')} not sent: only ${PHOTO_TYPES} images, ${MAX_PHOTOS} at most.)` : '')
+  const skippedNote = (n) => (n ? ` (${plural(n, 'file')} not sent: too big, or not a ${PHOTO_TYPES} image — ${MAX_PHOTOS} at most.)` : '')
   /** Captures envoyées au Worker mais pas rangées (Worker pas encore à
    *  jour : il ignore les photos) : la personne le sait. */
   const unsavedNote = (sent, r) => (sent && (Number(r?.photos) || 0) < sent ? ' ⚠️ The screenshot(s) couldn’t be saved — please send them again later.' : '')
@@ -635,7 +635,7 @@ export function startDiscordBridge({
     if (text.startsWith('//')) return   // note privée
     const photos = await photosOf(m.attachments || [])
     if (!text && !photos.ok.length) {
-      if (photos.skipped) say(thread, '⚠️ Nothing sent: only JPEG, PNG or WebP images go through.')
+      if (photos.skipped) say(thread, `⚠️ Nothing sent: too big, or not a ${PHOTO_TYPES} image.`)
       return
     }
     const s = await stateOf(thread)
@@ -676,7 +676,8 @@ export function startDiscordBridge({
 
   const reportModal = (kind, shot) => ({
     custom_id: `report:${kind}`,
-    title: `${kind === 'idea' ? 'Suggest an idea' : 'Report a bug'}${shot ? ' — screenshot attached' : ''}`,
+    // 45 caractères au plus (« Suggest an idea — file ignored (not an image) » : 45)
+    title: `${kind === 'idea' ? 'Suggest an idea' : 'Report a bug'}${shot === 'ok' ? ' — screenshot attached' : shot === 'bad' ? ' — file ignored (not an image)' : ''}`,
     components: [
       row(textInput('text', kind === 'idea' ? 'Your idea' : 'What happened?', 2, {
         min: 5, max: 2000,
@@ -705,14 +706,17 @@ export function startDiscordBridge({
   }
 
   /** Capture passée en option de /bug ou /idea : gardée 10 minutes, le
-   *  temps de remplir le formulaire (une par personne, la dernière). */
+   *  temps de remplir le formulaire (une par personne, la dernière). Un
+   *  fichier qui n'est pas une image n'est pas gardé : le titre du
+   *  formulaire le dit ('ok', 'bad', ou null sans fichier). */
   function keepShot(i, user) {
     const shot = i.data?.resolved?.attachments?.[opt(i, 'screenshot')]
+    const image = /^image\/(jpeg|png|webp)/.test(shot?.content_type || '')
     const now = Date.now()
     for (const [id, s] of st.shots) if (now - s.at > 10 * 60_000) st.shots.delete(id)
-    if (shot) st.shots.set(user.id, { at: now, att: shot })
+    if (image) st.shots.set(user.id, { at: now, att: shot })
     else st.shots.delete(user.id)
-    return Boolean(shot)
+    return shot ? (image ? 'ok' : 'bad') : null
   }
   function takeShot(user) {
     const s = st.shots.get(user.id)
@@ -899,7 +903,7 @@ export function startDiscordBridge({
         const text = field(i, 'text')
         const photos = await photosOf(uploads(i, 'pics'), { reduce: true })
         if (!text && !photos.ok.length) {
-          return photos.skipped ? `❌ Nothing sent: only ${PHOTO_TYPES} images go through.` : '❌ Attach a screenshot (or use “Reply” to write a message).'
+          return photos.skipped ? `❌ Nothing sent: the file was too big, or not a ${PHOTO_TYPES} image.` : '❌ Attach a screenshot (or use “Reply” to write a message).'
         }
         const r = await call({ action: 'userReply', key: a, du: user.id, message: text, photos: photos.ok })
         return 'Sent! The developer will see it.' + skippedNote(photos.skipped) + unsavedNote(photos.ok.length, r)
