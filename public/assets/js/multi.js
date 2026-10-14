@@ -252,7 +252,12 @@ async function start(login, tile) {
       // passeraient pas sur toutes les connexions.
       capLevelToPlayerSize: true,
       liveSyncDuration: 4,
-      maxLiveSyncPlaybackRate: 1.1,
+      // Jamais de changement de vitesse (le son se décalait de l'image) :
+      // trop loin du direct, hls.js saute vers la cible. Les tuiles n'ont pas
+      // de recul à protéger. Doit rester au-dessus de liveSyncDuration
+      // (sinon hls.js refuse la configuration), avec de la marge pour la
+      // cible qu'il relève après des calages (jusqu'à +6 s).
+      liveMaxLatencyDuration: 14,
       maxBufferLength: 12,
       backBufferLength: 10,
     })

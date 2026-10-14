@@ -2648,6 +2648,9 @@ function feedbackInfo() {
     screen: `${screen.width}×${screen.height}`,
     // Ce qui se lisait : la VOD ou la chaîne en cause, pour un bug de lecture.
     watching: w ? [w.kind, w.login, w.kind !== 'live' ? w.id : null].filter(Boolean).join(' ') : null,
+    // Lecteur : moteur, qualité, source, vitesse — de quoi trier un bug de
+    // lecture (désynchro, qualité). Court : le Worker coupe à 600 caractères.
+    player: w && player ? player.debugInfo() : null,
     account: Boolean(session.login),
   }
 }
@@ -2794,7 +2797,7 @@ function photoPicker(box, input, attach, textarea) {
 
 function openFeedback(kind = 'bug', { prefill = '' } = {}) {
   const info = feedbackInfo()
-  const summary = [info.browser, info.os, `v${usage.SITE_VERSION}`, info.page, info.watching].filter(Boolean).join(' · ')
+  const summary = [info.browser, info.os, `v${usage.SITE_VERSION}`, info.page, info.watching, info.player].filter(Boolean).join(' · ')
   let current = FEEDBACK_KINDS.includes(kind) ? kind : 'bug'
   const mine = myFeedback()
   openSheet(`

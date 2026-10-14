@@ -134,16 +134,35 @@ function unmuteLoader(Hls, player) {
 // l'existence d'un segment qu'à la relecture suivante de la liste. Changés en
 // segments ordinaires, ils sont demandés aussitôt : la réponse arrive dès que
 // le segment est fini. On peut alors se tenir juste derrière le dernier
-// segment complet (LIVE_BEHIND_COMPLETE) au lieu de 4 s.
+// segment complet (LIVE_BEHIND_COMPLETE) au lieu de 4 s (LIVE_BEHIND_PLAIN).
+// Seulement pour une qualité fixe : en « Auto », ces segments arrivent au
+// rythme de l'encodeur, et hls.js en concluait que la connexion ne valait
+// que le débit de la qualité jouée — il descendait palier par palier jusqu'en
+// 360p sans jamais remonter (essai du 14/10, caedrel : 1080p → 360p en 74 s).
 const LIVE_BEHIND_COMPLETE = 2.5
+const LIVE_BEHIND_PLAIN = 4
 const PREFETCH_TAG = '#EXT-X-TWITCH-PREFETCH:'
 // Plancher : le retard affiché (heure − horodatage de l'image, liveDelay) ne
 // passe jamais sous 4 s — en dessous, la lecture cale (retour
 // d'utilisateurs). Ce retard, c'est notre distance au dernier segment
 // complet plus le délai de Twitch avant de publier un segment, qui change
 // d'une chaîne à l'autre : la cible de hls.js est relevée d'autant
-// (holdLiveFloor), et un passage sous le seuil recule aussitôt.
+// (holdLiveFloor), et un passage sous le seuil recule (une fois par minute
+// au plus).
 const MIN_LIVE_DELAY = 4
+// Rattrapage du direct : jamais en changeant la vitesse — hls.js passait à
+// ×1,05-×1,1 plusieurs fois par minute, et le son finissait décalé de
+// l'image jusqu'au prochain saut (+10 s ou Direct, retours du 14/10). On
+// saute à la place : une fois au démarrage s'il a été lent (dans ce qui est
+// déjà chargé), puis seulement si le retard dépasse la cible de LIVE_DRIFT
+// pendant LIVE_DRIFT_MS, une fois toutes les LIVE_JUMP_GAP_MS au plus, et
+// jamais après un recul voulu (−10 s : holdingBehind).
+const LIVE_REALIGN = 2
+const LIVE_REALIGN_MS = 10_000
+const LIVE_DRIFT = 5
+const LIVE_DRIFT_MS = 4000
+const LIVE_JUMP_GAP_MS = 30_000
+const LIVE_FLOOR_SEEK_MS = 60_000
 
 function prefetchPlaylistLoader(Hls, player) {
   const Base = Hls.DefaultConfig.loader
@@ -427,6 +446,17 @@ export class Player {
     this.unmute = this.kind === 'vod' ? {} : null
     // Durée des segments annoncés d'avance dans la dernière playlist lue.
     this.prefetchAhead = 0
+    // État du direct remis à zéro à chaque source (qualité, chaîne, Worker) :
+    // la cible d'une chaîne débordait sur la suivante, et n'était pas
+    // réappliquée au nouvel objet hls.
+    this.behindTarget = undefined
+    this.floorCheckAt = 0
+    this.floorSeekAt = 0
+    this.holdingBehind = false
+    this.aligned = false
+    this.alignFrom = 0
+    this.driftSince = 0
+    this.lastRealign = 0
 
     const start = () => {
       if (token !== this.attachToken) return   // vidéo remplacée entre-temps
@@ -453,6 +483,8 @@ export class Player {
     if (token !== this.attachToken) return
 
     if (Hls?.isSupported()) {
+      // « Auto » : la liste maîtresse, hls.js choisit le débit (worker.js).
+      const master = String(this.quality).toLowerCase() === 'auto'
       const hls = new Hls({
         // Rouvrir la requête avec l'adresse corrigée : c'est le point
         // d'accroche que hls.js offre pour réécrire une URL avant envoi.
@@ -467,25 +499,46 @@ export class Player {
         // segments (liveSyncDurationCount: 3), le lecteur se tenait à 18 s du
         // bord — environ 20 s de retard, contre 3 à 4 s une fois avancé à la
         // main. 4 s, c'est deux vrais segments d'avance : bas sans caler.
-        // Quand Twitch annonce ses prochains segments (fast_bread), la cible
-        // passe à LIVE_BEHIND_COMPLETE derrière le dernier segment complet
-        // (withPrefetch).
-        liveSyncDuration: 4,
+        // Quand Twitch annonce ses prochains segments (fast_bread) et que la
+        // qualité est fixe, la cible passe à LIVE_BEHIND_COMPLETE derrière le
+        // dernier segment complet (withPrefetch).
+        liveSyncDuration: LIVE_BEHIND_PLAIN,
         // Une VOD part du début (ou de la reprise) même si sa playlist n'a
         // pas de fin déclarée : sinon hls.js la prend pour un direct et part
         // du bord (VOD reconstruite encore en cours d'écriture, par exemple).
         startPosition: this.kind === 'vod' ? (startAt > 1 ? startAt : 0) : -1,
         // VOD : passages coupés rétablis quand le CDN a encore l'original.
         ...(this.kind === 'vod' ? { fLoader: unmuteLoader(Hls, this) } : {}),
-        // Direct : segments annoncés d'avance par Twitch (voir plus haut), et
-        // rattrapage en douceur (×1,1) quand on a pris du retard.
-        ...(this.kind === 'live' ? { pLoader: prefetchPlaylistLoader(Hls, this), maxLiveSyncPlaybackRate: 1.1 } : {}),
+        // Direct en qualité fixe : segments annoncés d'avance par Twitch
+        // (voir plus haut). Pas de maxLiveSyncPlaybackRate : à 1 (valeur par
+        // défaut), hls.js ne touche plus à la vitesse ; le retard se rattrape
+        // par des sauts (holdLiveFloor, alignLive).
+        ...(this.kind === 'live' && !master ? { pLoader: prefetchPlaylistLoader(Hls, this) } : {}),
       })
       this.hls = hls
       this.directFails = 0
       hls.loadSource(url)
       hls.attachMedia(v)
-      hls.on(Hls.Events.MANIFEST_PARSED, () => this.tryPlay())
+      hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        // « Auto » démarrait toujours en 480p30 ou en dessous (hls.js écarte
+        // les niveaux à 60 i/s au premier choix) : départ au plus haut niveau
+        // jusqu'à 720p. L'adaptation au débit reste active ensuite. hls.js ne
+        // monte jamais vers une cadence plus basse : pas de départ en 720p60
+        // quand la Source est en 1080p50 ou 1080p30, elle deviendrait
+        // inaccessible (essai sur nico_la).
+        if (master) {
+          const lv = hls.levels || []
+          const fps = (l) => l.frameRate || 0
+          let best = -1
+          lv.forEach((l, i) => {
+            if (!(l.height > 0) || l.height > 720) return
+            if (lv.some((o) => o.height > l.height && fps(o) > 0 && fps(o) < fps(l))) return
+            if (best < 0 || l.height > lv[best].height || (l.height === lv[best].height && l.bitrate > lv[best].bitrate)) best = i
+          })
+          if (best >= 0) hls.startLevel = best
+        }
+        this.tryPlay()
+      })
       hls.on(Hls.Events.FRAG_LOADED, () => { this.directFails = 0 })
       // En « Auto » (playlist maître), hls.js choisit le débit : on affiche
       // lequel, sinon on ne sait jamais ce qu'on regarde vraiment.
@@ -592,6 +645,19 @@ export class Player {
   /** Source qui sert le direct, affichée dans le menu ⚙. */
   setLiveSource(id) { this.liveSource = id || null }
 
+  /** Résumé technique joint aux signalements (main.js, feedbackInfo) :
+   *  moteur, qualité, source du direct, vitesse et retard. */
+  debugInfo() {
+    const v = this.video
+    const engine = this.hls
+      ? `hls.js ${window.Hls?.version ?? '?'} ${window.ManagedMediaSource ? 'MMS' : 'MSE'}`
+      : /\.mp4(\?|$)/i.test(v.currentSrc || '') ? 'mp4' : 'native'
+    const q = this.quality ? `${this.quality}${this.autoLevel ? `/${this.autoLevel}` : ''}` : null
+    const lat = this.kind === 'live' ? this.liveDelay() : 0
+    return [engine, q, this.kind === 'live' && this.liveSource ? `src ${this.liveSource}` : null,
+      `rate ${v.playbackRate}`, lat > 0 ? `delay ${lat.toFixed(1)}s` : null].filter(Boolean).join(' · ')
+  }
+
   /** Libellé dans le menu : « Auto · 720p » une fois le débit connu. */
   menuLabel(k) {
     const base = qualityLabel(k)
@@ -614,7 +680,14 @@ export class Player {
       // Bord sans les segments annoncés d'avance : ils ne sont pas encore là.
       // Avancer s'arrête au plancher du retard (MIN_LIVE_DELAY).
       const end = v.seekable.end(v.seekable.length - 1) - (this.prefetchAhead || 0)
-      v.currentTime = Math.max(start, Math.min(end - Math.max(1.5, this.behindTarget ?? LIVE_BEHIND_COMPLETE), v.currentTime + delta))
+      const ceiling = end - Math.max(1.5, this.behindTarget ?? this.minBehind())
+      const to = Math.max(start, Math.min(ceiling, v.currentTime + delta))
+      v.currentTime = to
+      // Recul voulu : plus aucun saut automatique vers le direct (il annulait
+      // le −10 s). Revenu près du bord en avançant : on suit de nouveau.
+      this.aligned = true
+      if (delta < 0) this.holdingBehind = true
+      else if (ceiling - to <= 3) this.holdingBehind = false
     } else {
       const d = Number.isFinite(v.duration) ? v.duration : Infinity
       v.currentTime = Math.max(0, Math.min(d - 1, v.currentTime + delta))
@@ -668,29 +741,91 @@ export class Player {
     // liveSyncPosition suit la cible relevée par holdLiveFloor.
     if (this.hls?.liveSyncPosition) v.currentTime = this.hls.liveSyncPosition
     else if (v.seekable.length) v.currentTime = Math.max(0, v.seekable.end(v.seekable.length - 1) - MIN_LIVE_DELAY - 2)
+    this.holdingBehind = false
+    this.aligned = true
+    this.driftSince = 0
+    this.lastRealign = Date.now()
     if (v.paused) this.tryPlay()
   }
 
-  /** Tient le retard affiché au-dessus de MIN_LIVE_DELAY (voir plus haut),
-   *  toutes les 2 s pendant la lecture d'un direct. */
+  /** Distance minimale au dernier segment complet : plus courte quand les
+   *  segments annoncés d'avance sont demandés (qualité fixe). */
+  minBehind() {
+    return this.prefetchAhead ? LIVE_BEHIND_COMPLETE : LIVE_BEHIND_PLAIN
+  }
+
+  /** Retard sur la position visée par hls.js (cible relevée comprise), en
+   *  secondes ; NaN tant qu'elle n'est pas connue. */
+  liveLag() {
+    const sync = this.hls?.liveSyncPosition
+    return Number.isFinite(sync) ? sync - this.video.currentTime : NaN
+  }
+
+  /** Recalage unique au démarrage d'un direct : s'il a été lent, un saut vers
+   *  la cible dans ce qui est déjà chargé (sans nouveau téléchargement, donc
+   *  sans calage). Rien après LIVE_REALIGN_MS : la dérive prend le relais. */
+  alignLive() {
+    const v = this.video
+    if (this.aligned || !this.hls || v.paused) return
+    const now = Date.now()
+    this.alignFrom ||= now
+    const sync = this.hls.liveSyncPosition
+    // Plage chargée où se trouve la lecture : avant le premier saut de
+    // hls.js vers le direct, la position vaut encore 0, hors de tout tampon.
+    const b = v.buffered
+    let range = -1
+    for (let i = 0; i < b.length; i++) if (b.start(i) - 0.1 <= v.currentTime && v.currentTime < b.end(i)) range = i
+    if (range >= 0 && this.liveLag() > LIVE_REALIGN && b.end(range) - 0.5 > sync) {
+      console.info(`[TwitchUnblock] Direct : recalage de ${this.liveLag().toFixed(1)} s au démarrage.`)
+      v.currentTime = sync
+      this.aligned = true
+      this.lastRealign = now
+    } else if (now - this.alignFrom > LIVE_REALIGN_MS) this.aligned = true
+  }
+
+  /** Tient le retard affiché au-dessus de MIN_LIVE_DELAY (voir plus haut) et
+   *  rattrape une dérive par un saut, toutes les 2 s pendant la lecture d'un
+   *  direct. */
   holdLiveFloor() {
     const v = this.video
     if (this.kind !== 'live' || !this.hls || v.paused) return
     const now = Date.now()
     if (now - (this.floorCheckAt || 0) < 2000) return
+    // Pas de contrôle depuis un moment (pause, onglet en veille) : la dérive
+    // se compte de nouveau depuis la reprise.
+    if (now - (this.floorCheckAt || 0) > 4000) this.driftSince = 0
     this.floorCheckAt = now
+
+    // Dérive : trop loin de la cible pendant LIVE_DRIFT_MS → retour au
+    // direct, sauf après un recul voulu. Une pause longue y revient aussi.
+    const lag = this.liveLag()
+    if (this.holdingBehind || !(lag > LIVE_DRIFT)) this.driftSince = 0
+    else {
+      this.driftSince ||= now
+      if (now - this.driftSince >= LIVE_DRIFT_MS && now - (this.lastRealign || 0) > LIVE_JUMP_GAP_MS) {
+        console.info(`[TwitchUnblock] Direct : dérive de ${lag.toFixed(1)} s, retour au direct.`)
+        this.goLive()
+        return
+      }
+    }
+
     const total = this.liveDelay()
     const behind = this.chatDelay()
     if (!(total > 0) || !(behind > 0)) return
+    // Retard total plus court que la distance au bord : impossible, c'est
+    // l'horloge de l'appareil qui retarde. Plancher sans objet (il reculait
+    // l'image en boucle toutes les 8 à 15 s).
+    if (total < behind - 0.5) return
     // Délai de publication de Twitch = retard total − distance au bord.
     const publish = Math.max(0, total - behind)
-    const want = Math.min(8, Math.max(LIVE_BEHIND_COMPLETE, MIN_LIVE_DELAY + 0.5 - publish))
-    if (Math.abs(want - (this.behindTarget ?? LIVE_BEHIND_COMPLETE)) > 0.4) {
+    const min = this.minBehind()
+    const want = Math.min(8, Math.max(min, MIN_LIVE_DELAY + 0.5 - publish))
+    if (Math.abs(want - (this.behindTarget ?? min)) > 0.4) {
       this.behindTarget = want
       this.hls.config.liveSyncDuration = (this.prefetchAhead || 0) + want
     }
-    // Déjà sous le seuil : on recule tout de suite (une fois toutes les 8 s).
-    if (total < MIN_LIVE_DELAY - 0.2 && now - (this.floorSeekAt || 0) > 8000) {
+    // Déjà sous le seuil : on recule tout de suite (une fois par minute).
+    if (total < MIN_LIVE_DELAY - 0.2 && now - (this.floorSeekAt || 0) > LIVE_FLOOR_SEEK_MS) {
       this.floorSeekAt = now
       v.currentTime = Math.max(0, v.currentTime - (MIN_LIVE_DELAY + 0.5 - total))
     }
@@ -760,6 +895,7 @@ export class Player {
       this.el.live.title = atEdge ? '' : t('go_live')
       const lat = this.liveDelay()
       this.el.latency.textContent = lat > 0 ? `${lat.toFixed(1)} s` : ''
+      this.alignLive()
       this.holdLiveFloor()
     }
     if (this.kind === 'vod') this.updateMutedNote(cur)
