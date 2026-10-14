@@ -15,8 +15,10 @@
 //    - passé à « Done », le bot demande où sortira le correctif, et la
 //      personne est prévenue quand la version sort (« It's live ») ;
 //    - posts « Done » ou « Declined » archivés après un jour sans activité ;
-//    - /bug et /idea : n'importe quel membre signale depuis Discord ; les
-//      réponses lui arrivent en message privé, avec un bouton pour répondre ;
+//    - /bug et /idea : n'importe quel membre signale depuis Discord (une
+//      capture en option de la commande) ; les réponses lui arrivent en
+//      message privé, images jointes, avec deux boutons pour répondre
+//      (« Reply » : texte ; « Send screenshots » : captures) ;
 //    - les retours d'avant le pont reçoivent leur post.
 //  Surveillance (salon privé choisi avec /setup) : Workers en panne, ntfy en
 //  pause, webhook refusé, CI de l'app ou du site en échec ; résumé chaque
@@ -37,9 +39,10 @@
 //  rangée par le Worker (D1), rien sur le disque du VPS.
 // ═══════════════════════════════════════════════════════════════════════════
 
-// GUILDS (salons, posts, étiquettes), GUILD_MESSAGES, MESSAGE_CONTENT
+// GUILDS (salons, posts, étiquettes), GUILD_MESSAGES, DIRECT_MESSAGES (pour
+// renvoyer vers les boutons qui écrit au bot en privé), MESSAGE_CONTENT
 // (intention privilégiée, à activer dans le portail : le texte des messages).
-const INTENTS = (1 << 0) | (1 << 9) | (1 << 15)
+const INTENTS = (1 << 0) | (1 << 9) | (1 << 12) | (1 << 15)
 // Fermetures sans nouvel essai possible.
 const FATAL = new Map([
   [4004, 'token refused (DISCORD_BOT_TOKEN)'],
@@ -78,9 +81,12 @@ const QUICK = [
 // administrateurs du serveur (default_member_permissions « 0 »), et le bot
 // le vérifie aussi.
 const ADMIN = '0'
+// /bug et /idea : capture facultative (type 11, pièce jointe), gardée le
+// temps de remplir le formulaire.
+const screenshotOption = (description) => [{ type: 11, name: 'screenshot', description, required: false }]
 const COMMANDS = [
-  { name: 'bug', description: 'Report a bug in TwitchUnblock (app or website)' },
-  { name: 'idea', description: 'Suggest an idea for TwitchUnblock' },
+  { name: 'bug', description: 'Report a bug in TwitchUnblock (app or website)', options: screenshotOption('A screenshot of the problem (optional)') },
+  { name: 'idea', description: 'Suggest an idea for TwitchUnblock', options: screenshotOption('An image to go with your idea (optional)') },
   { name: 'delete', description: 'Delete this report (run it in its post)', default_member_permissions: ADMIN },
   { name: 'block', description: 'Close this report: the user can no longer write in it', default_member_permissions: ADMIN },
   {
@@ -106,13 +112,22 @@ const COMMANDS = [
   { name: 'summary', description: 'Post the daily summary now', default_member_permissions: ADMIN },
 ]
 const MAX_PHOTO_B64 = 700_000     // comme le Worker (~500 Ko d'image)
+const MAX_PHOTOS = 3              // par message, comme le Worker
 const MAX_TAGS = 5                // par post (limite de Discord)
+const EXT = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' }
+const PHOTO_TYPES = 'JPEG, PNG or WebP'
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 const snowflakeTime = (id) => Number((BigInt(id) >> 22n) + 1420070400000n)
 const row = (...components) => ({ type: 1, components })
 const button = (label, custom_id, style = 2) => ({ type: 2, style, label, custom_id })
 const textInput = (custom_id, label, style, { min, max, required = true, placeholder } = {}) =>
   ({ type: 4, custom_id, label, style, required, ...(min ? { min_length: min } : {}), ...(max ? { max_length: max } : {}), ...(placeholder ? { placeholder } : {}) })
+// Formulaire « Send screenshots » : chaque champ dans un « Label » (type 18,
+// libellé de 45 caractères au plus, description de 100), les fichiers dans
+// un « File Upload » (type 19).
+const labelled = (label, component, description) => ({ type: 18, label, ...(description ? { description } : {}), component })
+const fileUpload = (custom_id) => ({ type: 19, custom_id, min_values: 1, max_values: MAX_PHOTOS, required: true })
+const plural = (n, word) => `${n} ${word}${n > 1 ? 's' : ''}`
 const bullets = (body) => String(body || '').split('\n').map((l) => l.trim()).filter((l) => /^[-*] /.test(l)).map((l) => `- ${l.slice(2).trim()}`)
 
 /** Entrées anglaises d'une version dans changelog.js du site (chaînes entre
@@ -161,6 +176,8 @@ export function startDiscordBridge({
     quickDone: new Set(),  // posts qui ont leurs réponses rapides
     fixAsked: new Set(),   // posts où l'on a demandé où sort le correctif
     dmWarned: new Set(),
+    shots: new Map(),      // personne → capture de /bug ou /idea, le temps du formulaire
+    dmHints: new Map(),    // personne → dernier renvoi vers les boutons (MP tapé)
     summaryDay: null,
   }
   let ws = null
@@ -175,17 +192,26 @@ export function startDiscordBridge({
   const intervals = []
 
   // ── API de Discord, du Worker, de GitHub ────────────────────────────────
-  async function rest(method, path, body) {
+  /** `files` ({ bytes, type, name }) : envoyés en multipart (payload_json +
+   *  files[n]), formulaire refait à chaque essai ; fetch pose lui-même le
+   *  Content-Type avec sa frontière. */
+  async function rest(method, path, body, files = []) {
     for (let attempt = 0; ; attempt++) {
+      let payload = body ? JSON.stringify(body) : undefined
+      if (files.length) {
+        payload = new FormData()
+        payload.append('payload_json', JSON.stringify({ ...body, attachments: files.map((f, n) => ({ id: n, filename: f.name })) }))
+        files.forEach((f, n) => payload.append(`files[${n}]`, new Blob([f.bytes], { type: f.type }), f.name))
+      }
       const r = await fetch(`${api}${path}`, {
         method,
         headers: {
           Authorization: `Bot ${token}`,
           'User-Agent': 'DiscordBot (https://github.com/MXFia19/TwitchUnblock-Web, 1)',
-          ...(body ? { 'Content-Type': 'application/json' } : {}),
+          ...(body && !files.length ? { 'Content-Type': 'application/json' } : {}),
         },
-        body: body ? JSON.stringify(body) : undefined,
-        signal: AbortSignal.timeout(15_000),
+        body: payload,
+        signal: AbortSignal.timeout(files.length ? 30_000 : 15_000),
       })
       if (r.status === 429 && attempt < 3) {
         const j = await r.json().catch(() => ({}))
@@ -366,26 +392,36 @@ export function startDiscordBridge({
   }
 
   /** Images jointes (JPEG, PNG, WebP), en base64 pour le Worker. Trop
-   *  lourde : la version réduite du CDN de Discord. */
-  async function photosOf(list) {
+   *  lourde : la version réduite du CDN de Discord (1280 px au plus, WebP).
+   *  `reduce` (captures des personnes) : la version réduite d'abord, moins
+   *  lourde à ranger, l'original en repli. */
+  async function photosOf(list, { reduce = false } = {}) {
     const ok = []
-    let skipped = Math.max(0, list.length - 3)
-    for (const a of list.slice(0, 3)) {
+    let skipped = Math.max(0, list.length - MAX_PHOTOS)
+    for (const a of list.slice(0, MAX_PHOTOS)) {
       if (!/^image\/(jpeg|png|webp)/.test(a.content_type || '')) { skipped++; continue }
-      let b64 = await fetchB64(a.url)
-      if ((!b64 || b64.length > MAX_PHOTO_B64) && a.proxy_url && a.width && a.height) {
+      let small = null
+      if (a.proxy_url && a.width && a.height) {
         const scale = Math.min(1, 1280 / Math.max(a.width, a.height))
         const u = new URL(a.proxy_url)
         u.searchParams.set('width', String(Math.round(a.width * scale)))
         u.searchParams.set('height', String(Math.round(a.height * scale)))
         u.searchParams.set('format', 'webp')
-        b64 = await fetchB64(u.href)
+        small = u.href
       }
-      if (b64 && b64.length <= MAX_PHOTO_B64) ok.push(b64)
+      const fits = (b64) => Boolean(b64) && b64.length <= MAX_PHOTO_B64
+      let b64 = reduce && small ? await fetchB64(small) : null
+      if (!fits(b64)) b64 = await fetchB64(a.url)
+      if (!fits(b64) && small && !reduce) b64 = await fetchB64(small)
+      if (fits(b64)) ok.push(b64)
       else skipped++
     }
     return { ok, skipped }
   }
+  const skippedNote = (n) => (n ? ` (${plural(n, 'file')} not sent: only ${PHOTO_TYPES} images, ${MAX_PHOTOS} at most.)` : '')
+  /** Captures envoyées au Worker mais pas rangées (Worker pas encore à
+   *  jour : il ignore les photos) : la personne le sait. */
+  const unsavedNote = (sent, r) => (sent && (Number(r?.photos) || 0) < sent ? ' ⚠️ The screenshot(s) couldn’t be saved — please send them again later.' : '')
 
   async function fetchB64(url) {
     try {
@@ -400,7 +436,9 @@ export function startDiscordBridge({
 
   // ── Messages privés (retours envoyés depuis Discord) ────────────────────
   const dmChannels = new Map()
-  async function sendDm(userId, content, key) {
+  /** `key` : boutons pour répondre, en texte (« Reply », le formulaire le
+   *  plus simple, lu par tous les clients) ou en captures. */
+  async function sendDm(userId, content, key, files = []) {
     let ch = dmChannels.get(userId)
     if (!ch) {
       ch = (await rest('POST', '/users/@me/channels', { recipient_id: userId }))?.id
@@ -409,24 +447,46 @@ export function startDiscordBridge({
     }
     await rest('POST', `/channels/${ch}/messages`, {
       content: content.slice(0, 1900), allowed_mentions: { parse: [] },
-      ...(key ? { components: [row(button('Reply', `ur:${key}`, 1))] } : {}),
-    })
+      ...(key ? { components: [row(button('Reply', `ur:${key}`, 1), button('Send screenshots', `us:${key}`))] } : {}),
+    }, files)
   }
 
   /** Réponses du développeur pas encore envoyées à qui a écrit depuis
-   *  Discord : en message privé, une par une, dans l'ordre. */
+   *  Discord : en message privé, une par une, dans l'ordre, images jointes
+   *  (lues une par une au Worker). Discord refuse les fichiers : le texte
+   *  part seul, et le post le dit. */
   const dmQueue = new Map()
   function deliverDm(thread) {
     const run = (dmQueue.get(thread) || Promise.resolve()).then(async () => {
-      const r = await call({ action: 'deliver', thread })
+      const r = await call({ action: 'deliver', thread, pics: true })
       if (!r?.du || !r.items?.length) return
       for (const it of r.items) {
-        const text = it.m
-          ? `💬 **The developer replied** about your report “${r.excerpt}”:\n${it.m}${it.ph ? `\n(📷 ${it.ph} picture${it.ph > 1 ? 's' : ''}, not shown here)` : ''}`
+        const files = []
+        for (const n of it.pics || []) {
+          const p = await call({ action: 'photo', thread, n }).catch(() => null)
+          if (p?.b64) files.push({ bytes: Buffer.from(p.b64, 'base64'), type: p.type, name: `picture${files.length + 1}.${EXT[p.type] || 'jpg'}` })
+        }
+        const ph = it.ph || 0
+        // Mention ajoutée après la coupe : une longue réponse ne la cache pas.
+        const withLost = (text, k) => {
+          const note = k > 0 ? `\n(📷 ${plural(k, 'picture')} couldn’t be sent here)` : ''
+          return text.slice(0, 1900 - note.length) + note
+        }
+        const text = it.m || ph
+          ? `💬 **The developer replied** about your report “${r.excerpt}”:${it.m ? `\n${it.m}` : ''}`
           : `📌 Your report “${r.excerpt}” is now **${it.label}**.`
         try {
-          await sendDm(r.du, text, r.key)
-        } catch {
+          try {
+            await sendDm(r.du, withLost(text, ph - files.length), r.key, files)
+          } catch (e) {
+            // MP fermés : rien ne passera. Autre refus avec des fichiers
+            // (trop lourds, délai…) : le texte seul.
+            if (!files.length || e.code === 50007) throw e
+            await sendDm(r.du, withLost(text, ph), r.key)
+            await say(thread, `⚠️ The picture(s) couldn’t be sent to the user in a direct message (${e.message}) — the text went through.`)
+          }
+        } catch (e) {
+          if (e.code !== 50007) log.warn(`Discord bridge: DM to the user of post ${thread} not sent (${e.message})`)
           if (!st.dmWarned.has(thread)) {
             st.dmWarned.add(thread)
             await say(thread, '⚠️ I couldn’t send this to the user in a direct message (their DMs are closed).')
@@ -540,8 +600,21 @@ export function startDiscordBridge({
     }
   }
 
+  /** Message privé tapé au bot : il ne le lit pas (rien n'est gardé), il
+   *  renvoie vers les boutons, au plus une fois par heure et par personne. */
+  async function onDirectMessage(m) {
+    const who = m.author?.id
+    if (!who || m.author.bot || who === st.me) return
+    const now = Date.now()
+    if (now - (st.dmHints.get(who) || 0) < 3600_000) return
+    if (st.dmHints.size > 5000) st.dmHints.clear()
+    st.dmHints.set(who, now)
+    await say(m.channel_id, 'ℹ️ I don’t read messages sent here. To answer about your report, use the buttons under my last message: **Reply** for text, **Send screenshots** for pictures. To report something new, use /bug or /idea in the server.')
+  }
+
   async function onMessage(m) {
-    if (!m.guild_id || m.guild_id !== st.guild || !st.forum) return
+    if (!m.guild_id) return onDirectMessage(m)
+    if (m.guild_id !== st.guild || !st.forum) return
     if (m.author?.id && m.author.id === st.me) return
     if (await parentOf(m.channel_id) !== st.forum) return
     const thread = m.channel_id
@@ -583,7 +656,13 @@ export function startDiscordBridge({
   const respond = (i, type, data) => rest('POST', `/interactions/${i.id}/${i.token}/callback`, data ? { type, data } : { type })
   const editOriginal = (i, data) => rest('PATCH', `/webhooks/${st.app}/${i.token}/messages/@original`, data).catch(() => null)
   const opt = (i, name) => i.data?.options?.find((o) => o.name === name)?.value
-  const field = (i, id) => String(i.data?.components?.flatMap((r) => r.components || []).find((c) => c.custom_id === id)?.value || '').trim()
+  // Champs d'un formulaire : en rangée (type 1) ou dans un Label (type 18).
+  const inputs = (i) => (i.data?.components || []).flatMap((r) => r.components || (r.component ? [r.component] : []))
+  const field = (i, id) => String(inputs(i).find((c) => c.custom_id === id)?.value || '').trim()
+  /** Fichiers d'un champ « File Upload » : ses valeurs sont des numéros de
+   *  pièces jointes, décrites dans `resolved`. */
+  const uploads = (i, id) => (inputs(i).find((c) => c.custom_id === id)?.values || [])
+    .map((v) => i.data?.resolved?.attachments?.[v]).filter(Boolean)
   /** Réponse différée (le Worker peut prendre plus de 3 s), visible de soi seul. */
   async function deferred(i, fn) {
     await respond(i, 5, { flags: 64 })
@@ -595,9 +674,9 @@ export function startDiscordBridge({
   }
   const adminOnly = (i) => respond(i, 4, { flags: 64, content: 'Only the developer can use this.' })
 
-  const reportModal = (kind) => ({
+  const reportModal = (kind, shot) => ({
     custom_id: `report:${kind}`,
-    title: kind === 'idea' ? 'Suggest an idea' : 'Report a bug',
+    title: `${kind === 'idea' ? 'Suggest an idea' : 'Report a bug'}${shot ? ' — screenshot attached' : ''}`,
     components: [
       row(textInput('text', kind === 'idea' ? 'Your idea' : 'What happened?', 2, {
         min: 5, max: 2000,
@@ -625,9 +704,25 @@ export function startDiscordBridge({
     if (i.type === 5) return onModal(i, user)
   }
 
+  /** Capture passée en option de /bug ou /idea : gardée 10 minutes, le
+   *  temps de remplir le formulaire (une par personne, la dernière). */
+  function keepShot(i, user) {
+    const shot = i.data?.resolved?.attachments?.[opt(i, 'screenshot')]
+    const now = Date.now()
+    for (const [id, s] of st.shots) if (now - s.at > 10 * 60_000) st.shots.delete(id)
+    if (shot) st.shots.set(user.id, { at: now, att: shot })
+    else st.shots.delete(user.id)
+    return Boolean(shot)
+  }
+  function takeShot(user) {
+    const s = st.shots.get(user.id)
+    st.shots.delete(user.id)
+    return s && Date.now() - s.at <= 10 * 60_000 ? [s.att] : []
+  }
+
   async function onCommand(i, user) {
     const name = i.data?.name
-    if (name === 'bug' || name === 'idea') return respond(i, 9, reportModal(name))
+    if (name === 'bug' || name === 'idea') return respond(i, 9, reportModal(name, keepShot(i, user)))
     if (!isAdmin(user.id)) return adminOnly(i)
     switch (name) {
       case 'announce': return respond(i, 9, announceModal())
@@ -693,12 +788,23 @@ export function startDiscordBridge({
 
   async function onComponent(i, user) {
     const [kind, a, b] = String(i.data?.custom_id || '').split(':')
-    // Bouton « Reply » d'un message privé : le formulaire de réponse.
+    // Boutons d'un message privé : « Reply » (texte seul) et « Send
+    // screenshots » (captures, texte facultatif).
     if (kind === 'ur') {
       return respond(i, 9, {
         custom_id: `ureply:${a}`,
         title: 'Reply to the developer',
         components: [row(textInput('text', 'Your message', 2, { min: 1, max: 2000 }))],
+      })
+    }
+    if (kind === 'us') {
+      return respond(i, 9, {
+        custom_id: `ushots:${a}`,
+        title: 'Send screenshots to the developer',
+        components: [
+          labelled('Screenshots', fileUpload('pics'), `${PHOTO_TYPES} — up to ${MAX_PHOTOS}`),
+          labelled('Message (optional)', { type: 4, custom_id: 'text', style: 2, required: false, max_length: 2000 }),
+        ],
       })
     }
     if (!isAdmin(user.id)) return adminOnly(i)
@@ -766,22 +872,37 @@ export function startDiscordBridge({
     if (kind === 'report') {
       return deferred(i, async () => {
         const what = a === 'idea' ? 'idea' : 'report'
+        // Capture de l'option de la commande : téléchargée maintenant (son
+        // lien expire), rangée par le Worker avec le retour.
+        const photos = await photosOf(takeShot(user), { reduce: true })
         const r = await call({
           action: 'create', kind: a === 'idea' ? 'idea' : 'bug',
-          message: field(i, 'text'), where: field(i, 'where'),
+          message: field(i, 'text'), where: field(i, 'where'), photos: photos.ok,
           user: { id: user.id, name: user.global_name || user.username },
         })
-        const dm = await sendDm(user.id, `👋 Thanks for your ${what}! It was sent to the developer — their replies will arrive here, and you can answer with the button.`, r.key)
+        const dm = await sendDm(user.id, `👋 Thanks for your ${what}! It was sent to the developer — their replies will arrive here, and you can answer with the buttons (text or screenshots).`, r.key)
           .then(() => true, () => false)
         return `Thanks! Your ${what} was sent to the developer.` + (dm
           ? ' Replies will come in a direct message.'
           : ' I couldn’t send you a direct message: allow DMs from this server’s members (Privacy settings) to get the replies.')
+          + skippedNote(photos.skipped) + unsavedNote(photos.ok.length, r)
       })
     }
     if (kind === 'ureply') {
       return deferred(i, async () => {
         await call({ action: 'userReply', key: a, du: user.id, message: field(i, 'text') })
         return 'Sent! The developer will see it.'
+      })
+    }
+    if (kind === 'ushots') {
+      return deferred(i, async () => {
+        const text = field(i, 'text')
+        const photos = await photosOf(uploads(i, 'pics'), { reduce: true })
+        if (!text && !photos.ok.length) {
+          return photos.skipped ? `❌ Nothing sent: only ${PHOTO_TYPES} images go through.` : '❌ Attach a screenshot (or use “Reply” to write a message).'
+        }
+        const r = await call({ action: 'userReply', key: a, du: user.id, message: text, photos: photos.ok })
+        return 'Sent! The developer will see it.' + skippedNote(photos.skipped) + unsavedNote(photos.ok.length, r)
       })
     }
     if (kind === 'announce') {

@@ -365,9 +365,19 @@ limited to server admins in Discord.
   is told and gets the other report's status updates).
 - Done or Declined posts are archived after a day without activity; a reply
   from the person brings them back.
-- `/bug` and `/idea`: any member can report from Discord. Replies reach them
-  in a direct message, with a **Reply** button (their DMs from server members
-  must be open).
+- `/bug` and `/idea`: any member can report from Discord, with an optional
+  `screenshot`. Replies reach them in a direct message (their DMs from server
+  members must be open), your screenshots attached as files — also those sent
+  from `/stats` or the app, even without text. If Discord refuses the files,
+  the text still goes and the post says so. Under each message, **Reply**
+  answers with text and **Send screenshots** with up to 3 pictures (JPEG, PNG
+  or WebP, stored downsized), shown in the post, on `/stats` and in the app.
+  A message typed straight to the bot gets a pointer to those buttons (once an
+  hour); the bot keeps nothing of it. 20 replies per hour per person.
+- Update order: the **Worker first**, then the bot (`docker compose pull`). An
+  older bot keeps working with a newer Worker (no pictures in DMs, as before);
+  a newer bot with an older Worker can't store the person's screenshots and
+  says so.
 - Reports from before the bridge (or whose delivery failed) get their post
   too, oldest first: the original message with its screenshots, then the rest
   of the conversation in one message. A report is never kept longer because

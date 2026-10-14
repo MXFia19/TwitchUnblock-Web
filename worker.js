@@ -1716,10 +1716,18 @@ async function feedbackTeamUpdate(env, key, { message = '', photos = [], status 
 //     { action: 'status', thread, status }          → idem, après le changement
 //     { action: 'backfill' }                        → { done, remaining, retryAfter? }
 //                                                     (anciens retours, voir plus haut)
+//     { action: 'deliver', thread, pics? }          → { du, key, excerpt, items }
+//                                                     (réponses à envoyer en MP ;
+//                                                     pics: true, bot qui sait
+//                                                     joindre les photos : aussi
+//                                                     les réponses « photo seule »,
+//                                                     et leurs numéros)
+//     { action: 'photo', thread, n }                → { type, b64 } (une photo)
 //   Outils du bot (voir plus bas) : get / set (sa mémoire), create /
-//   userReply (/bug sur Discord, réponses en message privé), deliver,
-//   delete, block, merge, fix / released (« c'est en ligne »), summary,
-//   health, announce. Messages d'erreur en anglais : le bot les affiche.
+//   userReply (/bug sur Discord, réponses en message privé, photos
+//   comprises), delete, block, merge, fix / released (« c'est en ligne »),
+//   summary, health, announce. Messages d'erreur en anglais : le bot les
+//   affiche.
 async function handleFeedbackBot(request, env) {
     const secret = String(env.FEEDBACK_BOT_SECRET || '');
     if (secret.length < 16 || !env.DB) return jsonError('Discord bridge not configured', 404);
@@ -1778,16 +1786,34 @@ async function handleFeedbackBot(request, env) {
         return jsonResponse({ ok: true, ...state(r.metadata) });
     }
     // Réponses du développeur pas encore envoyées en message privé à qui a
-    // écrit depuis Discord (/bug) ; notées comme envoyées.
+    // écrit depuis Discord (/bug) ; notées comme envoyées. Les réponses
+    // « photo seule » et les numéros des photos ne vont qu'au bot qui le
+    // demande (pics) : un ancien bot prendrait une réponse sans texte pour
+    // un changement d'état (« is now null »).
     if (body.action === 'deliver') {
         if (!metadata.du) return jsonResponse({ du: null, items: [] });
         const thread = feedbackThread(value, metadata);
         const from = Math.max(1, Number(metadata.dd) || 1);
+        const withPics = body.pics === true;
         const items = thread.slice(from)
-            .filter((x) => x.f === 'a' && (x.m || (x.s && x.s !== 'seen')))
-            .map((x) => ({ m: x.m || null, s: x.s || null, label: x.s ? FEEDBACK_STATUS_LABELS[x.s] || x.s : null, ph: x.ph?.length || 0 }));
+            .filter((x) => x.f === 'a' && (x.m || (withPics && x.ph?.length) || (x.s && x.s !== 'seen')))
+            .map((x) => ({
+                m: x.m || null, s: x.s || null, label: x.s ? FEEDBACK_STATUS_LABELS[x.s] || x.s : null, ph: x.ph?.length || 0,
+                ...(withPics ? { pics: (x.ph || []).slice(0, FEEDBACK_MAX_PHOTOS) } : {}),
+            }));
         if (thread.length > from) await store(env).put(key, value, { metadata: { ...metadata, dd: thread.length }, expirationTtl: FEEDBACK_TTL });
         return jsonResponse({ du: metadata.du, key, excerpt: String(metadata.m || '').slice(0, 80), items });
+    }
+    // Une photo du retour, pour la joindre au message privé : le bot n'a ni
+    // le jeton du retour ni de jeton Twitch (/api/feedback/photo). Une par
+    // appel : toutes dans `deliver` feraient un JSON de plusieurs Mo.
+    if (body.action === 'photo') {
+        const n = body.n;
+        if (!Number.isInteger(n) || n < 0 || n >= (metadata.ph || 0)) return jsonError('Bad picture', 400);
+        const p = await store(env).getWithMetadata(`${FEEDBACK_PHOTO_PREFIX}${key}_${n}`);
+        if (!p.value) return jsonError('Picture not found', 404);
+        const type = ['image/jpeg', 'image/png', 'image/webp'].includes(p.metadata?.t) ? p.metadata.t : 'image/jpeg';
+        return jsonResponse({ type, b64: p.value });
     }
     if (body.action === 'delete') {
         await store(env).delete(key);
@@ -1837,6 +1863,7 @@ const FEEDBACK_LIVE_MESSAGES = {
 };
 const BOT_STORE_PREFIX = 'dcbot_';
 const discordReportHits = new Map();
+const discordReplyHits = new Map();
 
 /** Rend une réponse si l'action est l'une des siennes, sinon null. */
 async function feedbackBotTool(env, body) {
@@ -1866,9 +1893,11 @@ async function feedbackBotTool(env, body) {
             if (overLimit(discordReportHits, du, 5)) return jsonError('Too many reports — try again in an hour', 429);
             const message = cleanText(body.message, 2000);
             if (message.length < 5) return jsonError('Message too short', 400);
+            const photos = cleanPhotos(body.photos);
             const now = Date.now();
             const key = `${FEEDBACK_PREFIX}${now.toString(36)}_${crypto.randomUUID().slice(0, 8)}`;
             const token = (crypto.randomUUID() + crypto.randomUUID()).replace(/-/g, '').slice(0, 48);
+            const ph = await saveFeedbackPhotos(env, key, photos, 0);
             const entry = {
                 k: FEEDBACK_KINDS.includes(body.kind) ? body.kind : 'other',
                 m: message,
@@ -1876,13 +1905,15 @@ async function feedbackBotTool(env, body) {
                 p: 'discord',
                 v: cleanText(body.where, 60) || 'Discord',
                 i: null,
-                at: now, s: 'new', u: now, r: 'u', n: 1, ph: 0,
+                at: now, s: 'new', u: now, r: 'u', n: 1, ph: ph.length,
                 h: await sha256hex(token), du, dd: 1,
             };
-            await store(env).put(key, JSON.stringify([{ f: 'u', m: message, at: now }]), { metadata: entry, expirationTtl: FEEDBACK_TTL });
-            const r = await notifyDiscord(env, null, entry, [], { key });
-            return jsonResponse({ ok: true, key, thread: r?.thread || null });
+            await store(env).put(key, JSON.stringify([{ f: 'u', m: message, at: now, ...(ph.length ? { ph } : {}) }]), { metadata: entry, expirationTtl: FEEDBACK_TTL });
+            const r = await notifyDiscord(env, null, entry, photos, { key });
+            return jsonResponse({ ok: true, key, thread: r?.thread || null, photos: ph.length });
         }
+        // Réponse de la personne (bouton d'un message privé), captures
+        // comprises, comme /api/feedback/reply.
         case 'userReply': {
             const key = String(body.key || '');
             if (!FEEDBACK_KEY_RE.test(key)) return jsonError('Bad report', 400);
@@ -1890,15 +1921,18 @@ async function feedbackBotTool(env, body) {
             if (!m?.du || m.du !== String(body.du || '')) return jsonError('Report not found', 404);
             if (m.bl) return jsonError('This conversation was closed by the developer', 403);
             const message = cleanText(body.message, 2000);
-            if (!message) return jsonError('Empty message', 400);
+            const photos = cleanPhotos(body.photos);
+            if (!message && !photos.length) return jsonError('Empty message', 400);
             const thread = feedbackThread(value, m);
             if (thread.length >= FEEDBACK_MAX_MESSAGES) return jsonError('Conversation too long', 409);
+            if (overLimit(discordReplyHits, m.du, 20)) return jsonError('Too many replies — try again in an hour', 429);
             const now = Date.now();
-            thread.push({ f: 'u', m: message, at: now });
-            const next = { ...m, u: now, r: 'u', n: (m.n || 1) + 1 };
+            const ph = await saveFeedbackPhotos(env, key, photos, m.ph || 0);
+            thread.push({ f: 'u', m: message, at: now, ...(ph.length ? { ph } : {}) });
+            const next = { ...m, u: now, r: 'u', n: (m.n || 1) + 1, ph: (m.ph || 0) + ph.length };
             await store(env).put(key, JSON.stringify(thread), { metadata: next, expirationTtl: FEEDBACK_TTL });
-            await notifyDiscord(env, null, { ...next, m: message }, [], { key, inReplyTo: m.m });
-            return jsonResponse({ ok: true });
+            await notifyDiscord(env, null, { ...next, m: message }, photos, { key, inReplyTo: m.m });
+            return jsonResponse({ ok: true, photos: ph.length });
         }
         case 'released':
             return jsonResponse(await feedbackReleased(env, { ios: body.ios, web: body.web }));
