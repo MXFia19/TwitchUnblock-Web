@@ -8,7 +8,7 @@
 //  ET le chat, et la logique reprend celle du lecteur immersif de l'app.
 // ═══════════════════════════════════════════════════════════════════════════
 
-import { t } from './i18n.js'
+import { lang, t } from './i18n.js'
 import { API_URL, RELAY_BASE, WORKER_BASES, fixProxiedUrl, liveSourceOrder, proxyBaseOf } from './api.js'
 import { $, esc, formatClock, icon, isIOS } from './util.js'
 
@@ -313,6 +313,9 @@ export function qualityText(k) {
  *  qui ne contrôle que le type). */
 export const validSpeed = (v) => (SPEEDS.includes(Number(v)) ? Number(v) : 1)
 
+/** Vitesse écrite dans la langue du site : « 1,5× » en français, « 1.5× » en anglais. */
+const speedText = (s) => `${s.toLocaleString(lang())}×`
+
 export class Player {
   /**
    * @param {HTMLElement} root
@@ -335,6 +338,7 @@ export class Player {
     this.variants = {}
     // La vitesse choisie est retenue d'une VOD à l'autre (pas pour un clip).
     this.keepSpeed = false
+    this.speedNotice = false
     // Source qui sert le direct en cours (« as », « al », « eu », « twitch »).
     this.liveSource = null
     this.hideTimer = null
@@ -375,7 +379,7 @@ export class Player {
             <span class="p-latency live-only"></span>
             <button class="p-btn p-chapters vod-only" type="button" hidden data-i18n-title="chapters">${icon('list', 18)}<span class="p-chap-label"></span>${icon('chevronUp', 14)}</button>
             <span class="p-spacer"></span>
-            <button class="p-btn p-quality" type="button" data-i18n-title="quality">${icon('settings', 20)}<span class="p-q-label"></span></button>
+            <button class="p-btn p-quality" type="button" data-i18n-title="quality">${icon('settings', 20)}<span class="p-q-label"></span><span class="p-q-speed"></span></button>
             <button class="p-btn p-chat" type="button" data-i18n-title="chat">${icon('chat', 20)}</button>
             <button class="p-btn p-pip" type="button" data-i18n-title="pip">${icon('pip', 20)}</button>
             <button class="p-btn p-theatre" type="button" data-i18n-title="theatre">${icon('theatre', 20)}</button>
@@ -393,7 +397,7 @@ export class Player {
       played: q('.p-played'), knob: q('.p-knob'), tip: q('.p-tip'),
       play: q('.p-play'), back: q('.p-back'), fwd: q('.p-fwd'), mute: q('.p-mute'), vol: q('.p-vol'),
       time: q('.p-time'), live: q('.p-live'), liveText: q('.p-live-text'), latency: q('.p-latency'),
-      quality: q('.p-quality'), qLabel: q('.p-q-label'), chat: q('.p-chat'), pip: q('.p-pip'), fs: q('.p-fs'), theatre: q('.p-theatre'), chapBtn: q('.p-chapters'), chapLabel: q('.p-chap-label'),
+      quality: q('.p-quality'), qLabel: q('.p-q-label'), qSpeed: q('.p-q-speed'), chat: q('.p-chat'), pip: q('.p-pip'), fs: q('.p-fs'), theatre: q('.p-theatre'), chapBtn: q('.p-chapters'), chapLabel: q('.p-chap-label'),
       menu: q('.p-menu'), mutedNote: q('.p-mutednote'), mutedText: q('.p-mutednote-text'), mutedSkip: q('.p-mutednote-skip'),
     }
 
@@ -414,6 +418,13 @@ export class Player {
     v.addEventListener('durationchange', () => this.onTime())
     v.addEventListener('volumechange', () => this.syncVolume())
     v.addEventListener('ratechange', () => this.onRateChange())
+    // Vitesse retenue annoncée au démarrage d'une VOD : sinon une vitesse
+    // choisie une fois s'appliquait aux VODs suivantes sans aucun signe.
+    v.addEventListener('playing', () => {
+      if (!this.speedNotice) return
+      this.speedNotice = false
+      if (this.kind === 'vod' && v.playbackRate !== 1) this.flash(speedText(v.playbackRate))
+    })
     v.addEventListener('enterpictureinpicture', () => this.root.classList.add('in-pip'))
     v.addEventListener('leavepictureinpicture', () => this.root.classList.remove('in-pip'))
     v.addEventListener('webkitpresentationmodechanged', () => {
@@ -530,6 +541,7 @@ export class Player {
     const rate = this.keepSpeed ? validSpeed(this.o.prefs.vodSpeed) : 1
     this.video.defaultPlaybackRate = rate
     this.video.playbackRate = rate
+    this.speedNotice = this.keepSpeed && rate !== 1
     // Qualité préférée (réglages), ou la plus proche qui existe.
     this.quality = pickQuality(Object.keys(links), this.o.prefs.qualityPref, this.variants)
     this.updateQualityLabel()
@@ -746,11 +758,13 @@ export class Player {
   }
 
   /** Bouton ⚙ : la qualité (« Auto · 360p » : ce que joue Auto), et la
-   *  vitesse d'une VOD quand elle n'est pas normale (« 720p · 1.5× »). */
+   *  vitesse d'une VOD quand elle n'est pas normale (« 720p · 1,5× »). La
+   *  vitesse a sa propre case : sur téléphone, la qualité est masquée faute
+   *  de place, mais la vitesse reste visible (styles.css). */
   updateQualityLabel() {
     const r = this.video.playbackRate
-    const speed = this.kind === 'vod' && r !== 1 ? ` · ${r}×` : ''
-    this.el.qLabel.textContent = this.quality ? `${this.menuLabel(this.quality)}${speed}` : ''
+    this.el.qLabel.textContent = this.quality ? this.menuLabel(this.quality) : ''
+    this.el.qSpeed.textContent = this.kind === 'vod' && r !== 1 ? speedText(r) : ''
   }
 
   // ── Vitesse (VODs et clips ; jamais en direct) ─────────────────────────
@@ -761,7 +775,7 @@ export class Player {
     v.playbackRate = s
     if (this.keepSpeed && this.o.prefs.vodSpeed !== s) { this.o.prefs.vodSpeed = s; this.o.savePrefs() }
     this.updateQualityLabel()
-    this.flash(`${s}×`)
+    this.flash(speedText(s))
   }
 
   /** Raccourcis < et > : vitesse précédente ou suivante. */
@@ -1310,7 +1324,7 @@ export class Player {
     if (this.kind === 'vod') {
       html += `<div class="p-menu-title">${esc(t('speed'))}</div><div class="p-speeds">`
       // Quatre par ligne : « 1× » plutôt que « Normale », trop large ici.
-      html += SPEEDS.map((s) => `<button type="button" data-s="${s}" class="${s === rate ? 'on' : ''}"${s === 1 ? ` title="${esc(t('normal'))}"` : ''}>${s}×</button>`).join('')
+      html += SPEEDS.map((s) => `<button type="button" data-s="${s}" class="${s === rate ? 'on' : ''}"${s === 1 ? ` title="${esc(t('normal'))}"` : ''}>${speedText(s)}</button>`).join('')
       html += '</div>'
     }
     // Un souci pendant la lecture : le signaler d'ici, avec ce qui se lit.

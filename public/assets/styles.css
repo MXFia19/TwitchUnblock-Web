@@ -582,7 +582,9 @@ a.card, a.cat-card { display: block; }
 .p-latency { margin-left: 8px; font-size: 12px; color: rgba(255, 255, 255, 0.7); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .p-spacer { flex: 1; }
 .p-quality { width: auto; gap: 4px; padding: 0 8px; display: flex; }
-.p-q-label { font-size: 12px; font-weight: 800; }
+.p-q-label, .p-q-speed { font-size: 12px; font-weight: 800; white-space: nowrap; }
+.p-q-speed:empty { display: none; }
+.p-q-label:not(:empty) + .p-q-speed::before { content: '· '; }
 .player[data-kind='live'] .vod-only, .player[data-kind='vod'] .live-only { display: none; }
 
 .p-menu {
@@ -1053,6 +1055,10 @@ html.multi-open { overflow: hidden; }
   .brand-name { font-size: 16px; }
   .grid { grid-template-columns: 1fr; }
   .p-latency, .p-q-label { display: none; }
+  /* La vitesse d'une VOD reste visible, en pastille sur l'icône : le bouton
+     garde sa largeur (la barre est déjà pleine sur téléphone). */
+  .p-q-label:not(:empty) + .p-q-speed::before { content: none; }
+  .p-q-speed { position: absolute; right: 0; bottom: 2px; padding: 1px 3px; border-radius: 6px; background: var(--primary); font-size: 9px; line-height: 1.1; }
   .p-bar { gap: 0; }
   .p-btn { width: 38px; }
 }
