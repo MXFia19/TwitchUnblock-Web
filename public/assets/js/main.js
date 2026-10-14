@@ -3,9 +3,9 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import * as api from './api.js'
-import { store } from './store.js'
+import { qualityPrefOf, store } from './store.js'
 import { LANGS, applyStatic, deviceLang, initLang, setLang, t, lang } from './i18n.js'
-import { Player, loadHls, qualityLabel } from './player.js'
+import { Player, QUALITY_PREFS, loadHls, qualityText, validQualityPref, validSpeed } from './player.js'
 import { ChatView } from './chat/view.js'
 import { linkifyHtml } from './chat/message.js'
 import { Hermes } from './chat/hermes.js'
@@ -2058,7 +2058,7 @@ function switchWorker(base) {
   if (base === api.RELAY_BASE && w.links && api.markWorkerDown(base)) {
     console.info('[TwitchUnblock] Relais vidéo injoignable, retour au Worker :', base)
     w.links = api.withoutRelay(w.links)
-    player.swapLinks(w.links)
+    player.swapLinks(w.links, w.variants)
     return true
   }
   if (Date.now() - lastWorkerSwitch < 60_000 || !api.markWorkerDown(base)) return false
@@ -2069,7 +2069,8 @@ function switchWorker(base) {
     .then((links) => {
       if (state.watch !== w || !links?.links || !Object.keys(links.links).length) return
       w.links = links.links
-      player.swapLinks(links.links)
+      w.variants = links.variants ?? {}
+      player.swapLinks(links.links, w.variants)
       if (w.kind === 'live') player.setLiveSource(links.source)
     })
     .catch(() => {})
@@ -2147,7 +2148,8 @@ async function reloadLiveSource() {
   if (state.watch !== w) return
   if (!links?.links || !Object.keys(links.links).length) return toast(t('err_live'), 'error')
   w.links = links.links
-  player.swapLinks(links.links)
+  w.variants = links.variants ?? {}
+  player.swapLinks(links.links, w.variants)
   player.setLiveSource(links.source)
   if (links.source) toast(t('src_now', { s: t(`src_${links.source}`) }), 'info')
 }
@@ -2216,9 +2218,12 @@ async function openLive(rawLogin) {
     return showWatchError(links?.error === 'network' ? t('err_network') : t('err_live'))
   }
   token.links = links.links
+  // Hauteur, cadence et débit de chaque qualité (Worker à jour seulement) :
+  // gardés pour un changement de Worker ou de source en cours de lecture.
+  token.variants = links.variants ?? {}
   token.info = info
   $('#watch-loading').hidden = true
-  player.load({ links: links.links, kind: 'live' })
+  player.load({ links: links.links, variants: token.variants, kind: 'live' })
   player.setLiveSource(links.source)
   chat.openLive({ channel: login, channelId: info?.id ?? null })
   renderLiveInfo(info, links)
@@ -2365,7 +2370,7 @@ async function openClip(slug) {
   // Adresse complète, comme sur Twitch, une fois la chaîne connue.
   if (token.login) go(`/${token.login}/clip/${encodeURIComponent(slug)}`, { replace: true, watch: true })
   $('#watch-loading').hidden = true
-  player.load({ links: clip.links, kind: 'vod', startAt: 0 })
+  player.load({ links: clip.links, kind: 'vod', startAt: 0, clip: true })
   // Chat de la VOD d'origine, si elle existe encore.
   if (clip.video?.id && Number.isFinite(clip.videoOffsetSeconds)) {
     token.offset = clip.videoOffsetSeconds
@@ -2504,6 +2509,7 @@ async function openVod(id, preset, { keepPlaylist = false, at = null } = {}) {
     return showWatchError(links?.error === 'network' ? t('err_network') : t('err_vod'))
   }
   token.links = links.links
+  token.variants = links.variants ?? {}
   token.info = meta
   token.login = meta?.owner?.login ?? null
 
@@ -2516,7 +2522,7 @@ async function openVod(id, preset, { keepPlaylist = false, at = null } = {}) {
   if (startAt < 10) startAt = 0
 
   $('#watch-loading').hidden = true
-  player.load({ links: links.links, kind: 'vod', startAt })
+  player.load({ links: links.links, variants: token.variants, kind: 'vod', startAt })
   api.getVodMarkers(vodId).then((m) => {
     if (state.watch !== token) return
     player.setChapters(m.chapters)
@@ -3007,7 +3013,7 @@ function openInSheet() {
     <a class="sheet-row" href="infuse://x-callback-url/play?url=${esc(encodeURIComponent(url.replace('/api/proxy', `/api/proxy/${name}.m3u8`)))}"><span class="app-dot infuse"></span><span>Infuse</span>${icon('chevronRight', 16)}</a>` : ''
   openSheet(`
     <div class="sheet-head"><h2>${esc(t('open_in'))}</h2><button class="icon-btn" type="button" data-sheet-close>${icon('x', 20)}</button></div>
-    <p class="muted sheet-sub">${esc(t('quality'))} : ${esc(qualityLabel(player.quality ?? ''))}</p>
+    <p class="muted sheet-sub">${esc(t('quality'))} : ${esc(player.quality ? qualityText(player.quality) : '')}</p>
     <div class="sheet-group">
       ${apps}
       <button class="sheet-row" type="button" data-sheet="copy">${icon('copy', 18)}<span>${esc(t('copy_link'))}</span></button>
@@ -3031,6 +3037,18 @@ function openInSheet() {
       setTimeout(() => URL.revokeObjectURL(a.href), 1000)
     }
   }
+}
+
+/** Choix du réglage « Qualité préférée ». Une hauteur retenue depuis le
+ *  lecteur hors de la liste (1440p…) y figure aussi, à sa place. */
+function qualityPrefOptions(cur) {
+  const sel = validQualityPref(cur) ? cur : 'auto'
+  const heights = QUALITY_PREFS.filter((v) => /^\d+$/.test(v))
+  if (/^\d+$/.test(sel) && !heights.includes(sel)) heights.push(sel)
+  heights.sort((a, b) => Number(b) - Number(a))
+  const label = (v) => (v === 'auto' ? t('q_auto') : v === 'source' ? t('q_source') : v === 'audio' ? t('q_audio') : `${v}p`)
+  return ['auto', 'source', ...heights, 'audio']
+    .map((v) => `<option value="${v}" ${v === sel ? 'selected' : ''}>${esc(label(v))}</option>`).join('')
 }
 
 function openSettings() {
@@ -3086,6 +3104,10 @@ function openSettings() {
     </div>
     <div class="sheet-section">
       <h3>${esc(t('player_settings'))}</h3>
+      <label class="setting setting-col">
+        <span class="setting-text"><span>${esc(t('pref_quality'))}</span><small>${esc(t('pref_quality_sub'))}</small></span>
+        <select class="text-input" id="set-quality">${qualityPrefOptions(p.qualityPref)}</select>
+      </label>
       ${toggle('set-clickpause', t('click_pause'), p.clickPause !== false, t('click_pause_sub'))}
       <div class="setting setting-col">
         <span class="setting-text"><span>${esc(t('live_source_order'))}</span><small>${esc(t('live_source_order_sub'))}</small></span>
@@ -3225,6 +3247,8 @@ function openSettings() {
     }
     if (id === 'import-file') { importData(e.target.files?.[0]); e.target.value = ''; return }
     if (id === 'set-clickpause') p.clickPause = e.target.checked
+    // Vaut pour le prochain direct ou la prochaine VOD.
+    if (id === 'set-quality') p.qualityPref = validQualityPref(e.target.value) ? e.target.value : 'auto'
     if (id === 'set-worker-all') {
       p.customWorkerAll = e.target.checked
       store.savePrefs()
@@ -3319,7 +3343,14 @@ async function importData(file) {
       const cur = p[k]
       if (cur === null || typeof cur === typeof v || (Array.isArray(cur) && Array.isArray(v))) p[k] = v
     }
+    // Sauvegarde d'avant le réglage « Qualité préférée » : la qualité
+    // retenue par son nom exact (« 720p60 »).
+    const old = data.settings.quality
+    if (typeof old === 'string' && data.settings.qualityPref === undefined) p.qualityPref = qualityPrefOf(old)
   }
+  // Seul le type est vérifié plus haut : valeurs inconnues ramenées au défaut.
+  if (!validQualityPref(p.qualityPref)) p.qualityPref = 'auto'
+  p.vodSpeed = validSpeed(p.vodSpeed)
   store.savePrefs()
   if (p.lang) setLang(p.lang)
   applyStatic()

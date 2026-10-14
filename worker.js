@@ -275,15 +275,16 @@ async function handleGetLive(url, workerOrigin) {
 
     // Découpage du fichier M3U8 avec notre Proxy
     const links = parseAndProxyM3U8(m3u8Content, masterUrl, workerOrigin, false, useProxy);
+    const variants = variantInfo(m3u8Content);
     
     // Récupération des infos du stream (Titre, Jeu, Avatar) pour un bel affichage
     try {
         const meta = await twitchGQL(`query($login: String!) { user(login: $login) { profileImageURL(width: 70) broadcastSettings { title game { displayName } } } }`, { login });
         const info = meta.data?.user?.broadcastSettings, avatar = meta.data?.user?.profileImageURL;
-        return jsonResponse({ links, source, best: links["Source"] || links["Auto"], title: info?.title || "Live", game: info?.game?.displayName || "", thumbnail: `https://static-cdn.jtvnw.net/previews-ttv/live_user_${login}-640x360.jpg`, avatar: avatar || "" });
+        return jsonResponse({ links, variants, source, best: links["Source"] || links["Auto"], title: info?.title || "Live", game: info?.game?.displayName || "", thumbnail: `https://static-cdn.jtvnw.net/previews-ttv/live_user_${login}-640x360.jpg`, avatar: avatar || "" });
     } catch(e) {
         // Si l'API GQL bug, on renvoie la vidéo quand même
-        return jsonResponse({ links, source, best: links["Source"] || links["Auto"], title: "Live", game: "", thumbnail: `https://static-cdn.jtvnw.net/previews-ttv/live_user_${login}-640x360.jpg`, avatar: "" });
+        return jsonResponse({ links, variants, source, best: links["Source"] || links["Auto"], title: "Live", game: "", thumbnail: `https://static-cdn.jtvnw.net/previews-ttv/live_user_${login}-640x360.jpg`, avatar: "" });
     }
 }
 
@@ -295,10 +296,12 @@ async function handleGetM3U8(url, workerOrigin) {
     try {
         const token = await getAccessToken(vodId, false);
         if (token) {
-            const res = await fetch(`https://usher.ttvnw.net/vod/${vodId}.m3u8?nauth=${encodeURIComponent(token.value)}&nauthsig=${encodeURIComponent(token.signature)}&allow_source=true&player_backend=mediaplayer`, { headers: REQUEST_HEADERS });
+            const res = await fetch(`https://usher.ttvnw.net/vod/${vodId}.m3u8?nauth=${encodeURIComponent(token.value)}&nauthsig=${encodeURIComponent(token.signature)}&allow_source=true&allow_audio_only=true&player_backend=mediaplayer`, { headers: REQUEST_HEADERS });
             if (res.ok) { 
-                const links = parseAndProxyM3U8(await res.text(), res.url, workerOrigin, true, useProxy); 
-                return jsonResponse({ links, best: links["Source"] || links["Auto"] }); 
+                // allow_audio_only : « Audio seul » existe aussi pour les VODs.
+                const text = await res.text();
+                const links = parseAndProxyM3U8(text, res.url, workerOrigin, true, useProxy); 
+                return jsonResponse({ links, variants: variantInfo(text), best: links["Source"] || links["Auto"] }); 
             }
             // Sans ce journal, l'échec ne laissait aucune trace (Docker compris).
             console.warn(`get-m3u8 ${vodId} : usher ${res.status}`);
@@ -597,6 +600,24 @@ function sourceGroupsOf(content) {
         if (g) groups.add(g);
     }
     return groups;
+}
+
+/** Hauteur, cadence et débit de chaque qualité, sous les noms de
+ *  parseAndProxyM3U8 (même parcours, la dernière variante d'un nom gagne) :
+ *  « Source » ne dit pas sa hauteur (1080p60, 720p60, 936p…), et sans elle
+ *  une qualité préférée de 720p prenait la 480p sur une chaîne en 720p60.
+ *  Facultatif pour les clients (Worker pas à jour, secours storyboard). */
+function variantInfo(content) {
+    const sources = sourceGroupsOf(content), single = singleIvsSource(content), out = {};
+    let last = null;
+    for (const l of content.split('\n')) {
+        if (l.startsWith('#EXT-X-STREAM-INF')) {
+            const name = variantName(l, sources, single);
+            const num = (re) => Number((l.match(re) || [])[1]) || 0;
+            last = name ? { name, info: { h: num(/[:,]RESOLUTION=\d+x(\d+)/), fps: Math.round(num(/[:,]FRAME-RATE=([\d.]+)/)), bw: num(/[:,]BANDWIDTH=(\d+)/) } } : null;
+        } else if (l.startsWith('http') && last) { out[last.name] = last.info; last = null; }
+    }
+    return out;
 }
 
 function parseAndProxyM3U8(content, master, workerOrigin, isVod, useProxy = true) { 

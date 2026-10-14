@@ -12,7 +12,9 @@ import { t } from './i18n.js'
 import { API_URL, RELAY_BASE, WORKER_BASES, fixProxiedUrl, liveSourceOrder, proxyBaseOf } from './api.js'
 import { $, esc, formatClock, icon, isIOS } from './util.js'
 
-const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 2]
+// Mêmes vitesses que dans l'app. Pas au-delà de 2× : Twitch ne publie pas
+// de playlist I-frame, et le débit double déjà à 2×.
+const SPEEDS = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2]
 const HIDE_AFTER = 2800
 // Empreinte du fichier attendu (identique sur les deux CDN) : un CDN
 // compromis ne peut pas substituer son propre script.
@@ -209,25 +211,107 @@ export function loadHls() {
   return hlsPromise
 }
 
-/** Source d'abord, puis du plus fin au plus grossier, l'audio seul en dernier. */
-export function sortQualities(keys) {
+// ── Qualités ─────────────────────────────────────────────────────────────
+const isAutoKey = (k) => String(k).toLowerCase() === 'auto'
+const isSourceKey = (k) => /source|chunked/i.test(k)
+const isAudioKey = (k) => /audio/i.test(k)
+// Paliers standards, pour deviner la hauteur d'une « Source » sans info.
+const HEIGHTS = [160, 360, 480, 720, 1080, 1440, 2160]
+
+/** Hauteur d'une qualité : celle que donne le Worker (`variants`, worker.js
+ *  variantInfo), sinon celle du nom (« 720p60 », « 1920x1080 »). « Source »
+ *  ne dit pas la sienne (1080p60, 720p60, 936p…) : sans info, le palier
+ *  standard au-dessus de la meilleure qualité transcodée (1080 s'il y a une
+ *  720p, 720 si la meilleure est en 480p), 1080 s'il n'y en a aucune.
+ *  Audio seul : 0. */
+export function heightOf(key, variants, keys = []) {
+  const known = variants?.[key]?.h
+  if (known > 0) return known
+  const s = String(key)
+  if (isAudioKey(s) || isAutoKey(s)) return 0
+  const m = s.match(/(\d+)p/i) || s.match(/\d+x(\d+)/)
+  if (m) return Number(m[1])
+  if (!isSourceKey(s)) return 0
+  const best = Math.max(0, ...keys.filter((k) => !isSourceKey(k)).map((k) => heightOf(k, variants)))
+  return best ? (HEIGHTS.find((h) => h > best) ?? best) : 1080
+}
+
+/** Cadence (i/s) : celle du Worker, sinon celle du nom (« 720p60 »),
+ *  30 pour un nom sans cadence ; 0 si rien ne la dit (Source). */
+function fpsOf(key, variants) {
+  const known = variants?.[key]?.fps
+  if (known > 0) return known
+  const m = String(key).match(/\d+p(\d+)?/i)
+  return m ? Number(m[1] || 30) : 0
+}
+
+/** Auto d'abord, puis de la plus haute à la plus basse (la plus fluide
+ *  d'abord à hauteur égale, Source en tête d'une égalité), l'audio seul en
+ *  dernier. Sans `variants`, Source reste en tête des vidéos. */
+export function sortQualities(keys, variants) {
   const score = (k) => {
-    const s = k.toLowerCase()
-    if (s === 'auto') return 1e6
-    if (s.includes('source') || s === 'chunked') return 1e5
-    if (s.includes('audio')) return -1
-    const m = s.match(/(\d+)p(\d+)?/)
-    return m ? Number(m[1]) * 100 + Number(m[2] || 30) : 0
+    if (isAutoKey(k)) return 1e9
+    if (isAudioKey(k)) return -1
+    return heightOf(k, variants, keys) * 1000 + fpsOf(k, variants) * 2 + (isSourceKey(k) ? 1 : 0)
   }
   return [...keys].sort((a, b) => score(b) - score(a))
 }
 
+/** Valeurs du réglage « Qualité préférée » (prefs.qualityPref), les mêmes
+ *  que dans la sauvegarde de l'app iOS. Une autre hauteur (« 1440 », prise
+ *  dans le lecteur) reste valable. */
+export const QUALITY_PREFS = ['auto', 'source', '1080', '720', '480', '360', '160', 'audio']
+export const validQualityPref = (v) => typeof v === 'string' && (QUALITY_PREFS.includes(v) || /^[1-9]\d{1,3}$/.test(v))
+
+/** Qualité à lancer selon la préférence. Une valeur inconnue vaut « auto ».
+ *  auto : « Auto » s'il existe, sinon comme source. source : Source, sinon
+ *  la vidéo la plus haute. audio : l'audio seul, sinon la vidéo la plus
+ *  basse. Une hauteur : la même (la plus fluide), sinon la plus proche en
+ *  dessous, sinon la plus basse au-dessus. */
+export function pickQuality(keys, pref, variants) {
+  if (!keys.length) return null
+  const p = validQualityPref(pref) ? pref : 'auto'
+  const video = sortQualities(keys, variants).filter((k) => !isAutoKey(k) && !isAudioKey(k))
+  const auto = keys.find(isAutoKey)
+  const fallback = auto ?? keys[0]
+  if (p === 'auto' && auto) return auto
+  if (p === 'auto' || p === 'source') return keys.find(isSourceKey) ?? video[0] ?? fallback
+  if (p === 'audio') return keys.find(isAudioKey) ?? video[video.length - 1] ?? fallback
+  const want = Number(p)
+  const h = (k) => heightOf(k, variants, keys)
+  return video.find((k) => h(k) === want) ?? video.find((k) => h(k) < want) ?? video[video.length - 1] ?? fallback
+}
+
+/** Préférence que retient un choix fait dans le lecteur : « 720p60 » → '720'. */
+export function prefFromKey(key, variants, keys) {
+  if (isAutoKey(key)) return 'auto'
+  if (isSourceKey(key)) return 'source'
+  if (isAudioKey(key)) return 'audio'
+  const h = heightOf(key, variants, keys)
+  return h > 0 ? String(h) : 'auto'
+}
+
+/** Nom brut d'une qualité. Il sert aussi aux noms des fichiers téléchargés
+ *  (download.js) : jamais traduit — le nettoyage du nom efface le cyrillique. */
 export function qualityLabel(k) {
   const s = String(k)
   if (s.toLowerCase() === 'chunked') return 'Source'
   if (s.toLowerCase() === 'audio_only') return 'Audio'
   return s.replace(/^(\d+p)30$/, '$1')
 }
+
+/** Libellé affiché (menu, bouton, feuilles) : « Audio seul » traduit. */
+export function qualityText(k) {
+  if (isAudioKey(k)) return t('q_audio')
+  if (isAutoKey(k)) return t('auto')
+  return qualityLabel(k)
+}
+
+// ── Vitesse ──────────────────────────────────────────────────────────────
+/** Vitesse retenue pour les VODs (prefs.vodSpeed, même nom que dans la
+ *  sauvegarde iOS) ; 1 si elle n'est pas dans la liste (sauvegarde importée,
+ *  qui ne contrôle que le type). */
+export const validSpeed = (v) => (SPEEDS.includes(Number(v)) ? Number(v) : 1)
 
 export class Player {
   /**
@@ -247,6 +331,10 @@ export class Player {
     this.links = {}
     this.kind = 'vod'
     this.quality = null
+    // Hauteur, cadence et débit de chaque qualité (Worker), si connus.
+    this.variants = {}
+    // La vitesse choisie est retenue d'une VOD à l'autre (pas pour un clip).
+    this.keepSpeed = false
     // Source qui sert le direct en cours (« as », « al », « eu », « twitch »).
     this.liveSource = null
     this.hideTimer = null
@@ -325,6 +413,7 @@ export class Player {
     v.addEventListener('progress', () => this.drawBuffer())
     v.addEventListener('durationchange', () => this.onTime())
     v.addEventListener('volumechange', () => this.syncVolume())
+    v.addEventListener('ratechange', () => this.onRateChange())
     v.addEventListener('enterpictureinpicture', () => this.root.classList.add('in-pip'))
     v.addEventListener('leavepictureinpicture', () => this.root.classList.remove('in-pip'))
     v.addEventListener('webkitpresentationmodechanged', () => {
@@ -414,12 +503,16 @@ export class Player {
   /**
    * @param {object} o
    * @param {Record<string,string>} o.links  qualité → URL
+   * @param {Record<string,{h:number,fps:number,bw:number}>} [o.variants]  qualité → infos (Worker)
    * @param {'live'|'vod'} o.kind
    * @param {number} [o.startAt]
+   * @param {boolean} [o.clip]  clip : 1× au départ, vitesse non retenue
    */
-  load({ links, kind, startAt = 0 }) {
+  load({ links, variants, kind, startAt = 0, clip = false }) {
     this.links = links
+    this.variants = variants && typeof variants === 'object' ? variants : {}
     this.kind = kind
+    this.keepSpeed = kind === 'vod' && !clip
     this.liveSource = null
     this.root.dataset.kind = kind
     this.el.progress.hidden = kind !== 'vod'
@@ -430,10 +523,15 @@ export class Player {
     this.el.liveText.textContent = t('live_now')
     this.el.live.classList.remove('behind')
     this.el.latency.textContent = ''
-    this.video.playbackRate = 1
-    const keys = sortQualities(Object.keys(links))
-    const pref = this.o.prefs.quality
-    this.quality = keys.includes(pref) ? pref : (keys.find((k) => !/audio/i.test(k)) ?? keys[0])
+    // Vitesse retenue pour une VOD, 1× en direct et pour un clip. Réglée
+    // aussi en defaultPlaybackRate : chaque nouvelle source (qualité, autre
+    // Worker) remet playbackRate à cette valeur — la vitesse retombait à 1×,
+    // et une VOD accélérée débordait sur le direct suivant.
+    const rate = this.keepSpeed ? validSpeed(this.o.prefs.vodSpeed) : 1
+    this.video.defaultPlaybackRate = rate
+    this.video.playbackRate = rate
+    // Qualité préférée (réglages), ou la plus proche qui existe.
+    this.quality = pickQuality(Object.keys(links), this.o.prefs.qualityPref, this.variants)
     this.updateQualityLabel()
     this.attach(links[this.quality], startAt)
     this.showUI()
@@ -608,7 +706,9 @@ export class Player {
 
   destroyHls() {
     if (this.hls) { this.hls.destroy(); this.hls = null }
-    this.autoLevel = ''
+    // Niveau d'Auto inconnu jusqu'au prochain LEVEL_SWITCHED : le bouton
+    // ne garde pas celui de la source précédente.
+    if (this.autoLevel) { this.autoLevel = ''; this.updateQualityLabel() }
   }
 
   destroy() {
@@ -623,27 +723,65 @@ export class Player {
   /** Mêmes vidéos, servies par un autre Worker (quota du premier atteint) :
    *  on garde la qualité, la position et les chapitres — `load` repartait
    *  de zéro. */
-  swapLinks(links) {
+  swapLinks(links, variants = this.variants) {
     this.links = links
-    if (!links[this.quality]) this.quality = sortQualities(Object.keys(links))[0]
+    this.variants = variants && typeof variants === 'object' ? variants : {}
+    if (!links[this.quality]) this.quality = pickQuality(Object.keys(links), this.o.prefs.qualityPref, this.variants)
     this.updateQualityLabel()
     this.attach(links[this.quality], this.kind === 'vod' ? this.video.currentTime : 0)
   }
 
+  /** Qualité choisie dans le menu : elle devient la qualité préférée
+   *  (en hauteur : « 720p60 » → 720p, valable sur toutes les chaînes). */
   setQuality(key) {
     if (!this.links[key] || key === this.quality) return
     const at = this.video.currentTime
     const wasPaused = this.video.paused
     this.quality = key
-    this.o.prefs.quality = key
+    this.o.prefs.qualityPref = prefFromKey(key, this.variants, Object.keys(this.links))
     this.o.savePrefs()
     this.updateQualityLabel()
     this.attach(this.links[key], this.kind === 'vod' ? at : 0)
     if (wasPaused && this.kind === 'vod') this.video.addEventListener('playing', () => this.video.pause(), { once: true })
   }
 
+  /** Bouton ⚙ : la qualité (« Auto · 360p » : ce que joue Auto), et la
+   *  vitesse d'une VOD quand elle n'est pas normale (« 720p · 1.5× »). */
   updateQualityLabel() {
-    this.el.qLabel.textContent = this.quality ? qualityLabel(this.quality) : ''
+    const r = this.video.playbackRate
+    const speed = this.kind === 'vod' && r !== 1 ? ` · ${r}×` : ''
+    this.el.qLabel.textContent = this.quality ? `${this.menuLabel(this.quality)}${speed}` : ''
+  }
+
+  // ── Vitesse (VODs et clips ; jamais en direct) ─────────────────────────
+  setSpeed(s) {
+    if (this.kind !== 'vod' || !SPEEDS.includes(s)) return
+    const v = this.video
+    v.defaultPlaybackRate = s
+    v.playbackRate = s
+    if (this.keepSpeed && this.o.prefs.vodSpeed !== s) { this.o.prefs.vodSpeed = s; this.o.savePrefs() }
+    this.updateQualityLabel()
+    this.flash(`${s}×`)
+  }
+
+  /** Raccourcis < et > : vitesse précédente ou suivante. */
+  stepSpeed(d) {
+    const i = SPEEDS.indexOf(validSpeed(this.video.playbackRate))
+    this.setSpeed(SPEEDS[Math.max(0, Math.min(SPEEDS.length - 1, i + d))])
+  }
+
+  /** Vitesse changée hors de notre menu — plein écran natif de l'iPhone, qui
+   *  a le sien : gardée au changement de qualité et retenue comme si elle
+   *  venait du menu. En direct, rien (la vitesse y reste à 1×). */
+  onRateChange() {
+    if (this.kind !== 'vod') return
+    const v = this.video
+    const r = v.playbackRate
+    if (SPEEDS.includes(r)) {
+      if (v.defaultPlaybackRate !== r) v.defaultPlaybackRate = r
+      if (this.keepSpeed && this.o.prefs.vodSpeed !== r) { this.o.prefs.vodSpeed = r; this.o.savePrefs() }
+    }
+    this.updateQualityLabel()
   }
 
   /** Source qui sert le direct, affichée dans le menu ⚙. */
@@ -662,9 +800,10 @@ export class Player {
       `rate ${v.playbackRate}`, lat > 0 ? `delay ${lat.toFixed(1)}s` : null].filter(Boolean).join(' · ')
   }
 
-  /** Libellé dans le menu : « Auto · 720p » une fois le débit connu. */
+  /** Libellé dans le menu et sur le bouton : « Auto · 720p » une fois le
+   *  débit connu. */
   menuLabel(k) {
-    const base = qualityLabel(k)
+    const base = qualityText(k)
     return k.toLowerCase() === 'auto' && k === this.quality && this.autoLevel ? `${base} · ${this.autoLevel}` : base
   }
 
@@ -1142,6 +1281,9 @@ export class Player {
       l: () => this.seekBy(10),
       arrowup: () => { this.video.muted = false; this.video.volume = Math.min(1, this.video.volume + 0.1) },
       arrowdown: () => { this.video.volume = Math.max(0, this.video.volume - 0.1) },
+      // Vitesse (VOD, clip) : e.key vaut « < » et « > », AZERTY compris.
+      '<': this.kind === 'vod' ? () => this.stepSpeed(-1) : null,
+      '>': this.kind === 'vod' ? () => this.stepSpeed(1) : null,
     }[k]
     if (!handled) return
     e.preventDefault()
@@ -1152,7 +1294,7 @@ export class Player {
   // ── Menu qualité / vitesse ─────────────────────────────────────────────
   toggleMenu() {
     if (!this.el.menu.hidden) return this.closeMenu()
-    const keys = sortQualities(Object.keys(this.links))
+    const keys = sortQualities(Object.keys(this.links), this.variants)
     const rate = this.video.playbackRate
     let html = `<div class="p-menu-title">${esc(t('quality'))}</div>`
     html += keys.map((k) => `<button type="button" data-q="${esc(k)}" class="${k === this.quality ? 'on' : ''}">
@@ -1167,7 +1309,8 @@ export class Player {
     }
     if (this.kind === 'vod') {
       html += `<div class="p-menu-title">${esc(t('speed'))}</div><div class="p-speeds">`
-      html += SPEEDS.map((s) => `<button type="button" data-s="${s}" class="${s === rate ? 'on' : ''}">${s === 1 ? esc(t('normal')) : `${s}×`}</button>`).join('')
+      // Quatre par ligne : « 1× » plutôt que « Normale », trop large ici.
+      html += SPEEDS.map((s) => `<button type="button" data-s="${s}" class="${s === rate ? 'on' : ''}"${s === 1 ? ` title="${esc(t('normal'))}"` : ''}>${s}×</button>`).join('')
       html += '</div>'
     }
     // Un souci pendant la lecture : le signaler d'ici, avec ce qui se lit.
@@ -1218,7 +1361,7 @@ export class Player {
       return
     }
     if (b.dataset.q) this.setQuality(b.dataset.q)
-    if (b.dataset.s) this.video.playbackRate = Number(b.dataset.s)
+    if (b.dataset.s) this.setSpeed(Number(b.dataset.s))
     if (b.dataset.c) { this.video.currentTime = Number(b.dataset.c); this.updateChapterLabel() }
     this.closeMenu()
   }

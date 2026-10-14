@@ -14,7 +14,7 @@
 
 import { fixProxiedUrl } from './api.js'
 import { lang, t } from './i18n.js'
-import { qualityLabel, sortQualities } from './player.js'
+import { qualityLabel, qualityText, sortQualities } from './player.js'
 import { $, esc, formatClock, icon, toast } from './util.js'
 
 const CONCURRENCY = 4
@@ -55,7 +55,7 @@ function renderSetup() {
     <p class="muted sheet-sub dl-vod">${esc(ctx.title)}</p>
     <div class="dl-block">
       <span class="dl-label">${esc(t('quality'))}</span>
-      <div class="segmented dl-q">${qualities.map((q) => `<button type="button" data-q="${esc(q)}" class="${q === setup.quality ? 'active' : ''}">${esc(qualityLabel(q))}</button>`).join('')}</div>
+      <div class="segmented dl-q">${qualities.map((q) => `<button type="button" data-q="${esc(q)}" class="${q === setup.quality ? 'active' : ''}">${esc(qualityText(q))}</button>`).join('')}</div>
     </div>
     <div id="dl-range"><div class="dl-wait"><span class="spinner"></span></div></div>
     <label class="setting">

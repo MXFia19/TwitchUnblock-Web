@@ -45,6 +45,33 @@ const DEFAULT_PREFS = {
   blockedUsers: [],
   volume: 1,
   muted: false,
+  // Qualité préférée : 'auto', 'source', une hauteur ('1080', '720'…) ou
+  // 'audio' — mêmes valeurs que l'app iOS dans la sauvegarde.
+  qualityPref: 'auto',
+  vodSpeed: 1,       // vitesse des VODs, retenue d'une VOD à l'autre
+}
+
+/** Réglages enregistrés, avec la qualité d'avant le réglage « Qualité
+ *  préférée » (`quality`, le nom exact : « 720p60 ») reprise en préférence,
+ *  en hauteur — « 720p60 » vaut alors aussi pour une chaîne en 720p30. */
+function readPrefs() {
+  const saved = read('tu_prefs', {})
+  if (!saved || typeof saved !== 'object' || Array.isArray(saved)) return {}
+  if (typeof saved.quality === 'string') {
+    if (saved.qualityPref === undefined) saved.qualityPref = qualityPrefOf(saved.quality)
+    delete saved.quality
+  }
+  return saved
+}
+
+/** Nom d'une qualité → valeur du réglage (aussi pour une sauvegarde d'avant). */
+export function qualityPrefOf(name) {
+  const s = String(name).toLowerCase()
+  if (s === 'auto') return 'auto'
+  if (s.includes('source') || s === 'chunked') return 'source'
+  if (s.includes('audio')) return 'audio'
+  const m = s.match(/(\d+)p/) || s.match(/\d+x(\d+)/)
+  return m && Number(m[1]) > 0 ? String(Number(m[1])) : 'auto'
 }
 
 export const store = {
@@ -61,7 +88,7 @@ export const store = {
 
 
   // ── Préférences ─────────────────────────────────────────────────────────
-  prefs: { ...DEFAULT_PREFS, ...read('tu_prefs', {}) },
+  prefs: { ...DEFAULT_PREFS, ...readPrefs() },
   savePrefs() { write('tu_prefs', this.prefs) },
 
   // ── Historique (VODs + streamers), même forme que l'ancien site ────────
