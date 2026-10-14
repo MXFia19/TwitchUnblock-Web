@@ -2581,6 +2581,9 @@ function setupPlayer() {
       showWatchError(kind === 'live' ? t('err_live') : t('err_vod'))
     },
     onWorkerDown: (base) => switchWorker(base),
+    // Pause pub de la chaîne affichée (une fois par pause) : comptée pour
+    // /stats, comme la source qui sert le direct.
+    onAdBreak: () => usage.count('live_ad_break', store.prefs.shareUsage),
     // « Signaler un problème » du menu du lecteur : hors plein écran, la
     // feuille n'y serait pas visible.
     onReport: () => {

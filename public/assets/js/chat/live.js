@@ -14,6 +14,8 @@ import { loadChannelBadges, loadGlobalBadges } from './badges.js'
 import { joinBttvLive, leaveBttvLive, loadChannelEmotes, loadGlobalEmotes } from './emotes.js'
 
 const IRC_URL = 'wss://irc-ws.chat.twitch.tv:443'
+/** Attente maximale des badges et des emotes avant de se connecter (ms). */
+const START_WAIT = 3500
 
 /** Refus de Twitch (msg-id d'un NOTICE) → raison traduite. */
 const REJECTIONS = {
@@ -62,13 +64,21 @@ export class LiveChat {
     this.closed = false
     const gen = ++this.generation
     // Badges et emotes d'abord : un message arrivé avant eux s'afficherait
-    // nu. Les deux requêtes sont rapides et faites une fois par chaîne.
-    await Promise.all([
-      loadGlobalBadges(),
-      loadChannelBadges(this.o.channel),
-      loadGlobalEmotes(),
-      loadChannelEmotes(this.o.channelId, this.o.channel),
+    // nu. Les requêtes sont d'ordinaire rapides et faites une fois par
+    // chaîne ; mais une source lente (réseau filtré, VPN) laissait le chat
+    // sur « Connexion au chat… » sans fin : au plus START_WAIT d'attente,
+    // ce qui arrive ensuite sert aux messages suivants.
+    let waited
+    await Promise.race([
+      Promise.all([
+        loadGlobalBadges(),
+        loadChannelBadges(this.o.channel),
+        loadGlobalEmotes(),
+        loadChannelEmotes(this.o.channelId, this.o.channel),
+      ]),
+      new Promise((resolve) => { waited = setTimeout(resolve, START_WAIT) }),
     ])
+    clearTimeout(waited)
     if (gen !== this.generation) return
     // BTTV en direct : emotes personnelles (Pro), emotes ajoutées en live.
     joinBttvLive(this.o.channelId)

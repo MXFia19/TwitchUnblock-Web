@@ -17,13 +17,19 @@ let loadedChannelId = null
 const personal = new Map()
 
 async function getJSON(url) {
+  // Abandon après 8 s : sans délai, une API qui ne répond pas (réseau
+  // filtré) gardait la requête ouverte des minutes durant.
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), 8000)
   try {
-    const res = await fetch(url)
+    const res = await fetch(url, { signal: ctrl.signal })
     if (!res.ok) return null
     return await res.json()
   } catch {
     // Une source tierce indisponible ne doit pas empêcher le chat de tourner.
     return null
+  } finally {
+    clearTimeout(timer)
   }
 }
 

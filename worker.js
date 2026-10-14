@@ -440,17 +440,23 @@ async function handleRecoverResolve(url, workerOrigin) {
 // adresse — un proxy ouvert à tout Internet, aux frais du Worker.
 const PROXY_HOSTS = ['ttvnw.net', 'jtvnw.net', 'twitch.tv', 'cloudfront.net', 'luminous.dev', 'twitchcdn.net', 'twitch-al.nadeko.net'];
 
-// Proxys sans pub au format TTV.LOL v1 : la requête usher, encodée, après
-// /playlist/<chaîne>.m3u8 (« %3F » compris). Celui-ci est en Albanie, où
-// Twitch ne diffuse pas de pub ; ses variantes se lisent de n'importe quelle
-// adresse et annoncent leurs segments d'avance, comme celles de Luminous.
+// Proxys au format TTV.LOL v1 : la requête usher, encodée, après
+// /playlist/<chaîne>.m3u8 (« %3F » compris). Celui-ci est en Albanie ; ses
+// variantes se lisent de n'importe quelle adresse et annoncent leurs segments
+// d'avance, comme celles de Luminous.
 const TTVLOL_HOSTS = ['twitch-al.nadeko.net'];
 const ttvlolUrl = (host, login) =>
     `https://${host}/playlist/${login}.m3u8%3F${encodeURIComponent('allow_source=true&allow_audio_only=true&fast_bread=true')}`;
 
-// Sources sans pub du direct, dans l'ordre automatique. fast_bread : chaque
-// playlist annonce en plus les deux prochains segments (« EXT-X-TWITCH-
-// PREFETCH »), dont le lecteur du site se sert pour coller au direct.
+// Sources du direct, dans l'ordre automatique. Les proxys évitent la plupart
+// des pubs, pas toutes : les pré-rolls à l'ouverture et les pauses pub lancées
+// par la chaîne (« Commercial break in progress », DATERANGE
+// « twitch-stitched-ad ») arrivent sur toutes les sources à la même seconde
+// (sondes du 14/10) — le lecteur les signale et coupe le son. Ne pas passer le
+// jeton en playerType « popout » : avec un Device-ID, il reçoit les mêmes.
+// fast_bread : chaque playlist annonce en plus les deux prochains segments
+// (« EXT-X-TWITCH-PREFETCH »), dont le lecteur du site se sert pour coller au
+// direct.
 // Luminous Asie d'abord, comme l'app ; l'européen renvoie des listes au
 // format des serveurs IVS, où « Source » donnait un écran noir chez des
 // utilisateurs. Twitch officiel, avec ses pubs, vient en dernier — ou en
@@ -475,7 +481,7 @@ function liveSourceSteps(order, wanted) {
     return [...first, ...LIVE_SOURCE_IDS.filter((id) => !first.includes(id))];
 }
 
-/** Liste maîtresse d'un proxy sans pub ; null s'il ne répond pas ou si la
+/** Liste maîtresse d'un proxy ; null s'il ne répond pas ou si la
  *  chaîne y est hors ligne (pas de « #EXT-X-STREAM-INF »). */
 async function proxyLiveMaster(c) {
     const r = await fetch(c.url, { headers: c.headers });
@@ -526,10 +532,11 @@ async function handleProxy(url, request) {
         newHeaders.set("Content-Type", "application/vnd.apple.mpegurl");
         const finalUrl = res.url, base = finalUrl.substring(0, finalUrl.lastIndexOf('/') + 1);
         const proxyUrl = (full) => `${workerOrigin}/api/proxy?url=${encodeURIComponent(full)}&isVod=${isVod}`;
-        // Une sous-playlist passe TOUJOURS par le proxy : ses jetons sont liés
-        // à l'adresse IP qui l'a demandée — celle du Worker ou de Luminous —,
-        // et le navigateur s'y faisait refuser (403). Les segments d'un
-        // direct, eux, partent en direct : leur CDN accepte tout le monde.
+        // Une sous-playlist passe TOUJOURS par le proxy : demandée par le
+        // navigateur, elle était refusée (403). La cause est l'en-tête Origin
+        // qu'il ajoute (mesuré par deux enquêtes du 14/10), pas un lien avec
+        // l'adresse IP. Les segments d'un direct, eux, partent en direct :
+        // leur CDN accepte tout le monde.
         const isPlaylistUrl = (full) => full.includes('.m3u8') || /(^|\.)playlist\.ttvnw\.net\//.test(new URL(full).hostname + '/') || /luminous\.dev$/.test(new URL(full).hostname);
         const proxify = (u, playlist) => {
             const full = u.startsWith('http') ? u : new URL(u, base).href;
@@ -706,8 +713,10 @@ const BOT_UA = /headless|bot\b|crawler|spider|slurp|playwright|puppeteer|seleniu
 // d'appareil, version majeure d'iOS, et des compteurs de lectures — la source
 // qui a servi un direct, les échecs. Jamais de chaîne ni de titre.
 const USAGE_DEVICES = ['iphone', 'ipad', 'tv', 'mobile', 'desktop'];
-const USAGE_EVENTS = ['live_as', 'live_al', 'live_eu', 'live_twitch', 'live_worker', 'live_unknown',
-    'live_fail', 'live_play_fail', 'vod', 'vod_fail', 'vod_play_fail'];
+// live_account : direct de l'app servi par le compte d'un abonné sans pub ;
+// live_ad_break : pause pub de la chaîne affichée (une fois par pause).
+const USAGE_EVENTS = ['live_as', 'live_al', 'live_eu', 'live_twitch', 'live_account', 'live_worker', 'live_unknown',
+    'live_fail', 'live_play_fail', 'live_ad_break', 'vod', 'vod_fail', 'vod_play_fail'];
 
 // POST /api/ping — { id, version, platform } enregistre ; { id, forget: true } efface.
 async function handlePing(request, env) {

@@ -399,14 +399,14 @@
       devTitle: 'Outils développeur', devSub: 'Visible seulement par le compte administrateur. Chaque suppression compte comme une écriture D1 (100 000 par jour en gratuit), plafonnée à 500 par action.',
       delAnonWeb: 'Supprimer les anonymes web', delAnon: 'Supprimer tous les anonymes', delOnce: 'Supprimer les « vus un seul jour »', delAll: 'Tout réinitialiser',
       loginPh: 'Pseudo Twitch', syncBtn: 'Effacer sa sauvegarde (historique, progression)', filterPh: 'Filtrer (pseudo, version…)',
-      footer: 'Comptage : connecté, le compte Twitch (compté une fois sur tous ses appareils) ; sinon un identifiant tiré au hasard par navigateur ou par installation. Au plus un signal par heure, avec la langue de l’interface, le type d’appareil, la version d’iOS et le nombre de lectures (source du direct, échecs) ; ni adresse IP ni chaîne regardée. Les entrées expirent après 35 jours. Depuis le 3 octobre 2026, les robots, navigateurs automatisés, copies locales du site et navigations privées sans stockage ne sont plus comptés ; les anciens identifiants parasites disparaîtront d’eux-mêmes.',
+      footer: 'Comptage : connecté, le compte Twitch (compté une fois sur tous ses appareils) ; sinon un identifiant tiré au hasard par navigateur ou par installation. Au plus un signal par heure, avec la langue de l’interface, le type d’appareil, la version d’iOS et le nombre de lectures (source du direct, échecs, pauses pub) ; ni adresse IP ni chaîne regardée. Les entrées expirent après 35 jours. Depuis le 3 octobre 2026, les robots, navigateurs automatisés, copies locales du site et navigations privées sans stockage ne sont plus comptés ; les anciens identifiants parasites disparaîtront d’eux-mêmes.',
       today: "Aujourd'hui", week: '7 derniers jours', month: '30 derniers jours', partial: 'données depuis le {d} seulement',
       actTitle: 'Actifs par jour', actSub: 'Personnes différentes chaque jour (une fois par jour, même si elles reviennent plusieurs fois).', actSince: 'Mesuré depuis le {d}.', actNone: 'Pas encore de données : la mesure commence avec cette mise à jour.',
       rtTitle: 'Rétention', rtSub: 'Parmi les personnes arrivées depuis assez longtemps, la part revue au moins 1, 7 ou 14 jours après son premier jour. Par semaine d’arrivée, 5 dernières semaines.',
       rtD1: 'revenues un autre jour', rtD7: 'encore là 7 jours après', rtD14: 'encore là 14 jours après', rtOf: 'sur {n}', rtWeek: 'Arrivées', rtSize: 'Personnes', rtWeekOf: 'semaine du {d}',
       hlTitle: 'Santé du direct (7 jours)', hlSub: 'Source qui a servi chaque live lancé, et échecs. Compteurs anonymes : aucune chaîne, aucun titre.',
-      hlLives: '{n} lives lancés', hlVods: '{n} VODs lancées', hlFail: '{n} échecs au lancement ({p} %)', hlPlayFail: '{n} pendant la lecture', hlNone: 'Pas encore de données : elles arrivent avec les nouvelles versions de l’app et du site.',
-      hs_as: 'Luminous Asie', hs_al: 'Proxy Albanie', hs_eu: 'Luminous Europe', hs_twitch: 'Twitch officiel', hs_worker: 'Worker (secours)', hs_unknown: 'Inconnue',
+      hlLives: '{n} lives lancés', hlVods: '{n} VODs lancées', hlFail: '{n} échecs au lancement ({p} %)', hlPlayFail: '{n} pendant la lecture', hlAdBreaks: '{n} pauses pub de la chaîne vues', hlNone: 'Pas encore de données : elles arrivent avec les nouvelles versions de l’app et du site.',
+      hs_as: 'Luminous Asie', hs_al: 'Proxy Albanie', hs_eu: 'Luminous Europe', hs_twitch: 'Twitch officiel', hs_account: 'Compte abonné', hs_worker: 'Worker (secours)', hs_unknown: 'Inconnue',
       dvTitle: 'Appareils et langues', dvSub: 'Personnes actives sur 30 jours qui envoient ces infos : {ios} sur l’app, {web} sur le site (nouvelles versions seulement).',
       dvLangIos: 'Langue de l’app', dvLangWeb: 'Langue du site', dvOs: 'Version d’iOS', dvDevIos: 'Appareil (app)', dvDevWeb: 'Appareil (site)', dvMobile: 'Mobile ou tablette', dvDesktop: 'Ordinateur', dvNone: 'Pas encore de données : elles arrivent avec les nouvelles versions de l’app et du site.',
       tNew: '{n} nouvelles', tOld: '{n} déjà venues avant',
@@ -455,14 +455,14 @@
       devTitle: 'Developer tools', devSub: 'Only visible to the admin account. Each deletion counts as one D1 write (100,000 per day on the free plan), capped at 500 per action.',
       delAnonWeb: 'Delete anonymous web', delAnon: 'Delete all anonymous', delOnce: 'Delete “seen on one day only”', delAll: 'Reset everything',
       loginPh: 'Twitch username', syncBtn: 'Erase their backup (history, progress)', filterPh: 'Filter (username, version…)',
-      footer: 'Counting: when signed in, the Twitch account (counted once across all devices); otherwise a random identifier per browser or install. At most one signal per hour, with the interface language, the device type, the iOS version and the number of plays (live source, failures); no IP address and no watched channel. Entries expire after 35 days. Since October 3, 2026, bots, automated browsers, local copies of the site and private browsing without storage are no longer counted; old noisy identifiers will disappear on their own.',
+      footer: 'Counting: when signed in, the Twitch account (counted once across all devices); otherwise a random identifier per browser or install. At most one signal per hour, with the interface language, the device type, the iOS version and the number of plays (live source, failures, ad breaks); no IP address and no watched channel. Entries expire after 35 days. Since October 3, 2026, bots, automated browsers, local copies of the site and private browsing without storage are no longer counted; old noisy identifiers will disappear on their own.',
       today: 'Today', week: 'Last 7 days', month: 'Last 30 days', partial: 'data only since {d}',
       actTitle: 'Active per day', actSub: 'Different people each day (once per day, even if they come back several times).', actSince: 'Measured since {d}.', actNone: 'No data yet: measuring starts with this update.',
       rtTitle: 'Retention', rtSub: 'Among people who arrived long enough ago, the share seen again at least 1, 7 or 14 days after their first day. By arrival week, last 5 weeks.',
       rtD1: 'came back another day', rtD7: 'still there 7 days later', rtD14: 'still there 14 days later', rtOf: 'of {n}', rtWeek: 'Arrived', rtSize: 'People', rtWeekOf: 'week of {d}',
       hlTitle: 'Live health (7 days)', hlSub: 'Source that served each live started, and failures. Anonymous counters: no channel, no title.',
-      hlLives: '{n} lives started', hlVods: '{n} VODs started', hlFail: '{n} failed to start ({p} %)', hlPlayFail: '{n} during playback', hlNone: 'No data yet: it comes with the new versions of the app and the website.',
-      hs_as: 'Luminous Asia', hs_al: 'Albania proxy', hs_eu: 'Luminous Europe', hs_twitch: 'Official Twitch', hs_worker: 'Worker (fallback)', hs_unknown: 'Unknown',
+      hlLives: '{n} lives started', hlVods: '{n} VODs started', hlFail: '{n} failed to start ({p} %)', hlPlayFail: '{n} during playback', hlAdBreaks: '{n} channel ad breaks seen', hlNone: 'No data yet: it comes with the new versions of the app and the website.',
+      hs_as: 'Luminous Asia', hs_al: 'Albania proxy', hs_eu: 'Luminous Europe', hs_twitch: 'Official Twitch', hs_account: 'Subscriber account', hs_worker: 'Worker (fallback)', hs_unknown: 'Unknown',
       dvTitle: 'Devices and languages', dvSub: 'People active over 30 days who send this info: {ios} on the app, {web} on the website (new versions only).',
       dvLangIos: 'App language', dvLangWeb: 'Website language', dvOs: 'iOS version', dvDevIos: 'Device (app)', dvDevWeb: 'Device (website)', dvMobile: 'Phone or tablet', dvDesktop: 'Computer', dvNone: 'No data yet: it comes with the new versions of the app and the website.',
       tNew: '{n} new', tOld: '{n} had come before',
@@ -511,14 +511,14 @@
       devTitle: 'Herramientas de desarrollo', devSub: 'Solo visible para la cuenta de administrador. Cada eliminación cuenta como una escritura D1 (100 000 al día en el plan gratuito), con un máximo de 500 por acción.',
       delAnonWeb: 'Eliminar anónimos web', delAnon: 'Eliminar todos los anónimos', delOnce: 'Eliminar «vistos un solo día»', delAll: 'Restablecer todo',
       loginPh: 'Usuario de Twitch', syncBtn: 'Borrar su copia (historial, progreso)', filterPh: 'Filtrar (usuario, versión…)',
-      footer: 'Recuento: con sesión iniciada, la cuenta de Twitch (contada una vez en todos sus dispositivos); si no, un identificador aleatorio por navegador o instalación. Como mucho una señal por hora, con el idioma de la interfaz, el tipo de dispositivo, la versión de iOS y el número de reproducciones (fuente del directo, fallos); sin dirección IP ni canal visto. Las entradas caducan a los 35 días. Desde el 3 de octubre de 2026, los bots, navegadores automatizados, copias locales del sitio y la navegación privada sin almacenamiento ya no se cuentan; los antiguos identificadores parásitos desaparecerán solos.',
+      footer: 'Recuento: con sesión iniciada, la cuenta de Twitch (contada una vez en todos sus dispositivos); si no, un identificador aleatorio por navegador o instalación. Como mucho una señal por hora, con el idioma de la interfaz, el tipo de dispositivo, la versión de iOS y el número de reproducciones (fuente del directo, fallos, pausas publicitarias); sin dirección IP ni canal visto. Las entradas caducan a los 35 días. Desde el 3 de octubre de 2026, los bots, navegadores automatizados, copias locales del sitio y la navegación privada sin almacenamiento ya no se cuentan; los antiguos identificadores parásitos desaparecerán solos.',
       today: 'Hoy', week: 'Últimos 7 días', month: 'Últimos 30 días', partial: 'datos solo desde el {d}',
       actTitle: 'Activos por día', actSub: 'Personas distintas cada día (una vez por día, aunque vuelvan varias veces).', actSince: 'Medido desde el {d}.', actNone: 'Aún no hay datos: la medición empieza con esta actualización.',
       rtTitle: 'Retención', rtSub: 'Entre las personas que llegaron hace suficiente tiempo, la parte que volvió al menos 1, 7 o 14 días después de su primer día. Por semana de llegada, últimas 5 semanas.',
       rtD1: 'volvieron otro día', rtD7: 'siguen 7 días después', rtD14: 'siguen 14 días después', rtOf: 'de {n}', rtWeek: 'Llegadas', rtSize: 'Personas', rtWeekOf: 'semana del {d}',
       hlTitle: 'Salud del directo (7 días)', hlSub: 'Fuente que sirvió cada directo iniciado, y fallos. Contadores anónimos: ningún canal, ningún título.',
-      hlLives: '{n} directos iniciados', hlVods: '{n} VODs iniciados', hlFail: '{n} fallos al iniciar ({p} %)', hlPlayFail: '{n} durante la reproducción', hlNone: 'Aún no hay datos: llegan con las nuevas versiones de la app y del sitio.',
-      hs_as: 'Luminous Asia', hs_al: 'Proxy de Albania', hs_eu: 'Luminous Europa', hs_twitch: 'Twitch oficial', hs_worker: 'Worker (respaldo)', hs_unknown: 'Desconocida',
+      hlLives: '{n} directos iniciados', hlVods: '{n} VODs iniciados', hlFail: '{n} fallos al iniciar ({p} %)', hlPlayFail: '{n} durante la reproducción', hlAdBreaks: '{n} pausas publicitarias del canal vistas', hlNone: 'Aún no hay datos: llegan con las nuevas versiones de la app y del sitio.',
+      hs_as: 'Luminous Asia', hs_al: 'Proxy de Albania', hs_eu: 'Luminous Europa', hs_twitch: 'Twitch oficial', hs_account: 'Cuenta suscrita', hs_worker: 'Worker (respaldo)', hs_unknown: 'Desconocida',
       dvTitle: 'Dispositivos e idiomas', dvSub: 'Personas activas en 30 días que envían estos datos: {ios} en la app, {web} en el sitio (solo versiones nuevas).',
       dvLangIos: 'Idioma de la app', dvLangWeb: 'Idioma del sitio', dvOs: 'Versión de iOS', dvDevIos: 'Dispositivo (app)', dvDevWeb: 'Dispositivo (sitio)', dvMobile: 'Móvil o tableta', dvDesktop: 'Ordenador', dvNone: 'Aún no hay datos: llegan con las nuevas versiones de la app y del sitio.',
       tNew: '{n} nuevas', tOld: '{n} ya habían venido',
@@ -681,7 +681,8 @@
       || '<tr><td colspan="4" class="sub">—</td></tr>'}</tbody>`
   }
 
-  const SOURCES = ['as', 'al', 'eu', 'twitch', 'worker', 'unknown']
+  // account : direct de l'app servi par le compte d'un abonné sans pub.
+  const SOURCES = ['as', 'al', 'eu', 'twitch', 'account', 'worker', 'unknown']
   function health(s) {
     const h = s.health
     const box = $('#health')
@@ -691,7 +692,7 @@
       const w = h.week?.[plat] ?? {}
       const lives = SOURCES.reduce((n, k) => n + (w['live_' + k] || 0), 0)
       const vods = w.vod || 0
-      const liveFail = w.live_fail || 0, livePlay = w.live_play_fail || 0
+      const liveFail = w.live_fail || 0, livePlay = w.live_play_fail || 0, adBreaks = w.live_ad_break || 0
       const vodFail = w.vod_fail || 0, vodPlay = w.vod_play_fail || 0
       if (!lives && !vods && !liveFail && !vodFail) return ''
       const rows = SOURCES.filter((k) => w['live_' + k]).map((k) => `
@@ -700,7 +701,7 @@
           <span class="num">${fmt(w['live_' + k])}</span></div>`).join('')
       const fails = (n, total, play) => esc(t('hlFail', { n: fmt(n), p: pct(n, total + n) })) + (play ? ` · ${esc(t('hlPlayFail', { n: fmt(play) }))}` : '')
       return `<h3 class="subhead"><i class="dot ${plat}"></i>${esc(t(plat))}</h3>
-        <p class="sub">${esc(t('hlLives', { n: fmt(lives) }))} · ${fails(liveFail, lives, livePlay)}</p>
+        <p class="sub">${esc(t('hlLives', { n: fmt(lives) }))} · ${fails(liveFail, lives, livePlay)}${adBreaks ? ` · ${esc(t('hlAdBreaks', { n: fmt(adBreaks) }))}` : ''}</p>
         <div class="rows">${rows}</div>
         <p class="sub" style="margin-top:10px">${esc(t('hlVods', { n: fmt(vods) }))} · ${fails(vodFail, vods, vodPlay)}</p>`
     }).join('')

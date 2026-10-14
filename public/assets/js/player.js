@@ -170,6 +170,50 @@ const LIVE_DRIFT_MS = 4000
 const LIVE_JUMP_GAP_MS = 30_000
 const LIVE_FLOOR_SEEK_MS = 60_000
 
+// ── Pauses pub de la chaîne ─────────────────────────────────────────────
+// Pendant une pause pub (lancée par le streamer, ou pré-roll à l'ouverture),
+// Twitch remplace le direct par une pub ou par son écran violet
+// « Commercial break in progress », sur toutes les sources, proxys compris
+// (sondes du 14/10). La playlist l'annonce par une DATERANGE de classe
+// « twitch-stitched-ad » (début + durée). « twitch-maf-ad », présente dans
+// toutes les séances quelques minutes après l'ouverture, est une pub dessinée
+// par le lecteur de Twitch : rien ne change à l'image, elle est ignorée.
+// Lue par hls.js (LEVEL_UPDATED), en qualité fixe comme en « Auto », et
+// comparée à l'heure de l'image affichée (hls.playingDate) : la playlist a
+// jusqu'à ~20 s d'avance sur ce qu'on voit.
+const AD_CLASS = 'twitch-stitched-ad'
+const AD_KEEP = 20
+
+/** Fin (ms) de la pause pub en cours à l'instant `at` (heure de l'image), pubs
+ *  enchaînées comprises (écart d'une seconde au plus) ; 0 hors pause. */
+export function adBreakEnd(breaks, at) {
+  const list = [...breaks]
+  let end = 0
+  for (const b of list) if (b.start <= at && at < b.end) end = Math.max(end, b.end)
+  if (!end) return 0
+  for (let grown = true; grown;) {
+    grown = false
+    for (const b of list) if (b.start <= end + 1000 && b.end > end) { end = b.end; grown = true }
+  }
+  return end
+}
+
+/** Passages d'une VOD en fMP4 listés « N-unmuted.mp4 » : contrairement à
+ *  « N-unmuted.ts » (refusé par le CDN), ce fichier a le son d'origine
+ *  (sondé sur 19 VODs). Twitch les compte pourtant parmi les passages coupés
+ *  (muteInfo) : on ne les annonce pas comme muets. */
+export function soundSpansOf(fragments) {
+  const spans = []
+  for (const f of fragments ?? []) {
+    if (!/-unmuted\.mp4/.test(f?.relurl || f?.url || '') || !Number.isFinite(f.start)) continue
+    const end = f.start + (f.duration || 0)
+    const last = spans[spans.length - 1]
+    if (last && f.start <= last.end + 0.1) last.end = Math.max(last.end, end)
+    else spans.push({ start: f.start, end })
+  }
+  return spans
+}
+
 function prefetchPlaylistLoader(Hls, player) {
   const Base = Hls.DefaultConfig.loader
   return class PrefetchLoader extends Base {
@@ -341,6 +385,17 @@ export class Player {
     this.speedNotice = false
     // Source qui sert le direct en cours (« as », « al », « eu », « twitch »).
     this.liveSource = null
+    // Pauses pub annoncées par la playlist du direct (id → { start, end },
+    // en ms), celle qu'on affiche, celles déjà comptées, et le son coupé
+    // par nous (rétabli à la fin).
+    this.adBreaks = new Map()
+    this.adBreak = null
+    this.adSeen = []
+    this.adMuted = false
+    this.adKeepSound = false
+    this.adTimer = null
+    // Passages « -unmuted.mp4 » de la VOD : le son y est (soundSpansOf).
+    this.soundSpans = []
     this.hideTimer = null
     this.lastTap = 0
     this.tapTimer = null
@@ -357,6 +412,7 @@ export class Player {
       <div class="p-flash" aria-hidden="true"></div>
       <button class="p-unmute" type="button" hidden>${icon('mute', 16)}<span></span></button>
       <div class="p-mutednote" hidden>${icon('mute', 15)}<span class="p-mutednote-text"></span><button type="button" class="p-mutednote-skip">${icon('skipForward', 13)}<span></span></button></div>
+      <div class="p-adbreak" hidden role="status"><b class="p-adbreak-title"></b><span class="p-adbreak-sub"></span><span class="p-adbreak-hint"></span></div>
       <div class="p-ui">
         <div class="p-shade"></div>
         <button class="p-big" type="button" aria-label="play">${icon('play', 30)}</button>
@@ -399,6 +455,7 @@ export class Player {
       time: q('.p-time'), live: q('.p-live'), liveText: q('.p-live-text'), latency: q('.p-latency'),
       quality: q('.p-quality'), qLabel: q('.p-q-label'), qSpeed: q('.p-q-speed'), chat: q('.p-chat'), pip: q('.p-pip'), fs: q('.p-fs'), theatre: q('.p-theatre'), chapBtn: q('.p-chapters'), chapLabel: q('.p-chap-label'),
       menu: q('.p-menu'), mutedNote: q('.p-mutednote'), mutedText: q('.p-mutednote-text'), mutedSkip: q('.p-mutednote-skip'),
+      ad: q('.p-adbreak'), adTitle: q('.p-adbreak-title'), adSub: q('.p-adbreak-sub'), adHint: q('.p-adbreak-hint'),
     }
 
     const v = this.video
@@ -528,7 +585,12 @@ export class Player {
     this.root.dataset.kind = kind
     this.el.progress.hidden = kind !== 'vod'
     this.setChapters([])
+    this.soundSpans = []
     this.setMuted([])
+    // Nouvelle vidéo : pauses pub de la précédente oubliées, son rétabli.
+    this.endAdBreak()
+    this.adBreaks.clear()
+    this.adSeen = []
     // Rempli tout de suite : sinon la pastille du direct restait vide tant
     // que la vidéo n'avait pas démarré.
     this.el.liveText.textContent = t('live_now')
@@ -654,6 +716,13 @@ export class Player {
         this.tryPlay()
       })
       hls.on(Hls.Events.FRAG_LOADED, () => { this.directFails = 0 })
+      // Chaque playlist lue (niveau joué, « Auto » compris) : pauses pub
+      // annoncées d'un direct, passages « -unmuted.mp4 » d'une VOD.
+      hls.on(Hls.Events.LEVEL_UPDATED, (_e, d) => {
+        if (token !== this.attachToken) return
+        if (this.kind === 'live') this.readAdBreaks(d.details)
+        else this.readSoundSpans(d.details)
+      })
       // En « Auto » (playlist maître), hls.js choisit le débit : on affiche
       // lequel, sinon on ne sait jamais ce qu'on regarde vraiment.
       hls.on(Hls.Events.LEVEL_SWITCHED, (_e, d) => {
@@ -725,6 +794,8 @@ export class Player {
 
   destroy() {
     this.destroyHls()
+    this.endAdBreak()
+    this.adBreaks.clear()
     this.video.pause()
     this.video.removeAttribute('src')
     this.video.load()
@@ -811,7 +882,8 @@ export class Player {
     const q = this.quality ? `${this.quality}${this.autoLevel ? `/${this.autoLevel}` : ''}` : null
     const lat = this.kind === 'live' ? this.liveDelay() : 0
     return [engine, q, this.kind === 'live' && this.liveSource ? `src ${this.liveSource}` : null,
-      `rate ${v.playbackRate}`, lat > 0 ? `delay ${lat.toFixed(1)}s` : null].filter(Boolean).join(' · ')
+      `rate ${v.playbackRate}`, lat > 0 ? `delay ${lat.toFixed(1)}s` : null,
+      this.adBreak ? 'ad break' : null].filter(Boolean).join(' · ')
   }
 
   /** Libellé dans le menu et sur le bouton : « Auto · 720p » une fois le
@@ -1028,8 +1100,11 @@ export class Player {
     this.el.mute.title = t(muted ? 'unmute' : 'mute')
     if (document.activeElement !== this.el.vol) this.el.vol.value = String(muted ? 0 : v.volume)
     this.el.vol.style.setProperty('--fill', `${(muted ? 0 : v.volume) * 100}%`)
+    // Son remis pendant une pause pub : choix respecté jusqu'à sa fin.
+    if (this.adMuted && !v.muted) { this.adMuted = false; this.adKeepSound = true }
     this.o.prefs.volume = v.volume
-    this.o.prefs.muted = v.muted
+    // Le son coupé par une pause pub n'est pas un choix : pas retenu.
+    this.o.prefs.muted = this.adMuted ? false : v.muted
     this.o.savePrefs()
   }
 
@@ -1060,6 +1135,7 @@ export class Player {
       this.el.latency.textContent = lat > 0 ? `${lat.toFixed(1)} s` : ''
       this.alignLive()
       this.holdLiveFloor()
+      this.checkAdBreak()
     }
     if (this.kind === 'vod') this.updateMutedNote(cur)
     this.o.onTime?.(cur, v.duration)
@@ -1087,7 +1163,88 @@ export class Player {
     return out.join('\n')
   }
 
+  // ── Pauses pub (direct) ────────────────────────────────────────────────
+  /** Pauses pub annoncées par la playlist (voir AD_CLASS) : les AD_KEEP plus
+   *  récentes gardées, sans dépendre de l'horloge de l'appareil. */
+  readAdBreaks(details) {
+    for (const r of Object.values(details?.dateRanges ?? {})) {
+      if (r?.class !== AD_CLASS) continue
+      const start = r.startDate?.getTime()
+      const end = r.endDate?.getTime()
+      if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) continue
+      this.adBreaks.delete(r.id)
+      this.adBreaks.set(r.id, { start, end })
+    }
+    while (this.adBreaks.size > AD_KEEP) this.adBreaks.delete(this.adBreaks.keys().next().value)
+    this.checkAdBreak()
+  }
+
+  /** Bandeau et son selon l'heure de l'image affichée. Appelé à chaque
+   *  timeupdate d'un direct et à chaque playlist lue. */
+  checkAdBreak() {
+    if (this.kind !== 'live') { this.endAdBreak(); return }
+    if (!this.adBreaks.size && !this.adBreak) return
+    const pd = this.hls?.playingDate
+    const at = pd instanceof Date ? pd.getTime() : NaN
+    // Heure de l'image inconnue (nouvelle source en cours de chargement) :
+    // rien ne change, le minuteur de secours referme le bandeau.
+    if (!Number.isFinite(at)) return
+    // Pendant une pause : un trou de moins d'une seconde entre deux pubs ne
+    // la referme pas (le son revenait un instant).
+    const end = adBreakEnd(this.adBreaks.values(), at) || (this.adBreak ? adBreakEnd(this.adBreaks.values(), at + 1000) : 0)
+    if (!end) { this.endAdBreak(); return }
+    const v = this.video
+    if (!this.adBreak) {
+      this.adBreak = { end }
+      // Comptée une fois (/stats), même si le bandeau se rouvre (pause,
+      // autre qualité, autre Worker) pendant la même pause pub.
+      if (!this.adSeen.some((s) => s.start <= end && at <= s.end + 1000)) {
+        this.adSeen.push({ start: at, end })
+        if (this.adSeen.length > AD_KEEP) this.adSeen.shift()
+        this.o.onAdBreak?.()
+      }
+      console.info(`[TwitchUnblock] Direct : pause pub de la chaîne, ${Math.round((end - at) / 1000)} s.`)
+      this.el.adTitle.textContent = t('ad_break_title')
+      this.el.adHint.textContent = t('ad_break_site_hint')
+      this.el.ad.hidden = false
+      // Son coupé seulement s'il ne l'était pas déjà ; rétabli à la fin.
+      if (!this.adKeepSound && !v.muted) { this.adMuted = true; v.muted = true }
+    }
+    this.adBreak.end = end   // une pub de plus enchaînée : fin repoussée
+    const sub = t('ad_break_sub', { n: Math.max(1, Math.ceil((end - at) / 1000)) })
+    if (this.el.adSub.textContent !== sub) this.el.adSub.textContent = sub
+    // Secours : plus rien n'arrive (ni image ni playlist : flux arrêté,
+    // onglet en veille) → bandeau fermé et son rétabli 5 s après la fin
+    // prévue ; s'il reste de la pause à la reprise, il se rouvre. En pause,
+    // la playlist continue d'arriver : l'image reste sur la pub, le bandeau
+    // aussi.
+    clearTimeout(this.adTimer)
+    this.adTimer = setTimeout(() => this.endAdBreak(), end - at + 5000)
+  }
+
+  endAdBreak() {
+    clearTimeout(this.adTimer)
+    this.adTimer = null
+    if (!this.adBreak) return
+    this.adBreak = null
+    this.adKeepSound = false
+    this.el.ad.hidden = true
+    if (this.adMuted) {
+      this.adMuted = false
+      this.video.muted = false
+    }
+  }
+
   // ── Passages coupés ────────────────────────────────────────────────────
+  /** Playlist de VOD lue : passages « -unmuted.mp4 », qui ont le son. */
+  readSoundSpans(details) {
+    const spans = soundSpansOf(details?.fragments)
+    if (JSON.stringify(spans) === JSON.stringify(this.soundSpans)) return
+    this.soundSpans = spans
+    this.drawMuted()
+    this.updateMutedNote(this.video.currentTime)
+  }
+
   /** Passages au son coupé par Twitch : en orange sur la barre, et un avis
    *  (avec « Passer ») pendant qu'on les regarde. Ceux dont le son a pu être
    *  rétabli (unmuteLoader) sont retirés. */
@@ -1103,10 +1260,11 @@ export class Player {
     }
   }
 
-  /** Passages encore muets : les coupés, moins ce qui a été rétabli. */
+  /** Passages encore muets : les coupés, moins ce qui a été rétabli et ce
+   *  qui a le son d'origine (« -unmuted.mp4 »). */
   remainingMuted() {
     let out = this.muted ?? []
-    for (const s of this.unmutedSpans ?? []) {
+    for (const s of [...(this.unmutedSpans ?? []), ...(this.soundSpans ?? [])]) {
       out = out.flatMap((r) => {
         if (s.end <= r.start || s.start >= r.end) return [r]
         const parts = []

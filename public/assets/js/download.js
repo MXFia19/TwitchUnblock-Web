@@ -395,10 +395,12 @@ function parsePlan(text, playlistUrl) {
     }
     if (!line || line.startsWith('#')) continue
     const url = abs(line)
-    // « N-muted.ts », ou « N-muted.mp4 » pour les VODs en fMP4.
-    const muted = /-(un)?muted\.(ts|mp4)/.test(url)
+    // « N-muted.ts », ou « N-muted.mp4 » pour les VODs en fMP4. Mais
+    // « N-unmuted.mp4 » a le son d'origine (sondé sur 19 VODs ; « N.mp4 » est
+    // refusé) : pris tel quel, il n'était remplacé que par du silence.
+    const muted = /-(un)?muted\.(ts|mp4)/.test(url) && !/-unmuted\.mp4/.test(url)
     segments.push({
-      // « -unmuted » n'existe pas sur le CDN : la version muette sert de repli.
+      // « -unmuted.ts » n'existe pas sur le CDN : la version muette sert de repli.
       url: muted ? url.replace(/-(un)?muted\.(ts|mp4)/, '-muted.$2') : url,
       original: muted ? url.replace(/-(un)?muted\.(ts|mp4)/, '.$2') : null,
       start: clock,

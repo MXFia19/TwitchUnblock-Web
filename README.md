@@ -39,13 +39,14 @@ Watch Twitch lives and VODs in your browser, no subscription needed, with the re
 - Playback speed for VODs and clips (0.25× to 2×, `<` / `>` keys), remembered from one VOD to the next, shown on the ⚙ button (as a badge on phones) and recalled when a VOD starts; lives always play at 1×
 - ±10 s, double-tap on mobile, keyboard shortcuts
 - Picture in picture, “back to live” button, live latency — never under 4 seconds behind the edge (closer, playback freezes): the target follows how long Twitch takes to publish each segment, and skipping ahead or “back to live” stop there too. Lives never change playback speed to catch up (the sound drifted away from the picture): the player makes a small jump instead, and never after you rewound on purpose
-- **Ad-free lives, in the source order you pick**: Luminous Asia, an Albania proxy (TTV.LOL), Luminous Europe and official Twitch (with ads), tried one after the other until one answers. Reorder them in Settings → Player; picking a source from the player's ⚙ menu (which shows the one in use) moves it to the top. Channels that stream with multiple encodes (Enhanced Broadcasting) keep each quality's own name on every source
+- **Live sources, in the order you pick**: Luminous Asia, an Albania proxy (TTV.LOL), Luminous Europe and official Twitch (with ads), tried one after the other until one answers. The proxies avoid most ads, but not the channel's own ad breaks: Twitch puts its “Commercial break in progress” screen (or an ad) into every source at the same time, mostly for 15–30 s when a stream opens. Reorder them in Settings → Player; picking a source from the player's ⚙ menu (which shows the one in use) moves it to the top. Channels that stream with multiple encodes (Enhanced Broadcasting) keep each quality's own name on every source
+- **Channel ad breaks explained**: when Twitch replaces the live with an ad break, a banner says so with a countdown to the stream's return, and the sound is muted until then (unless you turn it back on). Detected from the live playlist, in Auto as in a fixed quality, and timed on the picture actually shown. The website can't use a Twitch sub to skip them (the iPhone app can, with its web session)
 - **Theatre mode** (T), keyboard shortcuts anywhere on the page (? lists them)
 - **VOD chapters**: game changes marked on the progress bar
-- **Muted parts**: passages Twitch muted for copyrighted music show in orange on the progress bar, with a notice and a **Skip** button. For a day or two after a stream, Twitch's CDN still serves the original sound: the site loads it instead, automatically
+- **Muted parts**: passages Twitch muted for copyrighted music show in orange on the progress bar, with a notice and a **Skip** button. For a day or two after a stream, Twitch's CDN still serves the original sound: the site loads it instead, automatically. On VODs stored as fMP4, the parts Twitch lists as `-unmuted.mp4` already have their sound: they're not shown as muted
 - **Live ended** screen, and **raids followed** automatically to the target channel (can be turned off)
 - VODs resume where you left off
-- **Download a VOD** or just a part of it (from one time to another, from where you are, the next 10 minutes) in the quality you pick: one `.ts` (or `.mp4`) file that plays in VLC, mpv or the Windows player. Parts muted for copyrighted music keep their original sound while Twitch still has it. Chrome and Edge write the file straight to disk; other browsers build it in memory (up to about 1.5 GB). Deleted VODs rebuilt from the CDN can be downloaded too
+- **Download a VOD** or just a part of it (from one time to another, from where you are, the next 10 minutes) in the quality you pick: one `.ts` (or `.mp4`) file that plays in VLC, mpv or the Windows player. Parts muted for copyrighted music keep their original sound while Twitch still has it (and always on fMP4 VODs' `-unmuted.mp4` parts). Chrome and Edge write the file straight to disk; other browsers build it in memory (up to about 1.5 GB). Deleted VODs rebuilt from the CDN can be downloaded too
 - Mini player: playback keeps going while you browse
 - “Open in…” VLC, Outplayer, Infuse, or copy the stream link
 
@@ -60,6 +61,7 @@ Watch Twitch lives and VODs in your browser, no subscription needed, with the re
 - Twitch, **BTTV**, **FFZ** and **7TV** emotes, badges, username colours readable on a dark background. BetterTTV's live connection adds the personal emotes of BTTV Pro users (once BTTV announces them) and the emotes added to the channel during the stream
 - **Click an emote or a badge** (in the chat, the pinned message or someone's card; right-click in the emote picker): a sharp, larger image, its exact name and source, copy it or add it to your message. Twitch emotes show their type (global, tier 1–3 sub emote, channel points) and the channel they belong to — live or not, one click opens its page — with that tier's other sub emotes; BTTV, FFZ and 7TV emotes show whether they're global or the channel's, who made them, their original name, zero-width (7TV) and modifier emotes, and a link to their page. Badges show their title (“3-Month Subscriber”…), also as a tooltip. Animated FFZ emotes now move, in the chat too
 - Recent messages loaded on arrival: you never land in an empty chat
+- The chat connects within a few seconds even when an emote or badge source is slow (filtered network, VPN): emotes that arrive later show up in the next messages
 - **Pinned message**: compact banner with badges, emotes, who pinned it and a countdown — collapse it to a chip
 - **Drops card**: when the channel runs a drops campaign, a card under the pinned message shows the reward, the watch time, the end date and a link to the details; dismissed, it stays away for that campaign
 - **Predictions** live (read-only), incoming **raids** and **announcements** highlighted
@@ -130,7 +132,7 @@ The website is plain JavaScript (ES modules) — no framework, no build step.
 ## How it works
 
 ```
-Browser ──► Cloudflare Worker ──► Twitch (playlists, video segments), ad-free sources (Luminous, TTV.LOL)
+Browser ──► Cloudflare Worker ──► Twitch (playlists, video segments), proxy sources (Luminous, TTV.LOL)
     │
     ├──► Twitch GQL     public data: streams, channels, VODs, VOD chat
     ├──► Twitch Helix   logged-in account: followed channels
@@ -151,14 +153,14 @@ ntfy.sh's free tier counts messages per IP address (250 a day). Every Cloudflare
 
 ### Security
 - **History backups are private**: every read or write must carry the owner's Twitch token. The Worker has Twitch confirm it and checks it belongs to that account — knowing someone's (public) Twitch ID is no longer enough.
-- **The proxy only relays Twitch and the ad-free sources** (`ttvnw.net`, `jtvnw.net`, `twitch.tv`, `cloudfront.net`, `luminous.dev`, and exactly `twitch-al.nadeko.net`), over HTTPS — it is not an open proxy.
+- **The proxy only relays Twitch and the proxy sources** (`ttvnw.net`, `jtvnw.net`, `twitch.tv`, `cloudfront.net`, `luminous.dev`, and exactly `twitch-al.nadeko.net`), over HTTPS — it is not an open proxy.
 - Usage pings only accept random UUIDs and store no IP address.
 
 ---
 
 ## Usage count
 
-To know whether people actually use the website and the app, each browser (and each app install) sends a small signal to the Worker at most once an hour. Numbers are public at **[/stats](https://twitchunblock.vercel.app/stats)**: unique people today, over 7 and 30 days (each one counted once per period), website vs iOS app, logged-in accounts vs anonymous, new vs returning people, active people per day, retention (back after 1, 7 and 14 days), live health (which source served each live, failures), devices and languages, and live notifications.
+To know whether people actually use the website and the app, each browser (and each app install) sends a small signal to the Worker at most once an hour. Numbers are public at **[/stats](https://twitchunblock.vercel.app/stats)**: unique people today, over 7 and 30 days (each one counted once per period), website vs iOS app, logged-in accounts vs anonymous, new vs returning people, active people per day, retention (back after 1, 7 and 14 days), live health (which source served each live, failures, channel ad breaks seen), devices and languages, and live notifications.
 
 | Sent | Never sent |
 |---|---|
@@ -166,7 +168,7 @@ To know whether people actually use the website and the app, each browser (and e
 | Logged in: your Twitch token, so the Worker counts your **account** once across all your devices (its Twitch ID and username are kept, visible to the site owner only) | IP address (not stored by the Worker) |
 | The website version, `web` or `ios` | |
 | The interface language, the device type (phone or computer; iPhone or iPad) and, from the app, the iOS major version | Titles, searches |
-| How many lives and VODs were started since the last signal: which source served each live, and how many failed — counters only | |
+| How many lives and VODs were started since the last signal: which source served each live, how many failed, how many channel ad breaks were shown — counters only | |
 
 Not counted: automated browsers and bots, copies of the site outside the official domain, private windows that can't keep the ID, visits shorter than 15 s. Keys expire on their own after 35 days. Anyone can turn it off in the settings, which also deletes their entry from the server.
 

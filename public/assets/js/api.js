@@ -666,8 +666,9 @@ export function fixProxiedUrl(url, playlistUrl) {
     // Qui a servi la playlist : le relais vidéo, le Worker ou un secours.
     const base = proxyBaseOf(playlistUrl) ?? API_URL
     // Sous-playlists de direct (Luminous, playlist.ttvnw.net) laissées en
-    // direct par le Worker : leurs jetons sont liés à l'adresse IP du Worker,
-    // le navigateur s'y faisait refuser (403) et « Auto » ne démarrait pas.
+    // direct par le Worker : le navigateur s'y faisait refuser (403) et
+    // « Auto » ne démarrait pas. La cause est l'en-tête Origin qu'il ajoute
+    // (mesuré le 14/10), pas un jeton lié à l'adresse IP : le proxy reste.
     if (/(^|\.)playlist\.ttvnw\.net$|(^|\.)luminous\.dev$/.test(u.hostname)) {
       return `${base}/api/proxy?url=${encodeURIComponent(url)}&isVod=false`
     }
