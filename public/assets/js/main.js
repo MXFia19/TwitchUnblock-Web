@@ -4305,14 +4305,61 @@ function openSettings() {
 // Même format que l'app iOS : les suivis passent d'un appareil à l'autre,
 // et les réglages communs aux deux portent le même nom.
 const BACKUP_FORMAT = 'twitchunblock-backup'
-// Réglages exportés : tout sauf ce qui dépend de l'appareil.
-const BACKUP_SKIP = new Set(['volume', 'muted', 'chatOpen'])
-// Exportés à part, hors de `settings` (listes validées à l'import).
-const BACKUP_OWN = new Set(['localFollows', 'followedCategories', 'hiddenChannels', 'hiddenCategories'])
+// Réglages d'une sauvegarde (`settings`), exportés et repris : une liste
+// blanche, chacun avec son validateur, qui rend la valeur à garder ou
+// undefined pour l'ignorer. Avant, l'import prenait toute clé déjà présente
+// du même type : un fichier piégé imposait un Worker personnel « tout
+// passer par lui » (le jeton Twitch partait chez un tiers), y compris par
+// « __proto__ », qui polluait les réglages ; et un réglage absent d'ici
+// (thème, accent, ordre des sources…) était perdu sur un navigateur neuf.
+// Ni le Worker personnel (enregistré seulement par « Vérifier »), ni ce qui
+// dépend de l'appareil (volume, son coupé, chat ouvert) n'y figurent ; les
+// listes (suivis, catégories, masqués) passent à part. Mêmes noms que l'app
+// iOS pour les réglages communs.
+const okBool = (v) => (typeof v === 'boolean' ? v : undefined)
+const okLogins = (max) => (v) => (Array.isArray(v)
+  ? [...new Set(v.filter((x) => typeof x === 'string' && /^[a-zA-Z0-9_]{1,25}$/.test(x)).map((x) => x.toLowerCase()))].slice(0, max)
+  : undefined)
+const okWords = (max) => (v) => (Array.isArray(v)
+  ? v.filter((x) => typeof x === 'string').map((x) => x.trim().toLowerCase().slice(0, 100)).filter(Boolean).slice(0, max)
+  : undefined)
+const BACKUP_SETTINGS = {
+  lang: (v) => (v === null || LANGS.some((l) => l.id === v) ? v : undefined),
+  topLang: (v) => (v === null || TOP_LANGS.includes(v) ? v : undefined),
+  catLang: (v) => (v === null || TOP_LANGS.includes(v) ? v : undefined),
+  homeList: okBool,
+  homeTab: (v) => (HOME_TABS.includes(v) ? v : undefined),
+  showRecent: okBool,
+  pinned: okLogins(300),
+  themeBg: (v) => (THEME_BGS.includes(v) ? v : undefined),
+  themeAccent: (v) => (THEME_ACCENTS.some(([id]) => id === v) ? v : undefined),
+  timestamps: okBool,
+  keepDeleted: okBool,
+  loadHistory: okBool,
+  chatSize: (v) => (Number.isFinite(v) ? Math.min(20, Math.max(12, Math.round(v))) : undefined),
+  chatSync: okBool,
+  multiChat: okBool,
+  autoRaid: okBool,
+  hideBots: okBool,
+  hideCommands: okBool,
+  mutedWords: okWords(50),
+  highlightWords: okWords(30),
+  blockedUsers: okLogins(500),
+  shareUsage: okBool,
+  clickPause: okBool,
+  theatre: okBool,
+  qualityPref: (v) => (validQualityPref(v) ? v : undefined),
+  vodSpeed: (v) => (typeof v === 'number' ? validSpeed(v) : undefined),
+  liveSourceOrder: (v) => (Array.isArray(v) ? [...new Set(v.filter((id) => api.LIVE_SOURCES.includes(id)))] : undefined),
+  liveSource: (v) => (v === null || api.LIVE_SOURCES.includes(v) ? v : undefined),
+}
 
 function exportData() {
   const p = store.prefs
-  const settings = Object.fromEntries(Object.entries(p).filter(([k]) => !BACKUP_SKIP.has(k) && !BACKUP_OWN.has(k)))
+  // La liste blanche, aussi à l'export : l'adresse d'un Worker personnel ne
+  // part plus dans un fichier qu'on partage.
+  const settings = Object.fromEntries(Object.keys(BACKUP_SETTINGS)
+    .filter((k) => Object.hasOwn(p, k) && p[k] !== undefined).map((k) => [k, p[k]]))
   const data = {
     format: BACKUP_FORMAT,
     version: 1,
@@ -4345,13 +4392,15 @@ async function importData(file) {
   }
   const p = store.prefs
   const login = (x) => (typeof x === 'string' && /^[a-zA-Z0-9_]{1,25}$/.test(x) ? x.toLowerCase() : null)
-  const incoming = [...(data.follows ?? []), ...(data.accountFollows ?? [])].map(login).filter(Boolean)
+  // Listes seulement : une chaîne « abc » donnait les suivis « a », « b », « c ».
+  const list = (v) => (Array.isArray(v) ? v : [])
+  const incoming = [...list(data.follows), ...list(data.accountFollows)].map(login).filter(Boolean)
   const before = new Set(p.localFollows ?? [])
   p.localFollows = [...new Set([...(p.localFollows ?? []), ...incoming])].slice(0, 300)
   const added = p.localFollows.filter((l) => !before.has(l)).length
 
   const cats = new Map((p.followedCategories ?? []).map((c) => [c.id, c]))
-  for (const c of data.followedCategories ?? []) {
+  for (const c of list(data.followedCategories)) {
     if (c && typeof c.id === 'string' && typeof c.name === 'string' && !cats.has(c.id)) {
       cats.set(c.id, { id: c.id, name: c.name, box: typeof c.box === 'string' ? c.box : '' })
     }
@@ -4367,29 +4416,32 @@ async function importData(file) {
   p.hiddenCategories = mergeHidden(hiddenCats(), hid.categories, cleanHiddenCat, (x) => x.id, HIDDEN_MAX_CATS)
     .filter((x) => !cats.has(x.id))
 
-  // Réglages : seulement les clés connues du site, du même type que la
-  // valeur actuelle. Une sauvegarde de l'app iOS apporte les réglages
-  // communs (langue, filtres du chat…), qu'elle exporte sous ces noms-là.
-  if (data.settings && typeof data.settings === 'object' && !Array.isArray(data.settings)) {
-    for (const [k, v] of Object.entries(data.settings)) {
-      if (BACKUP_SKIP.has(k) || !(k in p) || BACKUP_OWN.has(k)) continue
-      const cur = p[k]
-      if (cur === null || typeof cur === typeof v || (Array.isArray(cur) && Array.isArray(v))) p[k] = v
+  // Réglages : ceux de la liste blanche seulement, chacun validé (une valeur
+  // invalide est ignorée). Lus par Object.hasOwn sur le fichier : jamais
+  // __proto__, constructor ni prototype, ni rien d'hérité. Une sauvegarde
+  // de l'app iOS apporte les réglages communs, exportés sous ces noms-là.
+  const s = data.settings
+  if (s && typeof s === 'object' && !Array.isArray(s)) {
+    for (const [k, valid] of Object.entries(BACKUP_SETTINGS)) {
+      if (!Object.hasOwn(s, k)) continue
+      const v = valid(s[k])
+      if (v !== undefined) p[k] = v
     }
     // Sauvegarde d'avant le réglage « Qualité préférée » : la qualité
     // retenue par son nom exact (« 720p60 »).
-    const old = data.settings.quality
-    if (typeof old === 'string' && data.settings.qualityPref === undefined) p.qualityPref = qualityPrefOf(old)
+    const old = typeof s.quality === 'string' && !Object.hasOwn(s, 'qualityPref') ? qualityPrefOf(s.quality) : null
+    if (validQualityPref(old)) p.qualityPref = old
   }
-  // Seul le type est vérifié plus haut : valeurs inconnues ramenées au défaut.
-  if (!validQualityPref(p.qualityPref)) p.qualityPref = 'auto'
-  p.vodSpeed = validSpeed(p.vodSpeed)
   store.savePrefs()
-  if (p.lang) setLang(p.lang)
+  // Appliqués tout de suite (thème, langue, accueil, chat), pas seulement
+  // au prochain chargement.
+  setLang(p.lang || deviceLang())
+  applyTheme()
   applyStatic()
-  applyLayout()
-  chat.applyPrefs()
-  loadFollowed()
+  renderAccount()
+  applyHomeTab()
+  refreshTexts()   // relit l'accueil sur l'onglet Découvrir…
+  if (state.tab !== 'discover') loadFollowed()   // … sinon les suivis (et leurs notifications) quand même
   refreshHidden()
   toast(t('import_done', { n: added }), 'success')
   openSettings()

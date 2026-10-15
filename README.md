@@ -262,7 +262,9 @@ with the official Workers as a fallback; the official video relay is not
 used. **Send everything through this Worker** also moves history backups,
 feedback, announcements, notifications and the usage count there: your
 Twitch token is then sent to it (backups), so only turn it on for a Worker
-you host yourself. The website reloads when the Worker changes.
+you host yourself. The website reloads when the Worker changes. The personal
+Worker is only set here: a backup file never exports or imports it (an
+imported file only brings back a fixed list of settings, each one checked).
 
 ### Video relay on your own server (VPS)
 
