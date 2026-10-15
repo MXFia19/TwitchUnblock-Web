@@ -210,7 +210,8 @@ const LIVE_FLOOR_SEEK_MS = 60_000
 // purgé), sur le quota du Worker. Trois relances espacées (2, 4 puis 8 s),
 // remises à zéro dès qu'un segment arrive, puis l'erreur. Une VOD saute un
 // segment introuvable (404) au lieu de le redemander — au plus
-// MAX_SKIPPED_FRAGS de suite — et s'arrête là si ce sont ses derniers.
+// MAX_SKIPPED_FRAGS de suite — et s'arrête là si ce sont ses derniers
+// (quand la lecture y arrive ; un saut dedans retombe sur l'erreur).
 const NET_RETRIES = 3
 const MAX_SKIPPED_FRAGS = 30
 
@@ -518,8 +519,10 @@ export class Player {
     v.addEventListener('play', () => this.syncPlay())
     v.addEventListener('pause', () => { this.syncPlay(); this.showUI(); this.o.onPause?.() })
     v.addEventListener('waiting', () => { this.el.spinner.hidden = false; this.passHole() })
-    v.addEventListener('seeking', () => this.passHole())
-    v.addEventListener('playing', () => { this.el.spinner.hidden = true; this.scheduleHide() })
+    // Premier placement (départ demandé, ou saut fait pendant le chargement)
+    // ou lecture partie : la position de la vidéo fait foi dès lors (resumeAt).
+    v.addEventListener('seeking', () => { this.startPos = 0; this.passHole() })
+    v.addEventListener('playing', () => { this.startPos = 0; this.el.spinner.hidden = true; this.scheduleHide() })
     v.addEventListener('canplay', () => { this.el.spinner.hidden = true })
     v.addEventListener('timeupdate', () => this.onTime())
     v.addEventListener('progress', () => this.drawBuffer())
@@ -682,6 +685,9 @@ export class Player {
     this.skippedFrags = 0
     this.holes = []
     this.pendingHole = null
+    // Départ demandé (lien ?t=, reprise), gardé jusqu'à ce que la vidéo s'y
+    // place : rien n'étant chargé, elle reste à 0 jusque-là (resumeAt).
+    this.startPos = this.kind === 'vod' && startAt > 1 ? startAt : 0
     // Essais de son d'origine sur les passages coupés : remis à zéro à chaque
     // source (une VOD récente peut suivre une ancienne).
     this.unmute = this.kind === 'vod' ? {} : null
@@ -901,8 +907,22 @@ export class Player {
       // « VOD indisponible » avant même d'arriver au trou, et jamais de fin.
       const eos = window.Hls?.Events?.BUFFER_EOS
       if (!eos) return false
-      console.info(`[TwitchUnblock] VOD : fin introuvable à partir de ${formatClock(f.start)}, la vidéo s'arrête là.`)
-      this.pendingHole = { ...hole, final: true }
+      // Début de la partie manquante : les trous déjà sautés qui mènent à
+      // ce dernier segment en font partie.
+      let gap = f.start
+      for (let moved = true; moved;) {
+        moved = false
+        for (const x of this.holes) if (x.start < gap && Math.abs(x.end - gap) < 0.5) { gap = x.start; moved = true }
+      }
+      // Seulement si la lecture y arrive par ce qui est chargé : la fin de
+      // flux fixe la durée à la fin de ce qui est chargé. Arrivé dans la
+      // partie manquante par un saut (barre, +10 s, lien ?t=), la VOD se
+      // terminait à 1:36 au lieu de 4:10:42 (longueur sauvegardée fausse),
+      // ou, rien n'étant chargé, la roue tournait sans fin. Là : l'ancien
+      // chemin, relances puis « VOD indisponible ».
+      if (!this.loadedUpTo(gap)) return false
+      console.info(`[TwitchUnblock] VOD : fin introuvable à partir de ${formatClock(gap)}, la vidéo s'arrête là.`)
+      this.pendingHole = { start: gap, end: hole.end, final: true }
       hls.trigger(eos, {})
       return true
     }
@@ -911,6 +931,20 @@ export class Player {
     this.pendingHole = hole
     this.passHole()
     return true
+  }
+
+  /** Ce qui est chargé mène-t-il sans coupure (moins d'une demi-seconde) de
+   *  la position de lecture jusqu'à `to` ? Une position déjà au-delà compte
+   *  si la lecture y est arrivée par là (passée d'un trou au suivant). */
+  loadedUpTo(to) {
+    const b = this.video.buffered
+    const t = this.resumeAt()
+    let end = null
+    for (let i = 0; i < b.length; i++) {
+      if (b.start(i) - 0.5 <= t || (end !== null && b.start(i) - end < 0.5)) end = b.end(i)
+      else break
+    }
+    return end !== null && Math.abs(end - to) < 0.5
   }
 
   /** Après un segment introuvable (hls.js arrêté) : dès que la lecture
@@ -992,14 +1026,22 @@ export class Player {
     this.variants = variants && typeof variants === 'object' ? variants : {}
     if (!links[this.quality]) this.quality = pickQuality(Object.keys(links), this.o.prefs.qualityPref, this.variants)
     this.updateQualityLabel()
-    this.attach(links[this.quality], this.kind === 'vod' ? this.video.currentTime : 0)
+    this.attach(links[this.quality], this.kind === 'vod' ? this.resumeAt() : 0)
+  }
+
+  /** Position à reprendre sur une autre source (relais, Worker, qualité) :
+   *  celle de la vidéo, ou le départ demandé (lien ?t=, reprise) tant
+   *  qu'elle ne s'y est pas encore placée — un relais qui lâchait au
+   *  démarrage faisait repartir du début. */
+  resumeAt() {
+    return this.startPos || this.video.currentTime
   }
 
   /** Qualité choisie dans le menu : elle devient la qualité préférée
    *  (en hauteur : « 720p60 » → 720p, valable sur toutes les chaînes). */
   setQuality(key) {
     if (!this.links[key] || key === this.quality) return
-    const at = this.video.currentTime
+    const at = this.resumeAt()
     const wasPaused = this.video.paused
     this.quality = key
     this.o.prefs.qualityPref = prefFromKey(key, this.variants, Object.keys(this.links))
