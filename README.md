@@ -512,6 +512,12 @@ Live notifications work too: the container runs the scheduled check itself,
 every minute, through an internal route guarded by a random secret drawn at
 each start (nobody else can trigger it).
 
+Only the website and `/api` are reachable on the published port: `wrangler dev`
+listens inside the container, behind a small front server
+(`docker/front.mjs`), so its local tools under `/cdn-cgi/` — the scheduled
+trigger, the D1 database explorer — can't be reached from outside. The
+wrangler version is pinned in the `Dockerfile`.
+
 Data lives in the `twitchunblock-data` volume. Watching lives, VODs and clips,
 the chat (read-only without login), categories and device follows all work
 out of the box; logging in needs your own Twitch app (see above). The iOS app

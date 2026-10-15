@@ -25,8 +25,12 @@ const CURSOR_RE = /^[A-Za-z0-9+/=_-]{1,500}$/;
 const QUALITY_ORDER = ['chunked', 'source', '1080p60', '1080p30', '720p60', '720p30', '480p30', '360p30', '160p30', 'audio_only'];
 
 export default {
-    // Toutes les 2 minutes (wrangler.toml) : notifications de live du site.
+    // Chaque minute (wrangler.toml) : notifications de live du site.
     async scheduled(event, env, ctx) {
+        // Docker : la tâche passe par POST /api/cron et son secret. Un appel
+        // ici vient alors de /cdn-cgi/local/scheduled de wrangler dev, que
+        // n'importe qui pouvait viser : il ne fait rien.
+        if (dockerCron(env)) return;
         applyEnvConfig(env);
         ctx.waitUntil(pushTick(env).catch((e) => console.error(e)));
         ctx.waitUntil(relayWatch(env, new Date(event?.scheduledTime || Date.now())).catch((e) => console.error(e)));
@@ -2618,10 +2622,13 @@ function applyEnvConfig(env) {
 // n'importe qui déclenchait la tâche à volonté, et des passages qui se
 // chevauchaient pouvaient doubler les notifications. La réponse n'arrive
 // qu'une fois la tâche finie : la boucle ne relance jamais avant. Sans
-// secret (Cloudflare), la route n'existe pas.
+// secret (Cloudflare), la route n'existe pas ; avec, scheduled() ne fait
+// plus rien (wrangler dev la sert aussi sur /cdn-cgi/local/scheduled).
+const dockerCron = (env) => String(env?.CRON_SECRET || '').length >= 16;
+
 async function handleCron(request, env) {
     const secret = String(env.CRON_SECRET || '');
-    if (secret.length < 16) return new Response("Not Found", { status: 404, headers: RESPONSE_HEADERS });
+    if (!dockerCron(env)) return new Response("Not Found", { status: 404, headers: RESPONSE_HEADERS });
     if (request.method !== 'POST') return jsonError('Method Not Allowed', 405);
     // Empreintes comparées : la durée de la comparaison n'apprend rien du secret.
     if (await sha256hex(request.headers.get('Authorization') || '') !== await sha256hex(`Bearer ${secret}`)) {
