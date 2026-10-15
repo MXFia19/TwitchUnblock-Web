@@ -2330,8 +2330,17 @@ function renderVodGrid() {
   const keyword = ($('#vod-filter')?.value ?? '').trim().toLowerCase()
   const name = ch.info?.displayName || ch.login
   const unlisted = unlistedStreams()
+  // Date : au format court des cartes (« 5 oct. 2026 ») comme au format
+  // numérique (« 05/10/2026 »), sans le point des mois abrégés — taper
+  // « oct » ou « 5 oct 2026 » ne trouvait rien.
+  const plain = (s) => s.toLowerCase().replace(/\.(?=\s|$)/g, '')
+  const wanted = plain(keyword)
+  const dateText = (ms) => {
+    const d = new Date(ms)
+    return plain(`${d.toLocaleDateString(lang())} ${d.toLocaleDateString(lang(), { day: 'numeric', month: 'short', year: 'numeric' })}`)
+  }
   const match = (title, ms) => !keyword || String(title ?? '').toLowerCase().includes(keyword)
-    || new Date(ms).toLocaleDateString(lang()).includes(keyword)
+    || dateText(ms).includes(wanted)
   const items = [
     ...ch.videos.map((v) => ({ t: Date.parse(v.publishedAt) || 0, title: v.title, html: () => vodCard(v, name) })),
     ...unlisted.map((s) => ({ t: s.epoch * 1000, title: s.title, html: () => unlistedCard(s) })),
@@ -3224,11 +3233,17 @@ async function openVod(id, preset, { keepPlaylist = false, at = null } = {}) {
 
   const length = meta?.lengthSeconds ?? known.length ?? 0
   if (length) store.setLength(vodId, length)
-  // L'instant d'un lien (« ?t= ») passe avant la reprise.
-  let startAt = at ?? store.getProgress(vodId)
-  // Une VOD finie (ou presque) repart du début plutôt que de se terminer aussitôt.
-  if (length && startAt > length - 30) startAt = 0
-  if (startAt < 10) startAt = 0
+  // L'instant d'un lien (« ?t= ») passe avant la reprise, tel quel — seulement
+  // borné à la vidéo : un lien vers les 30 dernières secondes (ou les 10
+  // premières) repartait du début.
+  let startAt
+  if (at != null) startAt = Math.max(0, length ? Math.min(at, length - 1) : at)
+  else {
+    startAt = store.getProgress(vodId)
+    // Une VOD finie (ou presque) repart du début plutôt que de se terminer aussitôt.
+    if (length && startAt > length - 30) startAt = 0
+    if (startAt < 10) startAt = 0
+  }
 
   $('#watch-loading').hidden = true
   player.load({ links: links.links, variants: token.variants, kind: 'vod', startAt })

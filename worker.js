@@ -316,19 +316,18 @@ async function handleGetM3U8(url, workerOrigin) {
         if (seekUrl) {
             const rawLinks = await storyboardHack(seekUrl, vodId);
             if (Object.keys(rawLinks).length > 0) {
-                let finalLinks = {}; 
+                const proxied = (u) => useProxy ? `${workerOrigin}/api/proxy?url=${encodeURIComponent(u)}&isVod=true` : u;
                 // « Auto » = la meilleure qualité trouvée (l'ordre des réponses était aléatoire).
-                const top = rawLinks[QUALITY_ORDER.find(q => rawLinks[q])];
-                finalLinks["Auto"] = useProxy ? `${workerOrigin}/api/proxy?url=${encodeURIComponent(top)}&isVod=true` : top;
-                
-                ['Source', '1080p60', '1080p30', '720p60', '720p30', '480p30', '360p30', '160p30', 'audio_only'].forEach(key => { 
-                    Object.keys(rawLinks).forEach(k => { 
-                        if (k.toLowerCase().includes(key.toLowerCase())) { 
-                            finalLinks[k] = useProxy ? `${workerOrigin}/api/proxy?url=${encodeURIComponent(rawLinks[k])}&isVod=true` : rawLinks[k]; 
-                            delete rawLinks[k]; 
-                        } 
-                    }); 
-                });
+                const finalLinks = { Auto: proxied(rawLinks[QUALITY_ORDER.find(q => rawLinks[q])]) };
+                // La version d'origine (dossier « chunked ») s'appelle « Source »,
+                // comme dans la liste maîtresse (variantName) : seuls les noms
+                // contenant un libellé connu étaient recopiés, et « chunked » n'en
+                // contient aucun — la qualité d'origine manquait à la liste.
+                const source = rawLinks.chunked || rawLinks.source;
+                if (source) finalLinks.Source = proxied(source);
+                for (const q of QUALITY_ORDER) {
+                    if (q !== 'chunked' && q !== 'source' && rawLinks[q]) finalLinks[q] = proxied(rawLinks[q]);
+                }
                 return jsonResponse({ links: finalLinks, best: finalLinks["Source"] || finalLinks["Auto"], info: "Backup" });
             }
             console.warn(`get-m3u8 ${vodId} : secours sans résultat`);

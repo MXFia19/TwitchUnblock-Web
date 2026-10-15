@@ -137,7 +137,12 @@ export function init(o) {
     if (b === 'watch') {
       const entry = find(key)
       if (!entry) return
-      const at = entry.vod ? positionOf(entry) : 0
+      // L'instant donné au lecteur y est pris tel quel : seulement la
+      // position de la tuile (ou l'instant d'un lien pas encore lu). Sinon
+      // — tuile pas encore partie, ou VOD finie —, la reprise du lecteur,
+      // qui fait repartir du début une VOD finie ou presque.
+      const own = tiles.get(key)
+      const at = entry.vod && !own?.video.ended ? own?.video.currentTime || own?.pos || pendingAt.get(key) || 0 : 0
       close({ url: false })
       return hooks.onWatch?.(entry, at > 1 ? at : null)
     }
