@@ -65,6 +65,23 @@ function isDirectSegment(u) {
   } catch { return false }
 }
 
+/** Segment de direct jamais arrivé du CDN (code 0 : bloqué avant
+ *  d'atteindre Twitch), appareil en ligne : au troisième de suite (compté
+ *  dans `counter.directFails`, que FRAG_LOADED remet à zéro), les prochains
+ *  passent par le relais du Worker. `true` quand la bascule vient de se
+ *  faire. Sert aussi aux tuiles du multi-live, qui ne l'activaient jamais :
+ *  chez qui le CDN est bloqué, toutes finissaient « Hors ligne ». */
+export function noteDirectSegmentError(Hls, data, counter) {
+  if (segmentProxyOn() || data.type !== Hls.ErrorTypes.NETWORK_ERROR || !/^frag/i.test(data.details || '')
+      || data.response?.code || !isDirectSegment(data.frag?.url || data.url || '') || navigator.onLine === false) return false
+  counter.directFails = (counter.directFails || 0) + 1
+  if (counter.directFails < SEG_PROXY_FAILS) return false
+  counter.directFails = 0
+  enableSegmentProxy()
+  console.info('[TwitchUnblock] Segments directs bloqués : passage par le relais.')
+  return true
+}
+
 /** Erreur réseau de hls.js due au relais ou au Worker qui sert la vidéo :
  *  son adresse, sinon null. Worker : seulement une requête restée sans
  *  réponse (code 0 — quota du jour atteint : la page d'erreur de Cloudflare
@@ -786,14 +803,7 @@ export class Player {
         // Segments jamais arrivés (code 0 : bloqués avant d'atteindre
         // Twitch), trois de suite et appareil en ligne : les prochaines
         // tentatives passent par le relais du Worker.
-        if (!segmentProxyOn() && data.type === Hls.ErrorTypes.NETWORK_ERROR
-            && /^frag/i.test(data.details || '') && !data.response?.code && isDirectSegment(data.frag?.url || data.url || '')
-            && navigator.onLine !== false && ++this.directFails >= SEG_PROXY_FAILS) {
-          this.directFails = 0
-          enableSegmentProxy()
-          console.info('[TwitchUnblock] Segments directs bloqués : passage par le relais.')
-          if (data.fatal) { hls.startLoad(); return }
-        }
+        if (noteDirectSegmentError(Hls, data, this) && data.fatal) { hls.startLoad(); return }
         if (!data.fatal || token !== this.attachToken) return
         if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
           // Worker hors service en pleine lecture (quota du jour atteint), ou

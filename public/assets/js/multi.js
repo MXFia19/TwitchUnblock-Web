@@ -8,7 +8,7 @@
 
 import * as api from './api.js'
 import { t } from './i18n.js'
-import { heightOf, liveRequestUrl, loadHls, sortQualities } from './player.js'
+import { failedProxy, heightOf, liveRequestUrl, loadHls, noteDirectSegmentError, sortQualities } from './player.js'
 import { store } from './store.js'
 import { $, esc, formatClock, icon, toast, twitchTime } from './util.js'
 
@@ -417,11 +417,13 @@ function start(tile) {
   return tile.entry.vod ? startVod(tile) : startLive(tile)
 }
 
-async function startLive(tile) {
+/** `avoid` : Worker qui ne répondait plus (retryLive) — les liens sont
+ *  redemandés aux autres d'abord. */
+async function startLive(tile, { avoid = null } = {}) {
   const token = ++tile.token
   stopMedia(tile)
   setState(tile, 'loading')
-  const res = await api.getLive(tile.entry.login).catch((e) => ({ error: e?.status ? 'missing' : 'network' }))
+  const res = await api.getLive(tile.entry.login, { avoid }).catch((e) => ({ error: e?.status ? 'missing' : 'network' }))
   if (tile.token !== token) return
   const links = res?.links
   if (!links || res.error || !Object.keys(links).length) {
@@ -458,24 +460,50 @@ async function startLive(tile) {
       backBufferLength: 10,
     })
     tile.hls = hls
+    tile.directFails = 0
     hls.loadSource(url)
     hls.attachMedia(v)
     hls.on(Hls.Events.MANIFEST_PARSED, () => play(tile))
+    hls.on(Hls.Events.FRAG_LOADED, () => { tile.directFails = 0 })
     hls.on(Hls.Events.ERROR, (_e, data) => {
-      if (!data.fatal || tile.token !== token) return
+      if (tile.token !== token) return
+      // Segments bloqués avant d'atteindre Twitch : par le relais du
+      // Worker, comme dans le lecteur.
+      if (noteDirectSegmentError(Hls, data, tile) && data.fatal) return hls.startLoad()
+      if (!data.fatal) return
       if (data.type === Hls.ErrorTypes.MEDIA_ERROR) return hls.recoverMediaError()
-      // Coupure ou fin du live : on redemande les liens, quelques fois.
-      if (++tile.restarts > MAX_RESTARTS) return setState(tile, t('multi_offline'), true)
-      setState(tile, 'loading')
-      tile.timer = setTimeout(() => start(tile), 4000)
+      const network = data.type === Hls.ErrorTypes.NETWORK_ERROR
+      retryLive(tile, token, network && navigator.onLine !== false ? failedProxy(data) : null, network)
     })
   } else if (v.canPlayType('application/vnd.apple.mpegurl')) {
+    // HLS natif (Safari sans MSE) : une erreur relance comme avec hls.js —
+    // la roue tournait sans fin.
+    v.onerror = () => retryLive(tile, token, v.error?.code === 2 && navigator.onLine !== false ? api.proxyBaseOf(url) : null, true)
     v.src = url
     v.addEventListener('loadedmetadata', () => play(tile), { once: true })
     v.load()
   } else {
     setState(tile, t('err_live'), true)
   }
+}
+
+/**
+ * Direct d'une tuile en échec. Relais du VPS en panne (`down`) : écarté, la
+ * tuile repart aussitôt par le Worker. Sinon les liens sont redemandés —
+ * à un autre Worker d'abord si c'est celui-ci qui ne répondait plus —,
+ * quelques fois, puis l'erreur. Les relances reprenaient les mêmes liens,
+ * par le même relais, et la tuile finissait « Hors ligne » alors que le
+ * direct était en ligne (un direct fini, lui, l'est par startLive).
+ */
+function retryLive(tile, token, down, network) {
+  if (tile.token !== token) return
+  if (down && down === api.RELAY_BASE && api.markWorkerDown(down)) {
+    console.info('[TwitchUnblock] Relais vidéo injoignable (multi-live), retour au Worker.')
+    return startLive(tile)
+  }
+  if (++tile.restarts > MAX_RESTARTS) return setState(tile, t(network ? 'err_network' : 'err_live'), true)
+  setState(tile, 'loading')
+  tile.timer = setTimeout(() => startLive(tile, { avoid: down }), 4000)
 }
 
 async function startVod(tile) {
@@ -566,8 +594,10 @@ async function attachVod(tile, links, variants, at, token) {
       const from = tile.pos > 0 ? tile.pos : at
       // Relais vidéo du VPS en panne : les mêmes liens par le Worker, au
       // même endroit, sans les redemander (comme switchWorker dans main.js).
-      if (data.type === Hls.ErrorTypes.NETWORK_ERROR && api.RELAY_BASE
-          && api.proxyBaseOf(url) === api.RELAY_BASE && api.markWorkerDown(api.RELAY_BASE)) {
+      // Pas pour un segment introuvable (404) : même règle que le lecteur
+      // (failedProxy), il l'écartait 30 min pour toutes les vidéos.
+      if (data.type === Hls.ErrorTypes.NETWORK_ERROR && api.RELAY_BASE && navigator.onLine !== false
+          && failedProxy(data) === api.RELAY_BASE && api.markWorkerDown(api.RELAY_BASE)) {
         console.info('[TwitchUnblock] Relais vidéo injoignable (multi-live), retour au Worker.')
         const next = ++tile.token
         stopMedia(tile)
@@ -617,12 +647,12 @@ function pickByCount(links, variants = {}) {
 
 async function play(tile) {
   const v = tile.video
+  const token = tile.token
   v.muted = audible !== tile.key
   // Pause voulue ou VOD finie : une relance (relais, erreur, « Actualiser »)
   // la remet à sa place, en pause. Sans lecture, `playing` ne vient pas : la
   // roue s'efface dès les métadonnées (Safari peut ne rien charger de plus).
   if (tile.userPaused) {
-    const token = tile.token
     const shown = () => {
       if (tile.token !== token) return
       if (v.currentTime > 0) tile.ready = true
@@ -638,13 +668,17 @@ async function play(tile) {
   try {
     await v.play()
   } catch (err) {
-    if (v.muted) {
-      // Lecture interrompue (chargement en cours…) : relancée dès que possible.
-      if (err?.name === 'AbortError' && !document.hidden) {
-        v.addEventListener('canplay', () => { if (!tile.userPaused) v.play().catch(() => {}) }, { once: true })
+    if (tile.token !== token) return
+    // Lecture interrompue (chargement en cours, source remplacée…) :
+    // relancée dès que possible. Ce n'est pas un refus du son : la tuile qui
+    // l'avait passait en muet, avec « Clique sur une vidéo… », à tort.
+    if (err?.name === 'AbortError') {
+      if (!document.hidden) {
+        v.addEventListener('canplay', () => { if (!tile.userPaused && tile.token === token) v.play().catch(() => {}) }, { once: true })
       }
       return
     }
+    if (v.muted || err?.name !== 'NotAllowedError') return
     // Son refusé tant qu'on n'a pas cliqué dans la page (adresse partagée) :
     // en muet, et un clic sur une tuile le lui donnera.
     v.muted = true

@@ -56,7 +56,8 @@ Watch Twitch lives and VODs in your browser, no subscription needed, with the re
 - A live tile picks its quality from its size; a VOD tile plays 1080p alone, 720p with two tiles, 480p beyond — never above your preferred quality. Click a tile to hear it (or 1–4 on the keyboard, M to mute), double-click for fullscreen
 - **VOD tiles** resume where you left off and save their progress (the VOD joins your history); the tile you hear has its controls: play/pause, ±10 s, time and a seek bar (Space or K, ← →). Others show a thin progress line, and “Watch again” at the end
 - On large screens, the chat of the video you hear shows on the right — replayed for a VOD (button in the mosaic, or Settings → Chat → Chat in multi-live)
-- Add a channel by name, or a VOD by its link or ID, from the mosaic; open a tile with its chat in the regular player (a VOD at the tile's moment), and **share the mosaic's link** (`/?multi=xqc,v:2345678901`; “Copy” adds each VOD's moment, `v:<id>~<seconds>`)
+- Add a channel by name, or a VOD by its link or ID, from the mosaic; open a tile with its chat in the regular player (a VOD at the tile's moment), and **share the mosaic's link** (`/?multi=xqc,v:2345678901`; “Copy” adds each VOD's moment, `v:<id>~<seconds>`; where the browser can't copy, as in Discord's or Instagram's in-app browser, the share sheet opens or the link is shown)
+- Live tiles get the same rescue as the player: segments through the relay when Twitch's CDN is blocked, and another relay or Worker when the one serving them stops answering
 
 ### Chat
 - Connected straight to Twitch IRC — no iframe
@@ -273,11 +274,12 @@ server of yours, with no request limit. The Worker keeps everything else
 The website sends playback through the relay when one is set
 (`DEFAULT_RELAY_URL` in `public/assets/js/api.js`, or `relayUrl` in
 `public/config.js`), and falls back to the Worker on its own when the relay
-doesn't answer — even in the middle of a video. A relay that fails its
-`/health` check when the page opens is only set aside (for 30 minutes) if a
-Worker answers meanwhile: a slow or offline phone connection doesn't count
-against it, and neither does a missing segment or playlist (404, as when a
-live ends). The iOS app reads Twitch's CDN directly and doesn't need it.
+doesn't answer — even in the middle of a video, multi-live tiles included.
+A relay that fails its `/health` check when the page opens is only set aside
+(for 30 minutes) if a Worker answers meanwhile: a slow or offline phone
+connection doesn't count against it, and neither does a missing segment or
+playlist (404, as when a live ends). The iOS app reads Twitch's CDN directly
+and doesn't need it.
 
 You need a server with Docker and a domain name pointing to it (a free
 subdomain from [duckdns.org](https://www.duckdns.org) works — DuckDNS also

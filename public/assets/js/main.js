@@ -580,7 +580,12 @@ const actions = {
   'multi-share': () => {
     // Avec l'instant de chaque VOD (« v:<id>~<s> »).
     const url = multi.shareUrl()
-    navigator.clipboard?.writeText(url).then(() => toast(t('copied'), 'success'), () => toast(url))
+    if (navigator.clipboard?.writeText) return navigator.clipboard.writeText(url).then(() => toast(t('copied'), 'success'), () => toast(url))
+    // Sans presse-papiers (page non sécurisée, WebView de Discord ou
+    // d'Instagram) : la feuille de partage, sinon le lien affiché — le bouton
+    // ne faisait rien.
+    if (navigator.share) return navigator.share({ url }).catch((e) => { if (e?.name !== 'AbortError') toast(url) })
+    toast(url)
   },
   'vod-download': () => {
     const w = state.watch
