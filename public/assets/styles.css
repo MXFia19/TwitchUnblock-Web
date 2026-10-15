@@ -68,9 +68,10 @@ html { -webkit-text-size-adjust: 100%; background: var(--bg); color-scheme: dark
 :root[data-bg="light"] .fb-status.progress { color: #8a6d00; }
 :root[data-bg="light"] .fb-status.done { color: #0b7a4c; }
 /* Le lecteur reste noir quel que soit le thème : lui, son menu, l'écran de
-   fin de live et le chat posé sur l'image en plein écran gardent la palette
-   sombre (sinon texte foncé sur fond noir). */
-:root[data-bg="light"] :is(.player, .watch-ended, .watch-body:fullscreen .chat) {
+   fin de live, le chat posé sur l'image en plein écran et les tuiles du
+   multi-live gardent la palette sombre (sinon texte et icônes foncés sur
+   fond noir). */
+:root[data-bg="light"] :is(.player, .watch-ended, .watch-body:fullscreen .chat, .mtile) {
   --bg: #0e0e10; --card: #18181b; --card-hi: #1f1f23; --surface: #26262c; --surface-hi: #303036;
   --line: rgba(255, 255, 255, 0.08); --line-strong: #3a3a40; --text: #efeff1; --muted: #adadb8;
   color: var(--text);
@@ -908,7 +909,7 @@ a.card, a.cat-card { display: block; }
 #dl-progress .btn { margin-top: 14px; }
 
 /* ── Multi-live ────────────────────────────────────────────────────────── */
-/* « + » des cartes de live : ajoute le direct à la mosaïque. */
+/* « + » des cartes de live et de VOD : ajoute la vidéo à la mosaïque. */
 .thumb .madd {
   position: absolute; right: 6px; bottom: 6px; width: 30px; height: 30px; border-radius: 50%;
   display: grid; place-items: center; background: rgba(0, 0, 0, 0.72); color: #fff;
@@ -917,6 +918,8 @@ a.card, a.cat-card { display: block; }
 .thumb .madd:hover, .thumb .madd.on { background: var(--primary); }
 .thumb .madd.on, .card:hover .madd, .card:focus-within .madd { opacity: 1; }
 @media (hover: none) { .thumb .madd { opacity: 1; } }
+/* Cartes de VOD : en haut à droite, la durée occupe le bas. */
+.vod-card .thumb .madd { top: 6px; bottom: auto; }
 /* Épingle des chaînes suivies : à gauche du « + », visible une fois épinglée. */
 .thumb .mpin {
   position: absolute; right: 42px; bottom: 6px; width: 30px; height: 30px; border-radius: 50%;
@@ -1025,6 +1028,39 @@ html.multi-open { overflow: hidden; }
 @media (hover: none) { .mt-btns { opacity: 1; } }
 .mt-btns .icon-btn { background: rgba(0, 0, 0, 0.55); }
 .mt-state { position: absolute; inset: 0; z-index: 1; display: grid; place-content: center; justify-items: center; gap: 10px; padding: 12px; text-align: center; color: var(--muted); font-size: 14px; }
+/* Tuile VOD : sur celle qui a le son, une barre du bas toujours visible
+   (±10 s, lecture/pause, temps, position) ; sur les autres, un trait de
+   progression et une icône quand elle est en pause. */
+.mtile.vod { container-type: inline-size; }
+.mt-top .pill.vod { flex: none; }
+.mt-progress { position: absolute; left: 0; right: 0; bottom: 0; z-index: 2; height: 3px; background: rgba(255, 255, 255, 0.25); pointer-events: none; }
+.mt-progress span { display: block; width: 0; height: 100%; background: var(--primary); }
+.mt-paused {
+  position: absolute; left: 50%; top: 50%; z-index: 1; transform: translate(-50%, -50%);
+  display: none; place-items: center; width: 52px; height: 52px; border-radius: 50%;
+  background: rgba(0, 0, 0, 0.55); color: #fff; pointer-events: none;
+}
+.mtile.paused:not(.audible) .mt-paused { display: grid; }
+.mt-bottom {
+  position: absolute; left: 0; right: 0; bottom: 0; z-index: 2;
+  display: none; align-items: center; gap: 2px; padding: 16px 12px 4px 4px;
+  background: linear-gradient(transparent, rgba(0, 0, 0, 0.75));
+  font-size: 12px; font-weight: 700; color: #fff; cursor: default;
+}
+.mtile.vod.audible .mt-bottom { display: flex; }
+.mtile.vod.audible .mt-progress { display: none; }
+.mt-bottom .icon-btn { color: #fff; }
+.mt-bottom .icon-btn:hover { background: rgba(255, 255, 255, 0.14); }
+.mt-time { flex: none; margin: 0 6px 0 4px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.mt-seek { position: relative; flex: 1; min-width: 40px; height: 24px; cursor: pointer; touch-action: none; }
+.mt-seek::before, .mt-seek span { content: ''; position: absolute; left: 0; top: 50%; height: 4px; margin-top: -2px; border-radius: 2px; }
+.mt-seek::before { right: 0; background: rgba(255, 255, 255, 0.3); }
+.mt-seek span { width: 0; background: var(--primary); }
+.mt-seek:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; border-radius: 4px; }
+/* Tuile étroite (2 × 2 à côté du chat, petit écran) : la durée totale, puis
+   le temps, laissent la place à la barre. */
+@container (max-width: 380px) { .mt-total { display: none; } }
+@container (max-width: 240px) { .mt-time { display: none; } }
 @media (max-width: 760px) {
   .multi-bar { left: 8px; right: 8px; bottom: calc(70px + var(--safe-b)); max-width: none; border-radius: 14px; }
   html:has(#watch.minimized:not([hidden])) .multi-bar { bottom: calc(160px + var(--safe-b)); }

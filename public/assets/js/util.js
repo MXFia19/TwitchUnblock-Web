@@ -40,6 +40,14 @@ export function formatClock(seconds) {
   return h > 0 ? `${h}:${String(m).padStart(2, '0')}:${sec}` : `${m}:${sec}`
 }
 
+/** « 1h2m3s », « 3723s » ou « 3723 » → secondes (null sinon), comme le
+ *  « ?t= » des liens de Twitch. Sert au lecteur et au multi-live. */
+export function twitchTime(raw) {
+  const m = /^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s?)?$/i.exec(String(raw ?? '').trim())
+  const sec = m ? Number(m[1] ?? 0) * 3600 + Number(m[2] ?? 0) * 60 + Number(m[3] ?? 0) : 0
+  return sec > 0 ? sec : null
+}
+
 /** Durée d'une VOD en clair : « 3 h 12 » ou « 45 min ». */
 export function formatDuration(seconds) {
   const s = Math.max(0, Math.floor(Number(seconds) || 0))

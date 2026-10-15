@@ -51,10 +51,11 @@ Watch Twitch lives and VODs in your browser, no subscription needed, with the re
 - “Open in…” VLC, Outplayer, Infuse, or copy the stream link
 
 ### Multi-live
-- Up to **four lives side by side**: the “+” on a live card (or “Multi-live” on a channel page and under the player) adds a stream, and a bar at the bottom shows your picks
-- Each tile picks its quality from its size; click a tile to hear it (or 1–4 on the keyboard, M to mute), double-click for fullscreen
-- On large screens, the chat of the stream you hear shows on the right (button in the mosaic, or Settings → Chat → Chat in multi-live)
-- Add a channel by name from the mosaic, open one with its chat in the regular player, and **share the mosaic's link** (`/?multi=xqc,pokimane`)
+- Up to **four videos side by side, lives and VODs mixed**: the “+” on a live or VOD card (or “Multi-live” on a channel page and under the player) adds one, and a bar at the bottom shows your picks
+- A live tile picks its quality from its size; a VOD tile plays 1080p alone, 720p with two tiles, 480p beyond — never above your preferred quality. Click a tile to hear it (or 1–4 on the keyboard, M to mute), double-click for fullscreen
+- **VOD tiles** resume where you left off and save their progress (the VOD joins your history); the tile you hear has its controls: play/pause, ±10 s, time and a seek bar (Space or K, ← →). Others show a thin progress line, and “Watch again” at the end
+- On large screens, the chat of the video you hear shows on the right — replayed for a VOD (button in the mosaic, or Settings → Chat → Chat in multi-live)
+- Add a channel by name, or a VOD by its link or ID, from the mosaic; open a tile with its chat in the regular player (a VOD at the tile's moment), and **share the mosaic's link** (`/?multi=xqc,v:2345678901`; “Copy” adds each VOD's moment, `v:<id>~<seconds>`)
 
 ### Chat
 - Connected straight to Twitch IRC — no iframe
@@ -111,7 +112,7 @@ public/              The website, served as-is by Vercel (no build step)
     js/
       main.js        Navigation, home, streamer page, settings
       player.js      Video player (hls.js)
-      multi.js       Multi-live: up to four lives side by side
+      multi.js       Multi-live: up to four lives and VODs side by side
       download.js    Download a VOD or a part of it
       api.js         Worker, Helix and GQL access — configuration at the top
       usage.js       Anonymous usage count

@@ -15,7 +15,7 @@ import * as dl from './download.js'
 import { CHANGELOG } from './changelog.js'
 import {
   $, $$, debounce, esc, formatClock, formatDuration, formatViewers, icon, isIOS, isMobile,
-  thumb, toast, uptimeSince,
+  thumb, toast, twitchTime, uptimeSince,
 } from './util.js'
 
 // ── État ───────────────────────────────────────────────────────────────────
@@ -166,7 +166,8 @@ function routeFrom(pathname, search = '') {
   const channel = api.cleanLogin(q.get('channel'))
   // « ?t=1h2m3s » : la VOD démarre à cet instant, comme sur Twitch.
   const at = twitchTime(q.get('t'))
-  // « ?multi=a,b » : une mosaïque de directs, partagée.
+  // « ?multi=a,v:123~456 » : une mosaïque partagée (directs, et VODs avec
+  // leur instant éventuel), lue par multi.openWith.
   const multiParam = q.get('multi')
   if (multiParam) return { multi: multiParam.split(',') }
   if (clip) return { clip }
@@ -194,13 +195,6 @@ function routeFrom(pathname, search = '') {
     : section === 'videos' ? (filter === 'highlights' ? 'highlights' : filter === 'collections' ? 'playlists' : 'vods')
     : null
   return { channel: login, tab, live: !section }
-}
-
-/** « 1h2m3s », « 3723s » ou « 3723 » → secondes (null sinon). */
-function twitchTime(raw) {
-  const m = /^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s?)?$/i.exec(String(raw ?? '').trim())
-  const sec = m ? Number(m[1] ?? 0) * 3600 + Number(m[2] ?? 0) * 60 + Number(m[3] ?? 0) : 0
-  return sec > 0 ? sec : null
 }
 
 /** Ouvre la page d'une adresse. `initial` : premier chargement (le direct
@@ -464,6 +458,12 @@ function bindGlobal() {
       e.stopPropagation()
       return multi.toggle(madd.dataset.multiAdd, madd.dataset.multiName)
     }
+    // « + » d'une carte de VOD : la VOD dans la mosaïque.
+    const mvod = e.target.closest('[data-multi-vod]')
+    if (mvod) {
+      e.stopPropagation()
+      return multi.toggleVod(mvod.dataset.multiVod, { name: mvod.dataset.multiName, title: mvod.dataset.multiTitle })
+    }
     // Épingle d'une chaîne suivie : en tête des suivies.
     const pin = e.target.closest('[data-pin]')
     if (pin) {
@@ -569,7 +569,8 @@ const actions = {
   'multi-close': () => multi.close(),
   'multi-chat': () => setMultiChat(store.prefs.multiChat === false),
   'multi-share': () => {
-    const url = location.href
+    // Avec l'instant de chaque VOD (« v:<id>~<s> »).
+    const url = multi.shareUrl()
     navigator.clipboard?.writeText(url).then(() => toast(t('copied'), 'success'), () => toast(url))
   },
   'vod-download': () => {
@@ -585,7 +586,13 @@ const actions = {
   },
   'multi-add-current': () => {
     const w = state.watch
-    if (w?.kind === 'live') multi.add(w.login, w.info?.displayName || w.login)
+    if (w?.kind === 'live') return multi.add(w.login, w.info?.displayName || w.login)
+    // VOD (pas une rediffusion retrouvée) : la tuile reprendra où on en est —
+    // la fermeture du lecteur n'enregistre pas la dernière position.
+    if (w?.kind !== 'vod' || w.recovered || !/^\d{6,20}$/.test(w.id)) return
+    const cur = player.video?.currentTime || 0
+    if (cur > 0) { store.setProgress(w.id, cur); pushSync() }
+    multi.addVod(w.id, { name: w.info?.owner?.displayName || '', title: w.info?.title || '', channel: w.login || '' })
   },
   logout,
   settings: () => openSettings(),
@@ -730,12 +737,14 @@ function vodCard(v, streamer) {
   const dateStr = Number.isFinite(date.getTime())
     ? date.toLocaleDateString(lang(), { day: 'numeric', month: 'short', year: 'numeric' })
     : ''
+  const inMulti = multi.hasVod(v.id)
   return `
     <a class="card vod-card" href="/videos/${esc(v.id)}" data-vod="${esc(v.id)}">
       <div class="thumb">
         <img src="${esc(thumb(v.previewThumbnailURL, 320, 180))}" alt="" loading="lazy" decoding="async"
              onerror="this.src='https://vod-secure.twitch.tv/_404/404_processing_320x180.png'">
         <span class="pill duration">${esc(formatDuration(v.lengthSeconds))}</span>
+        <button class="madd${inMulti ? ' on' : ''}" type="button" data-multi-vod="${esc(v.id)}" data-multi-name="${esc(streamer || '')}" data-multi-title="${esc(v.title || '')}" title="${esc(t(inMulti ? 'multi_remove' : 'multi_add'))}">${icon(inMulti ? 'check' : 'plus', 16)}</button>
         ${ratio > 0.01 ? `<span class="progress"><span style="width:${(ratio * 100).toFixed(1)}%"></span></span>` : ''}
       </div>
       <div class="card-body">
@@ -2624,29 +2633,65 @@ function setupMulti() {
   multi.init({
     // Un seul son à la fois : le lecteur se ferme.
     onOpen: () => { if (!$('#watch').hidden) closeWatch({ url: false }) },
-    onWatch: (login) => openLive(login),
+    // Ouvrir en grand : le direct, ou la VOD à l'instant de sa tuile.
+    onWatch: (entry, at) => (entry.vod ? openVod(entry.vod, undefined, { at }) : openLive(entry.login)),
     onUrl: (path, replace = false) => (path ? go(path, { watch: true, replace }) : go(pagePath(), { replace: true })),
-    onAudible: (channel) => showMultiChat(channel),
+    onAudible: (entry) => showMultiChat(entry),
+    onClose: () => { flushSync({ force: true }); renderContinue() },
+    resume: (id) => store.getProgress(id),
+    onVodCount: (ok) => usage.count(ok ? 'vod' : 'vod_fail', store.prefs.shareUsage),
+    // Au premier démarrage d'une tuile VOD : dans l'historique, comme depuis
+    // le lecteur — sans cela sa progression ne part pas dans la sauvegarde.
+    onVodStart: (entry, meta) => {
+      const id = entry.vod
+      if (meta) multiVodMeta.set(id, meta)
+      const known = state.vodMeta.get(id) ?? {}
+      store.addHistory(id, 'vod', meta?.title || entry.title || known.title || `VOD ${id}`, {
+        thumb: meta?.previewThumbnailURL || known.thumb || '',
+        streamer: meta?.owner?.displayName || entry.name || known.streamer || '',
+      })
+      if (meta?.lengthSeconds) store.setLength(id, meta.lengthSeconds)
+      pushSync()
+    },
+    // Chat rejoué de la tuile qui a le son ; progression toutes les 5 s de
+    // lecture, et à la pause, à la fin ou au retrait de la tuile.
+    onVodTime: (entry, time, duration, { final = false, save = false } = {}) => {
+      if (multiChatKey === multi.keyOf(entry)) multiChat?.tick(time)
+      const id = entry.vod
+      if (!save || !(time > 0) || (!final && Math.abs(time - (multiSaved.get(id) ?? 0)) <= 5)) return
+      multiSaved.set(id, time)
+      store.setProgress(id, time)
+      if (Number.isFinite(duration) && duration > 0) store.setLength(id, duration)
+      pushSync()
+    },
   })
 }
 
-// Chat du direct qui a le son, à droite de la mosaïque (grand écran) :
-// réglage « Chat dans le multi-live », et bouton dans la mosaïque.
+// Chat de la vidéo qui a le son, à droite de la mosaïque (grand écran) :
+// réglage « Chat dans le multi-live », et bouton dans la mosaïque. Celui
+// d'une VOD est rejoué au rythme de sa tuile.
 let multiChat = null
-let multiChatChannel = null
-async function showMultiChat(channel) {
+let multiChatKey = null
+/** Infos des VODs des tuiles (chaîne du chat rejoué). */
+const multiVodMeta = new Map()
+/** Dernière position enregistrée de chaque VOD des tuiles. */
+const multiSaved = new Map()
+async function showMultiChat(entry) {
   const box = $('#multi')
-  const on = Boolean(channel) && store.prefs.multiChat !== false
+  const on = Boolean(entry) && store.prefs.multiChat !== false
   box.classList.toggle('with-chat', on)
-  box.classList.toggle('chat-ready', Boolean(channel))
+  box.classList.toggle('chat-ready', Boolean(entry))
   $('.multi-chat-btn', box)?.classList.toggle('on', store.prefs.multiChat !== false)
   if (!on) {
     multiChat?.close()
-    multiChatChannel = null
+    multiChatKey = null
     return
   }
-  if (channel === multiChatChannel) return
-  multiChatChannel = channel
+  // Par entrée et non par chaîne : le direct et une VOD d'une même chaîne
+  // n'ont pas le même chat.
+  const key = multi.keyOf(entry)
+  if (key === multiChatKey) return
+  multiChatKey = key
   multiChat ??= new ChatView($('#multi-chat'), {
     prefs: store.prefs,
     getDelay: () => 0,
@@ -2658,17 +2703,29 @@ async function showMultiChat(channel) {
     onHide: () => setMultiChat(false),
   })
   applyStatic($('#multi-chat'))
+  if (entry.vod) {
+    const meta = multiVodMeta.get(entry.vod) ?? await api.getVodMeta(entry.vod).catch(() => null)
+    if (multiChatKey !== key) return
+    multiChat.openVod({
+      videoId: entry.vod,
+      channelId: meta?.owner?.id ?? null,
+      channelLogin: meta?.owner?.login ?? (entry.channel || null),
+      startAt: multi.positionOf(entry),
+    })
+    return
+  }
+  const channel = entry.login
   const info = await api.getChannelInfo(channel).catch(() => null)
-  if (multiChatChannel !== channel) return
+  if (multiChatKey !== key) return
   multiChat.openLive({ channel, channelId: info?.id ?? null })
 }
 
 function setMultiChat(on) {
   store.prefs.multiChat = on
   store.savePrefs()
-  const channel = multiChatChannel ?? multi.audibleLogin()
-  multiChatChannel = null
-  showMultiChat(multi.isOpen() ? channel : null)
+  const entry = multi.audibleEntry()
+  multiChatKey = null
+  showMultiChat(multi.isOpen() ? entry : null)
 }
 
 function switchWorker(base) {
@@ -3171,6 +3228,7 @@ async function openVod(id, preset, { keepPlaylist = false, at = null } = {}) {
       ${meta?.game?.displayName ? `<p class="hero-game">${icon('gamepad', 14)} ${gameLink(meta.game.id, meta.game.displayName)}</p>` : ''}
     </div>
     <div class="wi-actions">
+      <button class="btn ghost sm" type="button" data-action="multi-add-current" title="${esc(t('multi_add'))}">${icon('grid', 16)}<span>${esc(t('multi_title'))}</span></button>
       ${token.login ? `<button class="btn ghost sm" type="button" data-action="see-vods">${icon('film', 16)}<span>${esc(t('see_vods'))}</span></button>` : ''}
       <button class="btn ghost sm" type="button" data-action="vod-download">${icon('download', 16)}<span>${esc(t('dl_download'))}</span></button>
       <button class="btn ghost sm" type="button" data-action="open-in">${icon('external', 16)}<span>${esc(t('open_in'))}</span></button>
