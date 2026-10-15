@@ -261,6 +261,23 @@ input[type='search']::-webkit-search-cancel-button { filter: invert(1) opacity(0
 .announce-reacts button:hover { border-color: var(--purple); }
 .announce-reacts button:active { transform: scale(0.92); }
 .announce-reacts button.on { border-color: var(--purple); background: rgba(145, 70, 255, 0.22); }
+/* Sondage du développeur : même carte que l'annonce, choix puis barres. */
+#announcement:not([hidden]) + #poll { margin-top: 12px; }
+.poll-options { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+.poll-options button { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 38px; padding: 8px 12px; border-radius: 10px; border: 1px solid var(--line-strong); background: var(--surface); color: var(--text); font: inherit; font-size: 14px; text-align: left; cursor: pointer; transition: border-color 0.15s, background 0.15s; }
+.poll-options button:hover { border-color: var(--purple); }
+.poll-options button.on { border-color: var(--purple); background: rgba(145, 70, 255, 0.22); }
+.poll-options button:disabled { opacity: 0.6; cursor: default; }
+.poll-box { flex: none; display: grid; place-items: center; width: 18px; height: 18px; border-radius: 5px; border: 1.5px solid var(--line-strong); }
+.poll-options button.on .poll-box { border-color: var(--purple); background: var(--purple); color: #fff; }
+.poll-results { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.poll-results li { position: relative; display: flex; align-items: center; gap: 8px; min-height: 34px; padding: 6px 12px; border-radius: 10px; background: var(--surface); overflow: hidden; }
+.poll-bar { position: absolute; inset: 0 auto 0 0; width: var(--pct); background: rgba(145, 70, 255, 0.18); }
+.poll-results li.mine .poll-bar { background: rgba(145, 70, 255, 0.34); }
+.poll-opt { position: relative; flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px; font-size: 14px; overflow-wrap: anywhere; }
+.poll-pct { position: relative; font-weight: 700; font-size: 13px; font-variant-numeric: tabular-nums; }
+.announce-body .poll-meta { margin-top: 8px; font-size: 12.5px; }
+.poll-meta .link-btn { padding: 0; border: 0; background: none; font: inherit; font-weight: 600; cursor: pointer; }
 .block-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
 .block-head h2 { display: flex; align-items: center; gap: 10px; font-size: 19px; font-weight: 800; letter-spacing: -0.01em; }
 .block-head h2 .ic { color: var(--purple); }

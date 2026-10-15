@@ -83,6 +83,7 @@ async function boot() {
   applyHomeTab()
   setupCategories()
   loadAnnouncement(true)
+  loadPoll(true)
   renderIcons()
   bindGlobal()
   setupPlayer()
@@ -508,7 +509,7 @@ setInterval(() => flushSync(), 60_000)
 // Fermeture d'onglet, changement d'appli sur mobile : dernier envoi.
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) flushSync({ force: true })
-  else { loadAnnouncement(); refreshFeedbackInbox(); revalidateSession() }
+  else { loadAnnouncement(); loadPoll(); refreshFeedbackInbox(); revalidateSession() }
 })
 // Réponses aux retours envoyés d'ici : pastille sur les boutons de retour.
 // Après l'évaluation du module : ces fonctions lisent des constantes
@@ -4555,6 +4556,112 @@ function renderAnnouncement() {
   }
   box.querySelector('[data-ann-close]').onclick = () => {
     try { localStorage.setItem(ANN_DISMISSED, JSON.stringify([...dismissed, a.id].slice(-20))) } catch {}
+    box.hidden = true
+  }
+}
+
+// ── Sondage du développeur ─────────────────────────────────────────────
+// Lancé dans /stats ou avec /poll sur Discord, sous l'annonce. Vote anonyme
+// par appareil (même identifiant que les réactions), modifiable jusqu'à la
+// fin ; résultats montrés après avoir voté, et à tous une fois fini.
+const POLL_DISMISSED = 'tu_poll_dismissed'
+let pollFetchedAt = 0
+let pollData = null       // { poll, mine, results } (Worker)
+let pollPicks = null      // plusieurs choix : cochés, pas encore envoyés
+let pollEditing = false   // « Changer mon vote » : choix rouverts
+let pollSending = false
+async function loadPoll(force = false) {
+  if (!force && Date.now() - pollFetchedAt < 5 * 60_000) return renderPoll()
+  try {
+    const res = await fetch(`${api.API_URL}/api/poll`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, cache: 'no-store',
+      body: JSON.stringify({ device: usage.installId() }),
+    })
+    if (!res.ok) return
+    pollData = await res.json()
+    pollFetchedAt = Date.now()
+  } catch { return }
+  renderPoll()
+}
+async function votePoll(choices) {
+  const p = pollData?.poll
+  if (!p || pollSending) return
+  pollSending = true
+  renderPoll()
+  try {
+    const res = await fetch(`${api.API_URL}/api/poll/vote`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ device: usage.installId(), pollId: p.id, choices }),
+    })
+    if (res.status === 410) {
+      // Fini entre-temps : résultats finaux relus.
+      toast(t('poll_closed'))
+      pollSending = false
+      return loadPoll(true)
+    }
+    const data = res.ok ? await res.json().catch(() => null) : null
+    if (!data?.poll) throw new Error(String(res.status))
+    pollData = { poll: data.poll, mine: data.mine, results: data.results }
+    pollPicks = null
+    pollEditing = false
+  } catch { toast(t('poll_failed')) }
+  pollSending = false
+  renderPoll()
+}
+/** Temps restant (« 25 min », « 3 h », « 2 j »), dans la langue du site. */
+function pollTimeLeft(until) {
+  const m = Math.max(1, Math.round((until - Date.now()) / 60_000))
+  const [v, unit] = m < 60 ? [m, 'minute'] : m < 48 * 60 ? [Math.round(m / 60), 'hour'] : [Math.round(m / 1440), 'day']
+  try { return new Intl.NumberFormat(lang(), { style: 'unit', unit, unitDisplay: 'short' }).format(v) } catch { return `${v} ${unit}` }
+}
+function renderPoll() {
+  const box = $('#poll')
+  if (!box) return
+  let dismissed = []
+  try { dismissed = JSON.parse(localStorage.getItem(POLL_DISMISSED) || '[]') } catch {}
+  const p = pollData?.poll
+  if (!p || dismissed.includes(p.id)) { box.hidden = true; box.innerHTML = ''; return }
+  const ended = p.ended || !(p.until > Date.now())
+  const mine = Array.isArray(pollData.mine) ? pollData.mine : []
+  const results = pollData.results
+  let body
+  if (results && (ended || (mine.length && !pollEditing))) {
+    const voters = results.voters || 0
+    body = `<ul class="poll-results">${p.options.map((o, i) => {
+      const pct = voters ? Math.round(((results.counts[i] || 0) / voters) * 100) : 0
+      return `<li class="${mine.includes(i) ? 'mine' : ''}"><div class="poll-bar" style="--pct:${pct}%"></div><span class="poll-opt">${mine.includes(i) ? icon('check', 14) : ''}${esc(o)}</span><span class="poll-pct">${pct}%</span></li>`
+    }).join('')}</ul>
+    <p class="poll-meta">${esc(t(voters === 1 ? 'poll_voter' : 'poll_voters', { n: voters }))} · ${esc(ended ? t('poll_ended') : t('poll_until', { time: pollTimeLeft(p.until) }))}${ended ? '' : ` · <button type="button" class="link-btn" data-poll-change>${esc(t('poll_change'))}</button>`}</p>`
+  } else {
+    const picks = pollPicks ?? mine
+    body = `<div class="poll-options">${p.options.map((o, i) => `<button type="button" data-poll-opt="${i}" class="${picks.includes(i) ? 'on' : ''}" aria-pressed="${picks.includes(i)}"${pollSending ? ' disabled' : ''}>${p.multi ? `<span class="poll-box">${picks.includes(i) ? icon('check', 12) : ''}</span>` : ''}${esc(o)}</button>`).join('')}</div>
+    <p class="poll-meta">${esc(t(p.multi ? 'poll_multi_hint' : 'poll_single_hint'))} · ${esc(t('poll_until', { time: pollTimeLeft(p.until) }))}</p>
+    ${p.multi ? `<button type="button" class="btn primary sm" data-poll-send${picks.length && !pollSending ? '' : ' disabled'}>${esc(t('poll_vote'))}</button>` : ''}`
+  }
+  box.innerHTML = `<div class="announce poll" role="group" aria-label="${esc(t('poll_title'))}">
+    <span class="announce-ic">${icon('poll', 18)}</span>
+    <div class="announce-body">
+      <h3>${esc(p.question)}</h3>
+      ${body}
+    </div>
+    <button class="icon-btn" type="button" data-poll-close title="${esc(t('close'))}">${icon('x', 18)}</button>
+  </div>`
+  box.hidden = false
+  box.querySelectorAll('[data-poll-opt]').forEach((b) => {
+    b.onclick = () => {
+      const i = Number(b.dataset.pollOpt)
+      if (!p.multi) return votePoll([i])
+      const cur = pollPicks ?? mine
+      pollPicks = cur.includes(i) ? cur.filter((x) => x !== i) : [...cur, i]
+      renderPoll()
+    }
+  })
+  const send = box.querySelector('[data-poll-send]')
+  if (send) send.onclick = () => votePoll(pollPicks ?? mine)
+  const change = box.querySelector('[data-poll-change]')
+  if (change) change.onclick = () => { pollEditing = true; pollPicks = null; renderPoll() }
+  box.querySelector('[data-poll-close]').onclick = () => {
+    try { localStorage.setItem(POLL_DISMISSED, JSON.stringify([...dismissed, p.id].slice(-20))) } catch {}
     box.hidden = true
   }
 }

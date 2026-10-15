@@ -23,6 +23,7 @@ export const CHANGELOG = [
         'Chat : Entrée envoie toujours ton message, Tab (ou un clic) prend l’emote ou le pseudo proposé ; tes messages s’affichent comme les autres les voient, et les emotes juste après un emoji s’affichent bien. Chat des VODs : après un saut, les messages d’avant apparaissent, et une erreur de Twitch ne l’arrête plus.',
         'Si Twitch ne répond pas à l’ouverture, tu restes connecté ; le logo ne recharge plus la page ; sur téléphone, un téléchargement trop gros s’arrête avec un message au lieu de faire planter l’onglet.',
         'Sauvegarde : un fichier importé reprend aussi le thème, l’accent et l’ordre des sources, mais ne peut plus changer le Worker utilisé, et l’export ne contient plus l’adresse de ton Worker personnel.',
+        'Sondages : le développeur peut poser une question sous l’annonce de l’accueil ; tu votes sans compte (un ou plusieurs choix selon le sondage), tu peux changer d’avis jusqu’à la fin, et tu vois les résultats dès que tu as voté.',
       ],
       en: [
         'Multi-live: up to four videos side by side, lives and VODs mixed. Add a VOD with the “+” on its card or by pasting its link into the mosaic; it resumes where you left off, and the one you hear has its controls (play, ±10 s, seek bar) and its replayed chat.',
@@ -39,6 +40,7 @@ export const CHANGELOG = [
         'Chat: Enter always sends your message, Tab (or a click) picks the suggested emote or name; your messages show the way others see them, and emotes right after an emoji display correctly. VOD chat: after a jump, the messages just before show up, and a Twitch error no longer stops it.',
         'If Twitch doesn’t answer when the site opens, you stay logged in; the logo no longer reloads the page; on phones, a download that grows too big stops with a message instead of crashing the tab.',
         'Backup: an imported file also restores the theme, accent and source order, but can no longer change the Worker in use, and exports no longer include your personal Worker’s address.',
+        'Polls: the developer can ask a question under the home announcement; you vote without an account (one or several choices depending on the poll), can change your mind until it ends, and see the results as soon as you’ve voted.',
       ],
       es: [
         'Multi-live: hasta cuatro vídeos lado a lado, directos y VODs mezclados. Añade un VOD con el «+» de su tarjeta o pegando su enlace en el mosaico; se reanuda donde lo dejaste, y el que suena tiene sus controles (reproducir, ±10 s, barra de posición) y su chat repetido.',
@@ -55,6 +57,7 @@ export const CHANGELOG = [
         'Chat: Intro siempre envía tu mensaje, Tab (o un clic) elige el emote o el nombre sugerido; tus mensajes se ven como los ven los demás, y los emotes justo después de un emoji se muestran bien. Chat de los VODs: tras un salto aparecen los mensajes de justo antes, y un error de Twitch ya no lo detiene.',
         'Si Twitch no responde al abrir el sitio, sigues con la sesión iniciada; el logo ya no recarga la página; en el móvil, una descarga demasiado grande se detiene con un mensaje en lugar de bloquear la pestaña.',
         'Copia de seguridad: un archivo importado también recupera el tema, el color de acento y el orden de las fuentes, pero ya no puede cambiar el Worker usado, y la exportación ya no incluye la dirección de tu Worker personal.',
+        'Encuestas: el desarrollador puede hacer una pregunta bajo el anuncio de inicio; votas sin cuenta (una o varias opciones según la encuesta), puedes cambiar de opinión hasta el final y ves los resultados en cuanto votas.',
       ],
       ru: [
         'Мульти-просмотр: до четырёх видео рядом, трансляции и VOD вперемешку. Добавьте VOD кнопкой «+» на его карточке или вставив ссылку в мозаику; он продолжается с того места, где вы остановились, а у того, что вы слышите, есть управление (воспроизведение, ±10 сек, полоса перемотки) и повтор чата.',
@@ -71,6 +74,7 @@ export const CHANGELOG = [
         'Чат: Enter всегда отправляет сообщение, Tab (или щелчок) выбирает предложенный эмоут или ник; ваши сообщения выглядят так, как их видят другие, а эмоуты сразу после эмодзи отображаются правильно. Чат записей: после перемотки появляются сообщения перед этим моментом, а ошибка Twitch больше его не останавливает.',
         'Если Twitch не отвечает при открытии сайта, вы остаётесь в аккаунте; логотип больше не перезагружает страницу; на телефоне слишком большая загрузка останавливается с сообщением, а не роняет вкладку.',
         'Резервная копия: импортированный файл также восстанавливает тему, акцентный цвет и порядок источников, но больше не может сменить используемый Worker, а экспорт больше не содержит адрес вашего личного Worker.',
+        'Опросы: разработчик может задать вопрос под объявлением на главной; голосуйте без аккаунта (один или несколько вариантов, в зависимости от опроса), меняйте решение до конца опроса и смотрите результаты сразу после голосования.',
       ],
     },
   },
