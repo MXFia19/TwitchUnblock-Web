@@ -73,6 +73,10 @@ export default {
                 // Annonces affichées dans l'app (lecture publique, écriture admin)
                 case '/api/announcement': return await handleAnnouncementGet(env);
                 case '/api/announcement/react': return await handleAnnouncementReact(request, env);
+                // Sondages (lecture et vote publics, création admin ou bot)
+                case '/api/poll': return await handlePollState(request, env);
+                case '/api/poll/vote': return await handlePollVote(request, env);
+                case '/api/admin/poll': return await handleAdminPoll(request, env);
                 // Retours (bug, idée) du site et de l'app
                 case '/api/feedback': return await handleFeedback(request, env, ctx);
                 case '/api/feedback/thread': return await handleFeedbackThread(request, env);
@@ -2037,7 +2041,8 @@ async function feedbackTeamUpdate(env, key, { message = '', photos = [], status 
 //   Outils du bot (voir plus bas) : get / set (sa mémoire), create /
 //   userReply (/bug sur Discord, réponses en message privé, photos
 //   comprises), delete, block, merge, fix / released (« c'est en ligne »),
-//   summary, health, announce. Messages d'erreur en anglais : le bot les
+//   summary, health, announce, poll / poll-end / poll-state (sondage).
+//   Messages d'erreur en anglais : le bot les
 //   affiche.
 async function handleFeedbackBot(request, env) {
     const secret = String(env.FEEDBACK_BOT_SECRET || '');
@@ -2295,6 +2300,19 @@ async function feedbackBotTool(env, body) {
             await store(env).put(ANNOUNCEMENT_KEY, JSON.stringify(announcement), { expirationTtl: Math.max(60, ttl) });
             return jsonResponse({ ok: true, announcement });
         }
+        // Sondage (/poll, /poll-end) ; `poll-state` : le bot en poste les
+        // résultats une fois fini.
+        case 'poll': {
+            const r = await createPoll(env, body);
+            if (r.error) return jsonError(r.error, 400);
+            return jsonResponse({ ok: true, ...(await pollAdminView(env)) });
+        }
+        case 'poll-end': {
+            if (!(await endPoll(env))) return jsonError('No poll running', 404);
+            return jsonResponse({ ok: true, ...(await pollAdminView(env)) });
+        }
+        case 'poll-state':
+            return jsonResponse(await pollAdminView(env));
     }
     return null;
 }
@@ -2533,6 +2551,163 @@ async function countReactions(env, announcementId) {
         cursor = page.list_complete ? undefined : page.cursor;
     } while (cursor);
     return { counts, total };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Sondages : une question du développeur dans l'app et sur le site, comme
+//  les annonces (un seul à la fois, durée choisie). Vote anonyme par
+//  appareil, modifiable jusqu'à la fin ; résultats montrés après avoir voté,
+//  et à tous une fois fini (24 h). Lancés dans /stats ou avec /poll (bot).
+// ═══════════════════════════════════════════════════════════════════════════
+const POLL_KEY = 'poll';
+const POLL_VOTE_PREFIX = 'pollv_';
+const POLL_SHOW_AFTER = 24 * 3600 * 1000;   // résultats finaux affichés 24 h
+const POLL_DEVICE_RE = /^[0-9a-fA-F-]{36}$/;
+const pollHits = new Map();   // adresse → { n, until } (mémoire de l'instance)
+let pollCache = null;         // { value, until }
+let pollCountCache = null;    // { id, at, value }
+
+async function readPoll(env) {
+    if (pollCache && pollCache.until > Date.now()) return pollCache.value;
+    let value = null;
+    try { value = await store(env).get(POLL_KEY, 'json'); } catch (e) {}
+    if (value && !(value.until + POLL_SHOW_AFTER > Date.now())) value = null;
+    pollCache = { value, until: Date.now() + 30 * 1000 };
+    return value;
+}
+
+/** Votes d'un sondage : par choix, et nombre de votants. Une liste par
+ *  lecture : gardés 30 s, sauf `fresh` (après un vote, pour l'admin). */
+async function countPoll(env, poll, fresh = false) {
+    const hit = pollCountCache;
+    if (!fresh && hit && hit.id === poll.id && Date.now() - hit.at < 30 * 1000) return hit.value;
+    const counts = poll.options.map(() => 0);
+    let voters = 0;
+    for (const k of await listStoreKeys(env, `${POLL_VOTE_PREFIX}${poll.id}_`)) {
+        const picks = Array.isArray(k.metadata?.o) ? k.metadata.o.filter((i) => Number.isInteger(i) && i >= 0 && i < counts.length) : [];
+        for (const i of picks) counts[i]++;
+        if (picks.length) voters++;
+    }
+    const value = { counts, voters };
+    pollCountCache = { id: poll.id, at: Date.now(), value };
+    return value;
+}
+
+/** Ce qu'un appareil voit : le sondage, son vote, et les résultats s'il a
+ *  voté ou si c'est fini. */
+async function pollState(env, poll, device, fresh = false) {
+    if (!poll) return { poll: null, mine: null, results: null };
+    const ended = Date.now() >= poll.until;
+    let mine = null;
+    if (device) {
+        const { metadata } = await store(env).getWithMetadata(`${POLL_VOTE_PREFIX}${poll.id}_${device}`);
+        if (Array.isArray(metadata?.o) && metadata.o.length) mine = metadata.o;
+    }
+    return {
+        poll: { id: poll.id, question: poll.question, options: poll.options, multi: Boolean(poll.multi), until: poll.until, ended },
+        mine,
+        results: ended || mine ? await countPoll(env, poll, fresh) : null,
+    };
+}
+
+// GET /api/poll, ou POST { device } (son vote en plus) → { poll, mine, results }
+async function handlePollState(request, env) {
+    if (!env.DB) return jsonResponse({ poll: null, mine: null, results: null });
+    let device = null;
+    if (request.method === 'POST') {
+        let body = {};
+        try { body = await request.json(); } catch (e) {}
+        if (POLL_DEVICE_RE.test(String(body.device || ''))) device = String(body.device).toLowerCase();
+    } else if (request.method !== 'GET') return jsonError('Method Not Allowed', 405);
+    return new Response(JSON.stringify(await pollState(env, await readPoll(env), device)), {
+        headers: { ...RESPONSE_HEADERS, 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
+    });
+}
+
+// POST /api/poll/vote { device, pollId, choices: [i…] } — choices vide : vote retiré.
+async function handlePollVote(request, env) {
+    if (request.method !== 'POST') return jsonError('Method Not Allowed', 405);
+    if (!env.DB) return jsonError("Base D1 'DB' non liée au Worker.", 500);
+    if (BOT_UA.test(request.headers.get('User-Agent') || '')) return jsonResponse({ ok: true, ignored: true });
+    // Chaque vote est une écriture : 30 par heure et par adresse.
+    if (overLimit(pollHits, clientKey(request), 30)) return jsonError('Trop de requêtes', 429);
+    let body;
+    try { body = await request.json(); } catch (e) { return jsonError('JSON invalide', 400); }
+    const device = String(body.device || '').toLowerCase();
+    if (!POLL_DEVICE_RE.test(device)) return jsonError('ID invalide', 400);
+    pollCache = null;
+    const poll = await readPoll(env);
+    if (!poll || poll.id !== String(body.pollId || '') || Date.now() >= poll.until) return jsonError('Sondage terminé', 410);
+    const picks = [...new Set((Array.isArray(body.choices) ? body.choices : []).map(Number))]
+        .filter((i) => Number.isInteger(i) && i >= 0 && i < poll.options.length).sort((a, b) => a - b);
+    if (!poll.multi && picks.length > 1) return jsonError('Un seul choix', 400);
+    const key = `${POLL_VOTE_PREFIX}${poll.id}_${device}`;
+    if (!picks.length) await store(env).delete(key);
+    else {
+        const ttl = Math.max(60, Math.round((poll.until + POLL_SHOW_AFTER - Date.now()) / 1000) + 86400);
+        await store(env).put(key, '', { expirationTtl: ttl, metadata: { o: picks } });
+    }
+    return jsonResponse({ ok: true, ...(await pollState(env, poll, device, true)) });
+}
+
+/** Nouveau sondage (/stats ou bot) : question, 2 à 6 choix, un ou plusieurs
+ *  par personne, durée en heures. Remplace celui en cours. */
+async function createPoll(env, body) {
+    const question = cleanText(body.question, 140);
+    const raw = Array.isArray(body.options) ? body.options : String(body.options || '').split('\n');
+    const options = [...new Set(raw.map((o) => cleanText(o, 60)).filter(Boolean))];
+    if (!question) return { error: 'A question is needed' };
+    if (options.length < 2 || options.length > 6) return { error: 'Between 2 and 6 different choices' };
+    const hours = Math.min(24 * 30, Math.max(1 / 60, Number(body.hours) || 24));
+    const now = Date.now();
+    const poll = { id: now.toString(36), question, options, multi: body.multi === true, until: now + Math.round(hours * 3600) * 1000, createdAt: now };
+    await store(env).put(POLL_KEY, JSON.stringify(poll), { expirationTtl: Math.max(60, Math.round((poll.until + POLL_SHOW_AFTER - now) / 1000)) });
+    pollCache = null;
+    pollCountCache = null;
+    return { poll };
+}
+
+/** Fin anticipée : les résultats restent affichés 24 h. */
+async function endPoll(env) {
+    let poll = null;
+    try { poll = await store(env).get(POLL_KEY, 'json'); } catch (e) {}
+    if (!poll) return null;
+    if (Date.now() < poll.until) {
+        poll.until = Date.now();
+        await store(env).put(POLL_KEY, JSON.stringify(poll), { expirationTtl: Math.round(POLL_SHOW_AFTER / 1000) });
+    }
+    pollCache = null;
+    return poll;
+}
+
+/** Sondage et tous ses résultats (admin, bot). */
+async function pollAdminView(env) {
+    pollCache = null;
+    const poll = await readPoll(env);
+    return { poll: poll ? { ...poll, ended: Date.now() >= poll.until } : null, results: poll ? await countPoll(env, poll, true) : null };
+}
+
+// GET : sondage en cours et résultats. POST { question, options, multi, hours } :
+// lancer ; { end: true } : terminer (résultats affichés 24 h) ; { clear: true } : retirer.
+async function handleAdminPoll(request, env) {
+    const { denied } = await requireAdmin(request);
+    if (denied) return denied;
+    if (request.method === 'GET') return jsonResponse(await pollAdminView(env));
+    if (request.method !== 'POST') return jsonError('Method Not Allowed', 405);
+    let body;
+    try { body = await request.json(); } catch (e) { return jsonError('JSON invalide', 400); }
+    if (body.clear === true) {
+        await store(env).delete(POLL_KEY);
+        pollCache = null;
+        return jsonResponse({ ok: true, poll: null, results: null });
+    }
+    if (body.end === true) {
+        if (!(await endPoll(env))) return jsonError('Aucun sondage en cours', 404);
+        return jsonResponse({ ok: true, ...(await pollAdminView(env)) });
+    }
+    const r = await createPoll(env, body);
+    if (r.error) return jsonError(r.error, 400);
+    return jsonResponse({ ok: true, ...(await pollAdminView(env)) });
 }
 
 // ── Commandes Moobot (relais pour le site) ───────────────────────────────

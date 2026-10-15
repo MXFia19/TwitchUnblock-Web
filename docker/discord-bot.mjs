@@ -23,7 +23,8 @@
 //  Surveillance (salon privé choisi avec /setup) : Workers en panne, ntfy en
 //  pause, webhook refusé, CI de l'app ou du site en échec ; résumé chaque
 //  matin. Le relais lui-même : le Worker prévient (ALERT_WEBHOOK).
-//  Communauté : /announce (bandeau de l'app et du site) ; brouillon des
+//  Communauté : /announce (bandeau de l'app et du site), /poll et
+//  /poll-end (sondage, résultats postés à la fin) ; brouillon des
 //  notes de version à chaque sortie, publié d'un bouton ; versions de test
 //  annoncées aux testeurs.
 //  Seuls le propriétaire du serveur et DISCORD_ADMIN_IDS agissent au nom du
@@ -95,6 +96,8 @@ const COMMANDS = [
   },
   { name: 'announce', description: 'Show an announcement in the app and on the website', default_member_permissions: ADMIN },
   { name: 'announce-clear', description: 'Remove the current announcement', default_member_permissions: ADMIN },
+  { name: 'poll', description: 'Start a poll in the app and on the website', default_member_permissions: ADMIN },
+  { name: 'poll-end', description: 'End the current poll and post its results', default_member_permissions: ADMIN },
   {
     name: 'setup', description: 'Use this channel for the bot', default_member_permissions: ADMIN,
     options: [
@@ -700,6 +703,17 @@ export function startDiscordBridge({
     ],
   })
 
+  const pollModal = () => ({
+    custom_id: 'poll',
+    title: 'Poll (app and website)',
+    components: [
+      row(textInput('question', 'Question', 1, { max: 140 })),
+      row(textInput('options', 'Choices, one per line (2 to 6)', 2, { max: 400 })),
+      row(textInput('multi', 'Several choices per person? (yes / no)', 1, { max: 3, required: false, placeholder: 'no' })),
+      row(textInput('hours', 'Open for how many hours? (default 24)', 1, { max: 4, required: false })),
+    ],
+  })
+
   async function onInteraction(i) {
     const user = i.member?.user || i.user
     if (!user) return
@@ -735,6 +749,13 @@ export function startDiscordBridge({
       case 'announce': return respond(i, 9, announceModal())
       case 'announce-clear':
         return deferred(i, async () => { await call({ action: 'announce', clear: true }); return 'Announcement removed from the app and the website.' })
+      case 'poll': return respond(i, 9, pollModal())
+      case 'poll-end':
+        return deferred(i, async () => {
+          const r = await call({ action: 'poll-end' })
+          await postPollResults(r.poll, r.results)
+          return st.settings.alerts ? `Poll ended: its results are in <#${st.settings.alerts}>.` : 'Poll ended (pick an alerts channel with /setup to get its results).'
+        })
       case 'setup': return deferred(i, () => setup(i))
       case 'summary':
         return deferred(i, async () => ((await postSummary(st.settings.alerts || i.channel_id)) ? 'Summary posted.' : 'Nothing to post.'))
@@ -922,6 +943,45 @@ export function startDiscordBridge({
         return `Announcement live in the app and on the website until <t:${Math.floor(r.announcement.until / 1000)}:f>.`
       })
     }
+    if (kind === 'poll') {
+      if (!isAdmin(user.id)) return adminOnly(i)
+      return deferred(i, async () => {
+        const r = await call({
+          action: 'poll', question: field(i, 'question'), options: field(i, 'options'),
+          multi: /^(y|yes|o|oui|1|true)$/i.test(String(field(i, 'multi') || '').trim()),
+          hours: Number(field(i, 'hours')) || 24,
+        })
+        return `Poll live in the app and on the website until <t:${Math.floor(r.poll.until / 1000)}:f>: “${r.poll.question}” (${r.poll.options.length} choices${r.poll.multi ? ', several per person' : ', one per person'}). Its results will be posted in the alerts channel when it ends, or with /poll-end.`
+      })
+    }
+  }
+
+  /** Résultats d'un sondage fini, une fois : dans le salon d'alertes, avec
+   *  « Publish » vers le salon des annonces, comme les notes de version. */
+  async function postPollResults(poll, results) {
+    if (!poll) return
+    if ((await kvGet('poll_done').catch(() => null)) === poll.id) return
+    await kvSet('poll_done', poll.id, 30 * 86400)
+    const voters = results?.voters || 0
+    const lines = poll.options.map((o, n) => {
+      const c = results?.counts?.[n] || 0
+      return `- ${o} — **${voters ? Math.round((c / voters) * 100) : 0}%** (${c})`
+    })
+    const text = `📊 **Poll results — ${poll.question}**\n${lines.join('\n')}\n\n${voters} ${voters === 1 ? 'voter' : 'voters'}${poll.multi ? ' · several choices per person' : ''}`
+    if (!st.settings.alerts) { log.log(`Discord bridge: poll ${poll.id} ended (no /setup alerts channel for its results)`); return }
+    const id = `poll-${poll.id}`.toLowerCase().replace(/[^a-z0-9_-]/g, '_').slice(0, 50)
+    await kvSet(`draft_${id}`, { text }, 30 * 86400)
+    await sendChunks(st.settings.alerts, text)
+    const where = st.settings.announcements ? `<#${st.settings.announcements}>` : 'the announcements channel (pick it with /setup)'
+    await say(st.settings.alerts, `📝 **Poll results draft**\n“Publish” posts the text above in ${where}.`, {
+      components: [row(button('Publish', `rel:pub:${id}`, 3), button('Discard', `rel:del:${id}`, 4))],
+    })
+  }
+
+  /** Sondage arrivé au bout de sa durée : ses résultats (toutes les 10 min). */
+  async function checkPoll() {
+    const r = await call({ action: 'poll-state' })
+    if (r?.poll?.ended) await postPollResults(r.poll, r.results)
   }
 
   // ── Surveillance ────────────────────────────────────────────────────────
@@ -1149,6 +1209,8 @@ export function startDiscordBridge({
 
   async function heartbeat() {
     emptyTrash().catch((e) => log.warn(`Discord bridge: trash — ${e.message}`))
+    // Worker plus ancien (sans sondages) : refus attendu, rien à signaler.
+    checkPoll().catch(() => {})
     const c = await call({ action: 'config' })
     if (c.forum !== st.forum) {
       log.log(`Discord bridge: the webhook moved to channel ${c.forum}`)
