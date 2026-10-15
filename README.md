@@ -156,7 +156,7 @@ ntfy.sh's free tier counts messages per IP address (250 a day). Every Cloudflare
 
 ### Security
 - **History backups are private**: every read or write must carry the owner's Twitch token. The Worker has Twitch confirm it and checks it belongs to that account — knowing someone's (public) Twitch ID is no longer enough.
-- **The proxy only relays Twitch and the proxy sources** (`ttvnw.net`, `jtvnw.net`, `twitch.tv`, `cloudfront.net`, `luminous.dev`, and exactly `twitch-al.nadeko.net`), over HTTPS — it is not an open proxy.
+- **The proxy only relays Twitch and the proxy sources** (`ttvnw.net`, `jtvnw.net`, `twitch.tv`, `twitchcdn.net`, `luminous.dev`, exactly `twitch-al.nadeko.net`, and on `cloudfront.net` only Twitch's own VOD distributions — a new one is accepted once Twitch itself points to it), over HTTPS — it is not an open proxy. Redirects are followed one by one (4 at most), each new address checked the same way. What comes back is served as media with only the headers a player needs, never as a web page (`nosniff`, sandboxing CSP).
 - Usage pings only accept random UUIDs and store no IP address.
 
 ---

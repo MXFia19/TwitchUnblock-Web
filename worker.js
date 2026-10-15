@@ -45,7 +45,7 @@ export default {
                 case '/api/get-live': return await handleGetLive(url, workerOrigin);
                 case '/api/get-channel-videos': return await handleGetVideos(url);
                 case '/api/get-m3u8': return await handleGetM3U8(url, workerOrigin);
-                case '/api/proxy': return await handleProxy(url, request);
+                case '/api/proxy': return await handleProxy(url, request, env);
 
                 // Récupération de VODs supprimées (le navigateur ne peut joindre
                 // ni la source externe ni le CDN de Twitch : CORS). Voir plus bas.
@@ -438,7 +438,22 @@ async function handleRecoverResolve(url, workerOrigin) {
 // Hôtes que le proxy accepte de relayer : Twitch (playlists, segments,
 // VODs) et Luminous. Sans cette liste, /api/proxy relayait n'importe quelle
 // adresse — un proxy ouvert à tout Internet, aux frais du Worker.
-const PROXY_HOSTS = ['ttvnw.net', 'jtvnw.net', 'twitch.tv', 'cloudfront.net', 'luminous.dev', 'twitchcdn.net', 'twitch-al.nadeko.net'];
+// cloudfront.net n'y est plus : n'importe qui peut y ouvrir sa propre
+// distribution et y déposer une page, que le proxy resservait sous le domaine
+// du projet (en Docker, même origine que le site : elle lisait le jeton
+// Twitch). Seules passent les distributions de Twitch (TWITCH_CLOUDFRONT).
+const PROXY_HOSTS = ['ttvnw.net', 'jtvnw.net', 'twitch.tv', 'luminous.dev', 'twitchcdn.net', 'twitch-al.nadeko.net'];
+
+// Distributions CloudFront des VODs de Twitch (archives, highlights, uploads,
+// aperçus) : celles de RECOVER_HOSTS. Sondées le 15/10/2026 sur 200 chaînes
+// (1 335 vidéos, playlists d'usher et seekPreviewsURL) : sept d'entre elles
+// servent tout, playlist toujours sur la distribution de l'aperçu. Une
+// distribution que Twitch ajouterait passe dès que Twitch lui-même la désigne
+// (twitchVouches) ; aucune autre.
+const TWITCH_CLOUDFRONT = new Set(RECOVER_HOSTS.filter((h) => h.endsWith('.cloudfront.net')));
+const cloudfrontVerdicts = new Map();   // hôte → { ok, until } (mémoire de l'instance)
+// Redirections de l'amont suivies au plus (la suivante est refusée).
+const PROXY_MAX_REDIRECTS = 4;
 
 // Proxys au format TTV.LOL v1 : la requête usher, encodée, après
 // /playlist/<chaîne>.m3u8 (« %3F » compris). Celui-ci est en Albanie ; ses
@@ -497,31 +512,136 @@ async function usherLiveMaster(login) {
     const r = await fetch(`https://usher.ttvnw.net/api/channel/hls/${login}.m3u8?allow_source=true&allow_audio_only=true&allow_spectre=true&fast_bread=true&player=twitchweb&playlist_include_framerate=true&segment_preference=4&sig=${encodeURIComponent(token.signature)}&token=${encodeURIComponent(token.value)}`, { headers: REQUEST_HEADERS });
     return r.ok ? { text: await r.text(), url: r.url } : null;
 }
-function proxyAllowed(target) {
-    try {
-        const u = new URL(target);
-        if (u.protocol !== 'https:') return false;
-        if (!PROXY_HOSTS.some((h) => u.hostname === h || u.hostname.endsWith('.' + h))) return false;
-        // N'importe qui peut héberger des fichiers sur cloudfront.net : on n'y
-        // accepte que les dossiers de VOD Twitch (« <empreinte>_<chaîne>_… »).
-        if (u.hostname.endsWith('.cloudfront.net')) return /^\/[0-9a-f]{20}_/.test(u.pathname);
-        return true;
-    } catch (e) { return false; }
+/** Adresse que le proxy peut demander : https, port par défaut, hôte de
+ *  PROXY_HOSTS ou distribution CloudFront de Twitch. */
+async function proxyAllowed(target) {
+    let u;
+    try { u = new URL(target); } catch (e) { return false; }
+    if (u.protocol !== 'https:' || u.port || u.username || u.password) return false;
+    if (u.hostname.endsWith('.cloudfront.net')) return twitchCloudfront(u);
+    return PROXY_HOSTS.some((h) => u.hostname === h || u.hostname.endsWith('.' + h));
 }
 
-async function handleProxy(url, request) {
+/** Distribution CloudFront de Twitch ? Connue, ou désignée par Twitch pour
+ *  la vidéo ou la chaîne du chemin (verdict gardé : 24 h oui, 10 min non). */
+async function twitchCloudfront(u) {
+    const host = u.hostname;
+    if (TWITCH_CLOUDFRONT.has(host)) return true;
+    const known = cloudfrontVerdicts.get(host);
+    if (known && known.until > Date.now()) return known.ok;
+    let vouched;
+    // GQL injoignable : refusé cette fois, sans rien retenir.
+    try { vouched = await twitchVouches(u); } catch (e) { return false; }
+    // Chemin d'aucune forme de Twitch : refusé sans rien demander.
+    if (!vouched) return false;
+    for (const h of vouched) rememberCloudfront(h, true);
+    if (!vouched.has(host)) rememberCloudfront(host, false);
+    return vouched.has(host);
+}
+
+function rememberCloudfront(host, ok) {
+    const now = Date.now();
+    if (cloudfrontVerdicts.size >= 500) {
+        for (const [h, v] of cloudfrontVerdicts) if (v.until <= now) cloudfrontVerdicts.delete(h);
+        if (cloudfrontVerdicts.size >= 500) cloudfrontVerdicts.clear();
+    }
+    cloudfrontVerdicts.set(host, { ok, until: now + (ok ? 24 * 3600 : 600) * 1000 });
+}
+
+/** Distributions CloudFront où Twitch range la vidéo ou les vidéos de la
+ *  chaîne nommées dans le chemin, d'après leurs aperçus (seekPreviewsURL) ;
+ *  null pour un chemin d'une autre forme. Formes vues chez Twitch :
+ *    <empreinte>_<chaîne>_<diffusion>_<epoch>/…   archives, highlights
+ *    <empreinte>/<chaîne>_<diffusion>_<n>/…       très vieux highlights
+ *    <chaîne>/<vidéo>/<uuid>/…                    anciens uploads
+ *    <empreinte>_<id chaîne>_<vidéo>_<uuid>/…     uploads */
+async function twitchVouches(u) {
+    const [a = '', b = ''] = u.pathname.split('/').filter(Boolean);
+    if (a.length > 120 || b.length > 120) return null;
+    let m, data;
+    if ((m = /^[0-9a-f]{10,20}_\d+_(\d+)_[0-9a-f-]{36}$/.exec(a)) || (LOGIN_RE.test(a) && VOD_ID_RE.test(b) && (m = [a, b]))) {
+        data = await twitchGQL(`query($id: ID!) { video(id: $id) { seekPreviewsURL } }`, { id: m[1] });
+    } else if ((m = /^[0-9a-f]{10,20}_(\w+?)_\d+_\d+$/.exec(a)) || (/^[0-9a-f]{10,20}$/.test(a) && (m = /^(\w+?)_\d+_\d+$/.exec(b)))) {
+        if (!LOGIN_RE.test(m[1])) return null;
+        data = await twitchGQL(`query($login: String!) { user(login: $login) { videos(first: 50, sort: TIME) { edges { node { seekPreviewsURL } } } } }`, { login: m[1].toLowerCase() });
+    } else return null;
+    if (!data?.data) throw new Error('GQL sans données');
+    const hosts = new Set();
+    const previews = [data.data.video?.seekPreviewsURL, ...(data.data.user?.videos?.edges || []).map((e) => e?.node?.seekPreviewsURL)];
+    for (const p of previews) {
+        try { const h = new URL(p).hostname; if (h.endsWith('.cloudfront.net')) hosts.add(h); } catch (e) {}
+    }
+    return hosts;
+}
+
+/** Réponse de l'amont, redirections suivies à la main : chaque nouvelle
+ *  adresse repasse par proxyAllowed (https, hôte autorisé). fetch() les
+ *  suivait seul, vers n'importe où — en http, vers le réseau interne ou le
+ *  service de métadonnées du serveur (SSRF). Rend { res, url } (url : la
+ *  dernière adresse demandée, base des adresses relatives d'une playlist),
+ *  ou {} quand une redirection est refusée. */
+async function proxyUpstream(target, headers, doFetch) {
+    let url = target;
+    for (let hops = 0; ; hops++) {
+        const res = await doFetch(url, { headers, redirect: 'manual' });
+        const location = res.status >= 300 && res.status < 400 ? res.headers.get('Location') : null;
+        if (!location) return { res, url };
+        await res.body?.cancel().catch(() => {});
+        let next;
+        try { next = new URL(location, url).href; } catch (e) { return {}; }
+        if (hops >= PROXY_MAX_REDIRECTS || !(await proxyAllowed(next))) return {};
+        url = next;
+    }
+}
+
+// Réponse du proxy : un type de média et les seuls en-têtes utiles à un
+// lecteur. Tous ceux de l'amont étaient recopiés, type compris : une page
+// HTML repartait en page HTML, active sous le domaine du site.
+const PROXY_KEEP_HEADERS = ['cache-control', 'expires', 'last-modified', 'age'];
+// Ceux qui décrivent le corps d'origine : pas pour une playlist réécrite, ni
+// pour un corps décompressé en route.
+const PROXY_BODY_HEADERS = ['content-length', 'content-range', 'accept-ranges', 'etag'];
+// Segments (video/MP2T, video/mp4, application/octet-stream), aperçus
+// (image/jpeg) et storyboards (binary/octet-stream) de Twitch.
+const PROXY_MEDIA_TYPE = /^(?:(?:video|audio)\/[\w.+-]+|image\/(?:jpeg|png|gif|webp|avif)|application\/(?:octet-stream|mp4|json)|binary\/octet-stream)$/;
+
+/** Type servi pour un corps relayé tel quel : celui de l'amont s'il est un
+ *  type de média, sinon un fichier opaque (page HTML, SVG, script…). */
+function proxyMediaType(raw) {
+    const essence = String(raw || '').split(/[;,]/)[0].trim().toLowerCase();
+    return PROXY_MEDIA_TYPE.test(essence) ? essence : 'application/octet-stream';
+}
+
+function proxyResponseHeaders(res, type, sameBody) {
+    const out = new Headers();
+    const names = sameBody && !res.headers.get('content-encoding') ? [...PROXY_KEEP_HEADERS, ...PROXY_BODY_HEADERS] : PROXY_KEEP_HEADERS;
+    for (const name of names) {
+        const v = res.headers.get(name);
+        if (v !== null) out.set(name, v);
+    }
+    out.set('Content-Type', type);
+    out.set('Access-Control-Allow-Origin', '*');
+    out.set('Access-Control-Expose-Headers', '*');
+    // Ouverte dans un onglet, une réponse du proxy n'est jamais une page active.
+    out.set('X-Content-Type-Options', 'nosniff');
+    out.set('Content-Security-Policy', "sandbox; default-src 'none'");
+    return out;
+}
+
+async function handleProxy(url, request, env) {
     const target = url.searchParams.get('url'); if (!target) return new Response("URL manquante", { status: 400, headers: RESPONSE_HEADERS });
-    if (!proxyAllowed(target)) return new Response("Hôte non autorisé", { status: 403, headers: RESPONSE_HEADERS });
+    if (!(await proxyAllowed(target))) return new Response("Hôte non autorisé", { status: 403, headers: RESPONSE_HEADERS });
     const isVod = url.searchParams.get('isVod') === 'true', workerOrigin = url.origin;
 
     let fetchHeaders = { ...REQUEST_HEADERS };
     if (request.headers.get("Range")) fetchHeaders["Range"] = request.headers.get("Range");
 
-    const res = await fetch(target, { headers: fetchHeaders });
-    const newHeaders = new Headers(res.headers);
-    newHeaders.set("Access-Control-Allow-Origin", "*");
-    newHeaders.set("Access-Control-Expose-Headers", "*");
-    newHeaders.delete("Set-Cookie");
+    // Le relais du VPS fournit son propre fetch, qui refuse en plus toute
+    // adresse interne (docker/relay.mjs).
+    const doFetch = typeof env?.PROXY_FETCH === 'function' ? env.PROXY_FETCH : (u, init) => fetch(u, init);
+    const up = await proxyUpstream(target, fetchHeaders, doFetch);
+    if (!up.res) return new Response("Redirection non autorisée", { status: 403, headers: RESPONSE_HEADERS });
+    const res = up.res;
 
     // Playlist reconnue à son type, pas seulement à son extension : celles
     // de Luminous (« /live/<chaîne>?allow_source=true ») et les variantes
@@ -529,8 +649,8 @@ async function handleProxy(url, request) {
     // « .m3u8 ». Non reconnues, elles passaient sans réécriture.
     const type = res.headers.get('content-type') || '';
     if (target.includes('.m3u8') || /mpegurl/i.test(type)) {
-        newHeaders.set("Content-Type", "application/vnd.apple.mpegurl");
-        const finalUrl = res.url, base = finalUrl.substring(0, finalUrl.lastIndexOf('/') + 1);
+        const newHeaders = proxyResponseHeaders(res, 'application/vnd.apple.mpegurl', false);
+        const finalUrl = up.url, base = finalUrl.substring(0, finalUrl.lastIndexOf('/') + 1);
         const proxyUrl = (full) => `${workerOrigin}/api/proxy?url=${encodeURIComponent(full)}&isVod=${isVod}`;
         // Une sous-playlist passe TOUJOURS par le proxy : demandée par le
         // navigateur, elle était refusée (403). La cause est l'en-tête Origin
@@ -563,7 +683,7 @@ async function handleProxy(url, request) {
         }).join('\n');
         return new Response(newText, { status: res.status, headers: newHeaders });
     }
-    return new Response(res.body, { status: res.status, headers: newHeaders });
+    return new Response(res.body, { status: res.status, headers: proxyResponseHeaders(res, proxyMediaType(type), true) });
 }
 
 // --- FONCTIONS UTILITAIRES ---
