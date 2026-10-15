@@ -19,10 +19,15 @@ set -- --config /app/wrangler.docker.toml --ip 0.0.0.0 --port "${PORT:-8787}" \
 [ -n "$PUBLIC_URL" ] && set -- "$@" --var "SITE_ORIGINS:$(echo "$PUBLIC_URL" | sed 's#/*$##')"
 
 # Notifications de live : la tâche planifiée de Cloudflare n'existe pas en
-# local ; wrangler l'expose sur /__scheduled, demandé chaque minute.
-set -- "$@" --test-scheduled
+# local. Une boucle la lance chaque minute par POST /api/cron, avec un secret
+# tiré au hasard à chaque démarrage, connu de ce conteneur seul. Avant,
+# wrangler l'exposait sur /__scheduled (--test-scheduled), ouvert à tous sur
+# le port publié : n'importe qui la déclenchait à volonté.
+CRON_SECRET=$(node -e 'process.stdout.write(require("crypto").randomBytes(24).toString("hex"))')
+export CRON_SECRET
+set -- "$@" --var "CRON_SECRET:$CRON_SECRET"
 ( while sleep 60; do
-    node -e 'fetch("http://127.0.0.1:" + (process.env.PORT || 8787) + "/__scheduled").catch(() => {})'
+    node -e 'fetch("http://127.0.0.1:" + (process.env.PORT || 8787) + "/api/cron", { method: "POST", headers: { Authorization: "Bearer " + process.env.CRON_SECRET }, signal: AbortSignal.timeout(300000) }).catch(() => {})'
   done ) &
 
 echo "TwitchUnblock : http://localhost:${PORT:-8787} (données dans /data)"

@@ -152,7 +152,7 @@ The iOS app uses the same Worker.
 
 The iOS app can't use Apple's push service (it needs a paid developer account), so it goes through [ntfy](https://ntfy.sh): the app creates a secret topic, the user subscribes to it in the free ntfy app, and the same scheduled check publishes a plain message there (`twitchunblock://live/<channel>` opens the stream in the app). Topics the app hasn't refreshed for 60 days are dropped.
 
-ntfy.sh's free tier counts messages per IP address (250 a day). Every Cloudflare Worker sends from the same shared addresses, so ntfy.sh answers them `429 Too Many Requests`. The Worker therefore hands its ntfy messages to the [video relay](#video-relay-on-your-own-server-vps) (`NTFY_RELAY` in `wrangler.toml`), which publishes them from its own address. Messages leave in one batch per run (12 at most, ntfy.sh's pace of one request every 5 seconds), signed with the Worker's VAPID key: the relay checks the signature against the Worker's public key (`/api/push/key`) and refuses anything else, so no secret needs to be shared. After a `429` the Worker stops sending to ntfy for 5 minutes, or until midnight UTC (when ntfy.sh resets its counters) once the daily quota is reached; the app's **Test** button says so. While the relay is down, messages wait in the queue (30 minutes at most): there is no fallback to sending directly, which ntfy.sh would refuse anyway. The relay logs one line per batch (`docker logs`). With `NTFY_TOKEN` (a paid ntfy account, counted per account rather than per address) the Worker publishes directly, like the Docker image does from your own server.
+ntfy.sh's free tier counts messages per IP address (250 a day). Every Cloudflare Worker sends from the same shared addresses, so ntfy.sh answers them `429 Too Many Requests`. The Worker therefore hands its ntfy messages to the [video relay](#video-relay-on-your-own-server-vps) (`NTFY_RELAY` in `wrangler.toml`), which publishes them from its own address. Messages leave in one batch per run (12 at most, ntfy.sh's pace of one request every 5 seconds), signed with the Worker's VAPID key: the relay checks the signature against the Worker's public key (`/api/push/key`) and refuses anything else, so no secret needs to be shared. After a `429` the Worker stops sending to ntfy for 5 minutes, or until midnight UTC (when ntfy.sh resets its counters) once the daily quota is reached; the app's **Test** button says so. While the relay is down, messages wait in the queue (30 minutes at most): there is no fallback to sending directly, which ntfy.sh would refuse anyway. The relay logs one line per batch (`docker compose logs relay`). With `NTFY_TOKEN` (a paid ntfy account, counted per account rather than per address) the Worker publishes directly, like the Docker image does from your own server.
 
 ### Security
 - **History backups are private**: every read or write must carry the owner's Twitch token. The Worker has Twitch confirm it and checks it belongs to that account — knowing someone's (public) Twitch ID is no longer enough.
@@ -444,8 +444,8 @@ Setting it up:
    (for your own Worker, `FEEDBACK_WORKER=https://…`; for other people allowed
    to answer, `DISCORD_ADMIN_IDS=<Discord IDs, comma-separated>`; optional:
    `FALLBACK_WORKERS`, `SUMMARY_TZ`, `SUMMARY_HOUR`), then
-   `docker compose pull && docker compose up -d`. `docker logs
-   twitchunblock-relay` shows `Discord bridge: connected` and `following forum
+   `docker compose pull && docker compose up -d`. `docker compose logs relay`
+   (in the relay's folder) shows `Discord bridge: connected` and `following forum
    “…”`, and `/stats` shows the bot as running.
 5. **Channels**: run `/setup` in the private channel (*Alerts, daily summary
    and release drafts*), in the announcements channel (*Release
@@ -502,7 +502,9 @@ Settings (in `docker-compose.yml`):
 | `TWITCH_CLIENT_ID` | Optional. To log in with Twitch, create an app on [dev.twitch.tv/console](https://dev.twitch.tv/console) with `PUBLIC_URL/` as the redirect URL, and paste its Client ID. |
 | `ADMIN_TWITCH_IDS` | Optional. Your Twitch user ID(s), comma-separated, for the developer tools on `/stats`. Empty: nobody gets them (`/stats` says so once you're logged in). |
 
-Live notifications work too: the container runs the scheduled check itself.
+Live notifications work too: the container runs the scheduled check itself,
+every minute, through an internal route guarded by a random secret drawn at
+each start (nobody else can trigger it).
 
 Data lives in the `twitchunblock-data` volume. Watching lives, VODs and clips,
 the chat (read-only without login), categories and device follows all work

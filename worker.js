@@ -82,6 +82,8 @@ export default {
                 case '/api/push/subscribe': return await handlePushSubscribe(request, env);
                 case '/api/push/unsubscribe': return await handlePushUnsubscribe(request, env);
                 case '/api/push/test': return await handlePushTest(request, env);
+                // Docker : la tâche planifiée, lancée par l'entrypoint (handleCron).
+                case '/api/cron': return await handleCron(request, env);
 
                 // Commandes Moobot pour le site (son API refuse les navigateurs)
                 case '/api/bot-commands/moobot': return await handleMoobotCommands(url);
@@ -2602,6 +2604,28 @@ function applyEnvConfig(env) {
     const list = (v) => String(v || '').split(',').map((x) => x.trim()).filter(Boolean);
     if (list(env?.ADMIN_TWITCH_IDS).length) ADMIN_IDS = list(env.ADMIN_TWITCH_IDS).filter((x) => /^\d{1,20}$/.test(x));
     if (list(env?.SITE_ORIGINS).length) USAGE_ORIGINS = list(env.SITE_ORIGINS);
+}
+
+// ── Tâche planifiée en Docker ──────────────────────────────────────────────
+// Hors de Cloudflare, pas de Cron Trigger : docker/entrypoint.sh appelle
+// POST /api/cron chaque minute avec CRON_SECRET, tiré au hasard à chaque
+// démarrage du conteneur et connu de lui seul. Avant, wrangler l'exposait sur
+// /__scheduled (--test-scheduled), ouvert à tous sur le port publié :
+// n'importe qui déclenchait la tâche à volonté, et des passages qui se
+// chevauchaient pouvaient doubler les notifications. La réponse n'arrive
+// qu'une fois la tâche finie : la boucle ne relance jamais avant. Sans
+// secret (Cloudflare), la route n'existe pas.
+async function handleCron(request, env) {
+    const secret = String(env.CRON_SECRET || '');
+    if (secret.length < 16) return new Response("Not Found", { status: 404, headers: RESPONSE_HEADERS });
+    if (request.method !== 'POST') return jsonError('Method Not Allowed', 405);
+    // Empreintes comparées : la durée de la comparaison n'apprend rien du secret.
+    if (await sha256hex(request.headers.get('Authorization') || '') !== await sha256hex(`Bearer ${secret}`)) {
+        return jsonError('Accès refusé', 403);
+    }
+    const runs = await Promise.allSettled([pushTick(env), relayWatch(env, new Date())]);
+    for (const r of runs) if (r.status === 'rejected') console.error(r.reason);
+    return jsonResponse({ ok: true });
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

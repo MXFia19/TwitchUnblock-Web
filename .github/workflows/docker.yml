@@ -25,6 +25,13 @@ on:
       - '.github/workflows/docker.yml'
   workflow_dispatch:
 
+# Deux poussées rapprochées sur la même branche : la construction en cours est
+# annulée, la plus récente publie. Sans ceci, la plus lente pouvait finir en
+# dernier et remettre l'ancien code sous « latest » (le relais le récupère).
+concurrency:
+  group: docker-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
   # En minuscules : ghcr.io refuse les majuscules du nom de compte.
