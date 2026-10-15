@@ -15,11 +15,18 @@
 import { fixProxiedUrl } from './api.js'
 import { lang, t } from './i18n.js'
 import { qualityLabel, qualityText, sortQualities } from './player.js'
-import { $, esc, formatClock, icon, toast } from './util.js'
+import { $, esc, formatClock, icon, isMobile, toast } from './util.js'
 
 const CONCURRENCY = 4
-/** Sans écriture sur le disque, tout tient en mémoire : pas au-delà. */
-const MEMORY_LIMIT = 1.5e9
+/** Sans écriture sur le disque, tout tient en mémoire : pas au-delà. Un
+ *  téléphone en supporte bien moins qu'un ordinateur — Safari rechargeait
+ *  l'onglet en cours de route, et tout était perdu : 800 Mo, 400 Mo s'il dit
+ *  n'avoir que 2 Go de mémoire (navigator.deviceMemory, Chrome). */
+const MEMORY_LIMIT = !isMobile ? 1.5e9 : (navigator.deviceMemory ?? 4) <= 2 ? 4e8 : 8e8
+/** La limite porte sur une estimation (débit moyen de la qualité) : un débit
+ *  plus fort la dépasse. Passé cette marge, le téléchargement s'arrête avec
+ *  un message au lieu de faire planter l'onglet. */
+const MEMORY_HARD_LIMIT = MEMORY_LIMIT * 1.3
 const canStream = typeof window.showSaveFilePicker === 'function'
 
 let hooks = {}
@@ -212,7 +219,7 @@ async function start() {
   }
   renderProgress(true)
   try {
-    if (plan.map) await writer.write(await fetchBytes(plan.map, controller.signal))
+    if (plan.map) await writer.write(await fetchPart(plan.map, controller.signal))
     if (plan.map) job.done++
     await fetchAll(segs, setup.restore, writer, controller.signal)
     await writer.close()
@@ -220,8 +227,11 @@ async function start() {
     toast(t('dl_done_notif'), 'success')
   } catch (e) {
     job.state = controller.signal.aborted ? 'cancelled' : 'failed'
+    job.error = e?.tooBig ? 'too-big' : null
+    // Les segments encore en route s'arrêtent avec lui.
+    controller.abort()
     try { await writer.abort() } catch {}
-    if (job.state === 'failed') toast(t('dl_failed_msg'), 'error')
+    if (job.state === 'failed') toast(t(job.error === 'too-big' ? 'dl_too_big' : 'dl_failed_msg'), 'error')
   }
   renderProgress()
 }
@@ -240,30 +250,32 @@ async function fetchAll(segs, restore, writer, signal) {
     const s = segs[i]
     if (s.original && !tries.off) {
       try {
-        const buf = await fetchBytes(s.original, signal, { retries: 0 })
+        const part = await fetchPart(s.original, signal, { retries: 0 })
         tries.ok++
         job.restored += s.duration
-        return buf
+        return part
       } catch (e) {
         if (signal.aborted) throw e
         if (++tries.fails >= 3 && !tries.ok) tries.off = true
       }
     }
     if (s.original) job.muted += s.duration
-    return fetchBytes(s.url, signal)
+    return fetchPart(s.url, signal)
   }
 
   await new Promise((resolve, reject) => {
     let running = 0
     const flush = async () => {
       while (!failure && ready.has(written)) {
-        const buf = ready.get(written)
+        const part = ready.get(written)
         ready.delete(written)
         written++
-        await writer.write(buf)
+        await writer.write(part)
         job.done++
-        job.bytes += buf.byteLength
+        job.bytes += part.size
         renderProgress()
+        // Assemblé en mémoire : arrêté, avec un message, passé la marge.
+        if (!canStream && job.bytes > MEMORY_HARD_LIMIT) throw Object.assign(new Error('trop gros'), { tooBig: true })
       }
     }
     let writing = Promise.resolve()
@@ -289,12 +301,16 @@ async function fetchAll(segs, restore, writer, signal) {
   })
 }
 
-/** Un segment, avec trois essais pour une erreur réseau (aucun pour un refus). */
-async function fetchBytes(url, signal, { retries = 2 } = {}) {
+/** Un segment, avec trois essais pour une erreur réseau (aucun pour un refus).
+ *  En Blob plutôt qu'en ArrayBuffer : le navigateur le garde hors de la
+ *  mémoire de la page (sur le disque au besoin pour Chrome), et le fichier
+ *  final les réunit sans les recopier — le pic à deux fois la taille de la
+ *  vidéo, au moment d'assembler, faisait planter les téléphones. */
+async function fetchPart(url, signal, { retries = 2 } = {}) {
   for (let attempt = 0; ; attempt++) {
     try {
       const res = await fetch(url, { signal })
-      if (res.ok) return await res.arrayBuffer()
+      if (res.ok) return await res.blob()
       const err = new Error(`HTTP ${res.status}`)
       err.status = res.status
       throw err
@@ -312,11 +328,12 @@ async function makeWriter(name, mime, ext) {
       types: [{ description: 'Video', accept: { [mime]: [`.${ext}`] } }],
     })
     const w = await handle.createWritable()
-    return { write: (buf) => w.write(buf), close: () => w.close(), abort: () => w.abort() }
+    return { write: (part) => w.write(part), close: () => w.close(), abort: () => w.abort() }
   }
+  // Ailleurs, les segments (des Blobs) sont gardés jusqu'à la fin.
   const parts = []
   return {
-    write: async (buf) => { parts.push(buf) },
+    write: async (part) => { parts.push(part) },
     close: async () => {
       const a = document.createElement('a')
       a.href = URL.createObjectURL(new Blob(parts, { type: mime }))
@@ -352,7 +369,7 @@ function renderProgress(force = false) {
   const ratio = job.total ? job.done / job.total : 0
   const state = job.state === 'running' ? `${Math.round(ratio * 100)} % · ${formatBytes(job.bytes)}`
     : job.state === 'done' ? t('dl_done_notif')
-    : job.state === 'cancelled' ? t('dl_cancelled') : t('dl_failed_msg')
+    : job.state === 'cancelled' ? t('dl_cancelled') : t(job.error === 'too-big' ? 'dl_too_big' : 'dl_failed_msg')
   const sound = [
     job.restored > 0 ? t('dl_restored', { d: formatClock(job.restored) }) : '',
     job.muted > 0 ? t('dl_muted', { d: formatClock(job.muted) }) : '',
