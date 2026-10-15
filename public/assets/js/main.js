@@ -2587,7 +2587,7 @@ function setupPlayer() {
       // Lecture qui échoue après le chargement (proxy en panne, flux noir…).
       const kind = state.watch?.kind
       if (kind === 'live' || kind === 'vod') usage.count(`${kind}_play_fail`, store.prefs.shareUsage)
-      showWatchError(kind === 'live' ? t('err_live') : t('err_vod'))
+      showWatchError(t(kind === 'live' ? 'err_live' : kind === 'clip' ? 'err_clip' : 'err_vod'))
     },
     onWorkerDown: (base) => switchWorker(base),
     // Pause pub de la chaîne affichée (une fois par pause) : comptée pour
@@ -3029,7 +3029,9 @@ function liveEnded(token) {
   const btn = $('[data-ended-raid]', box)
   if (btn) btn.onclick = () => openLive(raid.login)
   $('#watch').classList.add('ended')
-  player.video?.pause()
+  // Lecteur arrêté, pas seulement en pause : hls.js relisait sans fin la
+  // playlist du direct fini (404), sur le quota du Worker.
+  player.stop()
   $('#watch-sub').innerHTML = `<span class="pill sm">${esc(t('offline'))}</span>`
 }
 

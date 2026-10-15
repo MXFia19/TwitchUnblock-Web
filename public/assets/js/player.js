@@ -65,6 +65,23 @@ function isDirectSegment(u) {
   } catch { return false }
 }
 
+/** Erreur réseau de hls.js due au relais ou au Worker qui sert la vidéo :
+ *  son adresse, sinon null. Worker : seulement une requête restée sans
+ *  réponse (code 0 — quota du jour atteint : la page d'erreur de Cloudflare
+ *  n'a pas d'en-tête CORS). Relais du VPS : aussi un refus (403, 429 :
+ *  Twitch peut limiter son adresse IP) ou une panne (5xx) — mais plus un
+ *  segment ou une playlist introuvable (404, 410 : direct fini, segment
+ *  purgé), qui l'écartait 30 min pour toutes les vidéos alors qu'un autre
+ *  relais ne le trouverait pas davantage. Sert aussi aux tuiles du
+ *  multi-live. */
+export function failedProxy(data) {
+  const base = proxyBaseOf(data?.frag?.url || data?.context?.url || data?.url || '')
+  if (!base) return null
+  const code = data.response?.code || 0
+  if (!code) return base
+  return base === RELAY_BASE && (code === 403 || code === 429 || code >= 500) ? base : null
+}
+
 /** Adresse à demander pour une requête de lecture : adresses relatives du
  *  proxy corrigées, et segments par le relais si le direct n'aboutit pas.
  *  Sert aussi aux tuiles du multi-live. */
@@ -170,6 +187,16 @@ const LIVE_DRIFT_MS = 4000
 const LIVE_JUMP_GAP_MS = 30_000
 const LIVE_FLOOR_SEEK_MS = 60_000
 
+// ── Erreurs réseau fatales ──────────────────────────────────────────────
+// hls.js ne réessaie pas un 4xx : relancer aussitôt redemandait la même
+// adresse plusieurs fois par seconde, sans fin (direct terminé, segment
+// purgé), sur le quota du Worker. Trois relances espacées (2, 4 puis 8 s),
+// remises à zéro dès qu'un segment arrive, puis l'erreur. Une VOD saute un
+// segment introuvable (404) au lieu de le redemander — au plus
+// MAX_SKIPPED_FRAGS de suite.
+const NET_RETRIES = 3
+const MAX_SKIPPED_FRAGS = 30
+
 // ── Pauses pub de la chaîne ─────────────────────────────────────────────
 // Pendant une pause pub (lancée par le streamer, ou pré-roll à l'ouverture),
 // Twitch remplace le direct par une pub ou par son écran violet
@@ -234,19 +261,25 @@ function prefetchPlaylistLoader(Hls, player) {
 let hlsPromise = null
 /** Charge hls.js, avec un second CDN si le premier ne répond pas : sans lui,
  *  rien ne se lit hors de Safari. Appelé au démarrage pour être prêt au
- *  premier clic. */
+ *  premier clic. Si les deux échouent (réseau coupé au chargement), le
+ *  prochain appel réessaie — l'échec restait toute la séance, plus aucune
+ *  vidéo jusqu'au rechargement de la page. */
 export function loadHls() {
   if (window.Hls) return Promise.resolve(window.Hls)
   hlsPromise ??= new Promise((resolve) => {
+    const done = (Hls) => {
+      if (!Hls) hlsPromise = null
+      resolve(Hls)
+    }
     const next = (i) => {
-      if (window.Hls) return resolve(window.Hls)
-      if (i >= HLS_SOURCES.length) return resolve(null)
+      if (window.Hls) return done(window.Hls)
+      if (i >= HLS_SOURCES.length) return done(null)
       const s = document.createElement('script')
       s.src = HLS_SOURCES[i]
       s.integrity = HLS_INTEGRITY
       s.crossOrigin = 'anonymous'
       s.async = true
-      s.onload = () => resolve(window.Hls ?? null)
+      s.onload = () => done(window.Hls ?? null)
       s.onerror = () => { s.remove(); next(i + 1) }
       document.head.appendChild(s)
     }
@@ -467,7 +500,8 @@ export class Player {
     // ── Vidéo ────────────────────────────────────────────────────────────
     v.addEventListener('play', () => this.syncPlay())
     v.addEventListener('pause', () => { this.syncPlay(); this.showUI(); this.o.onPause?.() })
-    v.addEventListener('waiting', () => { this.el.spinner.hidden = false })
+    v.addEventListener('waiting', () => { this.el.spinner.hidden = false; this.passHole() })
+    v.addEventListener('seeking', () => this.passHole())
     v.addEventListener('playing', () => { this.el.spinner.hidden = true; this.scheduleHide() })
     v.addEventListener('canplay', () => { this.el.spinner.hidden = true })
     v.addEventListener('timeupdate', () => this.onTime())
@@ -475,6 +509,7 @@ export class Player {
     v.addEventListener('durationchange', () => this.onTime())
     v.addEventListener('volumechange', () => this.syncVolume())
     v.addEventListener('ratechange', () => this.onRateChange())
+    v.addEventListener('error', () => this.onMediaError())
     // Vitesse retenue annoncée au démarrage d'une VOD : sinon une vitesse
     // choisie une fois s'appliquait aux VODs suivantes sans aucun signe.
     v.addEventListener('playing', () => {
@@ -586,6 +621,12 @@ export class Player {
     this.el.progress.hidden = kind !== 'vod'
     this.setChapters([])
     this.soundSpans = []
+    // Passages rétablis (unmuteLoader) : ceux de la vidéo d'avant oubliés
+    // ici, plus dans setMuted — appelé après load(), quand la liste des
+    // passages coupés arrive, il effaçait ceux déjà rétablis entre-temps
+    // (barre orange et avis « son coupé » à tort).
+    this.unmutedSpans = []
+    this.unmutedToldAt = 0
     this.setMuted([])
     // Nouvelle vidéo : pauses pub de la précédente oubliées, son rétabli.
     this.endAdBreak()
@@ -613,10 +654,17 @@ export class Player {
 
   async attach(url, startAt = 0) {
     const v = this.video
+    // Avant tout : un attach() précédent encore en attente n'ira pas plus loin.
+    const token = (this.attachToken = (this.attachToken ?? 0) + 1)
     this.destroyHls()
     this.el.spinner.hidden = false
     if (!url) return
-    const token = (this.attachToken = (this.attachToken ?? 0) + 1)
+    // Erreurs réseau de suite (relances), segments introuvables sautés et
+    // trous qu'ils laissent (skipMissingFrag).
+    this.netFails = 0
+    this.skippedFrags = 0
+    this.holes = []
+    this.pendingHole = null
     // Essais de son d'origine sur les passages coupés : remis à zéro à chaque
     // source (une VOD récente peut suivre une ancienne).
     this.unmute = this.kind === 'vod' ? {} : null
@@ -715,7 +763,11 @@ export class Player {
         }
         this.tryPlay()
       })
-      hls.on(Hls.Events.FRAG_LOADED, () => { this.directFails = 0 })
+      hls.on(Hls.Events.FRAG_LOADED, () => {
+        this.directFails = 0
+        this.netFails = 0
+        this.skippedFrags = 0
+      })
       // Chaque playlist lue (niveau joué, « Auto » compris) : pauses pub
       // annoncées d'un direct, passages « -unmuted.mp4 » d'une VOD.
       hls.on(Hls.Events.LEVEL_UPDATED, (_e, d) => {
@@ -742,20 +794,17 @@ export class Player {
           console.info('[TwitchUnblock] Segments directs bloqués : passage par le relais.')
           if (data.fatal) { hls.startLoad(); return }
         }
-        if (!data.fatal) return
-        // Worker hors service en pleine lecture (quota du jour atteint) : ses
-        // requêtes n'aboutissent plus du tout — code 0, la page d'erreur de
-        // Cloudflare n'ayant pas d'en-tête CORS. Plutôt que de relancer sans
-        // fin le même Worker, main.js redemande les liens à un autre.
-        // Relais du VPS : même une réponse d'erreur (Twitch peut limiter son
-        // adresse IP) renvoie au Worker.
+        if (!data.fatal || token !== this.attachToken) return
         if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
-          const down = proxyBaseOf(data.frag?.url || data.context?.url || data.url || '')
-          const failed = !data.response?.code || (down === RELAY_BASE && data.response.code >= 400)
-          if (down && failed && this.o.onWorkerDown?.(down)) return
+          // Worker hors service en pleine lecture (quota du jour atteint), ou
+          // relais du VPS en panne (failedProxy) : plutôt que de relancer
+          // sans fin le même, main.js passe à un autre.
+          const down = navigator.onLine !== false ? failedProxy(data) : null
+          if (down && this.o.onWorkerDown?.(down)) return
+          if (this.skipMissingFrag(hls, data)) return
+          return this.retryLoad(hls, token)
         }
-        if (data.type === Hls.ErrorTypes.NETWORK_ERROR) hls.startLoad()
-        else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) hls.recoverMediaError()
+        if (data.type === Hls.ErrorTypes.MEDIA_ERROR) hls.recoverMediaError()
         else this.o.onError?.()
       })
     } else if (native) {
@@ -770,13 +819,15 @@ export class Player {
   }
 
   /** Lecture automatique : avec le son si le navigateur l'accepte, sinon en
-   *  muet avec une pastille pour le remettre — comme sur Twitch. */
+   *  muet avec une pastille pour le remettre — comme sur Twitch. Ce muet-là
+   *  n'est pas un choix : il n'est pas retenu (autoMuted, syncVolume) — les
+   *  visites suivantes démarraient en muet, sans pastille. */
   async tryPlay() {
     try {
       await this.video.play()
     } catch (err) {
       if (err?.name !== 'NotAllowedError') return
-      this.video.muted = true
+      if (!this.video.muted) { this.autoMuted = true; this.video.muted = true }
       try {
         await this.video.play()
         $('span', this.el.unmute).textContent = t('unmute')
@@ -785,7 +836,103 @@ export class Player {
     }
   }
 
+  /** Erreur réseau fatale (voir NET_RETRIES) : relance espacée, puis
+   *  l'erreur. Appareil hors ligne : on attend le retour du réseau, sans
+   *  compter d'essai. */
+  retryLoad(hls, token) {
+    this.clearRetry()
+    const again = () => {
+      this.clearRetry()
+      if (token === this.attachToken && this.hls === hls) hls.startLoad()
+    }
+    if (navigator.onLine === false) {
+      this.onlineWait = again
+      window.addEventListener('online', again, { once: true })
+      return
+    }
+    if (++this.netFails > NET_RETRIES) {
+      console.info('[TwitchUnblock] Lecture : erreur réseau persistante, abandon.')
+      this.stop()
+      this.el.spinner.hidden = true
+      this.o.onError?.()
+      return
+    }
+    this.retryTimer = setTimeout(again, 1000 * 2 ** this.netFails)
+  }
+
+  clearRetry() {
+    clearTimeout(this.retryTimer)
+    this.retryTimer = null
+    if (this.onlineWait) { window.removeEventListener('online', this.onlineWait); this.onlineWait = null }
+  }
+
+  /** VOD : segment introuvable (404, 410 — purgé, VOD reconstruite). Plutôt
+   *  que de le redemander, hls.js repart après lui quand la lecture y arrive
+   *  (passHole) : ce qui est déjà chargé avant lui se lit. `false` si ce
+   *  n'est pas le cas, ou après MAX_SKIPPED_FRAGS trous de suite. */
+  skipMissingFrag(hls, data) {
+    const f = data.frag
+    const code = data.response?.code
+    if (this.kind !== 'vod' || !f || !/^frag/i.test(data.details || '') || (code !== 404 && code !== 410)) return false
+    if (!Number.isFinite(f.start) || !(f.duration > 0) || ++this.skippedFrags > MAX_SKIPPED_FRAGS) return false
+    const hole = { start: f.start, end: f.start + f.duration + 0.05 }
+    const d = this.video.duration
+    if (Number.isFinite(d) && hole.end >= d - 0.5) return false
+    console.info(`[TwitchUnblock] VOD : segment introuvable à ${formatClock(f.start)}, sauté.`)
+    if (!this.holes.some((x) => x.start === hole.start)) this.holes.push(hole)
+    this.pendingHole = hole
+    this.passHole()
+    return true
+  }
+
+  /** Après un segment introuvable (hls.js arrêté) : dès que la lecture
+   *  arrive au trou — ou va ailleurs que dans ce qui est chargé —, elle
+   *  passe au-delà des trous connus et le chargement reprend de là (hls.js
+   *  repart toujours de la position de la vidéo). */
+  passHole() {
+    const h = this.pendingHole
+    if (!h || !this.hls) return
+    const v = this.video
+    const t0 = v.currentTime
+    const b = v.buffered
+    let buffered = false
+    for (let i = 0; i < b.length; i++) if (b.start(i) - 0.1 <= t0 && t0 < b.end(i) - 0.1) buffered = true
+    if (t0 < h.start - 0.5 && buffered) return
+    this.pendingHole = null
+    let to = t0
+    for (let moved = true; moved;) {
+      moved = false
+      for (const x of this.holes) if (to >= x.start - 0.5 && to < x.end) { to = x.end; moved = true }
+    }
+    if (to !== t0) v.currentTime = to
+    this.hls.startLoad(to)
+  }
+
+  /** Clip MP4 et HLS natif (Safari sans MSE) : un 403, un 404 ou un relais
+   *  en panne laissaient la roue tourner sans fin — hls.js, lui, a ses
+   *  propres erreurs (Hls.Events.ERROR). En HLS natif, un échec réseau peut
+   *  venir du relais ou du Worker qui sert la vidéo : on passe à un autre,
+   *  comme avec hls.js. */
+  onMediaError() {
+    const v = this.video
+    if (this.hls || !v.currentSrc || v.currentSrc.startsWith('blob:')) return
+    this.el.spinner.hidden = true
+    const down = v.error?.code === 2 /* MEDIA_ERR_NETWORK */ && navigator.onLine !== false ? proxyBaseOf(v.currentSrc) : null
+    if (down && this.o.onWorkerDown?.(down)) return
+    this.o.onError?.()
+  }
+
+  /** Plus rien à charger (direct terminé) : hls.js arrête ses requêtes — il
+   *  relisait sans fin la playlist d'un direct fini. L'image reste, en
+   *  pause. */
+  stop() {
+    this.clearRetry()
+    this.hls?.stopLoad()
+    this.video.pause()
+  }
+
   destroyHls() {
+    this.clearRetry()
     if (this.hls) { this.hls.destroy(); this.hls = null }
     // Niveau d'Auto inconnu jusqu'au prochain LEVEL_SWITCHED : le bouton
     // ne garde pas celui de la source précédente.
@@ -793,6 +940,9 @@ export class Player {
   }
 
   destroy() {
+    // Un attach() encore en attente (chargement de hls.js) ne démarre plus :
+    // la vidéo pouvait partir après la fermeture, son en arrière-plan.
+    this.attachToken = (this.attachToken ?? 0) + 1
     this.destroyHls()
     this.endAdBreak()
     this.adBreaks.clear()
@@ -1102,9 +1252,15 @@ export class Player {
     this.el.vol.style.setProperty('--fill', `${(muted ? 0 : v.volume) * 100}%`)
     // Son remis pendant une pause pub : choix respecté jusqu'à sa fin.
     if (this.adMuted && !v.muted) { this.adMuted = false; this.adKeepSound = true }
+    // Son remis, d'où que ce soit (pastille, curseur, flèche Haut, M) : le
+    // muet de la lecture automatique est fini, la pastille s'en va — elle
+    // restait affichée.
+    if (!v.muted) this.autoMuted = false
+    if (!muted) this.el.unmute.hidden = true
     this.o.prefs.volume = v.volume
-    // Le son coupé par une pause pub n'est pas un choix : pas retenu.
-    this.o.prefs.muted = this.adMuted ? false : v.muted
+    // Le son coupé par une pause pub ou par le refus de la lecture
+    // automatique n'est pas un choix : pas retenu.
+    this.o.prefs.muted = this.adMuted || this.autoMuted ? false : v.muted
     this.o.savePrefs()
   }
 
@@ -1137,7 +1293,10 @@ export class Player {
       this.holdLiveFloor()
       this.checkAdBreak()
     }
-    if (this.kind === 'vod') this.updateMutedNote(cur)
+    if (this.kind === 'vod') {
+      this.updateMutedNote(cur)
+      if (this.pendingHole) this.passHole()
+    }
     this.o.onTime?.(cur, v.duration)
   }
 
@@ -1255,8 +1414,6 @@ export class Player {
    *  rétabli (unmuteLoader) sont retirés. */
   setMuted(list) {
     this.muted = (list ?? []).map((r) => ({ start: r.start, end: r.end }))
-    this.unmutedSpans = []
-    this.unmutedToldAt = 0
     this.drawMuted()
     this.updateMutedNote(this.video.currentTime)
     if (!this.mutedDurHooked) {
@@ -1408,7 +1565,10 @@ export class Player {
     clearTimeout(this.hideTimer)
     this.hideTimer = setTimeout(() => {
       if (this.video.paused || this.dragging || !this.el.menu.hidden) return
-      if (this.root.matches(':hover') && this.root.querySelector('.p-bottom:hover')) return
+      // Souris sur les commandes : elles restent. Pas sur un écran tactile,
+      // où le survol « colle » au dernier bouton touché (iPhone, iPad) : les
+      // commandes ne se masquaient plus.
+      if (matchMedia('(hover: hover)').matches && this.root.matches(':hover') && this.root.querySelector('.p-bottom:hover')) return
       this.root.classList.remove('ui')
     }, delay)
   }
@@ -1456,8 +1616,10 @@ export class Player {
       arrowright: () => this.seekBy(10),
       j: () => this.seekBy(-10),
       l: () => this.seekBy(10),
-      arrowup: () => { this.video.muted = false; this.video.volume = Math.min(1, this.video.volume + 0.1) },
-      arrowdown: () => { this.video.volume = Math.max(0, this.video.volume - 0.1) },
+      // Arrondi au centième : 1 − 10 × 0,1 donnait 1,4e-16, jamais 0 (l'icône
+      // restait sur « son »).
+      arrowup: () => { this.video.muted = false; this.video.volume = Math.min(1, Math.round((this.video.volume + 0.1) * 100) / 100) },
+      arrowdown: () => { this.video.volume = Math.max(0, Math.round((this.video.volume - 0.1) * 100) / 100) },
       // Vitesse (VOD, clip) : e.key vaut « < » et « > », AZERTY compris.
       '<': this.kind === 'vod' ? () => this.stepSpeed(-1) : null,
       '>': this.kind === 'vod' ? () => this.stepSpeed(1) : null,

@@ -45,6 +45,7 @@ Watch Twitch lives and VODs in your browser, no subscription needed, with the re
 - **VOD chapters**: game changes marked on the progress bar
 - **Muted parts**: passages Twitch muted for copyrighted music show in orange on the progress bar, with a notice and a **Skip** button. For a day or two after a stream, Twitch's CDN still serves the original sound: the site loads it instead, automatically. On VODs stored as fMP4, the parts Twitch lists as `-unmuted.mp4` already have their sound: they're not shown as muted
 - **Live ended** screen, and **raids followed** automatically to the target channel (can be turned off)
+- Playback errors are retried a few times, spaced out (2, 4, then 8 s), before an error screen with a Refresh button — never an endless stream of requests; while the device is offline, the player waits for the connection to come back. A VOD plays on past a segment Twitch's CDN no longer has (rebuilt or very old VODs) instead of stopping
 - VODs resume where you left off
 - **Download a VOD** or just a part of it (from one time to another, from where you are, the next 10 minutes) in the quality you pick: one `.ts` (or `.mp4`) file that plays in VLC, mpv or the Windows player. Parts muted for copyrighted music keep their original sound while Twitch still has it (and always on fMP4 VODs' `-unmuted.mp4` parts). Chrome and Edge write the file straight to disk; other browsers build it in memory (up to about 1.5 GB). Deleted VODs rebuilt from the CDN can be downloaded too
 - Mini player: playback keeps going while you browse
@@ -275,7 +276,8 @@ The website sends playback through the relay when one is set
 doesn't answer — even in the middle of a video. A relay that fails its
 `/health` check when the page opens is only set aside (for 30 minutes) if a
 Worker answers meanwhile: a slow or offline phone connection doesn't count
-against it. The iOS app reads Twitch's CDN directly and doesn't need it.
+against it, and neither does a missing segment or playlist (404, as when a
+live ends). The iOS app reads Twitch's CDN directly and doesn't need it.
 
 You need a server with Docker and a domain name pointing to it (a free
 subdomain from [duckdns.org](https://www.duckdns.org) works — DuckDNS also
