@@ -944,8 +944,9 @@ function toggleLocalFollow(login) {
   if (!list.includes(l)) store.prefs.hiddenChannels = hiddenChannels().filter((x) => x.login !== l)
   store.savePrefs()
   state.loaded.followed = 0
-  // Sans compte (sinon la liste du compte n'est pas encore connue ici).
-  if (!session.token) syncPush()
+  // Sans compte (sinon la liste du compte n'est pas encore connue ici) ;
+  // un jeton en cours de validation compte comme un compte.
+  if (!store.token) syncPush()
   refreshHidden()
 }
 
@@ -1251,6 +1252,11 @@ async function loadFollowed({ silent = false } = {}) {
   state.loaded.followed = Date.now()
   const local = localFollows()
   if (!session.token) {
+    // Jeton rangé pas encore validé (ouverture de la page, ou connexion
+    // faite dans un autre onglet) : ni vue « déconnecté », ni liste des
+    // notifications sans les suivis du compte — le Worker la remplacerait.
+    // adoptToken relance l'accueil une fois le jeton validé ou refusé.
+    if (store.token) return
     head.classList.add('logged-out')
     const loginCard = (compact) => `
       <div class="login-card${compact ? ' compact' : ''}">
@@ -1263,7 +1269,7 @@ async function loadFollowed({ silent = false } = {}) {
     if (!silent) { grid.innerHTML = skeleton(Math.min(4, local.length)); offlinePending() }
     try {
       const channels = await api.getChannelsByLogins(local)
-      if (session.token) return
+      if (session.token || store.token) return
       state.followedView = {
         live: channels.filter((c) => c.stream).map((c) => c.stream),
         offline: channels.filter((c) => !c.stream),
@@ -1970,8 +1976,10 @@ function startLiveTicker() {
     const now = Date.now()
     if (now - state.loaded.top > 60_000 && !topExtended()) loadTop(state.topLang, { silent: true })
     // Sans compte aussi, pour les chaînes suivies sur l'appareil : elles
-    // n'étaient jamais relues (nouveaux lives, spectateurs).
-    if ((session.userId || (!session.token && localFollows().length)) && now - state.loaded.followed > 60_000) loadFollowed({ silent: true })
+    // n'étaient jamais relues (nouveaux lives, spectateurs). « Sans compte »
+    // = aucun jeton rangé : pendant sa validation à l'ouverture (jusqu'à
+    // 8 s), session.token est encore vide.
+    if ((session.userId || (!store.token && localFollows().length)) && now - state.loaded.followed > 60_000) loadFollowed({ silent: true })
   }, 1000)
 }
 
@@ -2341,12 +2349,19 @@ async function searchChannel(raw, { tab } = {}) {
   out.innerHTML = `<div class="channel-hero skeleton"></div><div class="grid vods">${skeleton(8, 'vod')}</div>`
   const seq = ++searchSeq
   // Une requête en échec (réseau, Twitch et Worker injoignables) n'est pas
-  // une chaîne introuvable : la page le disait pourtant.
+  // une chaîne introuvable : la page le disait pourtant. Mais quand Twitch
+  // est bloqué, c'est le Worker qui répond pour les VODs, et son 404 (ou
+  // 400, nom impossible) dit justement que la chaîne n'existe pas.
   let failed = false
+  let unknown = false
   const miss = () => { failed = true; return null }
   const [info, videos] = await Promise.all([
     api.getChannelInfo(login).catch(miss),
-    api.getChannelVideos(login).catch(miss),
+    api.getChannelVideos(login).catch((e) => {
+      if (e?.status === 404 || e?.status === 400) unknown = true
+      else failed = true
+      return null
+    }),
   ])
   if (seq !== searchSeq) return   // une recherche plus récente a pris la main
   if (!info && (!videos || videos.error)) {
@@ -2354,7 +2369,7 @@ async function searchChannel(raw, { tab } = {}) {
     // et pouvait réécrire cette page avec elle (un changement de langue aussi).
     clearInterval(channelTimer)
     state.channel = null
-    out.innerHTML = failed
+    out.innerHTML = failed && !unknown
       ? retryState(t('err_network'), `data-action="retry-channel" data-raw="${esc(raw)}" data-retry-tab="${esc(tab ?? '')}"`)
       : emptyState(t('not_found'), 'search')
     return
@@ -4223,7 +4238,7 @@ function openSettings() {
       // pas d'ici : ses suivis ne sont peut-être pas lus (autre onglet, échec)
       // et le Worker garderait les seuls suivis locaux. refreshTexts relit
       // l'accueil, dont la synchro emporte la langue (elle est dans le hash).
-      if (!session.token) syncPush()
+      if (!store.token) syncPush()
       applyStatic()
       renderAccount()
       refreshTexts()
