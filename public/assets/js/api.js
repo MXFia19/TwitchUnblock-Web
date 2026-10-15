@@ -844,7 +844,8 @@ const authHeader = () => (store.token ? { Authorization: `Bearer ${store.token}`
 
 export async function syncPull(userId) {
   try {
-    return await json(`${API_URL}/api/sync/get?userId=${encodeURIComponent(userId)}`, { headers: authHeader() })
+    // Au plus 8 s : l'ouverture de la page attend la synchro (adoptToken).
+    return await json(`${API_URL}/api/sync/get?userId=${encodeURIComponent(userId)}`, { headers: authHeader(), signal: AbortSignal.timeout?.(8000) })
   } catch {
     return null
   }
@@ -870,18 +871,28 @@ function helix(path) {
   })
 }
 
-/** Vérifie le jeton et renvoie son titulaire et ses droits. `null` = expiré. */
+/** Vérifie le jeton et renvoie son titulaire et ses droits. `null` = expiré
+ *  ou révoqué ; `offline` = Twitch n'a pas répondu (réseau, panne, plus de
+ *  8 s : id.twitch.tv filtré laissait la page en suspens). */
 export async function validateToken(token) {
+  const offline = { userId: null, login: null, scopes: [], offline: true }
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), 8000)
   try {
     const res = await fetch('https://id.twitch.tv/oauth2/validate', {
       headers: { Authorization: `OAuth ${token}` },
+      signal: ctrl.signal,
     })
+    // Une panne de Twitch ne dit rien du jeton : on ne déconnecte pas.
+    if (res.status >= 500 || res.status === 429) return offline
     if (!res.ok) return null
     const v = await res.json()
     return { userId: v.user_id, login: v.login, scopes: v.scopes ?? [] }
   } catch {
     // Hors ligne : on ne déconnecte pas pour autant.
-    return { userId: null, login: null, scopes: [], offline: true }
+    return offline
+  } finally {
+    clearTimeout(timer)
   }
 }
 

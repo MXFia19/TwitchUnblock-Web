@@ -43,27 +43,56 @@
   <script>
     // Retour de la connexion Twitch. Doit tourner avant tout le reste : dans
     // la popup, on transmet le jeton à la fenêtre d'origine puis on se ferme.
-    // Sans popup (mobile, popup bloquée), on le range et on nettoie l'adresse.
+    // Sans popup (mobile, popup bloquée), on le range, et l'adresse redevient
+    // celle de la page d'où l'on était parti (rangée par login() dans
+    // main.js) : le direct ou la VOD en cours n'est plus perdu.
     (function () {
       var hash = location.hash
-      if (hash.indexOf('access_token=') === -1) return
-      var params = new URLSearchParams(hash.slice(1))
-      var token = params.get('access_token')
-      history.replaceState(null, '', location.pathname + location.search)
-      if (!token) return
+      var query = new URLSearchParams(location.search)
+      var fromHash = new URLSearchParams(hash.slice(1))
+      var popup = window.opener && window.opener !== window
       // `state` : jeton remis seulement s'il répond à NOTRE demande de
       // connexion. Sans ce contrôle, n'importe quel site pouvait envoyer
       // vers « …/#access_token=<son jeton> » et connecter le visiteur à un
       // autre compte (où partaient ensuite son historique et ses messages).
       var expected = null
       try { expected = localStorage.getItem('tu_oauth_state') } catch (e) {}
-      if (!expected || params.get('state') !== expected) return
-      if (window.opener && window.opener !== window) {
+      var back = function () {
+        var p = null
+        try { p = sessionStorage.getItem('tu_login_back'); sessionStorage.removeItem('tu_login_back') } catch (e) {}
+        return p && p.charAt(0) === '/' && p.charAt(1) !== '/' && p.indexOf('\\') === -1 ? p : null
+      }
+      // Autorisation refusée sur Twitch : retour avec « ?error=access_denied »
+      // et sans jeton. La popup restait ouverte sur une 2e copie du site.
+      var failed = query.get('error') ? query : fromHash.get('error') ? fromHash : null
+      if (failed) {
+        var mine = Boolean(expected) && failed.get('state') === expected
+        if (mine) { try { localStorage.removeItem('tu_oauth_state') } catch (e) {} }
+        if (mine && popup) {
+          try { window.opener.postMessage('tu-login-cancelled', location.origin) } catch (e) {}
+          window.close()
+          return
+        }
+        query.delete('error'); query.delete('error_description'); query.delete('state')
+        var rest = query.toString()
+        var cancelledBack = mine ? back() : null
+        if (mine) { try { sessionStorage.setItem('tu_login_cancelled', '1') } catch (e) {} }
+        history.replaceState(null, '', cancelledBack || location.pathname + (rest ? '?' + rest : ''))
+        return
+      }
+      if (hash.indexOf('access_token=') === -1) return
+      var token = fromHash.get('access_token')
+      history.replaceState(null, '', location.pathname + location.search)
+      if (!token) return
+      if (!expected || fromHash.get('state') !== expected) return
+      if (popup) {
         try { window.opener.postMessage(hash, location.origin) } catch (e) {}
         window.close()
         return
       }
       try { localStorage.removeItem('tu_oauth_state'); localStorage.setItem('twitch_token', token) } catch (e) {}
+      var loginBack = back()
+      if (loginBack) history.replaceState(null, '', loginBack)
     })()
   </script>
   <script src="/config.js"></script>
@@ -73,7 +102,7 @@
   <div class="app">
     <!-- ── Barre du haut ─────────────────────────────────────────────── -->
     <header class="topbar">
-      <a class="brand" href="/" aria-label="TwitchUnblock">
+      <a class="brand" href="/" data-tab="discover" aria-label="TwitchUnblock">
         <span class="brand-mark" data-icon="twitch" data-size="20"></span>
         <span class="brand-name">Twitch<b>Unblock</b></span>
       </a>

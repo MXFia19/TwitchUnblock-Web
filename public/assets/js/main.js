@@ -21,6 +21,9 @@ import {
 // ── État ───────────────────────────────────────────────────────────────────
 const session = {
   token: null, userId: null, login: null, avatar: null, scopes: [],
+  /** Jeton pas encore vérifié par Twitch (injoignable) : compte gardé de la
+   *  dernière validation, voir adoptToken. */
+  unverified: false,
   get canChat() { return Boolean(this.token && this.login && this.scopes.includes('chat:edit') && this.scopes.includes('chat:read')) },
   get needRescope() { return Boolean(this.token && !this.canChat) },
 }
@@ -80,7 +83,6 @@ async function boot() {
   applyHomeTab()
   setupCategories()
   loadAnnouncement(true)
-  setTimeout(welcomeOrWhatsNew, 900)
   renderIcons()
   bindGlobal()
   setupPlayer()
@@ -95,22 +97,36 @@ async function boot() {
   if (shellInstallable()) {
     navigator.serviceWorker.register('/sw.js').catch(() => {})
     // Notification de live touchée, site déjà ouvert : on y ouvre le direct.
+    // L'entrée ajoutée est celle d'un lecteur (son direct s'ouvre), sans
+    // passer pour un premier chargement : le même direct déjà ouvert repasse
+    // en grand au lieu de redémarrer, et un autre lecteur se réduit — si la
+    // chaîne n'est plus en live, sa page se voit au lieu de rester dessous.
     navigator.serviceWorker.addEventListener('message', (e) => {
       if (e.data?.type !== 'open') return
       const u = new URL(e.data.url, location.origin)
       go(u.pathname + u.search, { watch: true })
-      applyRoute(routeFromLocation(), { initial: true })
+      applyRoute(routeFromLocation())
     })
   }
 
   // Jeton déjà là (session précédente, ou retour de connexion sans popup).
   if (store.token) await adoptToken(store.token, { silent: true })
   else renderAccount()
+  // Autorisation refusée sur Twitch, sans popup : noté par le script de tête.
+  try {
+    if (sessionStorage.getItem('tu_login_cancelled')) {
+      sessionStorage.removeItem('tu_login_cancelled')
+      toast(t('login_cancelled'))
+    }
+  } catch {}
 
   // L'adresse ouvre la page voulue (/xqc, /videos/123, /directory…), et les
   // boutons précédent / suivant du navigateur passent d'une page à l'autre.
   window.addEventListener('popstate', () => applyRoute(routeFromLocation()))
-  applyRoute(routeFromLocation(), { initial: true })
+  // Visite guidée ou nouveautés une fois la page de l'adresse ouverte : à
+  // heure fixe, elles passaient avant le direct, la VOD ou la mosaïque d'un
+  // lien et s'affichaient par-dessus.
+  applyRoute(routeFromLocation(), { initial: true }).finally(() => setTimeout(welcomeOrWhatsNew, 900))
 }
 
 // ── Adresses comme sur Twitch ──────────────────────────────────────────────
@@ -122,6 +138,23 @@ async function boot() {
 /** Pendant qu'une adresse est appliquée (chargement, précédent / suivant),
  *  les pages ouvertes remplacent l'entrée d'historique au lieu d'en ajouter. */
 let routing = false
+/** Numéro de l'adresse en cours d'application. Une autre adresse (précédent,
+ *  suivant) ou un geste de l'utilisateur le change : la suite de la
+ *  précédente (son direct, sa catégorie) n'a plus lieu. */
+let navSeq = 0
+
+/** Un clic sur un lien ou un bouton, ou un formulaire envoyé, pendant
+ *  qu'une adresse s'applique : l'utilisateur a pris la main. Ce qu'il ouvre
+ *  s'ajoute à l'historique (il remplaçait l'entrée), et le direct de
+ *  l'adresse ne s'ouvre plus par-dessus son choix. */
+function userNavigates(e) {
+  if (!routing || !e.isTrusted) return
+  if (e.type === 'click' && !e.target.closest?.('a[href], button, [role="button"], [data-live], [data-vod], [data-clip], [data-channel], [data-category], [data-cat], [data-tab]')) return
+  routing = false
+  navSeq++
+}
+document.addEventListener('click', userNavigates, true)
+document.addEventListener('submit', userNavigates, true)
 
 /** `watch` marque l'entrée d'un lecteur : « /xqc » est la page de la chaîne,
  *  ou son direct quand on l'a lancé (précédent / suivant le rouvrent). */
@@ -200,6 +233,7 @@ function routeFrom(pathname, search = '') {
 /** Ouvre la page d'une adresse. `initial` : premier chargement (le direct
  *  d'une chaîne en ligne se lance, comme sur Twitch). */
 async function applyRoute(r, { initial = false } = {}) {
+  const seq = ++navSeq
   routing = true
   try {
     // Mosaïque de directs : ouverte par son adresse, fermée par toute autre.
@@ -231,19 +265,26 @@ async function applyRoute(r, { initial = false } = {}) {
     if (r.channel) {
       setTab('channel', { url: false })
       $('#channel-input').value = r.channel
-      if (state.channel?.login === r.channel) setChannelTab(r.tab ?? 'vods')
+      // Page déjà chargée : reprise telle quelle, sauf quand l'adresse veut
+      // le direct et que la page, lue il y a un moment, dit la chaîne hors
+      // ligne (une notification de live arrive justement à ce moment-là).
+      if (state.channel?.login === r.channel && !(live && !state.channel.info?.stream)) setChannelTab(r.tab ?? 'vods')
       else await searchChannel(r.channel, { tab: r.tab ?? 'vods' })
+      // L'utilisateur a navigué pendant le chargement : pas de direct
+      // ouvert par-dessus son choix.
+      if (seq !== navSeq) return
       if (live && state.channel?.login === r.channel && state.channel.info?.stream) openLive(r.channel)
       return
     }
     if (r.category) {
-      await openCategoryBySlug(r.category)
+      await openCategoryBySlug(r.category, { stale: () => seq !== navSeq })
       return
     }
     if (r.tab === 'categories' && cat.current) closeCategory()
     setTab(r.tab ?? 'discover', { url: false })
   } finally {
-    routing = false
+    // Une adresse plus récente, ou l'utilisateur, a pris la main : rien à rendre.
+    if (seq === navSeq) routing = false
   }
 }
 
@@ -256,21 +297,48 @@ function renderIcons(root = document) {
 }
 
 // ── Session Twitch ─────────────────────────────────────────────────────────
+// Dernier compte validé pour le jeton, sur cet appareil : quand Twitch ne
+// répond pas à l'ouverture (réseau filtré, hors ligne, id.twitch.tv lent),
+// le site reste connecté avec lui au lieu de paraître déconnecté avec un
+// accueil vide pour toujours, et le jeton est revalidé dès que le réseau ou
+// l'onglet revient.
+const ACCOUNT_KEY = 'tu_account'
+/** Empreinte du jeton : le compte gardé ne vaut que pour celui-là. */
+function tokenTag(token) {
+  let h = 0
+  for (let i = 0; i < token.length; i++) h = (h * 31 + token.charCodeAt(i)) >>> 0
+  return h.toString(36)
+}
+function rememberAccount(token, v) {
+  try { localStorage.setItem(ACCOUNT_KEY, JSON.stringify({ tag: tokenTag(token), userId: v.userId, login: v.login, scopes: v.scopes })) } catch {}
+}
+function rememberedAccount(token) {
+  try {
+    const a = JSON.parse(localStorage.getItem(ACCOUNT_KEY) || 'null')
+    return a?.tag === tokenTag(token) && typeof a.userId === 'string' && typeof a.login === 'string' ? a : null
+  } catch { return null }
+}
+function forgetAccount() { try { localStorage.removeItem(ACCOUNT_KEY) } catch {} }
+
 async function adoptToken(token, { silent = false } = {}) {
   const v = await api.validateToken(token)
-  if (!v) {
-    store.token = null
-    Object.assign(session, { token: null, userId: null, login: null, avatar: null, scopes: [] })
-    if (!silent) toast(t('session_expired'), 'error')
-    else toast(t('session_expired'))
-    renderAccount()
-    // Comme logout() : les suivis du compte perdu ne protègent plus du masquage.
-    if (state.accountFollows?.length) { state.accountFollows = []; refreshHidden() }
-    return
-  }
+  if (!v) return dropToken({ silent })
+  const before = `${session.token}|${session.login}|${session.canChat}`
+  // Nouveau jeton : il a droit à sa nouvelle tentative après un refus de Helix.
+  if (token !== session.token) followedRetried = false
   store.token = token
   session.token = token
-  if (!v.offline) Object.assign(session, { userId: v.userId, login: v.login, scopes: v.scopes })
+  if (v.offline) {
+    // Twitch injoignable : le compte déjà validé avec ce jeton, s'il y en a
+    // un ; sinon l'accueil le dit, avec de quoi réessayer (loadFollowed).
+    const known = rememberedAccount(token)
+    session.unverified = true
+    Object.assign(session, { userId: known?.userId ?? null, login: known?.login ?? null, scopes: Array.isArray(known?.scopes) ? known.scopes : [] })
+  } else {
+    session.unverified = false
+    Object.assign(session, { userId: v.userId, login: v.login, scopes: v.scopes })
+    rememberAccount(token, v)
+  }
   renderAccount()
 
   if (session.login) {
@@ -280,8 +348,33 @@ async function adoptToken(token, { silent = false } = {}) {
   if (!silent) usage.pingNow(store.prefs.shareUsage)
   state.loaded.followed = 0
   if (state.tab === 'discover') loadFollowed()
+  // Revalidation du même compte : le chat ne se reconnecte pas pour rien.
+  if (`${session.token}|${session.login}|${session.canChat}` !== before) chat?.sessionChanged()
+}
+
+/** Jeton refusé par Twitch (expiré, révoqué) : la session s'arrête là. */
+function dropToken({ silent = false } = {}) {
+  store.token = null
+  forgetAccount()
+  Object.assign(session, { token: null, userId: null, login: null, avatar: null, scopes: [], unverified: false })
+  toast(t('session_expired'), silent ? 'info' : 'error')
+  renderAccount()
+  // Comme logout() : les suivis du compte perdu ne protègent plus du masquage.
+  if (state.accountFollows?.length) { state.accountFollows = []; refreshHidden() }
+  state.loaded.followed = 0
+  if (state.tab === 'discover') loadFollowed()
   chat?.sessionChanged()
 }
+
+/** Compte gardé sans validation (Twitch injoignable) : revalidé au retour
+ *  du réseau ou de l'onglet, ou depuis l'accueil. */
+let revalidating = false
+function revalidateSession() {
+  if (!session.token || !session.unverified || revalidating) return
+  revalidating = true
+  adoptToken(session.token, { silent: true }).finally(() => { revalidating = false })
+}
+window.addEventListener('online', revalidateSession)
 
 function login(opts) {
   const url = api.loginUrl(opts)
@@ -291,8 +384,12 @@ function login(opts) {
   const top = (screen.height - h) / 2
   const popup = isMobile ? null : window.open(url, 'TwitchLogin', `width=${w},height=${h},left=${left},top=${top}`)
   // Mobile, ou popup bloquée : redirection pleine page. Le script de tête
-  // récupère le jeton au retour.
-  if (!popup) location.href = url
+  // récupère le jeton au retour et rouvre cette page-ci (le direct ou la
+  // VOD en cours) : on revenait toujours sur l'accueil.
+  if (!popup) {
+    try { sessionStorage.setItem('tu_login_back', location.pathname + location.search) } catch {}
+    location.href = url
+  }
 }
 
 function logout() {
@@ -305,7 +402,8 @@ function logout() {
     }).catch(() => {})
   }
   store.token = null
-  Object.assign(session, { token: null, userId: null, login: null, avatar: null, scopes: [] })
+  forgetAccount()
+  Object.assign(session, { token: null, userId: null, login: null, avatar: null, scopes: [], unverified: false })
   // La prochaine connexion passera par la page d'autorisation de Twitch :
   // sans elle, il reconnectait aussitôt le compte dont il se souvient.
   try { localStorage.setItem(api.FORCE_VERIFY_KEY, '1') } catch {}
@@ -322,6 +420,8 @@ function logout() {
 window.addEventListener('message', (e) => {
   if (e.origin !== location.origin) return
   const raw = typeof e.data === 'string' ? e.data : ''
+  // Autorisation refusée sur Twitch : la popup s'est refermée (index.html).
+  if (raw === 'tu-login-cancelled') return toast(t('login_cancelled'))
   if (!raw.includes('access_token=')) return
   const params = new URLSearchParams(raw.replace(/^#/, ''))
   const token = params.get('access_token')
@@ -401,7 +501,7 @@ setInterval(() => flushSync(), 60_000)
 // Fermeture d'onglet, changement d'appli sur mobile : dernier envoi.
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) flushSync({ force: true })
-  else { loadAnnouncement(); refreshFeedbackInbox() }
+  else { loadAnnouncement(); refreshFeedbackInbox(); revalidateSession() }
 })
 // Réponses aux retours envoyés d'ici : pastille sur les boutons de retour.
 // Après l'évaluation du module : ces fonctions lisent des constantes
@@ -438,7 +538,9 @@ function bindGlobal() {
     // page, sans la recharger.
     const link = e.target.closest('a[href]')
     if (link && (e.ctrlKey || e.metaKey || e.shiftKey || e.altKey || e.button !== 0)) return
-    if (link?.matches('[data-live], [data-vod], [data-clip], [data-cat], [data-channel]')) e.preventDefault()
+    // Le logo aussi (data-tab) : il rechargeait toute la page, et coupait
+    // la lecture, le multi-live et le chat en cours.
+    if (link?.matches('[data-live], [data-vod], [data-clip], [data-cat], [data-channel], [data-tab]')) e.preventDefault()
 
     const tab = e.target.closest('[data-tab]')
     if (tab) return setTab(tab.dataset.tab)
@@ -610,7 +712,8 @@ const actions = {
   },
   logout,
   settings: () => openSettings(),
-  'refresh-discover': () => { loadFollowed(); loadTop(state.topLang) },
+  'refresh-discover': () => { revalidateSession(); loadFollowed(); loadTop(state.topLang) },
+  revalidate: () => revalidateSession(),
   'cat-more': () => loadCategories({ more: true }),
   'cat-streams-more': () => cat.current && openCategory(cat.current, { more: true }),
   'cat-back': () => closeCategory(),
@@ -1138,7 +1241,15 @@ async function loadFollowed({ silent = false } = {}) {
     return
   }
   head.classList.remove('logged-out')
-  if (!session.userId) return
+  if (!session.userId) {
+    // Jeton que Twitch n'a pas pu vérifier, sans compte déjà validé avec lui
+    // sur cet appareil : l'accueil restait vide sans rien dire.
+    if (session.unverified) {
+      grid.innerHTML = `<div class="empty">${icon('refresh', 28)}<p>${esc(t('session_unverified'))}</p><button class="btn ghost sm" type="button" data-action="revalidate">${icon('refresh', 15)}<span>${esc(t('refresh'))}</span></button></div>`
+      offlineFailed()
+    }
+    return
+  }
   if (!silent) { grid.innerHTML = skeleton(4); offlinePending() }
   const token = session.token
   try {
@@ -1170,9 +1281,22 @@ async function loadFollowed({ silent = false } = {}) {
     if (logins) syncPush()
   } catch (err) {
     if (session.token !== token) return
-    // Une seule nouvelle tentative : un jeton valide mais refusé par Helix
-    // (autre application, droit manquant) relançait la boucle sans fin.
-    if (err.status === 401 && !followedRetried) { followedRetried = true; await adoptToken(session.token); return }
+    // Une seule nouvelle tentative par jeton : un jeton valide mais refusé
+    // par Helix (autre application, droit manquant) relançait la boucle sans
+    // fin. Seul le jeton est revalidé : relancer toute la connexion (synchro,
+    // reconnexion du chat) ne servait à rien.
+    if (err.status === 401 && !followedRetried) {
+      followedRetried = true
+      const v = await api.validateToken(token)
+      if (session.token !== token) return
+      if (!v) return dropToken()
+      if (!v.offline) {
+        session.unverified = false
+        Object.assign(session, { userId: v.userId, login: v.login, scopes: v.scopes })
+        rememberAccount(token, v)
+      }
+      return loadFollowed({ silent })
+    }
     // En rafraîchissement silencieux, une panne passagère garde l'existant.
     if (!silent) { grid.innerHTML = emptyState(t('err_loading'), 'refresh'); offlineFailed() }
   }
@@ -1599,13 +1723,21 @@ function closeCategory() {
 }
 
 /** Une catégorie par son adresse : « just-chatting » (comme sur Twitch) ou
- *  un identifiant numérique. */
-async function openCategoryBySlug(slug) {
+ *  un identifiant numérique. `stale()` : l'utilisateur est allé ailleurs
+ *  pendant la recherche (applyRoute). */
+async function openCategoryBySlug(slug, { stale = () => false } = {}) {
   setTab('categories', { url: false })
+  let failed = false
   const c = /^\d+$/.test(slug)
-    ? (await api.getCategoriesByIds([slug]).catch(() => []))[0]
-    : await api.getCategoryBySlug(slug).catch(() => null)
-  if (c) openCategory(c)
+    ? (await api.getCategoriesByIds([slug]).catch(() => { failed = true; return [] }))[0]
+    : await api.getCategoryBySlug(slug).catch(() => { failed = true; return null })
+  if (stale()) return
+  if (c) return openCategory(c)
+  // Inconnue (ou Twitch injoignable) : la liste des catégories, et un mot
+  // pour le dire. La page restait vide, ou sur la catégorie ouverte avant.
+  if (cat.current) closeCategory()
+  else go('/directory')
+  toast(t(failed ? 'err_network' : 'cat_not_found'), 'error')
 }
 
 /** Une catégorie ouverte d'ailleurs (carte de live, lecteur) : on complète
@@ -1801,10 +1933,11 @@ const RETURNING = (() => {
 const TOUR_PENDING = 'tu_tour_pending'
 function welcomeOrWhatsNew() {
   if (!$('#sheet')?.hidden) return
-  // Lien vers une page précise (/xqc/clips, /videos/…, lecture partagée) : la
-  // visite guidée, qui passe par l'accueil, l'aurait remplacée — c'est
-  // justement par un lien partagé qu'arrivent les nouveaux visiteurs.
-  const deepLink = Boolean(state.watch) || location.pathname !== '/'
+  // Lien vers une page précise (/xqc/clips, /videos/…, lecture partagée,
+  // mosaïque « /?multi=… ») : la visite guidée, qui passe par l'accueil,
+  // l'aurait remplacée — c'est justement par un lien partagé qu'arrivent
+  // les nouveaux visiteurs.
+  const deepLink = Boolean(state.watch) || multi.isOpen() || location.pathname !== '/' || location.search !== ''
   let seen = null
   let pending = false
   try {
@@ -1820,9 +1953,9 @@ function welcomeOrWhatsNew() {
     if (!deepLink) startTour()
     return
   }
-  // Une lecture partagée en cours : on ne la couvre pas, les nouveautés
-  // attendront la prochaine visite.
-  if (state.watch) return
+  // Une lecture partagée en cours (lecteur ou mosaïque) : on ne la couvre
+  // pas, les nouveautés attendront la prochaine visite.
+  if (state.watch || multi.isOpen()) return
   try { localStorage.setItem(SEEN_VERSION, usage.SITE_VERSION) } catch {}
   const unseen = seen ? CHANGELOG.filter((e) => e.version > seen) : CHANGELOG.slice(0, 1)
   if (unseen.length) showWhatsNew(unseen)
@@ -1876,6 +2009,8 @@ const tour = { step: -1, el: null }
 function startTour() {
   closeSheet()
   if (!$('#watch').hidden) minimizeWatch({ url: false })
+  // La mosaïque, fixe au-dessus de tout, cacherait les écrans de la visite.
+  multi.close()
   let root = $('#tour')
   if (!root) {
     root = document.createElement('div')
