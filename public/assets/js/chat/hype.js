@@ -151,7 +151,9 @@ export function mergeHype(prev, next, now = Date.now(), first = false) {
     if (next.level < prev.level) return prev
     if (!next.pushedAt && prev.pushedAt && now - prev.pushedAt < 10_000 && next.level === prev.level) return prev
     const out = { ...next, bigGoal: prev.bigGoal, seq: next.seq ?? prev.seq, pushedAt: next.pushedAt ?? prev.pushedAt }
-    if (next.level > prev.level) out.flash = { kind: 'levelDone', n: prev.level, until: now + LEVEL_DONE_MS }
+    // Le dernier niveau terminé : en lecture GQL seule, plusieurs peuvent
+    // passer entre deux relevés.
+    if (next.level > prev.level) out.flash = { kind: 'levelDone', n: next.level - 1, until: now + LEVEL_DONE_MS }
     else if (prev.flash && prev.flash.until > now) out.flash = prev.flash
     return out
   }
@@ -198,7 +200,10 @@ export function hypeFromHermes(msg, prev, now = Date.now()) {
     }
     case 'hype-train-level-up': {
       const next = running(d.hype_train, now, { remaining: d.progress?.remaining_seconds, progress: d.progress, fallbackEnd: d.time_to_expire })
-      return next ? mergeHype(prev, { ...next, pushedAt: now }, now) : undefined
+      // Jamais un départ : un train qu'on ne suivait pas encore (première
+      // lecture ratée ou en cours) s'affiche sans annonce ; déjà suivi, il
+      // garde le « niveau terminé » (mergeHype ne lit `first` qu'après).
+      return next ? mergeHype(prev, { ...next, pushedAt: now }, now, true) : undefined
     }
     case 'hype-train-progression': {
       // Seulement le train affiché, et dans l'ordre (sequence_id croissant).
