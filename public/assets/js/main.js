@@ -519,6 +519,15 @@ function bindGlobal() {
     const act = e.target.closest('[data-action]')?.dataset.action
     if (act) actions[act]?.(e)
   })
+  // Carte « VOD non listée » (pas un lien) : Entrée ou Espace la lance, comme
+  // un clic — elle prenait le focus sans rien faire. Pas quand le lecteur
+  // est affiché en grand par-dessus (la carte, dessous, garde le focus).
+  document.addEventListener('keydown', (e) => {
+    if (e.defaultPrevented || e.repeat || (e.key !== 'Enter' && e.key !== ' ') || !e.target.matches?.('[data-recover]')) return
+    if (!$('#watch').hidden && !$('#watch').classList.contains('minimized')) return
+    e.preventDefault()
+    recoverAndPlay(e.target)
+  })
 
   // Accueil
   $('#top-seg').addEventListener('click', (e) => {
@@ -663,6 +672,9 @@ const actions = {
     const w = state.watch
     if (!w) return
     if (w.kind === 'live') openLive(w.login)
+    // VOD reconstruite : son id n'en est pas un (openVod était refusé).
+    else if (w.recovered) retryRecovered(w)
+    else if (w.kind === 'clip') openClip(w.id)
     else openVod(w.id)
   },
 }
@@ -2274,10 +2286,17 @@ const SAME_STREAM = 15 * 60_000
 
 async function loadUnlisted(login) {
   state.recoverCache ??= new Map()
+  state.recoverDown ??= new Set()
   if (!state.recoverCache.has(login)) {
     const data = await api.getRecoverableStreams(login).catch(() => null)
-    if (!data) return
-    state.recoverCache.set(login, data)
+    // Source indisponible (ou Worker injoignable) : ce n'est pas « rien à
+    // récupérer ». Pas gardé, pour réessayer à la prochaine ouverture de la
+    // chaîne, et la page le dit.
+    if (!data || data.unavailable) state.recoverDown.add(login)
+    else {
+      state.recoverDown.delete(login)
+      state.recoverCache.set(login, data)
+    }
   }
   if (state.channel?.login === login) renderVodGrid()
 }
@@ -2306,7 +2325,7 @@ function unlistedStreams() {
 function unlistedCard(s) {
   const dateStr = new Date(s.epoch * 1000).toLocaleDateString(lang(), { day: 'numeric', month: 'short', year: 'numeric' })
   return `
-    <article class="card vod-card unlisted" tabindex="0" data-recover data-login="${esc(s.login)}" data-stream="${esc(s.streamID)}" data-epoch="${esc(s.epoch)}" data-title="${esc(s.title || '')}">
+    <article class="card vod-card unlisted" tabindex="0" role="button" data-recover data-login="${esc(s.login)}" data-stream="${esc(s.streamID)}" data-epoch="${esc(s.epoch)}" data-title="${esc(s.title || '')}">
       <div class="thumb">
         <span class="unlisted-ic">${icon('eyeOff', 26)}</span>
         <span class="pill unlisted-pill">${esc(t('unlisted_vod'))}</span>
@@ -2352,7 +2371,11 @@ function renderVodGrid() {
     count.textContent = keyword ? (items.length ? t('filter_count', { n: items.length, k: keyword }) : t('filter_none', { k: keyword })) : ''
   }
   const hint = $('#unlisted-hint')
-  if (hint) hint.hidden = !unlisted.length
+  if (hint) {
+    const down = !unlisted.length && Boolean(state.recoverDown?.has(ch.login))
+    hint.hidden = !unlisted.length && !down
+    $('span', hint).textContent = t(down ? 'unlisted_unavailable' : 'unlisted_hint')
+  }
   const more = $('#channel-vods-more')
   if (more) more.innerHTML = vodsMoreHtml(ch)
 }
@@ -2403,30 +2426,57 @@ async function recoverAndPlay(card) {
   try {
     const r = await api.resolveRecovery(login, stream, Number(epoch))
     if (!r?.links || !Object.keys(r.links).length) throw new Error('none')
-    stopPlayback()
-    state.watch = { kind: 'vod', id: `recovered-${stream}`, info: null, links: r.links, recovered: true }
-    const tok = state.watch
-    // Pas d'adresse à partager : une VOD reconstruite garde celle de la page.
-    showWatch('vod', title || login)
-    if (state.watch !== tok) return
-    $('#watch-loading').hidden = true
-    player.load({ links: r.links, kind: 'vod', startAt: 0 })
-    $('#watch-title').textContent = title || login
-    $('#mini-title').textContent = title || login
-    setWatchChannel(login)
-    // À télécharger avant qu'elle ne quitte le CDN.
-    $('#watch-info').innerHTML = `
-      <div class="wi-text"><h1 title="${esc(title || login)}">${esc(title || login)}</h1></div>
-      <div class="wi-actions">
-        <button class="btn ghost sm" type="button" data-action="vod-download">${icon('download', 16)}<span>${esc(t('dl_download'))}</span></button>
-        <button class="btn ghost sm" type="button" data-action="open-in">${icon('external', 16)}<span>${esc(t('open_in'))}</span></button>
-      </div>`
+    playRecovered({ login, stream, epoch: Number(epoch), title }, r.links)
   } catch (e) {
     card.classList.add('gone')
     toast(t('recover_failed'), 'error')
   } finally {
     card.classList.remove('busy')
     if (pill) pill.textContent = t(card.classList.contains('gone') ? 'unlisted_gone' : 'unlisted_vod')
+  }
+}
+
+/** Lit une VOD reconstruite. Son état garde la chaîne, la diffusion et son
+ *  heure : sans elles, « Actualiser » redemandait « recovered-… » comme une
+ *  VOD (refusé), le téléchargement n'avait pas de nom de chaîne et les
+ *  signalements ne disaient pas laquelle. */
+function playRecovered(rec, links) {
+  const { login, stream, epoch, title } = rec
+  stopPlayback()
+  // Pas de « Tout lire » en cours : à la fin, la première vidéo d'une
+  // playlist ouverte avant se lançait.
+  state.playlist = null
+  state.watch = { kind: 'vod', id: `recovered-${stream}`, info: null, links, recovered: true, login, stream, epoch, title }
+  const tok = state.watch
+  // Pas d'adresse à partager : une VOD reconstruite garde celle de la page.
+  showWatch('vod', title || login)
+  if (state.watch !== tok) return
+  $('#watch-loading').hidden = true
+  player.load({ links, kind: 'vod', startAt: 0 })
+  $('#watch-title').textContent = title || login
+  $('#mini-title').textContent = title || login
+  setWatchChannel(login)
+  // À télécharger avant qu'elle ne quitte le CDN.
+  $('#watch-info').innerHTML = `
+    <div class="wi-text"><h1 title="${esc(title || login)}">${esc(title || login)}</h1></div>
+    <div class="wi-actions">
+      <button class="btn ghost sm" type="button" data-action="vod-download">${icon('download', 16)}<span>${esc(t('dl_download'))}</span></button>
+      <button class="btn ghost sm" type="button" data-action="open-in">${icon('external', 16)}<span>${esc(t('open_in'))}</span></button>
+    </div>`
+}
+
+/** « Actualiser » sur une VOD reconstruite : reconstruite de nouveau. */
+async function retryRecovered(w) {
+  $('#watch').classList.remove('error')
+  $('#watch-loading').hidden = false
+  try {
+    const r = await api.resolveRecovery(w.login, w.stream, w.epoch)
+    if (state.watch !== w) return
+    if (r?.links && Object.keys(r.links).length) return playRecovered(w, r.links)
+    showWatchError(t('recover_failed'))
+  } catch (e) {
+    // 404 : le CDN ne la sert plus ; sans statut : aucun Worker joignable.
+    if (state.watch === w) showWatchError(e?.status ? t('recover_failed') : t('err_network'))
   }
 }
 
@@ -3202,7 +3252,9 @@ function playPlaylist(id) {
 function playNextInPlaylist() {
   const w = state.watch, q = state.playlist
   if (w?.kind !== 'vod' || !q) return
-  const next = q.ids[q.ids.indexOf(w.id) + 1]
+  const i = q.ids.indexOf(w.id)
+  // Vidéo hors de la playlist : la suite n'est pas la première de la liste.
+  const next = i >= 0 ? q.ids[i + 1] : null
   if (next) openVod(next, undefined, { keepPlaylist: true })
   else state.playlist = null
 }

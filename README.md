@@ -27,7 +27,7 @@ Watch Twitch lives and VODs in your browser, no subscription needed, with the re
 - Search with suggestions as you type
 - Live status (title, game, viewers, uptime), or how long the channel has been offline
 - Every past broadcast, filterable by keyword or date — 100 at a time with “Load more”, fetched from the browser (the Worker route is only a fallback for the first page)
-- **Unlisted & deleted broadcasts**: streams whose VOD is hidden or was deleted show up among the VODs as “Unlisted VOD”, rebuilt from Twitch's CDN as long as it still has them (stream IDs from `vodvod.top`, third party)
+- **Unlisted & deleted broadcasts**: streams whose VOD is hidden or was deleted show up among the VODs as “Unlisted VOD”, rebuilt from Twitch's CDN as long as it still has them (stream IDs from `vodvod.top`, third party; when that source is down, the page says so instead of showing nothing). The cards open with Enter or Space too, and the player's Refresh button rebuilds the video again
 - **Clips**: the most viewed over 24 h, 7 days, 30 days or all time — played in the site, with the original chat replayed
 - **About** tab: description, followers, social links and the streamer's panels
 - Recent streamers

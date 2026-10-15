@@ -365,6 +365,10 @@ async function sha1hex(s) {
 }
 
 // GET /api/recover-list?channel= — diffusions passées récupérables (source externe).
+// Source en panne (erreur, réponse illisible) : `unavailable: true`, pour que
+// le site ne la confonde pas avec « rien à récupérer » (une chaîne inconnue
+// de la source, elle, répond 200 et une liste vide). `streams` reste une
+// liste vide : les anciens clients n'y voient pas de différence.
 async function handleRecoverList(url) {
     const channel = (url.searchParams.get('channel') || '').toLowerCase();
     if (!LOGIN_RE.test(channel)) return jsonError('Chaîne invalide', 400);
@@ -372,10 +376,11 @@ async function handleRecoverList(url) {
     try {
         const r = await fetch(`https://api.vodvod.top/channels/@${channel}`,
             { headers: { 'User-Agent': REQUEST_HEADERS['User-Agent'], Accept: 'application/json' } });
-        if (!r.ok) return jsonResponse({ streams: [] });
+        if (!r.ok) return jsonResponse({ streams: [], unavailable: true });
         arr = await r.json();
-    } catch (e) { return jsonResponse({ streams: [] }); }
-    const streams = (Array.isArray(arr) ? arr : []).map((it) => {
+    } catch (e) { return jsonResponse({ streams: [], unavailable: true }); }
+    if (!Array.isArray(arr)) return jsonResponse({ streams: [], unavailable: true });
+    const streams = arr.map((it) => {
         const m = it.Metadata || {};
         const sid = typeof m.StreamID === 'string' ? m.StreamID : (m.StreamID != null ? String(m.StreamID) : '');
         const start = Date.parse(m.StartTime);
