@@ -210,7 +210,7 @@ const LIVE_FLOOR_SEEK_MS = 60_000
 // purgé), sur le quota du Worker. Trois relances espacées (2, 4 puis 8 s),
 // remises à zéro dès qu'un segment arrive, puis l'erreur. Une VOD saute un
 // segment introuvable (404) au lieu de le redemander — au plus
-// MAX_SKIPPED_FRAGS de suite.
+// MAX_SKIPPED_FRAGS de suite — et s'arrête là si ce sont ses derniers.
 const NET_RETRIES = 3
 const MAX_SKIPPED_FRAGS = 30
 
@@ -892,7 +892,20 @@ export class Player {
     if (!Number.isFinite(f.start) || !(f.duration > 0) || ++this.skippedFrags > MAX_SKIPPED_FRAGS) return false
     const hole = { start: f.start, end: f.start + f.duration + 0.05 }
     const d = this.video.duration
-    if (Number.isFinite(d) && hole.end >= d - 0.5) return false
+    if (Number.isFinite(d) && hole.end >= d - 0.5) {
+      // Fin de la VOD introuvable (derniers segments purgés) : elle s'arrête
+      // là. Le navigateur apprend que rien ne viendra après ce qui est
+      // chargé (fin de flux, comme après le dernier segment d'une VOD
+      // entière) : la lecture va jusqu'au trou, puis la vidéo se termine et
+      // « Tout lire » passe à la suivante. Avant : trois relances, puis
+      // « VOD indisponible » avant même d'arriver au trou, et jamais de fin.
+      const eos = window.Hls?.Events?.BUFFER_EOS
+      if (!eos) return false
+      console.info(`[TwitchUnblock] VOD : fin introuvable à partir de ${formatClock(f.start)}, la vidéo s'arrête là.`)
+      this.pendingHole = { ...hole, final: true }
+      hls.trigger(eos, {})
+      return true
+    }
     console.info(`[TwitchUnblock] VOD : segment introuvable à ${formatClock(f.start)}, sauté.`)
     if (!this.holes.some((x) => x.start === hole.start)) this.holes.push(hole)
     this.pendingHole = hole
@@ -913,6 +926,9 @@ export class Player {
     let buffered = false
     for (let i = 0; i < b.length; i++) if (b.start(i) - 0.1 <= t0 && t0 < b.end(i) - 0.1) buffered = true
     if (t0 < h.start - 0.5 && buffered) return
+    // Fin introuvable atteinte : la vidéo se termine d'elle-même (fin de
+    // flux). Seul un retour hors de ce qui est chargé relance le chargement.
+    if (h.final && t0 >= h.start - 0.5) return
     this.pendingHole = null
     let to = t0
     for (let moved = true; moved;) {
