@@ -61,11 +61,21 @@ export class LiveChat {
     this.connected = false
     this.canSend = false
     this.present = new Set()
-    this.myColor = null
+    /** Le compte tel que Twitch le décrit (GLOBALUSERSTATE, puis USERSTATE
+     *  du salon) : nom affiché, couleur, badges, id — pour nos messages
+     *  affichés d'avance. */
+    this.me = {}
     /** Modes du salon (ROOMSTATE) : followers, abonnés, emotes, lent, uniques. */
     this.modes = {}
-    /** Dernier message envoyé, affiché d'avance : retiré si Twitch le refuse. */
-    this.lastSelf = null
+    /** Messages envoyés (affichés d'avance) en attente de la réponse de
+     *  Twitch, dans l'ordre d'envoi : il répond à chacun, dans l'ordre, par
+     *  un USERSTATE s'il passe (avec son vrai id) ou un NOTICE s'il le
+     *  refuse. Un seul suivi ne suffisait pas : deux envois rapides refusés
+     *  laissaient le premier affiché comme envoyé. */
+    this.pendingSelf = []
+    /** Arrivé dans le salon (ROOMSTATE) : les USERSTATE suivants répondent à
+     *  nos messages, pas au JOIN. */
+    this.joined = false
     /** Compte banni de ce chat : on le lit sans le compte (justinfan). */
     this.readOnly = Boolean(o.token && o.login) && READ_ONLY.has(readOnlyKey(o.login, o.channel))
     this.lastRejoin = 0
@@ -111,6 +121,12 @@ export class LiveChat {
       try { old.close() } catch { /* déjà fermée */ }
     }
     this.emit('status', 'connecting')
+    // Nouvelle socket : les messages encore sans réponse n'en auront plus
+    // (elle serait arrivée sur l'ancienne). Ils restent affichés, hors de la
+    // file des réponses ; un refus du compte à l'arrivée (banni) les retire
+    // quand même (enterReadOnly).
+    for (const p of this.pendingSelf) p.orphan = true
+    this.joined = false
     let ws
     try {
       ws = new WebSocket(IRC_URL)
@@ -201,10 +217,12 @@ export class LiveChat {
     READ_ONLY.add(readOnlyKey(this.o.login, this.o.channel))
     this.canSend = false
     clearTimeout(this.rejoinTimer)
-    // Message envoyé juste avant (affiché d'avance) : il n'est pas parti.
-    const recent = this.lastSelf && Date.now() - this.lastSelf.at < 20_000 ? this.lastSelf.id : null
-    this.lastSelf = null
-    this.emit('readonly', { id: recent })
+    // Messages envoyés juste avant (affichés d'avance), restés sans réponse,
+    // même sur une socket précédente : ils ne sont pas partis.
+    const now = Date.now()
+    const ids = this.pendingSelf.filter((p) => now - p.at <= 20_000).map((p) => p.id)
+    this.pendingSelf = []
+    this.emit('readonly', { ids })
     this.reopen()
   }
 
@@ -263,10 +281,37 @@ export class LiveChat {
     if (replyParentId && !/^[0-9a-f-]{36}$/i.test(replyParentId)) replyParentId = null
     const prefix = replyParentId ? `@reply-parent-msg-id=${replyParentId} ` : ''
     this.ws.send(`${prefix}PRIVMSG #${this.o.channel} :${body}`)
-    const msg = selfMessage(body, this.o.login ?? '', this.myColor)
-    this.lastSelf = { id: msg.id, at: Date.now() }
+    const msg = selfMessage(body, { ...this.me, login: this.o.login ?? '' })
+    // Une commande (/…, sauf /me) peut n'avoir pour réponse qu'un NOTICE
+    // qui n'est pas un refus : elle est soldée par lui (voir handle).
+    this.pendingSelf.push({ id: msg.id, at: Date.now(), command: /^\/(?!me\s)/i.test(body) })
     this.emit('add', msg)
     return true
+  }
+
+  /** Plus ancien message envoyé sur cette socket encore sans réponse. Au-delà
+   *  de 20 s, sa réponse a été perdue : il sort de la file. */
+  nextSelf() {
+    const now = Date.now()
+    this.pendingSelf = this.pendingSelf.filter((p) => now - p.at <= 20_000)
+    return this.pendingSelf.find((p) => !p.orphan) ?? null
+  }
+
+  /** Le même, retiré de la file : la réponse qui vient d'arriver est la sienne. */
+  takeSelf() {
+    const p = this.nextSelf()
+    if (p) this.pendingSelf.splice(this.pendingSelf.indexOf(p), 1)
+    return p?.id ?? null
+  }
+
+  /** GLOBALUSERSTATE / USERSTATE : le compte tel que les autres le voient. */
+  noteUser(tags) {
+    const me = this.me
+    if (tags['display-name']) me.displayName = unescapeTag(tags['display-name'])
+    if (tags.color != null) me.color = tags.color || null
+    // Badges du salon (abonné, modo, VIP…) dans USERSTATE, globaux avant.
+    if (tags.badges != null) me.badges = tags.badges
+    if (tags['user-id']) me.userId = tags['user-id']
   }
 
   /** ROOMSTATE (complet à l'arrivée, puis ce qui change) → modes du salon. */
@@ -293,13 +338,26 @@ export class LiveChat {
         // Arrive juste après le JOIN : c'est le vrai signal « on est dedans ».
         // Pas avant : un compte banni reçoit GLOBALUSERSTATE, puis le refus
         // du JOIN, et le champ s'activait le temps de ce refus.
+        this.joined = true
         this.emit('status', 'connected')
         this.applyModes(irc.tags)
         break
       case 'GLOBALUSERSTATE':
-        this.myColor = irc.tags.color || null
+        this.noteUser(irc.tags)
         this.canSend = Boolean(this.o.token) && !this.readOnly
         break
+      case 'USERSTATE': {
+        // Au JOIN (avant ROOMSTATE), puis en réponse à chacun de nos
+        // messages passés : badges du salon et nom affiché pour les suivants.
+        this.noteUser(irc.tags)
+        if (!this.joined) break
+        // Message accepté : son vrai id chez Twitch remplace l'id local —
+        // sans lui, y répondre envoyait un parent inconnu de Twitch, et sa
+        // suppression par un modérateur ne s'appliquait pas.
+        const local = this.takeSelf()
+        if (local && irc.tags.id) this.emit('confirmed', { local, id: irc.tags.id })
+        break
+      }
       case 'PING':
         this.ws?.send('PONG :tmi.twitch.tv')
         break
@@ -342,11 +400,13 @@ export class LiveChat {
         }
         const key = REJECTIONS[msgId] || (msgId.startsWith('msg_') ? 'chat_rej_generic' : null)
         if (key) {
-          const recent = this.lastSelf && Date.now() - this.lastSelf.at < 20_000 ? this.lastSelf.id : null
-          this.lastSelf = null
-          this.emit('rejected', { key, text: text ?? '', id: recent })
+          // Refus du plus ancien message encore sans réponse (aucun à
+          // l'arrivée dans le salon : la file est vide).
+          this.emit('rejected', { key, text: text ?? '', id: this.takeSelf() })
           break
         }
+        // Réponse à une commande (/…) : elle n'aura pas d'autre réponse.
+        if (msgId && this.nextSelf()?.command) this.takeSelf()
         if (text) this.emit('add', systemMessage(text))
         break
       }
@@ -385,7 +445,7 @@ export class LiveChat {
             if (duration == null || duration === '') this.rejoin()
             else if (Number(duration) > 0) this.emit('timeout', { seconds: Number(duration) })
           }
-        } else this.emit('clear')
+        } else this.emit('modclear')   // /clear d'un modérateur : tout le chat
         break
       }
     }
@@ -415,7 +475,15 @@ export class LiveChat {
         } else if (irc.command === 'CLEARCHAT') {
           // Banni ou exclu : ses messages déjà rejoués sont retirés aussi.
           const target = irc.params[irc.params.length - 1]?.toLowerCase()
-          if (target && !target.startsWith('#')) for (const m of older) if (m.userName === target) m.isDeleted = true
+          if (target && !target.startsWith('#')) {
+            for (const m of older) if (m.userName === target) m.isDeleted = true
+          } else if (older.length) {
+            // Chat vidé par un modérateur : tout ce qui précède l'est aussi,
+            // et une ligne le dit (texte mis par la vue, dans sa langue).
+            for (const m of older) m.isDeleted = true
+            const ms = Number(irc.tags['tmi-sent-ts'])
+            older.push(systemMessage('', { notice: 'clear', isHistorical: true, ...(ms > 0 ? { timestamp: ms } : {}) }))
+          }
         } else if (irc.command === 'CLEARMSG') {
           const id = irc.tags['target-msg-id']
           for (const m of older) if (m.id === id) m.isDeleted = true

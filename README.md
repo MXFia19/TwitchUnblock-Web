@@ -70,11 +70,11 @@ Watch Twitch lives and VODs in your browser, no subscription needed, with the re
 - **Predictions** live (read-only), incoming **raids** and **announcements** highlighted
 - **Hype train**, without an account: the “Incoming” card when a channel is one or two supports away from a Hype Train (dots and countdown), the departure, the current level with its real progress bar and time left, a line when a level is completed, and the end of a completed train — in real time in the main chat, every few seconds in the multi-live chat
 - Your name and **chosen words highlighted**; **filters**: hide bots, `!commands`, muted words, hide someone
-- Chat once logged in: emote and username autocomplete, emote picker, replies
+- Chat once logged in: emote and username autocomplete (Tab or a click picks the suggestion, the arrows move through them, Enter always sends), emote picker, replies. Your messages show as others see them (display name, badges, `/me`, Twitch emotes already seen in the chat) and can be replied to once Twitch has accepted them
 - **Chat restrictions said upfront**: the room's modes above the message box (followers only and for how long, subscribers only, emotes only, slow mode, verified account…), the channel's chat rules to accept before your first message, and a message Twitch refuses removed with the reason, instead of looking sent
 - **Banned from a channel's chat**: when Twitch refuses your account in that chat, the chat keeps going read-only without your account (like a logged-out viewer), with a banner in place of the message box and a “Retry with my account” button for when you're unbanned — remembered for that channel until the page is reloaded. A timeout shows a line with its duration
 - Click someone to see their latest messages, mention them or reply
-- Moderation honoured: deleted messages struck through or removed
+- Moderation honoured: deleted messages struck through or removed; a moderator's `/clear` says so in the chat
 - Scrolling pauses when you scroll up, with a “new messages” button
 - **VOD chat**, replayed in sync with the video
 

@@ -27,6 +27,11 @@ export class Hermes {
     let ws
     try { ws = new WebSocket(url) } catch { return this.retry() }
     this.ws = ws
+    // Nouvelle connexion : le chien de garde (toujours armé après une
+    // réouverture) lui laisse le délai entier pour dire bonjour. Avec l'heure
+    // du dernier message de l'ancienne, il coupait toutes les 5 s une
+    // connexion lente à s'établir.
+    this.lastSeen = Date.now()
     ws.onmessage = (ev) => {
       if (ws !== this.ws) return
       let msg

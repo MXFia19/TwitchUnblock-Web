@@ -3,7 +3,7 @@
 //  Port de handlePrivmsg / tokenizeChatSegment (Sources/Chat/).
 // ═══════════════════════════════════════════════════════════════════════════
 
-import { resolveEmote, twitchEmote } from './emotes.js'
+import { resolveEmote, seenTwitchEmote, twitchEmote } from './emotes.js'
 import { ircText, parseEmoteRanges, prefixNick, unescapeTag } from './irc.js'
 import { esc, uid } from '../util.js'
 
@@ -58,8 +58,10 @@ export function linkifyHtml(text) {
 }
 
 /** Découpe un segment de texte libre en liens, mentions, emotes tierces et
- *  mots. `userId` : auteur, pour ses emotes personnelles BTTV Pro. */
-export function tokenizeSegment(segment, userId) {
+ *  mots. `userId` : auteur, pour ses emotes personnelles BTTV Pro. `own` :
+ *  notre propre message, sans positions d'emotes Twitch — celles déjà vues
+ *  dans le chat sont reconnues par leur nom. */
+export function tokenizeSegment(segment, userId, own = false) {
   const out = []
   for (const word of segment.split(' ')) {
     if (!word) continue
@@ -69,7 +71,7 @@ export function tokenizeSegment(segment, userId) {
     } else if (word.startsWith('@') && word.length > 1) {
       out.push({ kind: 'mention', value: word.slice(1) })
     } else {
-      const emote = resolveEmote(word, userId)
+      const emote = resolveEmote(word, userId) ?? (own ? seenTwitchEmote(word) : null)
       out.push(emote ? { kind: 'emote', emote } : { kind: 'text', value: word })
     }
   }
@@ -231,13 +233,24 @@ export function noticeMessages(irc, historical = false) {
   return out
 }
 
-/** Notre propre message : Twitch ne le renvoie pas, on l'affiche nous-mêmes. */
-export function selfMessage(text, login, color) {
+/**
+ * Notre propre message : Twitch ne le renvoie pas, on l'affiche nous-mêmes,
+ * tel que les autres le voient — nom affiché, badges et couleur du compte
+ * (`me` : GLOBALUSERSTATE puis USERSTATE du salon), « /me » en action, emotes
+ * (celles de Twitch si on les a déjà vues dans le chat).
+ */
+export function selfMessage(text, me) {
+  const login = me.login ?? ''
+  const action = /^\/me\s+/i.exec(text)
+  const body = action ? text.slice(action[0].length) : text
   return base({
+    userId: me.userId ?? '',
     userName: login,
-    displayName: login,
-    color: readableColor(color) ?? '#bf94ff',
-    tokens: tokenizeSegment(text),
+    displayName: me.displayName || login,
+    color: readableColor(me.color) ?? fallbackColor(login),
+    badgeTag: me.badges ?? '',
+    tokens: tokenizeSegment(body, me.userId, true),
+    isAction: Boolean(action),
     isSelf: true,
   })
 }

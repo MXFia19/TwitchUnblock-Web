@@ -177,6 +177,12 @@ export function twitchEmote(id, name) {
   return emote
 }
 
+/** Emote Twitch déjà vue dans le chat, par son nom : pour nos propres
+ *  messages, que Twitch ne nous renvoie pas (donc sans positions d'emotes). */
+export function seenTwitchEmote(name) {
+  return twitchSeen.get(name) ?? null
+}
+
 /** Propositions pour l'autocomplétion : le préfixe l'emporte sur l'occurrence
  *  — en tapant « Kappa » on veut Kappa avant KappaPride. */
 export function suggestEmotes(prefix, limit = 8) {

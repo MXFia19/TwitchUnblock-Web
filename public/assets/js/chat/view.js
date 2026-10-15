@@ -153,6 +153,46 @@ function formatPoints(n) {
   return n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${(n / 1e3).toFixed(1)}k` : String(n)
 }
 
+/** Heure d'un message, dans la langue du site (pas celle du navigateur). */
+function timeLabel(ts) {
+  return new Date(ts).toLocaleTimeString(lang(), { hour: '2-digit', minute: '2-digit' })
+}
+
+/** Nom à écrire après « @ » : Twitch ne notifie que le pseudo, et un nom
+ *  affiché localisé (日本語…) ne préviendrait personne. Le nom affiché
+ *  reste quand il ne diffère du pseudo que par la casse. */
+function mentionName(login, displayName) {
+  return displayName && displayName.toLowerCase() === login ? displayName : login
+}
+
+/** Mots surveillés (réglages) → une expression qui les trouve en mots
+ *  entiers, expressions de plusieurs mots comprises (la comparaison mot par
+ *  mot n'en trouvait jamais). Bornes : ni lettre ni chiffre de part et
+ *  d'autre, tous alphabets (\b ignore les lettres accentuées). Gardée tant
+ *  que la liste ne change pas. */
+let watchedKey = null
+let watchedRe = null
+function watchedWords(words) {
+  const key = words.join('\n')
+  if (key !== watchedKey) {
+    watchedKey = key
+    watchedRe = null
+    const parts = words.map((w) => w.trim()).filter(Boolean)
+      .map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+'))
+    try {
+      if (parts.length) watchedRe = new RegExp(`(?:^|[^\\p{L}\\p{N}_])(?:${parts.join('|')})(?=$|[^\\p{L}\\p{N}_])`, 'u')
+    } catch { /* navigateur sans \p{…} : pas de surlignage par mot */ }
+  }
+  return watchedRe
+}
+
+/** Texte où chercher les mots surveillés : tout le message, noms d'emotes
+ *  et mentions compris, sans les liens. */
+function watchText(tokens) {
+  return tokens.map((tk) => (tk.kind === 'emote' ? tk.emote.name
+    : tk.kind === 'mention' ? `@${tk.value}` : tk.kind === 'link' ? '' : tk.value)).join(' ').toLowerCase()
+}
+
 export class ChatView {
   /**
    * @param {HTMLElement} root
@@ -1013,7 +1053,11 @@ export class ChatView {
         for (const m of payload) if (!this.isFiltered(m)) this.enqueue(m)
         break
       case 'prepend':
-        this.prepend(payload.filter((m) => (this.o.prefs.keepDeleted || !m.isDeleted) && !this.isFiltered(m)))
+        this.prepend(payload
+          .filter((m) => (this.o.prefs.keepDeleted || !m.isDeleted) && !this.isFiltered(m))
+          // Chat vidé par un modérateur dans l'historique : la ligne qui le
+          // dit, dans la langue du site.
+          .map((m) => (m.notice === 'clear' ? { ...m, systemMsg: t('chat_cleared') } : m)))
         break
       case 'moderate':
         // Les messages encore en attente sont modérés aussi : sinon un
@@ -1025,13 +1069,31 @@ export class ChatView {
         this.moderate(payload)
         break
       case 'clear':
-        this.delayed = []
-        this.messages = []
-        this.queue = []
-        this.el.list.replaceChildren()
-        this.stick = true
-        this.el.resume.hidden = true
+        this.clearList()
         break
+      case 'modclear':
+        // /clear d'un modérateur : une ligne le dit (le panneau se vidait sans
+        // explication). Avec « garder les messages supprimés », rien ne
+        // disparaît : tout est barré, messages retenus pour la synchro compris,
+        // et la ligne vient après eux.
+        if (this.o.prefs.keepDeleted) {
+          for (const m of [...this.messages, ...this.queue, ...this.delayed.map((d) => d.msg)]) m.isDeleted = true
+          for (const n of this.el.list.querySelectorAll('.msg:not(.sys)')) n.classList.add('deleted')
+          this.deliver(systemMessage(t('chat_cleared')))
+        } else {
+          this.clearList()
+          this.enqueue(systemMessage(t('chat_cleared')))
+        }
+        break
+      case 'confirmed': {
+        // Notre message accepté par Twitch : son vrai id remplace l'id local
+        // (réponses, suppression par un modérateur).
+        const m = this.messages.find((x) => x.id === payload.local) ?? this.queue.find((x) => x.id === payload.local)
+        if (m) { m.id = payload.id; m.confirmed = true }
+        for (const n of this.el.list.querySelectorAll(`.msg[data-id="${CSS.escape(payload.local)}"]`)) n.dataset.id = payload.id
+        if (this.el.card.dataset.msg === payload.local) this.el.card.dataset.msg = payload.id
+        break
+      }
       case 'empty':
         this.el.empty.textContent = t('chat_vod_empty')
         this.el.empty.hidden = false
@@ -1048,8 +1110,8 @@ export class ChatView {
       }
       case 'readonly':
         // Twitch refuse le compte dans ce chat (banni) : le client continue
-        // sans lui. Un message parti juste avant n'a pas été envoyé.
-        this.dropOwn(payload.id)
+        // sans lui. Les messages partis juste avant n'ont pas été envoyés.
+        for (const id of payload.ids ?? []) this.dropOwn(id)
         this.enqueue(systemMessage(t('chat_ban_switched')))
         this.setReply(null)
         this.hidePicker()
@@ -1063,6 +1125,19 @@ export class ChatView {
         this.enqueue(systemMessage(t('chat_timed_out', { d: secondsLabel(payload.seconds) })))
         break
     }
+  }
+
+  /** Liste vidée (saut dans une VOD, /clear d'un modérateur), messages en
+   *  attente compris. Le compteur du bouton « nouveaux messages » aussi :
+   *  il annonçait ensuite des messages effacés. */
+  clearList() {
+    this.delayed = []
+    this.messages = []
+    this.queue = []
+    this.el.list.replaceChildren()
+    this.stick = true
+    this.pending = 0
+    this.el.resume.hidden = true
   }
 
   /** Retire un message envoyé (affiché d'avance) que Twitch n'a pas pris. */
@@ -1138,7 +1213,10 @@ export class ChatView {
   }
 
   prepend(older) {
-    const known = new Set(this.messages.map((m) => m.id))
+    // Le direct démarre pendant le chargement de l'historique : un message
+    // déjà reçu (affiché, en file, ou retenu pour la synchro avec l'image)
+    // n'est pas rejoué une seconde fois.
+    const known = new Set([...this.messages, ...this.queue, ...this.delayed.map((d) => d.msg)].map((m) => m.id))
     const fresh = older.filter((m) => !known.has(m.id))
     if (!fresh.length) return
     const frag = document.createDocumentFragment()
@@ -1169,12 +1247,12 @@ export class ChatView {
 
     const me = this.o.session().login
     const words = this.o.prefs.highlightWords ?? []
+    const watched = !m.isSelf && words.length ? watchedWords(words) : null
     // Mentionné (avec ou sans @) ou mot-clé surveillé : surligné.
-    const mentionsMe = !m.isSelf && m.tokens.some((tk) => {
+    const mentionsMe = !m.isSelf && (m.tokens.some((tk) => {
       const v = String(tk.value ?? '').toLowerCase().replace(/^@/, '').replace(/[.,!?:;]+$/, '')
-      return (me && (tk.kind === 'mention' || tk.kind === 'text') && v === me)
-        || (tk.kind === 'text' && words.includes(v))
-    })
+      return me && (tk.kind === 'mention' || tk.kind === 'text') && v === me
+    }) || Boolean(watched?.test(watchText(m.tokens))))
     // « msg-announce », pas « announce » : cette classe-là est celle de la
     // bannière d'annonce du site (mise en page en colonnes, bordure) — le
     // message en héritait et le pseudo s'écrasait sur plusieurs lignes.
@@ -1193,9 +1271,7 @@ export class ChatView {
     if (m.replyTo) {
       html += `<div class="msg-reply">${icon('reply', 12)}<span>${esc(t('reply_to', { u: m.replyTo }))}${m.replyBody ? ` : ${esc(m.replyBody)}` : ''}</span></div>`
     }
-    const time = this.mode === 'vod' && m.offset !== null
-      ? formatClock(m.offset)
-      : new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    const time = this.mode === 'vod' && m.offset !== null ? formatClock(m.offset) : timeLabel(m.timestamp)
     html += `<span class="msg-time">${esc(time)}</span>`
     m.badgeList ??= parseBadgeTag(m.badgeTag)
     // Une image en échec garderait sa place, vide, et décalerait le pseudo.
@@ -1213,8 +1289,12 @@ export class ChatView {
         case 'emote':
           return `<img class="emote" src="${esc(tk.emote.url)}" alt="${esc(tk.emote.name)}" title="${esc(tk.emote.name)}" data-emote-src="${esc(tk.emote.source ?? '')}" data-emote-id="${esc(tk.emote.id ?? '')}"${tk.emote.personal ? ' data-personal="1"' : ''} loading="lazy" decoding="async" onerror="this.replaceWith(this.alt)">`
         case 'mention': {
-          const self = me && tk.value.toLowerCase() === me ? ' self' : ''
-          return `<span class="mention${self}" data-user="${esc(tk.value.toLowerCase())}">@${esc(tk.value)}</span>`
+          // « @pseudo, » : la ponctuation suit la mention sans en faire
+          // partie — la fiche visait « pseudo, », et « soi » n'était pas reconnu.
+          const who = tk.value.replace(/[.,!?:;]+$/, '')
+          if (!who) return esc(`@${tk.value}`)
+          const self = me && who.toLowerCase() === me ? ' self' : ''
+          return `<span class="mention${self}" data-user="${esc(who.toLowerCase())}">@${esc(who)}</span>${esc(tk.value.slice(who.length))}`
         }
         case 'link': {
           const href = /^https?:\/\//i.test(tk.value) ? tk.value : `https://${tk.value}`
@@ -1229,9 +1309,11 @@ export class ChatView {
   }
 
   moderate({ id, user }) {
+    // Les lignes de message seulement : `data-user` est aussi posé sur les
+    // @mentions, qu'un ban ou une exclusion retirait des messages des autres.
     const nodes = id
-      ? this.el.list.querySelectorAll(`[data-id="${CSS.escape(id)}"]`)
-      : this.el.list.querySelectorAll(`[data-user="${CSS.escape(user)}"]`)
+      ? this.el.list.querySelectorAll(`.msg[data-id="${CSS.escape(id)}"]`)
+      : this.el.list.querySelectorAll(`.msg[data-user="${CSS.escape(user)}"]`)
     for (const n of nodes) {
       if (this.o.prefs.keepDeleted) n.classList.add('deleted')
       else n.remove()
@@ -1320,6 +1402,9 @@ export class ChatView {
   }
 
   onKey(e) {
+    // Conversion en cours (japonais, chinois, coréen) : Entrée valide le
+    // mot choisi, elle n'envoie rien.
+    if (e.isComposing || e.keyCode === 229) return
     if (!this.el.suggest.hidden && this.suggestions.length) {
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
         e.preventDefault()
@@ -1328,7 +1413,11 @@ export class ChatView {
         this.renderSuggestions()
         return
       }
-      if (e.key === 'Tab' || (e.key === 'Enter' && this.suggestIndex >= 0)) {
+      // Tab complète avec la suggestion en surbrillance (flèches pour en
+      // changer), comme sur Twitch et 7TV. Entrée, elle, envoie toujours :
+      // les suggestions s'ouvrent dès deux lettres, y compris au milieu d'un
+      // mot d'emote, et Entrée remplaçait un mot ordinaire sans rien envoyer.
+      if (e.key === 'Tab' && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) {
         e.preventDefault()
         this.applySuggestion(this.suggestIndex)
         return
@@ -1362,7 +1451,12 @@ export class ChatView {
       this.suggestions = [...names.keys()]
         .filter((n) => n.startsWith(kw))
         .slice(0, 8)
-        .map((n) => ({ kind: 'user', value: `@${names.get(n)?.displayName ?? n}`, label: names.get(n)?.displayName ?? n, color: names.get(n)?.color }))
+        .map((n) => {
+          const name = names.get(n)?.displayName || n
+          const value = mentionName(n, name)
+          // Nom localisé : c'est le pseudo qui s'écrit, il se voit aussi.
+          return { kind: 'user', value: `@${value}`, label: value === name ? name : `${name} (${n})`, color: names.get(n)?.color }
+        })
     } else if (word.length >= 2) {
       this.suggestions = suggestEmotes(word, 8).map((e) => ({ kind: 'emote', value: e.name, label: e.name, url: e.url }))
     } else {
@@ -1374,10 +1468,12 @@ export class ChatView {
 
   renderSuggestions() {
     if (!this.suggestions.length) return this.hideSuggestions()
+    // « Tab » sur la suggestion en surbrillance (au clavier seulement) : la
+    // touche qui la prend, puisque Entrée envoie.
     this.el.suggest.innerHTML = this.suggestions.map((s, i) => `
       <button type="button" class="suggest-item${i === this.suggestIndex ? ' active' : ''}" data-i="${i}" role="option">
         ${s.kind === 'emote' ? `<img src="${esc(s.url)}" alt="">` : `<span class="dot" style="background:${esc(s.color ?? '#bf94ff')}"></span>`}
-        <span>${esc(s.label)}</span>
+        <span>${esc(s.label)}</span>${i === this.suggestIndex ? '<kbd class="suggest-key" aria-hidden="true">Tab</kbd>' : ''}
       </button>`).join('')
     this.el.suggest.hidden = false
   }
@@ -1529,7 +1625,15 @@ export class ChatView {
     if (hide) list.add(login); else list.delete(login)
     p.blockedUsers = [...list].slice(-500)
     this.o.onPrefsChange?.()
-    if (hide) for (const n of this.el.list.querySelectorAll('.msg[data-user]')) if (n.dataset.user === login) n.remove()
+    if (hide) {
+      for (const n of this.el.list.querySelectorAll('.msg[data-user]')) if (n.dataset.user === login) n.remove()
+      // Ses messages déjà reçus mais pas encore affichés (retenus pour la
+      // synchro avec l'image, ou en file) s'affichaient quand même.
+      const theirs = (m) => m.userName === login
+      this.delayed = this.delayed.filter((d) => !theirs(d.msg))
+      this.queue = this.queue.filter((m) => !theirs(m))
+      this.messages = this.messages.filter((m) => !theirs(m))
+    }
     return hide
   }
 
@@ -1554,12 +1658,12 @@ export class ChatView {
       </div>
       <div class="user-card-actions">
         ${canReply ? `<button class="btn sm" type="button" data-act="mention">@ ${esc(t('mention'))}</button>
-        ${msg ? `<button class="btn sm" type="button" data-act="reply">${icon('reply', 14)} ${esc(t('reply'))}</button>` : ''}` : ''}
+        ${msg && (!msg.isSelf || msg.confirmed) ? `<button class="btn sm" type="button" data-act="reply">${icon('reply', 14)} ${esc(t('reply'))}</button>` : ''}` : ''}
         <button class="btn sm ghost" type="button" data-act="block">${icon(this.o.prefs.blockedUsers?.includes(login) ? 'eye' : 'eyeOff', 14)} ${esc(t(this.o.prefs.blockedUsers?.includes(login) ? 'unhide_user' : 'hide_user'))}</button>
       </div>
       <div class="user-card-label">${esc(t('user_messages'))}</div>
       <div class="user-card-msgs">${theirs.length
-        ? theirs.map((m) => `<div class="uc-msg${m.isDeleted ? ' deleted' : ''}"><span class="msg-time">${esc(this.mode === 'vod' && m.offset !== null ? formatClock(m.offset) : new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))}</span> ${this.renderTokens(m.tokens, null)}</div>`).join('')
+        ? theirs.map((m) => `<div class="uc-msg${m.isDeleted ? ' deleted' : ''}"><span class="msg-time">${esc(this.mode === 'vod' && m.offset !== null ? formatClock(m.offset) : timeLabel(m.timestamp))}</span> ${this.renderTokens(m.tokens, null)}</div>`).join('')
         : '<div class="muted">—</div>'}</div>`
     card.hidden = false
     const list = $('.user-card-msgs', card)
@@ -1589,7 +1693,7 @@ export class ChatView {
     }
     if (act === 'mention') {
       const m = this.messages.find((x) => x.userName === card.dataset.login)
-      this.insertText(`@${m?.displayName ?? card.dataset.login}`)
+      this.insertText(`@${mentionName(card.dataset.login, m?.displayName)}`)
       this.hideCard()
     }
     if (act === 'reply') {
