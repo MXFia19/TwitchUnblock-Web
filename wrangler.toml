@@ -14,8 +14,14 @@ crons = ["* * * * *"]
 # Notifications ntfy de l'app iOS : publiées par le relais du VPS, ntfy.sh
 # refusant les adresses partagées des Workers (worker.js, NTFY_RELAY). Le
 # relais n'accepte que les lots signés par la clé push de ce Worker.
+#
+# Administrateur des outils de /stats (compte mxfia19) : le Worker n'en a
+# plus aucun par défaut. Une autre valeur posée dans le tableau de bord est
+# remplacée par celle-ci : ajouter ici les autres identifiants. Pour son
+# propre Worker, mettre le sien.
 [vars]
 NTFY_RELAY = "https://relais.mxfia19.duckdns.org"
+ADMIN_TWITCH_IDS = "839837720"
 
 [observability]
 enabled = false
@@ -47,6 +53,10 @@ database_id = "b586defd-3216-425b-9c13-e75abd8dbd13"
 # « Fallback Worker ».
 [env.fallback]
 workers_dev = true
+
+# Un environnement n'hérite pas non plus des variables.
+[env.fallback.vars]
+ADMIN_TWITCH_IDS = "839837720"
 
 # Le secours n'a pas de base : pas de tâche planifiée.
 [env.fallback.triggers]

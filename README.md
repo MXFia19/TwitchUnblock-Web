@@ -158,6 +158,7 @@ ntfy.sh's free tier counts messages per IP address (250 a day). Every Cloudflare
 - **History backups are private**: every read or write must carry the owner's Twitch token. The Worker has Twitch confirm it and checks it belongs to that account — knowing someone's (public) Twitch ID is no longer enough.
 - **The proxy only relays Twitch and the proxy sources** (`ttvnw.net`, `jtvnw.net`, `twitch.tv`, `twitchcdn.net`, `luminous.dev`, exactly `twitch-al.nadeko.net`, and on `cloudfront.net` only Twitch's own VOD distributions — a new one is accepted once Twitch itself points to it), over HTTPS — it is not an open proxy. Redirects are followed one by one (4 at most), each new address checked the same way. What comes back is served as media with only the headers a player needs, never as a web page (`nosniff`, sandboxing CSP).
 - Usage pings only accept random UUIDs and store no IP address.
+- Rate limits (feedback, replies, pings, notifications) count an IPv6 address by its `/64` block. Screenshots attached to feedback have a daily cap for the whole Worker and stop before the D1 database fills up; the message itself still goes through.
 
 ---
 
@@ -177,7 +178,7 @@ Not counted: automated browsers and bots, copies of the site outside the officia
 
 **Live notifications** on `/stats` come from the Worker's own tables, not from the signal above: subscribers (website by push service — Apple, Google, Mozilla, Microsoft — and iOS app through ntfy), new ones today and over 7 days, channels watched and how many are live right now, notifications waiting, the ntfy route (relay or direct) with today's messages against ntfy.sh's 250 a day and any pause, and notifications sent per day with the last 7 days' totals (lives detected, tests, failures, refusals, expired subscriptions). Counts only: no channel name, nothing per subscriber.
 
-The site owner's Twitch account gets developer tools on `/stats` (delete entries, reset, erase someone's backup); the Worker checks the token on every admin request.
+The Twitch accounts in `ADMIN_TWITCH_IDS` (the site owner's) get developer tools on `/stats` (delete entries, reset, erase someone's backup); the Worker checks the token on every admin request.
 
 Raw numbers: `GET https://test2.kurzmathis4.workers.dev/api/stats`
 
@@ -216,7 +217,7 @@ Optional settings, in the Cloudflare dashboard under *Workers & Pages → your W
 | `FEEDBACK_WEBHOOK` | Secret | Discord webhook address: each bug report, idea and reply is posted there, screenshots attached. In a **forum** channel, each report gets its own post, where its replies land too. `/stats` shows whether the last delivery worked and has a **Test Discord delivery** button. |
 | `FEEDBACK_BOT_SECRET` | Secret | Optional. Shared secret (32+ random characters) of the [Discord bot](#discord-bot-feedback-alerts-releases): the same value goes in the relay's `.env`. Without it, the bot's route is off. |
 | `ALERT_WEBHOOK` | Secret | Optional. Webhook of a private Discord channel: every 5 minutes the Worker checks the [video relay](#video-relay-on-your-own-server-vps) (`NTFY_RELAY`) and the Discord bot, and posts there when one goes down or comes back. |
-| `ADMIN_TWITCH_IDS` | Text | Twitch user ID(s) of the site owner, comma-separated, for the developer tools on `/stats`. |
+| `ADMIN_TWITCH_IDS` | Text | Twitch user ID(s) of the site owner, comma-separated, for the developer tools on `/stats`. Set in `wrangler.toml` for the official Worker (it replaces a dashboard value): put your own for your own Worker. Without it, nobody gets the tools. |
 | `SITE_ORIGINS` | Text | Website address(es) whose usage pings are counted, comma-separated. |
 | `NTFY_TOKEN` | Secret | Optional. Access token of a **paid** [ntfy](https://ntfy.sh) account, for the iOS app's live notifications: ntfy.sh counts free use per IP address (250 messages a day), which the Worker's shared Cloudflare addresses don't get — hence the relay below. A paid account is counted per account (2,500 a day for $6/month) and lets the Worker publish directly. A free account changes nothing. |
 | `NTFY_RELAY` | Text | Set in `wrangler.toml`: the [video relay](#video-relay-on-your-own-server-vps) that publishes the iOS app's ntfy messages (see [How it works](#how-it-works)). For your own Worker, point it to your own relay (with `NTFY_WORKER` set there) or remove it. |
@@ -499,7 +500,7 @@ Settings (in `docker-compose.yml`):
 |---|---|
 | `PUBLIC_URL` | Public address of your instance, without a trailing `/` (default `http://localhost:8787`). |
 | `TWITCH_CLIENT_ID` | Optional. To log in with Twitch, create an app on [dev.twitch.tv/console](https://dev.twitch.tv/console) with `PUBLIC_URL/` as the redirect URL, and paste its Client ID. |
-| `ADMIN_TWITCH_IDS` | Optional. Your Twitch user ID(s), comma-separated, for the developer tools on `/stats`. |
+| `ADMIN_TWITCH_IDS` | Optional. Your Twitch user ID(s), comma-separated, for the developer tools on `/stats`. Empty: nobody gets them (`/stats` says so once you're logged in). |
 
 Live notifications work too: the container runs the scheduled check itself.
 

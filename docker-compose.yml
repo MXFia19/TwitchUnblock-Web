@@ -21,6 +21,7 @@ services:
       # https://dev.twitch.tv/console avec PUBLIC_URL/ comme adresse de retour.
       TWITCH_CLIENT_ID: ""
       # Ton identifiant Twitch, pour les outils développeur de /stats.
+      # Vide : personne n'y a accès.
       ADMIN_TWITCH_IDS: ""
 
 volumes:

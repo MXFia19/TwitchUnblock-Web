@@ -419,7 +419,7 @@
       kToday: "aujourd'hui", kWeek: '7 jours', kMonth: '30 jours', kBack: 'revenus',
       kNew: "Nouveaux : {a} aujourd'hui · {b} sur 7 jours · {c} sur 30 jours",
       thDay: 'Jour', thVersion: 'Version', thActive: 'Actifs', thWho: 'Qui', thPlat: 'Plateformes', thFirst: 'Premier', thLast: 'Dernier', thDays: 'Jours',
-      signedIn: 'Connecté :', listErr: 'Liste indisponible ({e})', entries: '{a} / {b} entrées',
+      signedIn: 'Connecté :', noAdmin: 'aucun admin sur ce serveur (ADMIN_TWITCH_IDS)', listErr: 'Liste indisponible ({e})', entries: '{a} / {b} entrées',
       tagAcct: 'compte', tagAnon: 'anonyme', del: 'Supprimer',
       confirm: '{l} ?\nCette action est définitive.', deleting: 'Suppression…',
       deleted: '{n} entrée(s) supprimée(s)', remaining: ' · {n} restante(s), relance l’action', fail: 'Échec : {e}',
@@ -475,7 +475,7 @@
       kToday: 'today', kWeek: '7 days', kMonth: '30 days', kBack: 'came back',
       kNew: 'New: {a} today · {b} in 7 days · {c} in 30 days',
       thDay: 'Day', thVersion: 'Version', thActive: 'Active', thWho: 'Who', thPlat: 'Platforms', thFirst: 'First', thLast: 'Last', thDays: 'Days',
-      signedIn: 'Signed in:', listErr: 'List unavailable ({e})', entries: '{a} / {b} entries',
+      signedIn: 'Signed in:', noAdmin: 'no admin on this server (ADMIN_TWITCH_IDS)', listErr: 'List unavailable ({e})', entries: '{a} / {b} entries',
       tagAcct: 'account', tagAnon: 'anonymous', del: 'Delete',
       confirm: '{l}?\nThis cannot be undone.', deleting: 'Deleting…',
       deleted: '{n} entry(ies) deleted', remaining: ' · {n} left, run the action again', fail: 'Failed: {e}',
@@ -531,7 +531,7 @@
       kToday: 'hoy', kWeek: '7 días', kMonth: '30 días', kBack: 'volvieron',
       kNew: 'Nuevos: {a} hoy · {b} en 7 días · {c} en 30 días',
       thDay: 'Día', thVersion: 'Versión', thActive: 'Activos', thWho: 'Quién', thPlat: 'Plataformas', thFirst: 'Primero', thLast: 'Último', thDays: 'Días',
-      signedIn: 'Conectado:', listErr: 'Lista no disponible ({e})', entries: '{a} / {b} entradas',
+      signedIn: 'Conectado:', noAdmin: 'ningún admin en este servidor (ADMIN_TWITCH_IDS)', listErr: 'Lista no disponible ({e})', entries: '{a} / {b} entradas',
       tagAcct: 'cuenta', tagAnon: 'anónimo', del: 'Eliminar',
       confirm: '¿{l}?\nEsta acción es definitiva.', deleting: 'Eliminando…',
       deleted: '{n} entrada(s) eliminada(s)', remaining: ' · quedan {n}, repite la acción', fail: 'Error: {e}',
@@ -848,7 +848,8 @@
     if (!token) { $('#who').textContent = ''; return }
     try {
       const me = await (await authed('/me')).json()
-      if (me.login) $('#who').innerHTML = `${t('signedIn')} <b>${esc(me.login)}</b>${me.admin ? ' · admin' : ''}`
+      // Instance auto-hébergée sans ADMIN_TWITCH_IDS : plus d'admin par défaut, on le dit.
+      if (me.login) $('#who').innerHTML = `${t('signedIn')} <b>${esc(me.login)}</b>${me.admin ? ' · admin' : me.adminConfigured === false ? ` · ${esc(t('noAdmin'))}` : ''}`
       if (me.admin) { $('#dev').hidden = false; loadEntries(); loadAnnouncement(); loadFeedback() }
     } catch {}
   }

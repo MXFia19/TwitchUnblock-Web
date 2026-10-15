@@ -820,8 +820,13 @@ function getRequestHeaders(login) {
 // ═══════════════════════════════════════════════════════════════════════════
 const USAGE_PREFIX = 'usage_';
 const USAGE_ACCOUNT_PREFIX = 'usage_a_';
-/** Comptes Twitch administrateurs (ID numérique : le pseudo peut changer). mxfia19 */
-let ADMIN_IDS = ['839837720'];
+/** Comptes Twitch administrateurs (ID numérique : le pseudo peut changer),
+ *  posés par la variable ADMIN_TWITCH_IDS (wrangler.toml pour l'instance
+ *  officielle). Aucun par défaut : une instance auto-hébergée qui ne la
+ *  remplissait pas donnait au compte du développeur officiel les outils
+ *  d'administration — retours et contacts, comptes du comptage,
+ *  effacements, annonces. */
+let ADMIN_IDS = [];
 const USAGE_RETENTION_DAYS = 35;
 const PLATFORMS = ['ios', 'web'];
 // Le site officiel : un ping « web » venu d'ailleurs (copie locale, tests,
@@ -848,7 +853,7 @@ async function handlePing(request, env) {
     // Chaque ping est une écriture D1 (100 000 par jour en gratuit) : une même
     // adresse ne peut pas en enchaîner des centaines. Compté en mémoire
     // seulement, jamais stocké.
-    if (pingFlood(request.headers.get('CF-Connecting-IP') || '')) return jsonError('Trop de requêtes', 429);
+    if (overLimit(pingHits, clientKey(request), 10)) return jsonError('Trop de requêtes', 429);
 
     // Bruit écarté sans erreur (le client n'a rien à corriger) : robots et
     // navigateurs automatisés, et pings « web » hors du site officiel.
@@ -953,17 +958,7 @@ async function handlePing(request, env) {
     return jsonResponse({ ok: true, days, account: Boolean(who) });
 }
 
-const pingHits = new Map();   // adresse → { n, until } (mémoire de l'instance)
-function pingFlood(ip) {
-    const now = Date.now();
-    const hit = pingHits.get(ip);
-    if (!hit || hit.until < now) {
-        if (pingHits.size > 5000) pingHits.clear();
-        pingHits.set(ip, { n: 1, until: now + 60 * 60 * 1000 });
-        return false;
-    }
-    return ++hit.n > 10;
-}
+const pingHits = new Map();   // adresse → { n, until } (mémoire de l'instance, voir overLimit)
 
 // Les statistiques parcourent toutes les entrées de comptage (lectures D1 :
 // 5 millions par jour en gratuit). Mises en cache une minute, pour qu'une
@@ -1193,10 +1188,11 @@ async function requireAdmin(request) {
     return { who };
 }
 
-// GET /api/admin/me — suis-je administrateur ?
+// GET /api/admin/me — suis-je administrateur ? (adminConfigured : faux sur
+// une instance sans ADMIN_TWITCH_IDS, /stats le signale.)
 async function handleAdminMe(request) {
     const who = await tokenIdentity(request);
-    return jsonResponse({ login: who?.login ?? null, admin: Boolean(who && ADMIN_IDS.includes(who.userId)) });
+    return jsonResponse({ login: who?.login ?? null, admin: Boolean(who && ADMIN_IDS.includes(who.userId)), adminConfigured: ADMIN_IDS.length > 0 });
 }
 
 async function listUsage(env) {
@@ -1506,16 +1502,69 @@ function historyEmbed(messages) {
     return { title: '🗂️ Earlier conversation (before the Discord bridge)', description: text, color: 0x6b7280 };
 }
 
-/** Plus de `max` requêtes dans l'heure pour cette adresse ? */
-function overLimit(map, ip, max) {
+/** Plus de `max` requêtes dans l'heure pour cette clé (adresse, préfixe
+ *  IPv6, compte Discord) ? Au-delà de 5 000 clés suivies, on oublie celles
+ *  dont l'heure est passée, puis les moins actives (une rafale d'adresses
+ *  neuves) : `clear()` remettait tout le monde à zéro — 5 000 adresses
+ *  suffisaient à effacer sa propre trace. */
+function overLimit(map, key, max) {
     const now = Date.now();
-    const hit = map.get(ip);
-    if (!hit || hit.until < now) {
-        if (map.size > 5000) map.clear();
-        map.set(ip, { n: 1, until: now + 60 * 60 * 1000 });
-        return false;
+    const hit = map.get(key);
+    if (hit && hit.until >= now) return ++hit.n > max;
+    map.delete(key);
+    if (map.size >= 5000) {
+        for (const [k, v] of map) if (v.until < now) map.delete(k);
+        if (map.size >= 4000) {
+            [...map].sort((a, b) => a[1].n - b[1].n).slice(0, map.size - 4000).forEach(([k]) => map.delete(k));
+        }
     }
-    return ++hit.n > max;
+    map.set(key, { n: 1, until: now + 60 * 60 * 1000 });
+    return false;
+}
+
+/** Clé d'une personne pour les limites de débit : son adresse IPv4, ou le
+ *  préfixe /64 de son adresse IPv6 — un abonné en reçoit souvent un entier,
+ *  et en changeant d'adresse à chaque requête il échappait à toutes les
+ *  limites. */
+function clientKey(request) {
+    const ip = request.headers.get('CF-Connecting-IP') || '';
+    if (!ip.includes(':')) return ip;
+    const v4 = /(\d+\.\d+\.\d+\.\d+)$/.exec(ip);   // ::ffff:1.2.3.4
+    if (v4) return v4[1];
+    const [head, tail] = ip.toLowerCase().split('::');
+    const left = head ? head.split(':') : [];
+    const right = tail ? tail.split(':') : [];
+    const groups = tail === undefined ? left : [...left, ...Array(Math.max(0, 8 - left.length - right.length)).fill('0'), ...right];
+    return groups.slice(0, 4).map((g) => g.padStart(4, '0')).join(':') + '::/64';
+}
+
+// Photos des retours : un plafond par jour pour tout le Worker, gardé en D1
+// (les limites par adresse ne tiennent qu'en mémoire d'une instance), et
+// plus aucune quand la base approche de sa taille maximale (500 Mo en
+// gratuit : pleine, plus rien ne s'y écrit — sauvegardes, comptage,
+// notifications). Le message passe toujours, sans ses photos. Les réponses
+// de l'équipe n'y sont pas soumises.
+const FEEDBACK_PHOTOS_PER_DAY = 30 * 1024 * 1024;   // caractères base64 (~22 Mo d'images)
+const FEEDBACK_PHOTOS_DB_MAX = 400 * 1024 * 1024;   // octets de base
+
+/** Photos d'une personne, ou [] quand le plafond du jour ou la taille de la
+ *  base l'interdisent ; celles qui passent sont comptées. */
+async function photoAllowance(env, photos) {
+    if (!photos.length) return photos;
+    const size = photos.reduce((n, p) => n + p.b64.length, 0);
+    const day = new Date().toISOString().slice(0, 10);
+    try {
+        await ensureSchema(env);
+        const r = await env.DB.prepare(`SELECT n FROM stats_day WHERE day = ?1 AND metric = 'fb_photo_b64'`).bind(day).all();
+        const used = Number(r.results?.[0]?.n) || 0;
+        const dbSize = Number(r.meta?.size_after) || 0;   // taille de la base (D1)
+        if (used + size > FEEDBACK_PHOTOS_PER_DAY || dbSize > FEEDBACK_PHOTOS_DB_MAX) {
+            console.warn(`retours : photos refusées (${Math.round(used / 1e6)} Mo aujourd'hui, base de ${Math.round(dbSize / 1e6)} Mo)`);
+            return [];
+        }
+        await bumpDaily(env, day, { fb_photo_b64: size });
+    } catch (e) { console.warn('retours : plafond des photos illisible,', e.message); }
+    return photos;
 }
 
 /** Texte libre : sans caractères de contrôle (sauf retours à la ligne), borné. */
@@ -1591,7 +1640,7 @@ async function handleFeedback(request, env, ctx) {
     if (!env.DB) return jsonError("Base D1 'DB' non liée au Worker.", 500);
     if (BOT_UA.test(request.headers.get('User-Agent') || '')) return jsonResponse({ ok: true, ignored: true });
     // 5 retours par heure et par adresse : de quoi tout dire, pas de quoi inonder.
-    if (overLimit(feedbackHits, request.headers.get('CF-Connecting-IP') || '', 5)) {
+    if (overLimit(feedbackHits, clientKey(request), 5)) {
         return jsonError('Trop de messages, réessaie dans une heure', 429);
     }
 
@@ -1601,7 +1650,7 @@ async function handleFeedback(request, env, ctx) {
     if (message.length < 5) return jsonError('Message trop court', 400);
     let info = body.info;
     if (info && typeof info === 'object') { try { info = JSON.stringify(info); } catch (e) { info = ''; } }
-    const photos = cleanPhotos(body.photos);
+    const photos = await photoAllowance(env, cleanPhotos(body.photos));
 
     const now = Date.now();
     const key = `${FEEDBACK_PREFIX}${now.toString(36)}_${crypto.randomUUID().slice(0, 8)}`;
@@ -1631,7 +1680,7 @@ async function handleFeedbackThread(request, env) {
     if (!env.DB) return jsonError("Base D1 'DB' non liée au Worker.", 500);
     // Une discussion ouverte est relue toutes les 20 s (site et app) : 600
     // par heure et par adresse laissent de la marge à plusieurs appareils.
-    if (overLimit(threadHits, request.headers.get('CF-Connecting-IP') || '', 600)) return jsonError('Trop de requêtes', 429);
+    if (overLimit(threadHits, clientKey(request), 600)) return jsonError('Trop de requêtes', 429);
     let body;
     try { body = await request.json(); } catch (e) { return jsonError('JSON invalide', 400); }
     const list = Array.isArray(body.items) ? body.items.slice(0, 30) : [];
@@ -1649,7 +1698,7 @@ async function handleFeedbackReply(request, env, ctx) {
     if (request.method !== 'POST') return jsonError('Method Not Allowed', 405);
     if (!env.DB) return jsonError("Base D1 'DB' non liée au Worker.", 500);
     if (BOT_UA.test(request.headers.get('User-Agent') || '')) return jsonResponse({ ok: true, ignored: true });
-    if (overLimit(replyHits, request.headers.get('CF-Connecting-IP') || '', 20)) {
+    if (overLimit(replyHits, clientKey(request), 20)) {
         return jsonError('Trop de messages, réessaie dans une heure', 429);
     }
     let body;
@@ -1658,11 +1707,13 @@ async function handleFeedbackReply(request, env, ctx) {
     const found = await ownedFeedback(env, id, body.token);
     if (!found) return jsonError('Retour introuvable', 404);
     const message = cleanText(body.message, 2000);
-    const photos = cleanPhotos(body.photos);
-    if (!message && !photos.length) return jsonError('Message vide', 400);
+    const asked = cleanPhotos(body.photos);
+    if (!message && !asked.length) return jsonError('Message vide', 400);
     const { meta, thread } = found;
     if (meta.bl) return jsonError('This conversation was closed by the developer', 403);
     if (thread.length >= FEEDBACK_MAX_MESSAGES) return jsonError('Discussion trop longue', 409);
+    const photos = await photoAllowance(env, asked);
+    if (!message && !photos.length) return jsonError('Photos en pause pour aujourd’hui, réessaie demain', 429);
 
     const now = Date.now();
     const ph = await saveFeedbackPhotos(env, id, photos, meta.ph || 0);
@@ -2043,7 +2094,7 @@ async function feedbackBotTool(env, body) {
             if (overLimit(discordReportHits, du, 5)) return jsonError('Too many reports — try again in an hour', 429);
             const message = cleanText(body.message, 2000);
             if (message.length < 5) return jsonError('Message too short', 400);
-            const photos = cleanPhotos(body.photos);
+            const photos = await photoAllowance(env, cleanPhotos(body.photos));
             const now = Date.now();
             const key = `${FEEDBACK_PREFIX}${now.toString(36)}_${crypto.randomUUID().slice(0, 8)}`;
             const token = (crypto.randomUUID() + crypto.randomUUID()).replace(/-/g, '').slice(0, 48);
@@ -2071,11 +2122,13 @@ async function feedbackBotTool(env, body) {
             if (!m?.du || m.du !== String(body.du || '')) return jsonError('Report not found', 404);
             if (m.bl) return jsonError('This conversation was closed by the developer', 403);
             const message = cleanText(body.message, 2000);
-            const photos = cleanPhotos(body.photos);
-            if (!message && !photos.length) return jsonError('Empty message', 400);
+            const asked = cleanPhotos(body.photos);
+            if (!message && !asked.length) return jsonError('Empty message', 400);
             const thread = feedbackThread(value, m);
             if (thread.length >= FEEDBACK_MAX_MESSAGES) return jsonError('Conversation too long', 409);
             if (overLimit(discordReplyHits, m.du, 20)) return jsonError('Too many replies — try again in an hour', 429);
+            const photos = await photoAllowance(env, asked);
+            if (!message && !photos.length) return jsonError('Screenshots are paused for today — try again tomorrow', 429);
             const now = Date.now();
             const ph = await saveFeedbackPhotos(env, key, photos, m.ph || 0);
             thread.push({ f: 'u', m: message, at: now, ...(ph.length ? { ph } : {}) });
@@ -2333,13 +2386,8 @@ async function handleAnnouncementReact(request, env) {
     const ua = request.headers.get('User-Agent') || '';
     if (BOT_UA.test(ua)) return jsonResponse({ ok: true, ignored: true });
     // Chaque réaction est une écriture KV : 30 par heure et par adresse.
-    const ip = request.headers.get('CF-Connecting-IP') || '';
+    if (overLimit(reactHits, clientKey(request), 30)) return jsonError('Trop de requêtes', 429);
     const now = Date.now();
-    const hit = reactHits.get(ip);
-    if (!hit || hit.until < now) {
-        if (reactHits.size > 5000) reactHits.clear();
-        reactHits.set(ip, { n: 1, until: now + 60 * 60 * 1000 });
-    } else if (++hit.n > 30) return jsonError('Trop de requêtes', 429);
 
     let body;
     try { body = await request.json(); } catch (e) { return jsonError('JSON invalide', 400); }
@@ -2543,9 +2591,10 @@ function store(env) {
 }
 
 // ── Réglages par variables d'environnement (auto-hébergement) ─────────────
-// ADMIN_TWITCH_IDS : identifiants Twitch admins, séparés par des virgules.
-// SITE_ORIGINS     : origines du site dont les comptages sont acceptés.
-// Absentes : valeurs de l'instance officielle.
+// ADMIN_TWITCH_IDS : identifiants Twitch admins, séparés par des virgules
+//                    (absente : aucun ; l'officielle est dans wrangler.toml).
+// SITE_ORIGINS     : origines du site dont les comptages sont acceptés
+//                    (absente : celles du site officiel).
 let envApplied = false;
 function applyEnvConfig(env) {
     if (envApplied) return;
@@ -2866,7 +2915,7 @@ async function handlePushKey(env) {
  *  live déjà en cours partirait comme un nouveau. */
 async function handlePushSubscribe(request, env) {
     if (request.method !== 'POST' || !env.DB) return jsonError('Méthode non autorisée', 405);
-    if (overLimit(pushHits, request.headers.get('CF-Connecting-IP') || '', 60)) return jsonError('Trop de requêtes', 429);
+    if (overLimit(pushHits, clientKey(request), 60)) return jsonError('Trop de requêtes', 429);
     const body = await request.json().catch(() => null);
     const sub = readPushSubscription(body) ?? readNtfySubscription(body);
     if (!sub) return jsonError('Abonnement invalide', 400);
@@ -2912,7 +2961,7 @@ async function handlePushUnsubscribe(request, env) {
 /** Notification de test, envoyée tout de suite. */
 async function handlePushTest(request, env) {
     if (request.method !== 'POST' || !env.DB) return jsonError('Méthode non autorisée', 405);
-    if (overLimit(pushHits, request.headers.get('CF-Connecting-IP') || '', 60)) return jsonError('Trop de requêtes', 429);
+    if (overLimit(pushHits, clientKey(request), 60)) return jsonError('Trop de requêtes', 429);
     const body = await request.json().catch(() => null);
     const sub = readPushSubscription(body) ?? readNtfySubscription(body);
     if (!sub) return jsonError('Abonnement invalide', 400);
