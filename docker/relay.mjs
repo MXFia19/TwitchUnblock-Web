@@ -19,7 +19,8 @@
 //    RELAY_PORT       port d'écoute (8788). Pas PORT : l'image le fixe déjà
 //                     à 8787 pour le site, le relais s'y mettait.
 //    PUBLIC_ORIGIN    adresse publique (https://relais.exemple.fr), utilisée
-//                     dans les playlists réécrites
+//                     dans les playlists réécrites ; mal formée, le relais
+//                     ne démarre pas
 //    ALLOWED_ORIGINS  sites autorisés, séparés par des virgules ; « * » dans
 //                     un nom en remplace une partie
 //                     (https://test2-*-mxfia19s-projects.vercel.app).
@@ -34,8 +35,12 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import http from 'node:http'
+import https from 'node:https'
+import dns from 'node:dns'
+import net from 'node:net'
+import zlib from 'node:zlib'
 import { createHash, webcrypto } from 'node:crypto'
-import { Readable } from 'node:stream'
+import { Readable, pipeline as pipe } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 // worker.js, copié en .mjs dans l'image : Node le lit alors sans hésiter
 // comme un module (export default).
@@ -43,6 +48,17 @@ import worker from './worker.mjs'
 
 const PORT = Number(process.env.RELAY_PORT) || 8788
 const PUBLIC_ORIGIN = (process.env.PUBLIC_ORIGIN || '').trim().replace(/\/+$/, '')
+// Adresse publique mal formée (« https:// » quand RELAY_DOMAIN manque dans le
+// .env) : chaque requête, /health comprise, finissait en 502 sans un mot dans
+// le journal. Mieux vaut ne pas démarrer, en disant pourquoi.
+if (PUBLIC_ORIGIN) {
+  let ok = false
+  try { const u = new URL(PUBLIC_ORIGIN); ok = /^https?:$/.test(u.protocol) && Boolean(u.hostname) } catch {}
+  if (!ok) {
+    console.error(`PUBLIC_ORIGIN invalide (« ${PUBLIC_ORIGIN} ») : mettre RELAY_DOMAIN=… dans le fichier .env (README, « Video relay »).`)
+    process.exit(1)
+  }
+}
 const ALLOWED = (process.env.ALLOWED_ORIGINS || '')
   .split(',')
   .map((s) => s.trim().replace(/\/+$/, ''))
@@ -77,7 +93,7 @@ const NTFY_MAX = 50                // messages par lot
 const NTFY_BODY_MAX = 64 * 1024    // octets
 
 let workerKey = null               // { key, at } : clé publique du Worker
-const usedTokens = new Map()       // signature → expiration (secondes)
+const usedTokens = new Map()       // en-tête.revendications → expiration (secondes)
 
 /** Clé publique du Worker, gardée. Relue quand une signature ne passe pas
  *  (clé changée), une fois par minute au plus. */
@@ -104,14 +120,25 @@ async function signedByWorker(auth, body) {
     c = JSON.parse(Buffer.from(claims, 'base64url'))
   } catch { return false }
   const now = Math.floor(Date.now() / 1000)
-  if (alg !== 'ES256' || !(c?.exp > now && c.exp <= now + 600) || usedTokens.has(sig)) return false
+  // Un jeton se reconnaît à ce qu'il signe (empreinte du corps, expiration),
+  // pas à sa signature : une signature ECDSA a deux formes valides, (r, s) et
+  // (r, n−s), et la seconde passait pour un jeton neuf.
+  const id = `${header}.${claims}`
+  if (alg !== 'ES256' || !(c?.exp > now && c.exp <= now + 600) || usedTokens.has(id)) return false
   if (c.sha !== createHash('sha256').update(body).digest('base64url')) return false
-  const verify = async (key) => webcrypto.subtle.verify({ name: 'ECDSA', hash: 'SHA-256' }, key,
-    Buffer.from(sig, 'base64url'), Buffer.from(`${header}.${claims}`))
-  if (!(await verify(await trustedKey(false))) && !(await verify(await trustedKey(true)))) return false
+  // Retenu avant la moindre attente : deux requêtes simultanées avec le même
+  // jeton passaient toutes les deux. Libéré si la signature ne tient pas.
   for (const [s, exp] of usedTokens) if (exp <= now) usedTokens.delete(s)
-  usedTokens.set(sig, c.exp)
-  return true
+  usedTokens.set(id, c.exp)
+  const verify = async (key) => webcrypto.subtle.verify({ name: 'ECDSA', hash: 'SHA-256' }, key,
+    Buffer.from(sig, 'base64url'), Buffer.from(id))
+  let ok = false
+  try {
+    ok = (await verify(await trustedKey(false))) || (await verify(await trustedKey(true)))
+  } finally {
+    if (!ok) usedTokens.delete(id)
+  }
+  return ok
 }
 
 /** Publie les messages un par un ; après un refus (429), le reste attend.
@@ -183,6 +210,98 @@ async function handleNtfy(req, res) {
   res.end(JSON.stringify({ results }))
 }
 
+// ── Vidéo : accès à l'amont ────────────────────────────────────────────────
+// Le proxy (worker.js) suit lui-même les redirections et revérifie chaque
+// adresse (https, hôtes de Twitch et des sources). Ici, en plus : jamais de
+// connexion vers une adresse interne du serveur — boucle locale, réseau privé
+// du VPS, passerelle Docker et conteneurs voisins, service de métadonnées du
+// cloud (169.254.169.254) —, vérifiée au moment même de la connexion (une
+// réponse DNS qui changerait entre la vérification et l'accès ne passe pas).
+// Une redirection de l'amont pouvait y mener (SSRF).
+const INTERNAL = new net.BlockList()
+for (const [a, p] of [['0.0.0.0', 8], ['10.0.0.0', 8], ['100.64.0.0', 10], ['127.0.0.0', 8], ['169.254.0.0', 16],
+  ['172.16.0.0', 12], ['192.0.0.0', 24], ['192.168.0.0', 16], ['198.18.0.0', 15], ['224.0.0.0', 3]]) INTERNAL.addSubnet(a, p, 'ipv4')
+for (const [a, p] of [['::', 127], ['fc00::', 7], ['fe80::', 10], ['ff00::', 8]]) INTERNAL.addSubnet(a, p, 'ipv6')
+
+function internalAddress(ip) {
+  const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/i.exec(ip)
+  try {
+    return mapped ? INTERNAL.check(mapped[1], 'ipv4') : INTERNAL.check(ip, net.isIPv6(ip) ? 'ipv6' : 'ipv4')
+  } catch { return true }
+}
+
+/** dns.lookup, sans aucune adresse interne. */
+function publicLookup(hostname, options, callback) {
+  dns.lookup(hostname, { ...options, all: true }, (err, list) => {
+    if (err) return callback(err)
+    const bad = list.find((a) => internalAddress(a.address))
+    if (bad || !list.length) {
+      return callback(Object.assign(new Error(`${hostname} : adresse interne refusée (${bad?.address ?? 'aucune'})`), { code: 'EINTERNAL' }))
+    }
+    if (options.all) callback(null, list)
+    else callback(null, list[0].address, list[0].family)
+  })
+}
+
+// Connexions gardées ouvertes (une playlist de direct toutes les 2 s), fermées
+// après 4 s sans usage, comme le fetch de Node.
+const upstreamAgent = new https.Agent({ keepAlive: true, timeout: 4_000, lookup: publicLookup })
+
+/** Réponse Node → Response, corps décompressé comme le ferait fetch(). */
+function toResponse(res) {
+  const headers = new Headers()
+  for (let i = 0; i < res.rawHeaders.length; i += 2) {
+    try { headers.append(res.rawHeaders[i], res.rawHeaders[i + 1]) } catch {}
+  }
+  const enc = String(res.headers['content-encoding'] || '').trim().toLowerCase()
+  const unzip = enc === 'gzip' || enc === 'x-gzip' ? zlib.createGunzip()
+    : enc === 'deflate' ? zlib.createInflate()
+    : enc === 'br' ? zlib.createBrotliDecompress() : null
+  let body = res
+  if (unzip) {
+    body = pipe(res, unzip, () => {})
+    headers.delete('content-encoding')
+    headers.delete('content-length')
+  }
+  if ([204, 205, 304].includes(res.statusCode)) {
+    res.resume()
+    return new Response(null, { status: res.statusCode, headers })
+  }
+  // File comptée en octets : face à un spectateur lent, l'amont attend au
+  // lieu de remplir la mémoire d'un segment entier.
+  return new Response(Readable.toWeb(body, { strategy: new ByteLengthQueuingStrategy({ highWaterMark: 64 * 1024 }) }),
+    { status: res.statusCode, headers })
+}
+
+/** fetch() du proxy pour worker.js (env.PROXY_FETCH) : GET en https
+ *  seulement, redirections jamais suivies (le proxy les examine), adresses
+ *  internes refusées, 30 s au plus sans recevoir un octet. */
+function proxyFetch(input, init = {}) {
+  const url = new URL(String(input))
+  if (url.protocol !== 'https:') return Promise.reject(new TypeError('https seulement'))
+  const host = url.hostname.replace(/^\[|\]$/g, '')
+  // Une adresse IP écrite telle quelle ne passe pas par le DNS.
+  if (net.isIP(host) && internalAddress(host)) return Promise.reject(Object.assign(new Error(`${host} : adresse interne refusée`), { code: 'EINTERNAL' }))
+  const headers = {}
+  new Headers(init.headers).forEach((v, k) => { headers[k] = v })
+  const attempt = (retry) => new Promise((resolve, reject) => {
+    let answered = false
+    const req = https.request(url, { method: init.method || 'GET', headers, agent: upstreamAgent, timeout: 30_000 }, (res) => {
+      answered = true
+      try { resolve(toResponse(res)) } catch (e) { res.destroy(); reject(e) }
+    })
+    req.on('timeout', () => req.destroy(Object.assign(new Error('amont muet depuis 30 s'), { code: 'ETIMEDOUT' })))
+    req.on('error', (e) => {
+      // Connexion gardée ouverte que le serveur venait de fermer, avant toute
+      // réponse : une seconde chance. (Après, l'erreur passe par le corps.)
+      if (!answered && retry && req.reusedSocket && (e.code === 'ECONNRESET' || e.code === 'EPIPE')) resolve(attempt(false))
+      else reject(e)
+    })
+    req.end()
+  })
+  return attempt(true)
+}
+
 // En-têtes de la réponse à ne pas recopier : ceux de la connexion, et la
 // compression — fetch() a déjà décompressé le corps.
 const SKIP = new Set(['connection', 'keep-alive', 'transfer-encoding', 'content-encoding', 'upgrade'])
@@ -203,7 +322,7 @@ const server = http.createServer(async (req, res) => {
 
     const headers = new Headers()
     if (req.headers.range) headers.set('Range', req.headers.range)
-    const r = await worker.fetch(new Request(url, { headers }), {}, { waitUntil() {}, passThroughOnException() {} })
+    const r = await worker.fetch(new Request(url, { headers }), { PROXY_FETCH: proxyFetch }, { waitUntil() {}, passThroughOnException() {} })
 
     // Playlist réécrite ou corps décompressé : la longueur d'origine est fausse.
     const stale = r.headers.has('content-encoding') || /mpegurl/i.test(r.headers.get('content-type') || '')
@@ -213,12 +332,21 @@ const server = http.createServer(async (req, res) => {
       out[k] = v
     })
     res.writeHead(r.status, out)
-    if (!r.body || req.method === 'HEAD') return res.end()
+    if (!r.body || req.method === 'HEAD') {
+      // HEAD : rien à envoyer, la connexion vers l'amont est rendue tout de suite.
+      await r.body?.cancel().catch(() => {})
+      return res.end()
+    }
     // Au fil de l'eau : un segment n'est jamais gardé en mémoire en entier.
     await pipeline(Readable.fromWeb(r.body), res)
-  } catch {
-    // Spectateur parti en cours de route, ou Twitch injoignable.
-    if (!res.headersSent) { res.writeHead(502, CORS); res.end() } else res.destroy()
+  } catch (e) {
+    // Spectateur parti en cours de route : rien à dire. Sinon, une ligne au
+    // journal (chemin seul : l'adresse relayée peut porter un jeton) — un
+    // 502 muet ne se diagnostiquait pas.
+    if (!res.headersSent) {
+      console.warn(`${(req.url || '/').split('?')[0]} : 502, ${e?.cause?.code || e?.code || e?.name || 'erreur'} ${e?.cause?.message || e?.message || ''}`.trim())
+      res.writeHead(502, CORS); res.end()
+    } else res.destroy()
   }
 })
 

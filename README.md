@@ -325,9 +325,19 @@ the website's image (`ghcr.io/mxfia19/twitchunblock-web`), started with
 ntfy.sh for the Worker (`POST /ntfy`), since ntfy.sh refuses Cloudflare's
 shared addresses. It only accepts batches signed by the Worker whose address
 is in `NTFY_WORKER` (default: the official Worker; its public key is read
-from `<NTFY_WORKER>/api/push/key`), and only for the app's topics with a link
-back into the app. An empty `NTFY_WORKER=` in `.env` turns it off. Your
-server's address gets ntfy.sh's free quota: 250 messages a day.
+from `<NTFY_WORKER>/api/push/key`), each signed batch once, and only for the
+app's topics with a link back into the app. An empty `NTFY_WORKER=` in `.env`
+turns it off. Your server's address gets ntfy.sh's free quota: 250 messages a
+day.
+
+`RELAY_DOMAIN` is required: without it, `docker compose` stops with a message,
+and the relay itself refuses to start with an invalid `PUBLIC_ORIGIN`.
+
+The relay only relays what the Worker's proxy accepts (see [Security](#security)),
+and it never connects to an internal address of your server — loopback,
+private networks, the Docker network, the cloud metadata service — even if a
+name or a redirect points there. Failed requests are logged
+(`docker compose logs relay`).
 
 `ALLOWED_ORIGINS` (in `docker-compose.yml`) lists the websites allowed to use
 the relay; other sites get a 403, so they can't use your bandwidth. Bandwidth:

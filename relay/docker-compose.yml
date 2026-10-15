@@ -23,7 +23,9 @@ services:
     ports:
       - "127.0.0.1:8788:8788"
     environment:
-      PUBLIC_ORIGIN: "https://${RELAY_DOMAIN}"
+      # RELAY_DOMAIN obligatoire (.env) : sans lui, chaque requête finissait
+      # en 502, sans un mot dans le journal.
+      PUBLIC_ORIGIN: "https://${RELAY_DOMAIN:?set RELAY_DOMAIN in the .env file (README, Video relay)}"
       # Sites qui peuvent s'en servir (les autres sont refusés) : le site
       # officiel (nouvelle et ancienne adresse) et ses aperçus de test sur
       # Vercel. Remplaçable par ALLOWED_ORIGINS=… dans le fichier .env.
