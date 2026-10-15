@@ -215,6 +215,8 @@ export class ChatView {
     this.replyTo = null
     this.suggestIndex = 0
     this.suggestions = []
+    /** Suggestion choisie aux flèches : Entrée la prend (onKey). */
+    this.suggestPicked = false
     /** Messages du direct mis en attente pour coller à l'image. */
     this.delayed = []
     this.delayTimer = null
@@ -1447,14 +1449,23 @@ export class ChatView {
         e.preventDefault()
         const n = this.suggestions.length
         this.suggestIndex = (this.suggestIndex + (e.key === 'ArrowDown' ? 1 : n - 1)) % n
+        this.suggestPicked = true
         this.renderSuggestions()
         return
       }
       // Tab complète avec la suggestion en surbrillance (flèches pour en
-      // changer), comme sur Twitch et 7TV. Entrée, elle, envoie toujours :
-      // les suggestions s'ouvrent dès deux lettres, y compris au milieu d'un
-      // mot d'emote, et Entrée remplaçait un mot ordinaire sans rien envoyer.
-      if (e.key === 'Tab' && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) {
+      // changer), comme sur Twitch et 7TV. Entrée, elle, envoie — sauf
+      // après un choix aux flèches, qu'elle prend (liste de choix, comme
+      // partout) : « coucou @al », flèche vers @albert, puis Entrée envoyait
+      // « coucou @al ». Sans choix, Entrée envoie toujours : les suggestions
+      // s'ouvrent dès deux lettres, y compris au milieu d'un mot d'emote, et
+      // Entrée remplaçait un mot ordinaire sans rien envoyer.
+      if (e.key === 'Tab' && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey && this.tabTakes()) {
+        e.preventDefault()
+        this.applySuggestion(this.suggestIndex)
+        return
+      }
+      if (e.key === 'Enter' && !e.shiftKey && this.suggestPicked) {
         e.preventDefault()
         this.applySuggestion(this.suggestIndex)
         return
@@ -1500,17 +1511,32 @@ export class ChatView {
       this.suggestions = []
     }
     this.suggestIndex = 0
+    this.suggestPicked = false
     this.renderSuggestions()
+  }
+
+  /** Tab prend-il la suggestion en surbrillance ? Oui si elle a été choisie
+   *  aux flèches, si c'est un pseudo (cherché par le début), ou une emote
+   *  dont le nom commence par le mot tapé. Pas une emote trouvée au milieu
+   *  de son nom (« c'est ok » + Tab donnait « c'est FeelsOkayMan », alors
+   *  que Tab sert aussi à quitter le champ) : celle-là, au clic ou aux
+   *  flèches. */
+  tabTakes() {
+    const s = this.suggestions[this.suggestIndex]
+    if (!s) return false
+    if (this.suggestPicked || s.kind !== 'emote') return true
+    return s.value.toLowerCase().startsWith(this.currentWord().word.toLowerCase())
   }
 
   renderSuggestions() {
     if (!this.suggestions.length) return this.hideSuggestions()
     // « Tab » sur la suggestion en surbrillance (au clavier seulement) : la
-    // touche qui la prend, puisque Entrée envoie.
+    // touche qui la prend, puisque Entrée envoie — quand Tab la prend.
+    const key = this.tabTakes() ? '<kbd class="suggest-key" aria-hidden="true">Tab</kbd>' : ''
     this.el.suggest.innerHTML = this.suggestions.map((s, i) => `
       <button type="button" class="suggest-item${i === this.suggestIndex ? ' active' : ''}" data-i="${i}" role="option">
         ${s.kind === 'emote' ? `<img src="${esc(s.url)}" alt="">` : `<span class="dot" style="background:${esc(s.color ?? '#bf94ff')}"></span>`}
-        <span>${esc(s.label)}</span>${i === this.suggestIndex ? '<kbd class="suggest-key" aria-hidden="true">Tab</kbd>' : ''}
+        <span>${esc(s.label)}</span>${i === this.suggestIndex ? key : ''}
       </button>`).join('')
     this.el.suggest.hidden = false
   }
@@ -1518,6 +1544,7 @@ export class ChatView {
   hideSuggestions() {
     this.el.suggest.hidden = true
     this.suggestions = []
+    this.suggestPicked = false
   }
 
   applySuggestion(i) {
@@ -1548,15 +1575,19 @@ export class ChatView {
     const { sets, failed } = await fetchBotCommands(channel)
     if (box.hidden || this.channel !== channel) return
     const list = box.querySelector('.bot-cmds-list')
+    // Bots qui n'ont pas répondu (délai, réseau, panne) : nommés, sous les
+    // listes ou seuls. « Impossible de charger » n'apparaissait que si les
+    // quatre échouaient : une chaîne qui n'a que Nightbot, en panne, avait
+    // « Aucune commande trouvée ».
+    const missing = failed.length ? `<p class="muted small">${esc(t('bot_commands_failed', { b: failed.join(', ') }))}</p>` : ''
     const render = (q = '') => {
       q = q.trim().toLowerCase()
       const shown = sets.map((s) => ({ ...s, commands: q ? s.commands.filter((c) => c.name.toLowerCase().includes(q) || c.response.toLowerCase().includes(q)) : s.commands }))
         .filter((s) => s.commands.length)
-      // Aucun bot n'a répondu (réseau) : pas « aucune commande ».
       list.innerHTML = !sets.length
-        ? `<p class="muted small">${esc(t(failed >= 4 ? 'err_loading' : 'bot_commands_none'))}</p>`
+        ? missing || `<p class="muted small">${esc(t('bot_commands_none'))}</p>`
         : shown.map((s) => `<section><h4><img src="${esc(s.icon)}" alt="">${esc(s.bot)} <span class="muted">${s.commands.length}</span></h4>
-            ${s.commands.map((c) => `<div class="bot-cmd" role="button" tabindex="0" data-cmd="${esc(c.name)}"><code>${esc(c.name)}</code>${c.response ? `<span>${linkifyHtml(c.response)}</span>` : ''}</div>`).join('')}</section>`).join('')
+            ${s.commands.map((c) => `<div class="bot-cmd" role="button" tabindex="0" data-cmd="${esc(c.name)}"><code>${esc(c.name)}</code>${c.response ? `<span>${linkifyHtml(c.response)}</span>` : ''}</div>`).join('')}</section>`).join('') + missing
     }
     render()
     box.querySelector('.bot-cmds-filter').oninput = (e) => render(e.target.value)

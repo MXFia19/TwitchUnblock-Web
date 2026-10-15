@@ -11,9 +11,14 @@
 import { parseIRC, prefixNick, ircText, unescapeTag } from './irc.js'
 import { fromIRC, noticeMessages, systemMessage, selfMessage } from './message.js'
 import { loadChannelBadges, loadGlobalBadges } from './badges.js'
-import { joinBttvLive, leaveBttvLive, loadChannelEmotes, loadGlobalEmotes } from './emotes.js'
+import { joinBttvLive, leaveBttvLive, loadChannelEmotes, loadGlobalEmotes, loadOwnEmotes } from './emotes.js'
 
 const IRC_URL = 'wss://irc-ws.chat.twitch.tv:443'
+/** Commande de chat : « /ban x », mais aussi « .ban x » — Twitch lit le point
+ *  comme la barre (règle de tmi.js ; « .. » n'en est pas une). « /me » et
+ *  « .me » sont des messages. Une commande n'a jamais de USERSTATE : au plus
+ *  un NOTICE. */
+const COMMAND = /^(?:\/|\.(?!\.))(?!me\s)/i
 /** Attente maximale des badges et des emotes avant de se connecter (ms). */
 const START_WAIT = 3500
 
@@ -286,24 +291,28 @@ export class LiveChat {
     const prefix = replyParentId ? `@reply-parent-msg-id=${replyParentId} ` : ''
     this.ws.send(`${prefix}PRIVMSG #${this.o.channel} :${body}`)
     const msg = selfMessage(body, { ...this.me, login: this.o.login ?? '' })
-    // Une commande (/…, sauf /me) peut n'avoir pour réponse qu'un NOTICE
-    // qui n'est pas un refus : elle est soldée par lui (voir handle).
-    this.pendingSelf.push({ id: msg.id, at: Date.now(), command: /^\/(?!me\s)/i.test(body) })
+    // Une commande (/… ou .…, sauf /me) peut n'avoir pour réponse qu'un
+    // NOTICE qui n'est pas un refus : elle est soldée par lui (voir handle).
+    this.pendingSelf.push({ id: msg.id, at: Date.now(), command: COMMAND.test(body) })
     this.emit('add', msg)
     return true
   }
 
-  /** Plus ancien message envoyé sur cette socket encore sans réponse. Au-delà
-   *  de 20 s, sa réponse a été perdue : il sort de la file. */
-  nextSelf() {
+  /** Plus ancien envoi sur cette socket encore sans réponse, commande
+   *  (`command` vrai) ou message. Au-delà de 20 s, sa réponse a été perdue :
+   *  il sort de la file. Chaque réponse va au type d'envoi qu'elle concerne :
+   *  une commande restée sans réponse (« .ban x », que Twitch prend pour une
+   *  commande) décalait toutes les suivantes — l'id de « salut » donné à
+   *  « .ban x », puis « salut », passé, retiré au refus d'après. */
+  nextSelf(command) {
     const now = Date.now()
     this.pendingSelf = this.pendingSelf.filter((p) => now - p.at <= 20_000)
-    return this.pendingSelf.find((p) => !p.orphan) ?? null
+    return this.pendingSelf.find((p) => !p.orphan && p.command === command) ?? null
   }
 
   /** Le même, retiré de la file : la réponse qui vient d'arriver est la sienne. */
-  takeSelf() {
-    const p = this.nextSelf()
+  takeSelf(command) {
+    const p = this.nextSelf(command)
     if (p) this.pendingSelf.splice(this.pendingSelf.indexOf(p), 1)
     return p?.id ?? null
   }
@@ -316,6 +325,12 @@ export class LiveChat {
     // Badges du salon (abonné, modo, VIP…) dans USERSTATE, globaux avant.
     if (tags.badges != null) me.badges = tags.badges
     if (tags['user-id']) me.userId = tags['user-id']
+    // Jeux d'emotes du compte : seules leurs emotes Twitch s'affichent en
+    // image dans nos messages (selfMessage). En anonyme, rien à lire.
+    if (tags['emote-sets'] && this.o.token && this.o.login && !this.readOnly) {
+      me.emoteSets = tags['emote-sets'].split(',').filter(Boolean)
+      loadOwnEmotes(me.emoteSets)
+    }
   }
 
   /** ROOMSTATE (complet à l'arrivée, puis ce qui change) → modes du salon. */
@@ -357,8 +372,9 @@ export class LiveChat {
         if (!this.joined) break
         // Message accepté : son vrai id chez Twitch remplace l'id local —
         // sans lui, y répondre envoyait un parent inconnu de Twitch, et sa
-        // suppression par un modérateur ne s'appliquait pas.
-        const local = this.takeSelf()
+        // suppression par un modérateur ne s'appliquait pas. Jamais une
+        // commande : elle n'a pas de USERSTATE.
+        const local = this.takeSelf(false)
         if (local && irc.tags.id) this.emit('confirmed', { local, id: irc.tags.id })
         break
       }
@@ -404,13 +420,15 @@ export class LiveChat {
         }
         const key = REJECTIONS[msgId] || (msgId.startsWith('msg_') ? 'chat_rej_generic' : null)
         if (key) {
-          // Refus du plus ancien message encore sans réponse (aucun à
-          // l'arrivée dans le salon : la file est vide).
-          this.emit('rejected', { key, text: text ?? '', id: this.takeSelf() })
+          // Refus du plus ancien message encore sans réponse — d'une commande
+          // s'il n'y en a pas (aucun à l'arrivée dans le salon : la file est
+          // vide).
+          this.emit('rejected', { key, text: text ?? '', id: this.takeSelf(false) ?? this.takeSelf(true) })
           break
         }
-        // Réponse à une commande (/…) : elle n'aura pas d'autre réponse.
-        if (msgId && this.nextSelf()?.command) this.takeSelf()
+        // Réponse à une commande (/… ou .…) : elle n'aura pas d'autre
+        // réponse — la plus ancienne, même derrière des messages.
+        if (msgId) this.takeSelf(true)
         if (text) this.emit('add', systemMessage(text))
         break
       }

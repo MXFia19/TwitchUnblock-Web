@@ -40,6 +40,7 @@ export const RU = {
   bot_commands: 'Команды ботов',
   bot_commands_filter: 'Поиск команд',
   bot_commands_none: 'Команды не найдены (Nightbot, StreamElements, Fossabot, Moobot).',
+  bot_commands_failed: 'Нет ответа от {b}: откройте список снова, чтобы повторить попытку.',
   react: 'Отреагировать',
   react_failed: 'Реакция не отправлена, попробуйте позже',
   top_lang: 'Топ трансляций',

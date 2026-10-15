@@ -73,7 +73,7 @@ const cache = new Map()     // chaîne → { at, result }
 const pending = new Map()   // chaîne → lecture en cours
 
 /** { sets: [{ bot, icon, commands: [{ name, response }] }], failed } — bots
- *  sans commande exclus ; `failed` : nombre de bots qui n'ont pas répondu.
+ *  sans commande exclus ; `failed` : noms des bots qui n'ont pas répondu.
  *  Une liste incomplète n'est pas gardée : la prochaine ouverture redemande
  *  (un échec passait pour « aucune commande » pendant 10 min). Deux
  *  ouvertures rapides partagent la même lecture. */
@@ -85,11 +85,12 @@ export function fetchBotCommands(channel) {
   if (!run) {
     run = (async () => {
       const all = await Promise.all([nightbot(ch), streamElements(ch), fossabot(ch), moobot(ch)])
-      const sets = [['Nightbot', all[0]], ['StreamElements', all[1]], ['Fossabot', all[2]], ['Moobot', all[3]]]
+      const bots = [['Nightbot', all[0]], ['StreamElements', all[1]], ['Fossabot', all[2]], ['Moobot', all[3]]]
+      const sets = bots
         .filter(([, cmds]) => cmds?.length)
         .map(([bot, cmds]) => ({ bot, icon: ICONS[bot], commands: cmds.sort((a, b) => a.name.localeCompare(b.name)) }))
-      const result = { sets, failed: all.filter((x) => x === undefined).length }
-      if (!result.failed) cache.set(ch, { at: Date.now(), result })
+      const result = { sets, failed: bots.filter(([, cmds]) => cmds === undefined).map(([bot]) => bot) }
+      if (!result.failed.length) cache.set(ch, { at: Date.now(), result })
       return result
     })().finally(() => pending.delete(ch))
     pending.set(ch, run)

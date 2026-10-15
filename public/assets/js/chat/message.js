@@ -3,7 +3,7 @@
 //  Port de handlePrivmsg / tokenizeChatSegment (Sources/Chat/).
 // ═══════════════════════════════════════════════════════════════════════════
 
-import { resolveEmote, seenTwitchEmote, twitchEmote } from './emotes.js'
+import { ownTwitchEmote, resolveEmote, twitchEmote } from './emotes.js'
 import { ircText, parseEmoteRanges, prefixNick, unescapeTag } from './irc.js'
 import { esc, uid } from '../util.js'
 
@@ -58,10 +58,10 @@ export function linkifyHtml(text) {
 }
 
 /** Découpe un segment de texte libre en liens, mentions, emotes tierces et
- *  mots. `userId` : auteur, pour ses emotes personnelles BTTV Pro. `own` :
- *  notre propre message, sans positions d'emotes Twitch — celles déjà vues
- *  dans le chat sont reconnues par leur nom. */
-export function tokenizeSegment(segment, userId, own = false) {
+ *  mots. `userId` : auteur, pour ses emotes personnelles BTTV Pro. `ownSets` :
+ *  notre propre message, sans positions d'emotes Twitch — celles des jeux du
+ *  compte sont reconnues par leur nom, avant les tierces comme chez Twitch. */
+export function tokenizeSegment(segment, userId, ownSets = null) {
   const out = []
   for (const word of segment.split(' ')) {
     if (!word) continue
@@ -71,7 +71,7 @@ export function tokenizeSegment(segment, userId, own = false) {
     } else if (word.startsWith('@') && word.length > 1) {
       out.push({ kind: 'mention', value: word.slice(1) })
     } else {
-      const emote = resolveEmote(word, userId) ?? (own ? seenTwitchEmote(word) : null)
+      const emote = (ownSets ? ownTwitchEmote(word, ownSets) : null) ?? resolveEmote(word, userId)
       out.push(emote ? { kind: 'emote', emote } : { kind: 'text', value: word })
     }
   }
@@ -247,12 +247,12 @@ export function noticeMessages(irc, historical = false) {
 /**
  * Notre propre message : Twitch ne le renvoie pas, on l'affiche nous-mêmes,
  * tel que les autres le voient — nom affiché, badges et couleur du compte
- * (`me` : GLOBALUSERSTATE puis USERSTATE du salon), « /me » en action, emotes
- * (celles de Twitch si on les a déjà vues dans le chat).
+ * (`me` : GLOBALUSERSTATE puis USERSTATE du salon), « /me » (ou « .me ») en
+ * action, emotes (celles de Twitch seulement si le compte les a : `me.emoteSets`).
  */
 export function selfMessage(text, me) {
   const login = me.login ?? ''
-  const action = /^\/me\s+/i.exec(text)
+  const action = /^[/.]me\s+/i.exec(text)
   const body = action ? text.slice(action[0].length) : text
   return base({
     userId: me.userId ?? '',
@@ -260,7 +260,7 @@ export function selfMessage(text, me) {
     displayName: me.displayName || login,
     color: readableColor(me.color) ?? fallbackColor(login),
     badgeTag: me.badges ?? '',
-    tokens: tokenizeSegment(body, me.userId, true),
+    tokens: tokenizeSegment(body, me.userId, me.emoteSets ?? []),
     isAction: Boolean(action),
     isSelf: true,
   })

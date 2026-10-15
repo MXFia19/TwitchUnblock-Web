@@ -5,6 +5,8 @@
 //  avec les en-têtes CORS qu'il faut : le navigateur les appelle en direct.
 // ═══════════════════════════════════════════════════════════════════════════
 
+import { gql } from '../api.js'
+
 const globals = new Map()   // nom → emote
 const channel = new Map()   // nom → emote (canal courant)
 /** Les emotes Twitch n'arrivent que par les messages : on les mémorise au vol
@@ -180,10 +182,50 @@ export function twitchEmote(id, name) {
   return emote
 }
 
-/** Emote Twitch déjà vue dans le chat, par son nom : pour nos propres
- *  messages, que Twitch ne nous renvoie pas (donc sans positions d'emotes). */
-export function seenTwitchEmote(name) {
-  return twitchSeen.get(name) ?? null
+// ── Emotes Twitch du compte ─────────────────────────────────────────────────
+// Twitch ne nous renvoie pas nos propres messages, donc pas les positions de
+// leurs emotes : on les reconnaît par leur nom, mais seulement parmi les jeux
+// que le compte peut utiliser (tag `emote-sets` de GLOBALUSERSTATE et
+// USERSTATE). Une emote d'abonné vue chez les autres, que le compte n'a pas,
+// part en texte : notre copie l'affichait en image.
+/** Id d'un jeu → Map(nom → emote) ; null pendant sa lecture. */
+const ownSets = new Map()
+/** GQL refuse plus de 15 alias par requête. */
+const SETS_PER_QUERY = 15
+
+/** Lit (une fois par séance) le contenu des jeux pas encore connus. Un échec
+ *  sera retenté au prochain USERSTATE (après chacun de nos messages). */
+export function loadOwnEmotes(ids) {
+  const todo = [...new Set(ids)].filter((id) => /^[\w-]{1,64}$/.test(id) && !ownSets.has(id)).slice(0, 300)
+  for (let i = 0; i < todo.length; i += SETS_PER_QUERY) {
+    const part = todo.slice(i, i + SETS_PER_QUERY)
+    for (const id of part) ownSets.set(id, null)
+    const vars = Object.fromEntries(part.map((id, k) => [`s${k}`, id]))
+    const query = `query(${part.map((_, k) => `$s${k}: ID!`).join(', ')}) {
+      ${part.map((_, k) => `s${k}: emoteSet(id: $s${k}) { emotes { id token } }`).join('\n')}
+    }`
+    gql(query, vars)
+      .then((data) => {
+        if (!data) throw new Error('vide')
+        part.forEach((id, k) => {
+          const map = new Map()
+          for (const e of data[`s${k}`]?.emotes ?? []) {
+            if (e?.id && e.token) map.set(e.token, { id: e.id, name: e.token, url: `https://static-cdn.jtvnw.net/emoticons/v2/${e.id}/default/dark/2.0`, source: 'twitch' })
+          }
+          ownSets.set(id, map)
+        })
+      })
+      .catch(() => { for (const id of part) if (ownSets.get(id) === null) ownSets.delete(id) })
+  }
+}
+
+/** Emote Twitch du compte (jeux `ids`), par son nom. */
+export function ownTwitchEmote(name, ids) {
+  for (const id of ids ?? []) {
+    const e = ownSets.get(id)?.get(name)
+    if (e) return e
+  }
+  return null
 }
 
 /** Propositions pour l'autocomplétion : le préfixe l'emporte sur l'occurrence
