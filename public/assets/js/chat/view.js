@@ -1335,6 +1335,10 @@ export class ChatView {
           const self = me && who.toLowerCase() === me ? ' self' : ''
           return `<span class="mention${self}" data-user="${esc(who.toLowerCase())}">@${esc(who)}</span>${esc(tk.value.slice(who.length))}`
         }
+        case 'gif':
+          // Clavier GIF de Twitch : l'image, sur sa propre ligne (son texte
+          // si elle ne charge pas).
+          return `<img class="chat-gif" src="${esc(tk.url)}" alt="${esc(tk.value)}" title="${esc(tk.value)}" loading="lazy" decoding="async" referrerpolicy="no-referrer" onerror="this.replaceWith(this.alt)">`
         case 'link': {
           const href = /^https?:\/\//i.test(tk.value) ? tk.value : `https://${tk.value}`
           // Lien de clip : lu ici plutôt que sur Twitch.

@@ -100,3 +100,29 @@ export function parseEmoteRanges(raw, text) {
   }
   return out.sort((x, y) => x.start - y.start)
 }
+
+/**
+ * Tag `gifs` (clavier GIF de Twitch) : « début-fin|id|adresse » séparés par
+ * des virgules, positions en points de code comme les emotes. L'adresse est
+ * gardée telle quelle (règle de Twitch), GIPHY seulement.
+ */
+export function parseGifRanges(raw, text) {
+  const value = unescapeTag(raw || '')
+  if (!value) return []
+  const at = []
+  let pos = 0
+  for (const ch of text) { at.push(pos); pos += ch.length }
+  at.push(pos)
+  const count = at.length - 1
+  const out = []
+  for (const m of value.matchAll(/(\d+)-(\d+)\|[^|]*\|(https:\/\/[^,]+?)(?=,\d+-\d+\||$)/g)) {
+    const start = Number(m[1])
+    const end = Number(m[2])
+    if (start > end || end >= count) continue
+    let host = ''
+    try { host = new URL(m[3]).hostname.toLowerCase() } catch { continue }
+    if (host !== 'giphy.com' && !host.endsWith('.giphy.com')) continue
+    out.push({ url: m[3], start: at[start], end: at[end + 1] })
+  }
+  return out
+}

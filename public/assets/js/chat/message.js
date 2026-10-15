@@ -4,7 +4,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { ownTwitchEmote, resolveEmote, twitchEmote } from './emotes.js'
-import { ircText, parseEmoteRanges, prefixNick, unescapeTag } from './irc.js'
+import { ircText, parseEmoteRanges, parseGifRanges, prefixNick, unescapeTag } from './irc.js'
 import { esc, uid } from '../util.js'
 
 /**
@@ -130,14 +130,21 @@ export function fromIRC(irc, historical = false) {
 
   // Les emotes Twitch sont données par position : on découpe autour d'elles,
   // et seuls les intervalles restants passent par la tokenisation par mot.
-  const ranges = parseEmoteRanges(irc.tags.emotes ?? '', text)
+  // GIF du clavier GIF de Twitch : son texte (« [… GIF by …] ») laisse la
+  // place à l'image.
+  const ranges = [
+    ...parseEmoteRanges(irc.tags.emotes ?? '', text),
+    ...parseGifRanges(irc.tags.gifs ?? '', text).map((g) => ({ ...g, gif: true })),
+  ].sort((x, y) => x.start - y.start)
   const author = irc.tags['user-id'] ?? ''
   const tokens = []
   let cursor = 0
   for (const r of ranges) {
     if (r.start < cursor) continue
     if (r.start > cursor) tokens.push(...tokenizeSegment(text.slice(cursor, r.start), author))
-    tokens.push({ kind: 'emote', emote: twitchEmote(r.id, text.slice(r.start, r.end)) })
+    tokens.push(r.gif
+      ? { kind: 'gif', url: r.url, value: text.slice(r.start, r.end) }
+      : { kind: 'emote', emote: twitchEmote(r.id, text.slice(r.start, r.end)) })
     cursor = r.end
   }
   if (cursor < text.length) tokens.push(...tokenizeSegment(text.slice(cursor), author))

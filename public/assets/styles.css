@@ -764,6 +764,8 @@ a.card, a.cat-card { display: block; }
 .msg-name:hover { text-decoration: underline; }
 .msg-colon { color: var(--text); }
 .emote { display: inline-block; height: 2em; max-width: 7em; margin: -0.35em 0; vertical-align: middle; object-fit: contain; }
+/* GIF du clavier GIF de Twitch : sur sa propre ligne, taille bornée. */
+.chat-gif { display: block; width: auto; height: auto; max-width: min(100%, 260px); max-height: 160px; margin: 4px 0 2px; border-radius: 8px; }
 .mention { padding: 0 3px; border-radius: 4px; font-weight: 700; background: rgba(255, 255, 255, 0.08); }
 .mention.self { background: rgba(145, 70, 255, 0.4); color: #fff; }
 .msg a { color: var(--purple); text-decoration: underline; text-underline-offset: 2px; }

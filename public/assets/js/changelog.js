@@ -6,6 +6,23 @@
 
 export const CHANGELOG = [
   {
+    version: '2026.10.15b',
+    items: {
+      fr: [
+        'Chat : les GIF envoyés avec le clavier GIF de Twitch s’affichent dans le chat, comme sur Twitch.',
+      ],
+      en: [
+        'Chat: GIFs sent with Twitch’s GIF keyboard now show up in the chat, like on Twitch.',
+      ],
+      es: [
+        'Chat: los GIF enviados con el teclado de GIF de Twitch ahora aparecen en el chat, como en Twitch.',
+      ],
+      ru: [
+        'Чат: GIF, отправленные через GIF-клавиатуру Twitch, теперь показываются в чате, как на Twitch.',
+      ],
+    },
+  },
+  {
     version: '2026.10.15a',
     items: {
       fr: [
