@@ -2621,13 +2621,6 @@ function setupPlayer() {
   }, true)
 }
 
-/**
- * Le Worker qui servait la vidéo ne répond plus (quota du jour atteint) : on
- * redemande les liens — un autre Worker répond — et la lecture reprend au
- * même endroit. Au plus une fois par minute, pour ne pas boucler si tous les
- * Workers tombent : le lecteur retente alors comme avant. `false` = rien fait.
- */
-let lastWorkerSwitch = 0
 // ── Multi-live ───────────────────────────────────────────────────────────
 function setupMulti() {
   multi.init({
@@ -2728,36 +2721,64 @@ function setMultiChat(on) {
   showMultiChat(multi.isOpen() ? entry : null)
 }
 
+/**
+ * Le relais ou le Worker qui servait la vidéo ne répond plus (quota du jour
+ * atteint) : la lecture reprend au même endroit par un autre. Pour un
+ * Worker, au plus une fois par minute, pour ne pas boucler si tous tombent :
+ * le lecteur retente alors lui-même, quelques fois, avant l'erreur.
+ * `false` = rien fait.
+ */
+let lastWorkerSwitch = 0
 function switchWorker(base) {
   const w = state.watch
   if (w?.kind !== 'live' && w?.kind !== 'vod') return false
+  // Appareil hors ligne : ni le relais ni le Worker n'y sont pour rien (ils
+  // étaient écartés 30 min à tort) ; le lecteur attend le retour du réseau.
+  if (navigator.onLine === false) return false
   // Relais vidéo du VPS en panne : les mêmes liens, par le Worker — sans
-  // redemander quoi que ce soit (une VOD reconstruite n'a rien à redemander).
+  // redemander quoi que ce soit.
   if (base === api.RELAY_BASE && w.links && api.markWorkerDown(base)) {
     console.info('[TwitchUnblock] Relais vidéo injoignable, retour au Worker :', base)
     w.links = api.withoutRelay(w.links)
     player.swapLinks(w.links, w.variants)
     return true
   }
-  if (Date.now() - lastWorkerSwitch < 60_000 || !api.markWorkerDown(base)) return false
+  if (Date.now() - lastWorkerSwitch < 60_000 || !w.links || !api.hasOtherWorker(base)) return false
   lastWorkerSwitch = Date.now()
-  console.info('[TwitchUnblock] Worker injoignable, passage au secours :', base)
-  const request = w.kind === 'live' ? api.getLive(w.login) : api.getVodLinks(w.id)
+  // VOD reconstruite : rien à redemander (son id n'en est pas un, le Worker
+  // répondait 400), ses liens passent par un autre Worker.
+  if (w.recovered) {
+    const moved = api.linksAvoiding(w.links, base)
+    if (!moved || !api.markWorkerDown(base)) return false
+    console.info('[TwitchUnblock] Worker injoignable, passage au secours :', base)
+    w.links = moved
+    player.swapLinks(moved, w.variants)
+    return true
+  }
+  // Les liens sont redemandés aux autres Workers d'abord ; celui-ci n'est
+  // écarté que si l'un d'eux répond. Échec (aucun ne répond, direct fini…) :
+  // la lecture repart avec les mêmes liens, et le lecteur retente lui-même
+  // avant d'afficher l'erreur — elle restait figée, sans erreur ni essai.
+  console.info('[TwitchUnblock] Worker injoignable, liens redemandés aux autres :', base)
+  const request = w.kind === 'live' ? api.getLive(w.login, { avoid: base }) : api.getVodLinks(w.id, { avoid: base })
   request
     .then((links) => {
-      if (state.watch !== w || !links?.links || !Object.keys(links.links).length) return
+      if (state.watch !== w) return
+      if (!links?.links || !Object.keys(links.links).length) throw new Error('none')
       w.links = links.links
       w.variants = links.variants ?? {}
       player.swapLinks(links.links, w.variants)
       if (w.kind === 'live') player.setLiveSource(links.source)
     })
-    .catch(() => {})
+    .catch(() => { if (state.watch === w) player.swapLinks(w.links, w.variants) })
   return true
 }
 
-/** Source choisie dans le menu ⚙ du lecteur : mise en tête de l'ordre. */
+/** Source choisie dans le menu ⚙ du lecteur : mise en tête de l'ordre, et
+ *  le direct repart par elle si ce n'est pas elle qui le sert — même déjà en
+ *  tête, quand un secours a pris le relais. */
 function switchLiveSource(id) {
-  setLiveSourceOrder([id, ...api.liveSourceOrder().filter((x) => x !== id)])
+  setLiveSourceOrder([id, ...api.liveSourceOrder().filter((x) => x !== id)], { reload: id !== player.liveSource })
 }
 
 /** Une source montée ou descendue d'un cran (réglages). */
@@ -2770,15 +2791,15 @@ function moveLiveSource(id, delta) {
 }
 
 /** Ordre des sources enregistré ; si la première change, le direct en cours
- *  repart aussitôt par le nouvel ordre. */
-function setLiveSourceOrder(order) {
+ *  repart aussitôt par le nouvel ordre (`reload` en décide autrement). */
+function setLiveSourceOrder(order, { reload } = {}) {
   const before = api.liveSourceOrder()[0]
   store.prefs.liveSourceOrder = order
   store.prefs.liveSource = null
   store.savePrefs()
   const list = $('#src-order')
   if (list) list.innerHTML = sourceOrderHtml()
-  if (api.liveSourceOrder()[0] !== before) reloadLiveSource()
+  if (reload ?? api.liveSourceOrder()[0] !== before) reloadLiveSource()
 }
 
 /** Lignes de l'ordre des sources (réglages) : rang, nom, monter, descendre. */
@@ -2883,17 +2904,24 @@ async function openLive(rawLogin) {
   go(`/${login}`, { watch: true })
 
   const [links, info] = await Promise.all([
-    api.getLive(login).catch((e) => ({ error: e?.status ? 'missing' : 'network' })),
+    // « missing » : aucune source n'a de direct (404) ou nom refusé (400) ;
+    // « failed » : une autre erreur du Worker (5xx).
+    api.getLive(login).catch((e) => ({ error: e?.status === 404 || e?.status === 400 ? 'missing' : e?.status ? 'failed' : 'network' })),
     api.getChannelInfo(login).catch(() => null),
   ])
   if (state.watch !== token) return
   // Santé du direct (/stats) : la source qui a servi, ou un échec — jamais la
-  // chaîne. « missing » : hors ligne ou introuvable, ce n'est pas un échec.
+  // chaîne. Aucune source n'a de direct alors que Twitch dit la chaîne en
+  // live : elles ont toutes échoué, c'est un échec (il passait pour « hors
+  // ligne »). Hors ligne ou introuvable, non.
   const liveOk = links && !links.error && links.links && Object.keys(links.links).length
+  const sourcesDown = !liveOk && links?.error === 'missing' && Boolean(info?.stream)
   if (liveOk) usage.count(`live_${links.source || 'unknown'}`, store.prefs.shareUsage)
-  else if (links?.error !== 'missing') usage.count('live_fail', store.prefs.shareUsage)
-  if (!links || links.error || !links.links || !Object.keys(links.links).length) {
-    return showWatchError(links?.error === 'network' ? t('err_network') : t('err_live'))
+  else if (links?.error !== 'missing' || sourcesDown) usage.count('live_fail', store.prefs.shareUsage)
+  if (!liveOk) {
+    return showWatchError(links?.error === 'network' ? t('err_network')
+      : sourcesDown ? t('err_live_sources')
+      : links?.error === 'missing' && info ? t('offline') : t('err_live'))
   }
   token.links = links.links
   // Hauteur, cadence et débit de chaque qualité (Worker à jour seulement) :

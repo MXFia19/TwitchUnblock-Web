@@ -1478,11 +1478,14 @@ export class Player {
       <span>${esc(this.menuLabel(k))}</span>${k === this.quality ? icon('check', 16) : ''}</button>`).join('')
     // Direct : la source (proxy) qui sert le flux, et de quoi en changer.
     if (this.kind === 'live' && this.o.onSource) {
-      // Dans l'ordre des réglages ; en choisir une la met en tête.
+      // Dans l'ordre des réglages ; en choisir une la met en tête. Cochée :
+      // celle qui sert le direct (la première de l'ordre si on l'ignore) —
+      // pas toujours la première, quand un secours a pris le relais.
       const order = liveSourceOrder(this.o.prefs)
+      const current = this.liveSource ?? order[0]
       html += `<div class="p-menu-title">${esc(t('live_source'))}${this.liveSource ? ` · ${esc(t(`src_${this.liveSource}`))}` : ''}</div>`
-      html += order.map((id, i) => `<button type="button" data-src="${id}" class="${i === 0 ? 'on' : ''}">
-        <span>${esc(t(`src_${id}`))}</span>${i === 0 ? icon('check', 16) : ''}</button>`).join('')
+      html += order.map((id) => `<button type="button" data-src="${id}" class="${id === current ? 'on' : ''}">
+        <span>${esc(t(`src_${id}`))}</span>${id === current ? icon('check', 16) : ''}</button>`).join('')
     }
     if (this.kind === 'vod') {
       html += `<div class="p-menu-title">${esc(t('speed'))}</div><div class="p-speeds">`
@@ -1534,7 +1537,11 @@ export class Player {
     if (b.dataset.report) { this.closeMenu(); this.o.onReport?.(); return }
     if (b.dataset.src) {
       this.closeMenu()
-      if (b.dataset.src !== liveSourceOrder(this.o.prefs)[0]) this.o.onSource?.(b.dataset.src)
+      // Rien à faire seulement pour celle qui sert le direct et qui est déjà
+      // en tête : la préférée, choisie pendant qu'un secours la remplace, est
+      // retentée (le clic était ignoré).
+      const id = b.dataset.src
+      if (id !== this.liveSource || id !== liveSourceOrder(this.o.prefs)[0]) this.o.onSource?.(id)
       return
     }
     if (b.dataset.q) this.setQuality(b.dataset.q)

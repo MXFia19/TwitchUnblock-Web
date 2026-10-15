@@ -105,11 +105,14 @@ function downStored() {
 }
 const isDown = (base) => Math.max(downStored()[base] || 0, downMem[base] || 0) > Date.now()
 
+/** Un autre Worker peut-il prendre le relais de celui-ci ? */
+export const hasOtherWorker = (base) => WORKER_BASES.length > 1 && WORKER_BASES.includes(base)
+
 /** Écarte un Worker en panne. `false` s'il n'y a aucun autre Worker vers
  *  qui se tourner : l'appelant garde alors son comportement habituel. */
 export function markWorkerDown(base) {
   // Le relais a toujours un recours : le Worker.
-  if (base !== RELAY_BASE && (WORKER_BASES.length < 2 || !WORKER_BASES.includes(base))) return false
+  if (base !== RELAY_BASE && !hasOtherWorker(base)) return false
   const until = Date.now() + DOWN_MS
   downMem[base] = until
   const m = downStored()
@@ -146,26 +149,52 @@ const viaRelay = (data) => (RELAY_BASE && !isDown(RELAY_BASE) && data?.links
 export const withoutRelay = (links) => moveLinks(links, (o) => o === RELAY_BASE,
   LOOKUP_BASES.find((b) => !isDown(b)) ?? LOOKUP_BASES[0])
 
-// Relais injoignable (VPS arrêté, mal configuré) : on le sait dès le
-// chargement de la page, plutôt qu'après les essais du lecteur.
-if (RELAY_BASE && !isDown(RELAY_BASE)) {
-  const ctrl = new AbortController()
-  const timer = setTimeout(() => ctrl.abort(), 4000)
-  fetch(`${RELAY_BASE}/health`, { cache: 'no-store', signal: ctrl.signal })
-    .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`) })
-    .catch(() => markWorkerDown(RELAY_BASE))
-    .finally(() => clearTimeout(timer))
+/** Worker en panne en pleine lecture d'une VOD reconstruite (rien à
+ *  redemander) : les mêmes liens, par un autre Worker ; null s'il n'y en a
+ *  pas. */
+export function linksAvoiding(links, base) {
+  const to = LOOKUP_BASES.find((b) => b !== base && !isDown(b)) ?? LOOKUP_BASES.find((b) => b !== base)
+  return to ? moveLinks(links, (o) => o === base, to) : null
 }
+
+/** L'adresse répond-elle (2xx) en moins de 8 s ? */
+async function answers(url) {
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), 8000)
+  try {
+    return (await fetch(url, { cache: 'no-store', signal: ctrl.signal })).ok
+  } catch { return false } finally { clearTimeout(timer) }
+}
+
+// Relais injoignable (VPS arrêté, mal configuré) : on le sait dès le
+// chargement de la page, plutôt qu'après les essais du lecteur. Écarté
+// seulement si l'appareil est en ligne et qu'un Worker répond, lui : un
+// réseau mobile lent (plus de 4 s, l'ancien délai) mettait le relais à
+// l'écart 30 min à tort. Sinon, un nouvel essai deux minutes plus tard.
+async function checkRelay(again = true) {
+  if (!RELAY_BASE || isDown(RELAY_BASE) || await answers(`${RELAY_BASE}/health`)) return
+  const worker = LOOKUP_BASES.find((b) => !isDown(b)) ?? LOOKUP_BASES[0]
+  if (navigator.onLine !== false && await answers(`${worker}/`)) markWorkerDown(RELAY_BASE)
+  else if (again) setTimeout(() => checkRelay(false), 120_000)
+}
+checkRelay()
 
 /**
  * JSON d'une route du Worker qui ne touche pas à la base D1, en passant au
  * Worker suivant quand l'un d'eux ne répond pas (quota atteint) — ceux qui
  * répondent d'abord, les Workers écartés en dernier recours.
- * Une réponse d'erreur du Worker lui-même (404 « VOD introuvable »…) n'est
- * pas une panne : un autre Worker dirait la même chose.
+ * Une réponse d'erreur du Worker lui-même (404 « VOD introuvable », 502
+ * « Twitch injoignable »…) n'est pas une panne : un autre Worker dirait la
+ * même chose — le 502 l'écartait 30 min à tort. N'en sont une qu'un échec
+ * réseau (la page d'erreur de Cloudflare, quota 1027 ou plantage 1101, n'a
+ * pas d'en-tête CORS), un 429, ou une erreur 5xx qui n'est pas le JSON du
+ * Worker.
+ * `avoid` : le Worker qui vient de lâcher en pleine lecture. Essayé après
+ * les autres, il n'est écarté que si l'un d'eux répond — sinon, c'est la
+ * connexion de l'appareil qui est en cause.
  */
-export async function workerJson(path, { timeout = 0 } = {}) {
-  const bases = LOOKUP_BASES.filter((b) => !isDown(b))
+export async function workerJson(path, { timeout = 0, avoid = null } = {}) {
+  const bases = LOOKUP_BASES.filter((b) => !isDown(b) && b !== avoid)
   const failed = []
   for (const base of [...bases, ...LOOKUP_BASES.filter((b) => !bases.includes(b))]) {
     const ctrl = timeout ? new AbortController() : null
@@ -182,13 +211,14 @@ export async function workerJson(path, { timeout = 0 } = {}) {
     } finally {
       clearTimeout(timer)
     }
-    if (res.status === 429 || res.status === 502 || res.status === 503 || res.status === 504) {
+    if (res.status === 429 || (res.status >= 500 && !/json/i.test(res.headers.get('content-type') || ''))) {
       failed.push(base)
       continue
     }
     // Ce Worker répond : ceux qui ont échoué avant lui sont bien en panne —
     // pas la connexion de l'appareil —, on les écarte un moment.
     for (const b of failed) markWorkerDown(b)
+    if (avoid && base !== avoid) markWorkerDown(avoid)
     if (!res.ok) {
       const err = new Error(`HTTP ${res.status}`)
       err.status = res.status
@@ -616,11 +646,12 @@ export async function getVodMeta(id) {
 // bloqué — chargement infini et « CORS error » dans la console. Le réglage
 // « proxy » ne concerne plus que les liens donnés aux applis externes
 // (VLC, Infuse…), voir `directUrl`.
-export async function getLive(login) {
+/** `avoid` : Worker en panne en pleine lecture (voir workerJson). */
+export async function getLive(login, { avoid = null } = {}) {
   // Ordre des sources (réglages) : le Worker les essaie l'une après l'autre.
   // `source` (la première) pour un Worker d'avant l'ordre.
   const order = liveSourceOrder()
-  return viaRelay(await workerJson(`/api/get-live?name=${encodeURIComponent(login)}&proxy=true&source=${order[0]}&order=${order.join(',')}`))
+  return viaRelay(await workerJson(`/api/get-live?name=${encodeURIComponent(login)}&proxy=true&source=${order[0]}&order=${order.join(',')}`, { avoid }))
 }
 
 /** Sources du direct, dans l'ordre automatique : Luminous Asie, proxy
@@ -637,8 +668,8 @@ export function liveSourceOrder(prefs = store.prefs) {
   return [...order, ...LIVE_SOURCES.filter((id) => !order.includes(id))]
 }
 
-export async function getVodLinks(id) {
-  return viaRelay(await workerJson(`/api/get-m3u8?id=${encodeURIComponent(id)}&proxy=true`))
+export async function getVodLinks(id, { avoid = null } = {}) {
+  return viaRelay(await workerJson(`/api/get-m3u8?id=${encodeURIComponent(id)}&proxy=true`, { avoid }))
 }
 
 /** Adresse d'origine derrière un lien du proxy, pour les applis externes. */

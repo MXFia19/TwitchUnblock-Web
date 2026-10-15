@@ -39,7 +39,7 @@ Watch Twitch lives and VODs in your browser, no subscription needed, with the re
 - Playback speed for VODs and clips (0.25× to 2×, `<` / `>` keys), remembered from one VOD to the next, shown on the ⚙ button (as a badge on phones) and recalled when a VOD starts; lives always play at 1×
 - ±10 s, double-tap on mobile, keyboard shortcuts
 - Picture in picture, “back to live” button, live latency — never under 4 seconds behind the edge (closer, playback freezes): the target follows how long Twitch takes to publish each segment, and skipping ahead or “back to live” stop there too. Lives never change playback speed to catch up (the sound drifted away from the picture): the player makes a small jump instead, and never after you rewound on purpose
-- **Live sources, in the order you pick**: Luminous Asia, an Albania proxy (TTV.LOL), Luminous Europe and official Twitch (with ads), tried one after the other until one answers. The proxies avoid most ads, but not the channel's own ad breaks: Twitch puts its “Commercial break in progress” screen (or an ad) into every source at the same time, mostly for 15–30 s when a stream opens. Reorder them in Settings → Player; picking a source from the player's ⚙ menu (which shows the one in use) moves it to the top. Channels that stream with multiple encodes (Enhanced Broadcasting) keep each quality's own name on every source
+- **Live sources, in the order you pick**: Luminous Asia, an Albania proxy (TTV.LOL), Luminous Europe and official Twitch (with ads), tried one after the other until one answers. The proxies avoid most ads, but not the channel's own ad breaks: Twitch puts its “Commercial break in progress” screen (or an ad) into every source at the same time, mostly for 15–30 s when a stream opens. Reorder them in Settings → Player; picking a source from the player's ⚙ menu (which ticks the one in use) moves it to the top and switches the live to it — your preferred source too, when another one had taken over. When no source answers while the channel is live, the player says so (an offline channel is shown as offline), and it counts as a failure on `/stats`. Channels that stream with multiple encodes (Enhanced Broadcasting) keep each quality's own name on every source
 - **Channel ad breaks explained**: when Twitch replaces the live with an ad break, a banner says so with a countdown to the stream's return, and the sound is muted until then (unless you turn it back on). Detected from the live playlist, in Auto as in a fixed quality, and timed on the picture actually shown. The website can't use a Twitch sub to skip them (the iPhone app can, with its web session)
 - **Theatre mode** (T), keyboard shortcuts anywhere on the page (? lists them)
 - **VOD chapters**: game changes marked on the progress bar
@@ -272,8 +272,10 @@ server of yours, with no request limit. The Worker keeps everything else
 The website sends playback through the relay when one is set
 (`DEFAULT_RELAY_URL` in `public/assets/js/api.js`, or `relayUrl` in
 `public/config.js`), and falls back to the Worker on its own when the relay
-doesn't answer — even in the middle of a video. The iOS app reads Twitch's CDN
-directly and doesn't need it.
+doesn't answer — even in the middle of a video. A relay that fails its
+`/health` check when the page opens is only set aside (for 30 minutes) if a
+Worker answers meanwhile: a slow or offline phone connection doesn't count
+against it. The iOS app reads Twitch's CDN directly and doesn't need it.
 
 You need a server with Docker and a domain name pointing to it (a free
 subdomain from [duckdns.org](https://www.duckdns.org) works — DuckDNS also
