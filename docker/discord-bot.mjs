@@ -1104,8 +1104,10 @@ export function startDiscordBridge({
     const role = st.settings.testersRole
     const tv = /^tv-test-/.test(rel.tag_name || '')
     const items = bullets(rel.body).slice(0, 12)
+    // Apple TV : sa source (apps-tv.json, à côté de celle de test) pour
+    // ATVLoadly, qui se met alors à jour seul.
     const how = tv
-      ? 'Apple TV build: install it with Xcode (see the README).'
+      ? `Apple TV build: add the source <${testSource.replace(/apps-test\.json$/, 'apps-tv.json')}> in ATVLoadly for automatic updates, or install it with Xcode (see the README): <${rel.html_url}>`
       : `Install it from the test source <${testSource}>, or download the IPA: <${rel.html_url}>`
     await sendChunks(channel, `${role ? `<@&${role}> ` : ''}🧪 **New test build: ${rel.name}**\n${items.join('\n')}\n\n${how}`,
       { allowed_mentions: role ? { parse: [], roles: [role] } : { parse: [] } })
