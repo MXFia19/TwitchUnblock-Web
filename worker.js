@@ -2779,6 +2779,19 @@ const NTFY_FREE_DAILY = 250;
 /** Sujet ntfy sans nouvelles de l'app depuis 60 jours (désinstallée…) : oublié. */
 const NTFY_IDLE = 60 * 86400000;
 const PUSH_QUEUE_TTL = 30 * 60 * 1000;
+// Quota de ntfy.sh (NTFY_FREE_DAILY messages par jour, pour toute l'app iOS) :
+// un test publiait sur n'importe quel sujet, et des sujets factices abonnés
+// à des chaînes populaires le vidaient pour tout le monde jusqu'à minuit
+// (UTC). Les limites par adresse ne tiennent qu'en mémoire d'une instance :
+// ces plafonds-ci sont des compteurs du jour gardés en D1 (table kv, oubliés
+// le lendemain). La part d'une personne est comptée dans l'une des 65 536
+// cases tirées de l'empreinte du jour et de son adresse, comme pour les
+// photos des retours : la base ne garde aucune adresse.
+const NTFY_NEW_PER_PERSON = 5;     // nouveaux sujets par jour et par adresse (/64 en IPv6)
+const NTFY_NEW_PER_DAY = 40;       // nouveaux sujets par jour, en tout
+const NTFY_TESTS_PER_TOPIC = 5;    // tests par jour et par sujet
+const NTFY_TESTS_PER_DAY = 40;     // tests par jour, en tout
+const NTFY_LIVES_PER_TOPIC = 30;   // notifications de live par jour et par sujet
 const PUSH_TEXT = {
     fr: { live: (n) => `${n} est en live`, test: 'Les notifications de live fonctionnent.' },
     en: { live: (n) => `${n} is live`, test: 'Live notifications are working.' },
@@ -3028,6 +3041,39 @@ async function ntfyPausedUntil(env) {
     return p?.via === ntfyRoute(env) && p.until > Date.now() ? p.until : 0;
 }
 
+/** Clé D1 d'un compteur du jour (UTC) des plafonds ntfy. */
+const ntfyLimitKey = (name) => `lim:${name}:${new Date().toISOString().slice(0, 10)}`;
+
+/** Ajoute à ces compteurs du jour ([nom, quantité]) et rend leurs nouvelles
+ *  valeurs, d'un coup (RETURNING) : lus avant d'écrire, des requêtes
+ *  simultanées passaient ensemble. */
+async function bumpNtfyLimits(env, entries) {
+    const expires = (Math.floor(Date.now() / 86400000) + 1) * 86400000;
+    const res = await env.DB.batch(entries.map(([name, n]) => env.DB.prepare(
+        `INSERT INTO kv (key, value, expires) VALUES (?1, ?2, ?3)
+         ON CONFLICT(key) DO UPDATE SET value = CAST(value AS INTEGER) + ?2 RETURNING value`)
+        .bind(ntfyLimitKey(name), n, expires)));
+    return res.map((r) => Number(r?.results?.[0]?.value) || 0);
+}
+
+/** Une unité de chaque compteur [nom, plafond] si tous restent sous leur
+ *  plafond ; sinon rien n'est compté, et false. */
+async function takeNtfyLimits(env, limits) {
+    const after = await bumpNtfyLimits(env, limits.map(([name]) => [name, 1]));
+    if (after.every((v, i) => v <= limits[i][1])) return true;
+    await bumpNtfyLimits(env, limits.map(([name]) => [name, -1])).catch(() => {});
+    return false;
+}
+
+/** Valeurs du jour de ces compteurs (nom → nombre). */
+async function readNtfyLimits(env, names) {
+    const keys = names.map(ntfyLimitKey);
+    const rows = (await env.DB.prepare(`SELECT key, value FROM kv WHERE key IN (SELECT value FROM json_each(?1))`)
+        .bind(JSON.stringify(keys)).all()).results || [];
+    const byKey = new Map(rows.map((r) => [r.key, Number(r.value) || 0]));
+    return new Map(names.map((name, i) => [name, byKey.get(keys[i]) || 0]));
+}
+
 const pushLang = (l) => (PUSH_TEXT[l] ? l : 'en');
 
 async function handlePushKey(env) {
@@ -3050,7 +3096,18 @@ async function handlePushSubscribe(request, env) {
     await ensureSchema(env);
     const id = await pushIdOf(sub.endpoint);
     const hash = await pushIdOf(channels.slice().sort().join(','));
-    const old = await env.DB.prepare('SELECT hash FROM push_subs WHERE id = ?1').bind(id).first('hash');
+    const known = await env.DB.prepare('SELECT hash FROM push_subs WHERE id = ?1').bind(id).first();
+    const old = known?.hash ?? null;
+    // Nouveau sujet ntfy : plafonné par personne et en tout, chaque jour (voir
+    // NTFY_NEW_PER_PERSON). Un sujet déjà connu (synchro quotidienne de
+    // l'app, chaînes changées) ne compte pas.
+    if (sub.kind === 'ntfy' && !known) {
+        const day = new Date().toISOString().slice(0, 10);
+        const mine = `ntn_${(await sha256hex(`ntfy|${day}|${clientKey(request)}`)).slice(0, 4)}`;
+        if (!(await takeNtfyLimits(env, [[mine, NTFY_NEW_PER_PERSON], ['ntn', NTFY_NEW_PER_DAY]]))) {
+            return jsonError('Trop de nouveaux sujets ntfy aujourd\'hui', 429);
+        }
+    }
     const now = Date.now();
     const ops = [env.DB.prepare(
         `INSERT INTO push_subs (id, kind, endpoint, p256dh, auth, lang, hash, created, updated)
@@ -3095,18 +3152,32 @@ async function handlePushTest(request, env) {
         // `limit` : ntfy.sh refuse les messages pour l'instant (l'app le dit
         // autrement qu'un serveur injoignable). `via` : relais ou direct.
         const via = ntfyRoute(env);
-        const refused = (detail) => new Response(JSON.stringify({ error: `ntfy.sh : ${detail}`, limit: true, via }),
-            { status: 502, headers: { ...RESPONSE_HEADERS, 'Content-Type': 'application/json' } });
+        const refused = (detail, status = 502) => new Response(JSON.stringify({ error: `ntfy.sh : ${detail}`, limit: true, via }),
+            { status, headers: { ...RESPONSE_HEADERS, 'Content-Type': 'application/json' } });
         await ensureSchema(env);
+        // Seulement pour un sujet déjà abonné (l'app s'abonne avant de
+        // proposer le test) : n'importe quel sujet passait, et quelques
+        // centaines de tests vidaient le quota du jour pour toute l'app.
+        const id = await pushIdOf(sub.endpoint);
+        const known = await env.DB.prepare(`SELECT 1 AS ok FROM push_subs WHERE id = ?1 AND kind = 'ntfy'`).bind(id).first('ok');
+        if (!known) return jsonError('Sujet ntfy inconnu : active d\'abord les notifications', 404);
         const paused = await ntfyPausedUntil(env);
         if (paused) return refused(`pause jusqu'à ${new Date(paused).toISOString().slice(11, 16)} UTC après un refus (429)`);
+        // Tests plafonnés par sujet et en tout, chaque jour (`limit` : l'app
+        // dit « réessaie plus tard »).
+        if (!(await takeNtfyLimits(env, [[`ntt_${id}`, NTFY_TESTS_PER_TOPIC], ['ntt', NTFY_TESTS_PER_DAY]]))) {
+            return refused('trop de tests aujourd\'hui', 429);
+        }
         const [r] = await sendNtfy(env, [{ topic: ntfyTopic(sub), title: 'TwitchUnblock', message: text.test,
                                            click: 'twitchunblock://', tags: ['white_check_mark'] }]);
         await pushStats(env, pushCount({ pu_test: 1 }, 'ntfy', r));
         if (r.status >= 200 && r.status < 300) return jsonResponse({ ok: true, via });
         if (r.relay) return jsonError(`Relais ntfy : ${r.relay}`, 502);
         if (r.status !== 429) return jsonError(`ntfy.sh : ${r.status}`, 502);
-        await ntfyPause(env, r.code);
+        // Pause pour tous seulement quand ntfy.sh dit le quota du jour
+        // atteint : le refus passager d'un test ne coupe plus les
+        // notifications de live de tout le monde.
+        if (r.code === NTFY_DAILY_QUOTA) await ntfyPause(env, r.code);
         return refused(`429${r.code ? ` (${r.code})` : ''}`);
     }
     const status = await sendPush(env, sub, { title: 'TwitchUnblock', body: text.test, tag: 'test', url: '/' });
@@ -3192,13 +3263,15 @@ async function pushSend(env, room, counts = {}) {
     // ntfy en pause après un refus : ses messages attendent, sans retenir
     // ceux du site qui les suivent dans la file.
     const ntfyOn = !(await ntfyPausedUntil(env));
-    const rows = (await db.prepare(`SELECT q.id, q.body, s.id AS sid, s.kind, s.endpoint, s.p256dh, s.auth, s.lang
-        FROM push_queue q JOIN push_subs s ON s.id = q.sub ${ntfyOn ? '' : `WHERE s.kind IS NOT 'ntfy'`}
-        ORDER BY q.id LIMIT ?1`).bind(room + (ntfyOn ? PUSH_NTFY_PER_RUN : 0)).all()).results || [];
-    // Au plus `room` notifications web (chiffrées) ; les ntfy en plus.
-    let webLeft = room;
-    let ntfyLeft = PUSH_NTFY_PER_RUN;
-    const queue = rows.filter((q) => (q.kind === 'ntfy' ? ntfyLeft-- > 0 : webLeft-- > 0));
+    // Au plus `room` notifications web (chiffrées) ; les ntfy en plus. Une
+    // lecture par voie : avec une seule fenêtre commune, une file web
+    // chargée ne laissait passer aucun ntfy, et des ntfy en attente (relais
+    // en panne) bloquaient tout le web.
+    const pick = (kind, n) => db.prepare(`SELECT q.id, q.body, s.id AS sid, s.kind, s.endpoint, s.p256dh, s.auth, s.lang
+        FROM push_queue q JOIN push_subs s ON s.id = q.sub WHERE s.kind ${kind === 'ntfy' ? `= 'ntfy'` : `IS NOT 'ntfy'`}
+        ORDER BY q.id LIMIT ?1`).bind(n);
+    const lanes = await db.batch([pick('web', room), ...(ntfyOn ? [pick('ntfy', PUSH_NTFY_PER_RUN)] : [])]);
+    const queue = lanes.flatMap((r) => r?.results || []);
     if (!queue.length) {
         // De temps en temps : chaînes que plus personne ne suit, sujets ntfy
         // dont l'app ne donne plus de nouvelles.
@@ -3223,18 +3296,42 @@ async function pushSend(env, room, counts = {}) {
     // Envoyé, refusé pour de bon, ou injoignable : retiré de la file (un live
     // en retard de 30 minutes n'a plus d'intérêt). Refusé pour l'instant
     // (429) ou relais en panne (503) : il attend le passage suivant.
-    const ntfyRows = queue.filter((q) => q.kind === 'ntfy');
     const sendNtfyRows = async () => {
+        let ntfyRows = queue.filter((q) => q.kind === 'ntfy');
+        if (!ntfyRows.length) return;
+        // Part de chaque sujet : au plus NTFY_LIVES_PER_TOPIC messages par
+        // jour ; au-delà, retirés sans envoi. Sans elle, quelques sujets
+        // factices abonnés à des chaînes populaires vidaient le quota commun.
+        const sids = [...new Set(ntfyRows.map((q) => q.sid))];
+        const used = await readNtfyLimits(env, sids.map((sid) => `ntl_${sid}`)).catch(() => new Map());
+        const taken = new Map();
+        ntfyRows = ntfyRows.filter((q) => {
+            const n = (taken.get(q.sid) ?? used.get(`ntl_${q.sid}`) ?? 0) + 1;
+            taken.set(q.sid, n);
+            if (n <= NTFY_LIVES_PER_TOPIC) return true;
+            done.push(q.id);
+            return false;
+        });
         if (!ntfyRows.length) return;
         const results = await sendNtfy(env, ntfyRows.map((q) => {
             const n = notice(q);
             return { topic: ntfyTopic(q), title: n.title, message: n.body || n.title,
                      click: `twitchunblock://live/${n.live.login}`, tags: ['red_circle'] };
         }));
+        // Relais en panne : un essai compté, pas un par message — ils sont
+        // retentés à chaque passage, jusqu'à 30 minutes.
+        if (results.length && results.every((r) => r.relay)) pushCount(counts, 'ntfy', results[0]);
+        const sent = new Map();
         results.forEach((r, i) => {
-            pushCount(counts, 'ntfy', r);
+            if (!r.relay) pushCount(counts, 'ntfy', r);
             if (r.status !== 429 && r.status !== 503) done.push(ntfyRows[i].id);
+            if (r.status >= 200 && r.status < 300) sent.set(ntfyRows[i].sid, (sent.get(ntfyRows[i].sid) || 0) + 1);
         });
+        // Comptés une fois envoyés : un message retenté n'use pas deux fois sa part.
+        if (sent.size) {
+            await bumpNtfyLimits(env, [...sent].map(([sid, n]) => [`ntl_${sid}`, n]))
+                .catch((e) => console.warn('ntfy : part des sujets non comptée,', e.message));
+        }
         const refused = results.find((r) => r.status === 429);
         if (refused) await ntfyPause(env, refused.code);
     };
