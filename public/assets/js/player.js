@@ -843,7 +843,12 @@ export class Player {
     this.clearRetry()
     const again = () => {
       this.clearRetry()
-      if (token === this.attachToken && this.hls === hls) hls.startLoad()
+      if (token !== this.attachToken || this.hls !== hls) return
+      // Playlist jamais lue (le relais ou le Worker ne répondait pas dès le
+      // départ) : startLoad n'y fait rien — ni requête ni nouvelle erreur, la
+      // roue tournait sans fin. On la redemande.
+      if (!hls.levels?.length && hls.url) hls.loadSource(hls.url)
+      else hls.startLoad()
     }
     if (navigator.onLine === false) {
       this.onlineWait = again
