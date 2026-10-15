@@ -2,9 +2,9 @@
 //  Hermes : les événements temps réel de Twitch (successeur du PubSub).
 //
 //  Une seule connexion WebSocket par chaîne regardée, anonyme : raids,
-//  prédictions, nombre de spectateurs, fin du live, changements de message
-//  épinglé. Chaque notification transporte la même chaîne JSON que l'ancien
-//  PubSub, décodée ici et remise à `onEvent(topic, data)`.
+//  prédictions, hype train, nombre de spectateurs, fin du live, changements
+//  de message épinglé. Chaque notification transporte la même chaîne JSON que
+//  l'ancien PubSub, décodée ici et remise à `onEvent(topic, data)`.
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { GQL_CLIENT_ID } from '../api.js'

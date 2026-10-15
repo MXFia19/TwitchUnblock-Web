@@ -8,6 +8,7 @@
 
 import { LiveChat } from './live.js'
 import { fetchPinned } from './pinned.js'
+import { fetchHypeTrain, hypeFromGQL, hypeFromHermes, hypeView, mergeHype } from './hype.js'
 import { fetchBotCommands } from './botcmds.js'
 import { VodChat } from './vod.js'
 import { badgeInfo, parseBadgeTag } from './badges.js'
@@ -179,6 +180,8 @@ export class ChatView {
     this.delayTimer = null
     /** Fiche d'emote affichée : protège des réponses tardives. */
     this.infoSeq = 0
+    /** Hype train : génération de la boucle de lecture (une par chaîne ouverte). */
+    this.hypeGen = 0
     this.build()
   }
 
@@ -388,6 +391,7 @@ export class ChatView {
     this.refreshComposer()
     this.client.start()
     this.startPinned(channel)
+    this.startHype(channel)
     this.startDrops(channel)
     this.loadChatSettings(channel)
   }
@@ -713,6 +717,138 @@ export class ChatView {
     $('.chat-raid', this.el.events)?.remove()
   }
 
+  // ── Hype train ─────────────────────────────────────────────────────────
+  /** Lu à l'ouverture (GQL public, sans compte), puis toutes les 5 s pendant
+   *  une approche — le départ s'y voit vite, même sans Hermes (multi-live) —
+   *  et toutes les 20 s sinon ; relu aussi dès l'échéance passée (setHype). */
+  startHype(channel) {
+    const gen = ++this.hypeGen
+    clearTimeout(this.hypePoll)
+    this.hype = undefined
+    let busy = false
+    const load = async () => {
+      if (busy || gen !== this.hypeGen) return
+      busy = true
+      clearTimeout(this.hypePoll)
+      // Onglet en arrière-plan : inutile d'interroger Twitch (la première
+      // lecture a lieu ; Hermes continue de raconter la suite).
+      if (!document.hidden || this.hype === undefined) {
+        let ht
+        try { ht = await fetchHypeTrain(channel) } catch {}
+        if (gen !== this.hypeGen) return
+        // Lecture ratée : rien ne change, rien ne se déduit.
+        if (ht !== undefined) {
+          const now = Date.now()
+          this.setHype(mergeHype(this.hype ?? null, hypeFromGQL(ht, now), now, this.hype === undefined))
+        }
+      }
+      busy = false
+      this.hypePoll = setTimeout(load, this.hype?.phase === 'approaching' ? 5000 : 20_000)
+    }
+    this.hypeLoad = load
+    load()
+  }
+
+  /** Message Hermes du hype train (chat principal) : départ, niveaux et fin
+   *  à la seconde. Pas retardé par le chat synchronisé, comme la prédiction. */
+  applyHype(msg) {
+    if (this.mode !== 'live') return
+    const next = hypeFromHermes(msg, this.hype ?? null, Date.now())
+    if (next !== undefined) this.setHype(next)
+  }
+
+  /** Nouvel état : la carte suit, et l'échéance programme une relecture
+   *  plutôt qu'un effacement — une montée de niveau la repousse de 5 min, un
+   *  départ remplace l'approche juste avant la sienne. */
+  setHype(state) {
+    this.hype = state
+    clearTimeout(this.hypeDue)
+    if (state && state.phase !== 'ended') {
+      const gen = this.hypeGen
+      // Échéance déjà passée (Hermes vient de parler, GQL en retard) : on
+      // relit dans 5 s plutôt qu'à chaque seconde.
+      const wait = state.endsAt - Date.now()
+      this.hypeDue = setTimeout(() => { if (gen === this.hypeGen) this.hypeLoad?.() }, wait > 0 ? wait + 1000 : 5000)
+    }
+    this.renderHype()
+  }
+
+  /** Carte au-dessus de la prédiction : l'approche (pastilles, soutiens qui
+   *  manquent, compte à rebours), le départ, le niveau en cours (barre du
+   *  niveau, temps restant), un niveau terminé, la fin. Tenue à jour chaque
+   *  seconde tant qu'elle est là ; un clic replie la seconde ligne. */
+  renderHype() {
+    const now = Date.now()
+    const s = this.hype
+    const view = hypeView(s, now)
+    let box = $('.chat-hype', this.el.events)
+    if (!view) {
+      box?.remove()
+      clearInterval(this.hypeTimer)
+      this.hypeTimer = null
+      this.hypeSig = ''
+      // Fin montée puis écoulée : on repart de zéro.
+      if (s?.phase === 'ended') this.hype = null
+      return
+    }
+    if (!box) {
+      box = document.createElement('div')
+      box.className = 'chat-hype'
+      box.setAttribute('role', 'group')
+      // Sous le raid, au-dessus de la prédiction.
+      this.el.events.insertBefore(box, $('.chat-pred', this.el.events))
+      box.addEventListener('click', () => box.classList.toggle('folded'))
+    }
+    const title = t(s.variant === 'golden' ? 'hype_golden' : s.variant === 'treasure' ? 'hype_treasure' : 'hype_train')
+    const pct = Math.round((s.percent ?? 0) * 100)
+    // Compte à rebours muet pour les lecteurs d'écran : le libellé de la carte suffit.
+    const count = '<span class="hype-count" aria-hidden="true"></span>'
+    let head
+    let body = ''
+    let label
+    if (view === 'approaching' || view === 'kickoff') {
+      // Comme Twitch : 2 pastilles (3 au-delà de 5 soutiens), les dernières
+      // vides tant qu'il manque des soutiens ; au départ, tout se remplit.
+      const dots = s.bigGoal ? 3 : 2
+      const empty = view === 'kickoff' ? 0 : Math.max(1, Math.min(dots - 1, s.left))
+      const pills = Array.from({ length: dots }, (_, i) => {
+        const on = i < dots - empty
+        return `<i class="hype-dot${on ? ' on' : ''}${view === 'kickoff' && i === dots - 1 ? ' go' : ''}">${on ? icon('check', 10) : ''}</i>`
+      }).join('')
+      const kick = view === 'approaching' ? t('hype_kickoff', { n: s.left }) : ''
+      head = `<b>${esc(title)}</b><span class="hype-tag">${esc(t('hype_incoming'))}</span>${view === 'approaching' ? count : ''}`
+      body = `<span class="hype-dots">${pills}</span><span class="hype-sub">${esc(kick)}</span>`
+      label = [title, t('hype_incoming'), kick].filter(Boolean).join(' · ')
+    } else if (view === 'departed') {
+      head = `<b>${esc(t('hype_departed'))}</b>`
+      body = `<span class="hype-sub">${esc(t('hype_departed_sub'))}</span>`
+      label = `${t('hype_departed')} ${t('hype_departed_sub')}`
+    } else if (view === 'ended') {
+      head = `<b>${esc(t('hype_ended', { n: s.level, p: pct }))}</b>`
+      label = t('hype_ended', { n: s.level, p: pct })
+    } else {
+      // En route, ou niveau tout juste terminé (le message prend la place du titre).
+      const level = `${title} · ${t('hype_level', { n: s.level })}`
+      const done = view === 'levelDone' ? t('hype_level_done', { n: s.flash.n }) : ''
+      head = `<b>${esc(done || level)}</b>${count}`
+      body = `<span class="hype-bar"><i style="width:${pct}%"></i></span><span class="hype-pct">${pct}%</span>`
+      label = [done, level, `${pct}%`].filter(Boolean).join(' · ')
+    }
+    const html = `<div class="hype-head">${icon('train', 14)}${head}</div>${body ? `<div class="hype-body">${body}</div>` : ''}`
+    if (html !== this.hypeSig) {
+      box.innerHTML = html
+      box.dataset.view = view
+      box.setAttribute('aria-label', label)
+      this.hypeSig = html
+    }
+    const el = $('.hype-count', box)
+    if (el) {
+      const sec = Math.ceil((s.endsAt - now) / 1000)
+      el.textContent = sec > 0 ? `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}` : ''
+    }
+    this.hypeTimer ??= setInterval(() => this.renderHype(), 1000)
+  }
+
   // ── Prédiction ─────────────────────────────────────────────────────────
   /** Carte de prédiction en lecture seule : issues en %, points, compte à
    *  rebours, puis l'issue gagnante une minute après la résolution. */
@@ -807,6 +943,15 @@ export class ChatView {
     clearInterval(this.raidTimer)
     clearInterval(this.predTimer)
     clearTimeout(this.predHide)
+    // Hype train : la boucle de lecture s'arrête (génération changée), la
+    // carte part avec les autres événements.
+    this.hypeGen++
+    clearTimeout(this.hypePoll)
+    clearTimeout(this.hypeDue)
+    clearInterval(this.hypeTimer)
+    this.hypeTimer = null
+    this.hypeSig = ''
+    this.hype = undefined
     this.el.events.innerHTML = ''
     clearInterval(this.delayTimer)
     this.delayTimer = null

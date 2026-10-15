@@ -2880,7 +2880,7 @@ async function openLive(rawLogin) {
 function startHermes(token, login, channelId) {
   hermes?.stop()
   hermes = new Hermes({
-    topics: [`raid.${channelId}`, `video-playback-by-id.${channelId}`, `predictions-channel-v1.${channelId}`, `pinned-chat-updates-v1.${channelId}`],
+    topics: [`raid.${channelId}`, `video-playback-by-id.${channelId}`, `predictions-channel-v1.${channelId}`, `pinned-chat-updates-v1.${channelId}`, `hype-train-events-v2.${channelId}`],
     onEvent: (topic, data) => {
       if (state.watch !== token) return
       const kind = topic.split('.')[0]
@@ -2895,6 +2895,7 @@ function startHermes(token, login, channelId) {
       } else if (kind === 'raid') onRaid(token, data)
       else if (kind === 'predictions-channel-v1') chat.setPrediction(data.data?.event)
       else if (kind === 'pinned-chat-updates-v1') chat.refreshPinned()
+      else if (kind === 'hype-train-events-v2') chat.applyHype(data)
     },
   })
 }

@@ -1175,7 +1175,7 @@ html.multi-open { overflow: hidden; }
 .usage-cell strong { font-size: 22px; font-weight: 800; font-variant-numeric: tabular-nums; }
 .usage-split { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
 
-/* ── Événements du chat : raid, prédiction ──────────────────────────────── */
+/* ── Événements du chat : raid, hype train, prédiction ──────────────────── */
 .chat-events:empty { display: none; }
 .chat-events { flex: none; display: flex; flex-direction: column; }
 .chat-raid {
@@ -1201,6 +1201,24 @@ html.multi-open { overflow: hidden; }
 .pred-row.win .pred-label span:first-child { color: var(--text); }
 .pred-bar { height: 5px; margin-top: 3px; border-radius: 3px; background: var(--card); overflow: hidden; }
 .pred-bar i { display: block; height: 100%; border-radius: 3px; transition: width 0.4s ease; }
+/* Hype train : approche (pastilles), départ, niveau en cours (barre), fin */
+.chat-hype { padding: 7px 10px 8px; background: var(--card-hi); border-bottom: 1px solid var(--line); cursor: pointer; }
+.hype-head { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--live); }
+.hype-head b { flex: 1; min-width: 0; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hype-tag { flex: none; padding: 1px 6px; border-radius: 999px; background: var(--live); color: #fff; font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.03em; }
+.hype-count { flex: none; font-size: 11px; font-weight: 700; color: var(--muted); font-variant-numeric: tabular-nums; }
+.hype-body { display: flex; align-items: center; gap: 8px; margin-top: 5px; min-width: 0; }
+.chat-hype.folded .hype-body { display: none; }
+.hype-dots { flex: none; display: inline-flex; gap: 4px; }
+.hype-dot { display: inline-flex; align-items: center; justify-content: center; width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--live); color: #fff; }
+.hype-dot.on { background: var(--live); }
+.hype-dot.go { animation: hype-go 0.6s ease-out; }
+.hype-sub { flex: 1; min-width: 0; font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hype-bar { flex: 1; height: 5px; border-radius: 3px; background: var(--surface); overflow: hidden; }
+.hype-bar i { display: block; height: 100%; border-radius: 3px; background: var(--live); }
+.hype-pct { flex: none; font-size: 11px; font-weight: 700; color: var(--muted); font-variant-numeric: tabular-nums; }
+@keyframes hype-go { from { transform: scale(0.4); } 60% { transform: scale(1.25); } to { transform: none; } }
+@media (prefers-reduced-motion: reduce) { .hype-dot.go { animation: none; } }
 
 /* ── Fin du live ────────────────────────────────────────────────────────── */
 .watch-ended {

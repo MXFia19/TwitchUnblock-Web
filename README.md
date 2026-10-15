@@ -65,6 +65,7 @@ Watch Twitch lives and VODs in your browser, no subscription needed, with the re
 - **Pinned message**: compact banner with badges, emotes, who pinned it and a countdown — collapse it to a chip
 - **Drops card**: when the channel runs a drops campaign, a card under the pinned message shows the reward, the watch time, the end date and a link to the details; dismissed, it stays away for that campaign
 - **Predictions** live (read-only), incoming **raids** and **announcements** highlighted
+- **Hype train**, without an account: the “Incoming” card when a channel is one or two supports away from a Hype Train (dots and countdown), the departure, the current level with its real progress bar and time left, a line when a level is completed, and the end of a completed train — in real time in the main chat, every few seconds in the multi-live chat
 - Your name and **chosen words highlighted**; **filters**: hide bots, `!commands`, muted words, hide someone
 - Chat once logged in: emote and username autocomplete, emote picker, replies
 - **Chat restrictions said upfront**: the room's modes above the message box (followers only and for how long, subscribers only, emotes only, slow mode, verified account…), the channel's chat rules to accept before your first message, and a message Twitch refuses removed with the reason, instead of looking sent
@@ -117,7 +118,7 @@ public/              The website, served as-is by Vercel (no build step)
       i18n.js        Translations
       store.js       History, progress, preferences (localStorage)
       util.js        Escaping, formatting, icons
-      chat/          Chat: IRC, emotes, badges, pinned message, VOD replay
+      chat/          Chat: IRC, emotes, badges, pinned message, hype train, VOD replay
 worker.js            Backend: Cloudflare Worker
 wrangler.toml        Worker configuration
 docker/relay.mjs     Video relay for your own server (same proxy as the Worker)
@@ -138,7 +139,7 @@ Browser ──► Cloudflare Worker ──► Twitch (playlists, video segments)
     ├──► Twitch GQL     public data: streams, channels, VODs, VOD chat
     ├──► Twitch Helix   logged-in account: followed channels
     ├──► Twitch IRC     live chat (WebSocket)
-    ├──► Twitch Hermes  real time: raids, predictions, viewers, stream end
+    ├──► Twitch Hermes  real time: raids, predictions, hype train, viewers, stream end
     └──► BTTV / FFZ / 7TV / recent-messages   emotes and chat history
 ```
 
