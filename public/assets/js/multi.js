@@ -65,7 +65,9 @@ const sharePath = () => `/?multi=${list.map(keyOf).join(',')}`
 export function positionOf(entry) {
   const tile = tiles.get(keyOf(entry))
   const cur = tile?.video.currentTime || tile?.pos || 0
-  return cur > 0 ? cur : (hooks.resume?.(entry.vod) ?? 0)
+  if (cur > 0) return cur
+  // Tuile pas encore partie : l'instant d'un lien passe avant la reprise.
+  return pendingAt.get(keyOf(entry)) ?? hooks.resume?.(entry.vod) ?? 0
 }
 
 /** Lien à copier : celui de la mosaïque, avec l'instant de chaque VOD
@@ -79,11 +81,12 @@ export function shareUrl() {
   return `${location.origin}/?multi=${parts.join(',')}`
 }
 
-/** Ce que désigne une saisie du « + » : une VOD (lien /videos/<id>, avec
- *  « ?t= » éventuel, ou un nombre de 8 chiffres et plus), sinon une chaîne. */
+/** Ce que désigne une saisie du « + » : une VOD (lien /videos/<id> ou ancien
+ *  lien /<chaîne>/v/<id>, avec « ?t= » éventuel, ou un nombre de 8 chiffres
+ *  et plus), sinon une chaîne. */
 function parseInput(raw) {
   const s = String(raw ?? '').trim()
-  const id = (/videos\/(\d{6,20})/.exec(s) ?? /^(\d{8,20})$/.exec(s))?.[1]
+  const id = (/(?:videos|\/v)\/v?(\d{6,20})/.exec(s) ?? /^(\d{8,20})$/.exec(s))?.[1]
   if (id) return { vod: id, at: twitchTime(/[?&]t=([^&#\s]+)/.exec(s)?.[1]) }
   const login = api.cleanLogin(/twitch\.tv\/([A-Za-z0-9_]{1,25})(?:[/?#]|$)/i.exec(s)?.[1] ?? s)
   return login ? { login } : null
@@ -301,6 +304,9 @@ export function openWith(tokens) {
   list = next
   save()
   open({ url: false })
+  // L'adresse garde la sélection, sans les instants : un rechargement
+  // reprend chaque VOD à sa progression, pas à l'instant du lien.
+  hooks.onUrl?.(sharePath(), true)
 }
 
 /** Titre et chaîne d'une VOD, connus au démarrage de sa tuile. */
@@ -607,6 +613,23 @@ function pickByCount(links, variants = {}) {
 async function play(tile) {
   const v = tile.video
   v.muted = audible !== tile.key
+  // Pause voulue ou VOD finie : une relance (relais, erreur, « Actualiser »)
+  // la remet à sa place, en pause. Sans lecture, `playing` ne vient pas : la
+  // roue s'efface dès les métadonnées (Safari peut ne rien charger de plus).
+  if (tile.userPaused) {
+    const token = tile.token
+    const shown = () => {
+      if (tile.token !== token) return
+      if (v.currentTime > 0) tile.ready = true
+      setState(tile, null)
+      markPaused(tile)
+      showTime(tile)
+    }
+    if (v.readyState >= 1) shown()
+    else v.addEventListener('loadedmetadata', shown, { once: true })
+    v.addEventListener('canplay', shown, { once: true })
+    return markPaused(tile)
+  }
   try {
     await v.play()
   } catch (err) {
