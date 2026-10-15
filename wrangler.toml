@@ -16,12 +16,14 @@ crons = ["* * * * *"]
 # relais n'accepte que les lots signés par la clé push de ce Worker.
 #
 # Administrateur des outils de /stats (compte mxfia19) : le Worker n'en a
-# plus aucun par défaut. Une autre valeur posée dans le tableau de bord est
-# remplacée par celle-ci : ajouter ici les autres identifiants. Pour son
-# propre Worker, mettre le sien.
+# plus aucun par défaut. ADMIN_TWITCH_IDS, si elle est posée dans le tableau
+# de bord (Texte ou Secret), passe avant. Nom à part exprès : une variable
+# d'ici qui porterait le nom d'un secret ou d'une variable du tableau de bord
+# la remplacerait à chaque déploiement depuis main. Pour son propre Worker,
+# mettre le sien (ou poser ADMIN_TWITCH_IDS).
 [vars]
 NTFY_RELAY = "https://relais.mxfia19.duckdns.org"
-ADMIN_TWITCH_IDS = "839837720"
+OFFICIAL_ADMIN_TWITCH_IDS = "839837720"
 
 [observability]
 enabled = false
@@ -56,7 +58,7 @@ workers_dev = true
 
 # Un environnement n'hérite pas non plus des variables.
 [env.fallback.vars]
-ADMIN_TWITCH_IDS = "839837720"
+OFFICIAL_ADMIN_TWITCH_IDS = "839837720"
 
 # Le secours n'a pas de base : pas de tâche planifiée.
 [env.fallback.triggers]

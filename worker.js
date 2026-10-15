@@ -461,7 +461,15 @@ const PROXY_HOSTS = ['ttvnw.net', 'jtvnw.net', 'twitch.tv', 'luminous.dev', 'twi
 // distribution que Twitch ajouterait passe dès que Twitch lui-même la désigne
 // (twitchVouches) ; aucune autre.
 const TWITCH_CLOUDFRONT = new Set(RECOVER_HOSTS.filter((h) => h.endsWith('.cloudfront.net')));
-const cloudfrontVerdicts = new Map();   // hôte → { ok, until } (mémoire de l'instance)
+// Verdicts de twitchCloudfront (mémoire de l'instance). Les refus ne valent
+// que pour la vidéo ou la chaîne demandée, et ne partagent pas la liste des
+// distributions reconnues : une adresse inventée ne bloque plus les vraies
+// vidéos d'un hôte, et un flot de refus n'efface plus ce qui est reconnu.
+const cloudfrontOk = new Map();      // hôte → fin de validité (désigné par Twitch)
+const cloudfrontNo = new Map();      // « hôte|v:<vidéo> » ou « hôte|c:<chaîne> » → fin du refus
+const cloudfrontAsks = new Map();    // « v:<vidéo> » ou « c:<chaîne> » → question GQL en cours
+const cloudfrontBudget = { n: 0, until: 0 };   // questions GQL de la minute
+const CLOUDFRONT_GQL_PER_MINUTE = 30;
 // Redirections de l'amont suivies au plus (la suivante est refusée).
 const PROXY_MAX_REDIRECTS = 4;
 
@@ -533,55 +541,86 @@ async function proxyAllowed(target) {
 }
 
 /** Distribution CloudFront de Twitch ? Connue, ou désignée par Twitch pour
- *  la vidéo ou la chaîne du chemin (verdict gardé : 24 h oui, 10 min non). */
+ *  la vidéo ou la chaîne du chemin (verdict gardé : 24 h oui ; non, 10 min
+ *  pour cette vidéo ou cette chaîne seulement). */
 async function twitchCloudfront(u) {
     const host = u.hostname;
     if (TWITCH_CLOUDFRONT.has(host)) return true;
-    const known = cloudfrontVerdicts.get(host);
-    if (known && known.until > Date.now()) return known.ok;
-    let vouched;
-    // GQL injoignable : refusé cette fois, sans rien retenir.
-    try { vouched = await twitchVouches(u); } catch (e) { return false; }
-    // Chemin d'aucune forme de Twitch : refusé sans rien demander.
-    if (!vouched) return false;
-    for (const h of vouched) rememberCloudfront(h, true);
-    if (!vouched.has(host)) rememberCloudfront(host, false);
-    return vouched.has(host);
-}
-
-function rememberCloudfront(host, ok) {
     const now = Date.now();
-    if (cloudfrontVerdicts.size >= 500) {
-        for (const [h, v] of cloudfrontVerdicts) if (v.until <= now) cloudfrontVerdicts.delete(h);
-        if (cloudfrontVerdicts.size >= 500) cloudfrontVerdicts.clear();
-    }
-    cloudfrontVerdicts.set(host, { ok, until: now + (ok ? 24 * 3600 : 600) * 1000 });
+    if ((cloudfrontOk.get(host) || 0) > now) return true;
+    // Chemin d'aucune forme de Twitch : refusé sans rien demander.
+    const subject = cloudfrontSubject(u);
+    if (!subject) return false;
+    const refusal = `${host}|${subject}`;
+    if ((cloudfrontNo.get(refusal) || 0) > now) return false;
+    let hosts;
+    // GQL injoignable, ou trop de questions cette minute : refusé cette fois,
+    // sans rien retenir.
+    try { hosts = await twitchVouches(subject); } catch (e) { return false; }
+    if (!hosts) return false;
+    for (const h of hosts) rememberCloudfront(cloudfrontOk, h, 24 * 3600 * 1000, 100);
+    if (hosts.has(host)) return true;
+    rememberCloudfront(cloudfrontNo, refusal, 600 * 1000, 500);
+    return false;
 }
 
-/** Distributions CloudFront où Twitch range la vidéo ou les vidéos de la
- *  chaîne nommées dans le chemin, d'après leurs aperçus (seekPreviewsURL) ;
- *  null pour un chemin d'une autre forme. Formes vues chez Twitch :
+/** Garde `key` dans `map` pendant `ttl` ms ; à `max` entrées, les expirées
+ *  partent, puis les plus anciennes. */
+function rememberCloudfront(map, key, ttl, max) {
+    const now = Date.now();
+    map.delete(key);
+    if (map.size >= max) {
+        for (const [k, until] of map) if (until <= now) map.delete(k);
+        for (const k of map.keys()) { if (map.size < max) break; map.delete(k); }
+    }
+    map.set(key, now + ttl);
+}
+
+/** Ce que nomme le chemin, sous une forme vue chez Twitch : une vidéo
+ *  (« v:<id> ») ou une chaîne (« c:<login> ») ; null sinon.
  *    <empreinte>_<chaîne>_<diffusion>_<epoch>/…   archives, highlights
  *    <empreinte>/<chaîne>_<diffusion>_<n>/…       très vieux highlights
  *    <chaîne>/<vidéo>/<uuid>/…                    anciens uploads
  *    <empreinte>_<id chaîne>_<vidéo>_<uuid>/…     uploads */
-async function twitchVouches(u) {
+function cloudfrontSubject(u) {
     const [a = '', b = ''] = u.pathname.split('/').filter(Boolean);
     if (a.length > 120 || b.length > 120) return null;
-    let m, data;
+    let m;
     if ((m = /^[0-9a-f]{10,20}_\d+_(\d+)_[0-9a-f-]{36}$/.exec(a)) || (LOGIN_RE.test(a) && VOD_ID_RE.test(b) && (m = [a, b]))) {
-        data = await twitchGQL(`query($id: ID!) { video(id: $id) { seekPreviewsURL } }`, { id: m[1] });
-    } else if ((m = /^[0-9a-f]{10,20}_(\w+?)_\d+_\d+$/.exec(a)) || (/^[0-9a-f]{10,20}$/.test(a) && (m = /^(\w+?)_\d+_\d+$/.exec(b)))) {
-        if (!LOGIN_RE.test(m[1])) return null;
-        data = await twitchGQL(`query($login: String!) { user(login: $login) { videos(first: 50, sort: TIME) { edges { node { seekPreviewsURL } } } } }`, { login: m[1].toLowerCase() });
-    } else return null;
-    if (!data?.data) throw new Error('GQL sans données');
-    const hosts = new Set();
-    const previews = [data.data.video?.seekPreviewsURL, ...(data.data.user?.videos?.edges || []).map((e) => e?.node?.seekPreviewsURL)];
-    for (const p of previews) {
-        try { const h = new URL(p).hostname; if (h.endsWith('.cloudfront.net')) hosts.add(h); } catch (e) {}
+        return `v:${m[1]}`;
     }
-    return hosts;
+    if ((m = /^[0-9a-f]{10,20}_(\w+?)_\d+_\d+$/.exec(a)) || (/^[0-9a-f]{10,20}$/.test(a) && (m = /^(\w+?)_\d+_\d+$/.exec(b)))) {
+        return LOGIN_RE.test(m[1]) ? `c:${m[1].toLowerCase()}` : null;
+    }
+    return null;
+}
+
+/** Distributions CloudFront où Twitch range la vidéo, ou les 50 dernières
+ *  vidéos de la chaîne, d'après leurs aperçus (seekPreviewsURL). Une question
+ *  déjà en cours n'est pas reposée (dix requêtes simultanées faisaient dix
+ *  GQL) ; au-delà de CLOUDFRONT_GQL_PER_MINUTE questions dans la minute,
+ *  null sans GQL : une distribution nouvelle n'en coûte qu'une, gardée 24 h. */
+function twitchVouches(subject) {
+    const pending = cloudfrontAsks.get(subject);
+    if (pending) return pending;
+    const now = Date.now();
+    if (cloudfrontBudget.until <= now) Object.assign(cloudfrontBudget, { n: 0, until: now + 60 * 1000 });
+    if (++cloudfrontBudget.n > CLOUDFRONT_GQL_PER_MINUTE) return Promise.resolve(null);
+    const ask = (async () => {
+        const id = subject.slice(2);
+        const data = subject.startsWith('v:')
+            ? await twitchGQL(`query($id: ID!) { video(id: $id) { seekPreviewsURL } }`, { id })
+            : await twitchGQL(`query($login: String!) { user(login: $login) { videos(first: 50, sort: TIME) { edges { node { seekPreviewsURL } } } } }`, { login: id });
+        if (!data?.data) throw new Error('GQL sans données');
+        const hosts = new Set();
+        const previews = [data.data.video?.seekPreviewsURL, ...(data.data.user?.videos?.edges || []).map((e) => e?.node?.seekPreviewsURL)];
+        for (const p of previews) {
+            try { const h = new URL(p).hostname; if (h.endsWith('.cloudfront.net')) hosts.add(h); } catch (e) {}
+        }
+        return hosts;
+    })().finally(() => cloudfrontAsks.delete(subject));
+    cloudfrontAsks.set(subject, ask);
+    return ask;
 }
 
 /** Réponse de l'amont, redirections suivies à la main : chaque nouvelle
@@ -612,8 +651,10 @@ const PROXY_KEEP_HEADERS = ['cache-control', 'expires', 'last-modified', 'age'];
 // pour un corps décompressé en route.
 const PROXY_BODY_HEADERS = ['content-length', 'content-range', 'accept-ranges', 'etag'];
 // Segments (video/MP2T, video/mp4, application/octet-stream), aperçus
-// (image/jpeg) et storyboards (binary/octet-stream) de Twitch.
-const PROXY_MEDIA_TYPE = /^(?:(?:video|audio)\/[\w.+-]+|image\/(?:jpeg|png|gif|webp|avif)|application\/(?:octet-stream|mp4|json)|binary\/octet-stream)$/;
+// (image/jpeg) et storyboards (binary/octet-stream) de Twitch. Pas de
+// sous-type en « +xml » (video/x+xml…) : le navigateur l'affiche comme un
+// document XML, XHTML compris.
+const PROXY_MEDIA_TYPE = /^(?:(?:video|audio)\/(?![\w.+-]*\+xml$)[\w.+-]+|image\/(?:jpeg|png|gif|webp|avif)|application\/(?:octet-stream|mp4|json)|binary\/octet-stream)$/;
 
 /** Type servi pour un corps relayé tel quel : celui de l'amont s'il est un
  *  type de média, sinon un fichier opaque (page HTML, SVG, script…). */
@@ -831,11 +872,11 @@ function getRequestHeaders(login) {
 const USAGE_PREFIX = 'usage_';
 const USAGE_ACCOUNT_PREFIX = 'usage_a_';
 /** Comptes Twitch administrateurs (ID numérique : le pseudo peut changer),
- *  posés par la variable ADMIN_TWITCH_IDS (wrangler.toml pour l'instance
- *  officielle). Aucun par défaut : une instance auto-hébergée qui ne la
- *  remplissait pas donnait au compte du développeur officiel les outils
- *  d'administration — retours et contacts, comptes du comptage,
- *  effacements, annonces. */
+ *  posés par la variable ADMIN_TWITCH_IDS, ou OFFICIAL_ADMIN_TWITCH_IDS
+ *  (wrangler.toml) pour l'instance officielle (applyEnvConfig). Aucun par
+ *  défaut : une instance auto-hébergée qui ne la remplissait pas donnait au
+ *  compte du développeur officiel les outils d'administration — retours et
+ *  contacts, comptes du comptage, effacements, annonces. */
 let ADMIN_IDS = [];
 const USAGE_RETENTION_DAYS = 35;
 const PLATFORMS = ['ios', 'web'];
@@ -2629,7 +2670,13 @@ function store(env) {
 
 // ── Réglages par variables d'environnement (auto-hébergement) ─────────────
 // ADMIN_TWITCH_IDS : identifiants Twitch admins, séparés par des virgules
-//                    (absente : aucun ; l'officielle est dans wrangler.toml).
+//                    (tableau de bord de Cloudflare, ou docker-compose.yml).
+// OFFICIAL_ADMIN_TWITCH_IDS : ceux de l'instance officielle (wrangler.toml),
+//                    quand ADMIN_TWITCH_IDS manque. Un nom à part : une
+//                    variable du toml qui porterait le nom d'un secret ou
+//                    d'une variable du tableau de bord le remplacerait au
+//                    déploiement. L'image Docker ne la pose pas : sans
+//                    ADMIN_TWITCH_IDS, aucun admin.
 // SITE_ORIGINS     : origines du site dont les comptages sont acceptés
 //                    (absente : celles du site officiel).
 let envApplied = false;
@@ -2637,7 +2684,8 @@ function applyEnvConfig(env) {
     if (envApplied) return;
     envApplied = true;
     const list = (v) => String(v || '').split(',').map((x) => x.trim()).filter(Boolean);
-    if (list(env?.ADMIN_TWITCH_IDS).length) ADMIN_IDS = list(env.ADMIN_TWITCH_IDS).filter((x) => /^\d{1,20}$/.test(x));
+    const admins = list(env?.ADMIN_TWITCH_IDS).length ? list(env.ADMIN_TWITCH_IDS) : list(env?.OFFICIAL_ADMIN_TWITCH_IDS);
+    if (admins.length) ADMIN_IDS = admins.filter((x) => /^\d{1,20}$/.test(x));
     if (list(env?.SITE_ORIGINS).length) USAGE_ORIGINS = list(env.SITE_ORIGINS);
 }
 
@@ -2911,14 +2959,17 @@ async function sendNtfy(env, msgs) {
 
 /** Lot confié au relais (POST NTFY_RELAY/ntfy), qui le publie depuis sa
  *  propre adresse. Jeton signé par la clé VAPID : empreinte du corps,
- *  5 minutes de validité ; le relais le vérifie avec la clé publique de ce
- *  Worker (/api/push/key). */
+ *  5 minutes de validité, identifiant unique ; le relais le vérifie avec la
+ *  clé publique de ce Worker (/api/push/key) et ne l'accepte qu'une fois. */
 async function ntfyViaRelay(env, msgs) {
     let failure;
     try {
         const body = JSON.stringify({ messages: msgs });
         const sha = b64u.enc(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(body)));
-        const jwt = await vapidJwt(await vapidKeys(env), { exp: Math.floor(Date.now() / 1000) + 300, sha });
+        // jti : deux lots identiques dans la même seconde (deux appuis sur
+        // « Tester ») avaient le même jeton, et le relais refusait le second
+        // comme rejoué. Les anciens relais l'ignorent.
+        const jwt = await vapidJwt(await vapidKeys(env), { exp: Math.floor(Date.now() / 1000) + 300, sha, jti: crypto.randomUUID() });
         const res = await fetch(`${String(env.NTFY_RELAY).trim().replace(/\/+$/, '')}/ntfy`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${jwt}` },

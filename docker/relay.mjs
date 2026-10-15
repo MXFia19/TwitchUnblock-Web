@@ -93,7 +93,7 @@ const NTFY_MAX = 50                // messages par lot
 const NTFY_BODY_MAX = 64 * 1024    // octets
 
 let workerKey = null               // { key, at } : clé publique du Worker
-const usedTokens = new Map()       // en-tête.revendications → expiration (secondes)
+const usedTokens = new Map()       // en-tête.revendications.r → expiration (secondes)
 
 /** Clé publique du Worker, gardée. Relue quand une signature ne passe pas
  *  (clé changée), une fois par minute au plus. */
@@ -120,10 +120,14 @@ async function signedByWorker(auth, body) {
     c = JSON.parse(Buffer.from(claims, 'base64url'))
   } catch { return false }
   const now = Math.floor(Date.now() / 1000)
-  // Un jeton se reconnaît à ce qu'il signe (empreinte du corps, expiration),
-  // pas à sa signature : une signature ECDSA a deux formes valides, (r, s) et
-  // (r, n−s), et la seconde passait pour un jeton neuf.
-  const id = `${header}.${claims}`
+  // Un jeton se reconnaît à ce qu'il signe (empreinte du corps, expiration,
+  // identifiant jti des Workers récents) et à r, la première moitié de sa
+  // signature. Une signature ECDSA a deux formes valides, (r, s) et (r, n−s) :
+  // même r, la seconde est un rejeu. Une nouvelle signature du même contenu a
+  // un autre r : deux lots identiques signés dans la même seconde par un
+  // Worker sans jti (deux appuis sur « Tester ») ne passent plus pour un rejeu.
+  const signed = `${header}.${claims}`
+  const id = `${signed}.${Buffer.from(sig, 'base64url').subarray(0, 32).toString('base64url')}`
   if (alg !== 'ES256' || !(c?.exp > now && c.exp <= now + 600) || usedTokens.has(id)) return false
   if (c.sha !== createHash('sha256').update(body).digest('base64url')) return false
   // Retenu avant la moindre attente : deux requêtes simultanées avec le même
@@ -131,7 +135,7 @@ async function signedByWorker(auth, body) {
   for (const [s, exp] of usedTokens) if (exp <= now) usedTokens.delete(s)
   usedTokens.set(id, c.exp)
   const verify = async (key) => webcrypto.subtle.verify({ name: 'ECDSA', hash: 'SHA-256' }, key,
-    Buffer.from(sig, 'base64url'), Buffer.from(id))
+    Buffer.from(sig, 'base64url'), Buffer.from(signed))
   let ok = false
   try {
     ok = (await verify(await trustedKey(false))) || (await verify(await trustedKey(true)))
@@ -220,8 +224,21 @@ async function handleNtfy(req, res) {
 // Une redirection de l'amont pouvait y mener (SSRF).
 const INTERNAL = new net.BlockList()
 for (const [a, p] of [['0.0.0.0', 8], ['10.0.0.0', 8], ['100.64.0.0', 10], ['127.0.0.0', 8], ['169.254.0.0', 16],
-  ['172.16.0.0', 12], ['192.0.0.0', 24], ['192.168.0.0', 16], ['198.18.0.0', 15], ['224.0.0.0', 3]]) INTERNAL.addSubnet(a, p, 'ipv4')
-for (const [a, p] of [['::', 127], ['fc00::', 7], ['fe80::', 10], ['ff00::', 8]]) INTERNAL.addSubnet(a, p, 'ipv6')
+  ['172.16.0.0', 12], ['192.0.0.0', 24], ['192.168.0.0', 16], ['198.18.0.0', 15], ['224.0.0.0', 3]]) {
+  INTERNAL.addSubnet(a, p, 'ipv4')
+  // La même plage vue par le NAT64 du réseau (64:ff9b::<IPv4>, VPS en IPv6
+  // seulement) : une IPv4 publique y passe toujours, une interne non.
+  const [w, x, y, z] = a.split('.').map(Number)
+  INTERNAL.addSubnet(`64:ff9b::${((w << 8) | x).toString(16)}:${((y << 8) | z).toString(16)}`, 96 + p, 'ipv6')
+}
+// IPv6 : boucle locale et IPv4 « compatible » (::/96, obsolète), réseaux
+// privés, lien local, multicast, et les traductions d'IPv4 qu'on ne sait pas
+// relire — NAT64 local (64:ff9b:1::/48), Teredo (2001::/32), 6to4
+// (2002::/16) — dont aucun CDN ne se sert. Une IPv4 mappée (::ffff:…) est
+// comparée par BlockList aux plages IPv4.
+for (const [a, p] of [['::', 96], ['64:ff9b:1::', 48], ['2001::', 32], ['2002::', 16], ['fc00::', 7], ['fe80::', 10], ['ff00::', 8]]) {
+  INTERNAL.addSubnet(a, p, 'ipv6')
+}
 
 function internalAddress(ip) {
   const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/i.exec(ip)
@@ -284,6 +301,11 @@ function proxyFetch(input, init = {}) {
   if (net.isIP(host) && internalAddress(host)) return Promise.reject(Object.assign(new Error(`${host} : adresse interne refusée`), { code: 'EINTERNAL' }))
   const headers = {}
   new Headers(init.headers).forEach((v, k) => { headers[k] = v })
+  // Playlists compressées, comme les demandait le fetch de Node (une playlist
+  // de VOD : 26 Ko au lieu de 238 Ko) ; toResponse les décompresse. Pas pour
+  // une plage d'octets (segments) : une réponse partielle compressée ne se
+  // décompresse pas seule.
+  if (!headers.range) headers['accept-encoding'] ??= 'gzip, br'
   const attempt = (retry) => new Promise((resolve, reject) => {
     let answered = false
     const req = https.request(url, { method: init.method || 'GET', headers, agent: upstreamAgent, timeout: 30_000 }, (res) => {
