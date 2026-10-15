@@ -359,8 +359,10 @@ function dropToken({ silent = false } = {}) {
   Object.assign(session, { token: null, userId: null, login: null, avatar: null, scopes: [], unverified: false })
   toast(t('session_expired'), silent ? 'info' : 'error')
   renderAccount()
-  // Comme logout() : les suivis du compte perdu ne protègent plus du masquage.
-  if (state.accountFollows?.length) { state.accountFollows = []; refreshHidden() }
+  // Comme logout() : les suivis du compte perdu ne protègent plus du
+  // masquage, et ne reçoivent plus de notifications.
+  if (state.accountFollows?.length) { state.accountFollows = []; refreshHidden(); syncPush() }
+  state.followedView = null
   state.loaded.followed = 0
   if (state.tab === 'discover') loadFollowed()
   chat?.sessionChanged()
@@ -408,9 +410,14 @@ function logout() {
   // sans elle, il reconnectait aussitôt le compte dont il se souvient.
   try { localStorage.setItem(api.FORCE_VERIFY_KEY, '1') } catch {}
   renderAccount()
-  // Les suivis de l'ancien compte ne protègent plus rien du masquage.
+  // Les suivis de l'ancien compte ne protègent plus rien du masquage, et
+  // leurs notifications de live s'arrêtent (l'appareil peut être partagé) :
+  // la liste repart tout de suite au Worker, sans eux — même sans chaîne
+  // suivie sur l'appareil, où rien ne la renvoyait.
   state.accountFollows = []
+  state.followedView = null
   refreshHidden()
+  syncPush()
   state.loaded.followed = 0
   loadFollowed()
   chat?.sessionChanged()
@@ -714,6 +721,12 @@ const actions = {
   settings: () => openSettings(),
   'refresh-discover': () => { revalidateSession(); loadFollowed(); loadTop(state.topLang) },
   revalidate: () => revalidateSession(),
+  // Page d'une chaîne ou ses temps forts en échec (réseau) : on relance.
+  'retry-channel': (e) => {
+    const b = e.target.closest('[data-raw]')
+    if (b) searchChannel(b.dataset.raw, { tab: b.dataset.retryTab || undefined })
+  },
+  'retry-highlights': () => loadChannelHighlights(),
   'cat-more': () => loadCategories({ more: true }),
   'cat-streams-more': () => cat.current && openCategory(cat.current, { more: true }),
   'cat-back': () => closeCategory(),
@@ -858,11 +871,14 @@ function vodCard(v, streamer) {
     ? date.toLocaleDateString(lang(), { day: 'numeric', month: 'short', year: 'numeric' })
     : ''
   const inMulti = multi.hasVod(v.id)
+  // Vignette en échec : celle de Twitch « en cours de traitement », puis le
+  // fond de la carte. Hors ligne, la même image en échec était réassignée
+  // sans fin (une requête après l'autre).
   return `
     <a class="card vod-card" href="/videos/${esc(v.id)}" data-vod="${esc(v.id)}">
       <div class="thumb">
         <img src="${esc(thumb(v.previewThumbnailURL, 320, 180))}" alt="" loading="lazy" decoding="async"
-             onerror="this.src='https://vod-secure.twitch.tv/_404/404_processing_320x180.png'">
+             onerror="this.onerror=()=>this.remove();this.src='https://vod-secure.twitch.tv/_404/404_processing_320x180.png'">
         <span class="pill duration">${esc(formatDuration(v.lengthSeconds))}</span>
         <button class="madd${inMulti ? ' on' : ''}" type="button" data-multi-vod="${esc(v.id)}" data-multi-name="${esc(streamer || '')}" data-multi-title="${esc(v.title || '')}" title="${esc(t(inMulti ? 'multi_remove' : 'multi_add'))}">${icon(inMulti ? 'check' : 'plus', 16)}</button>
         ${ratio > 0.01 ? `<span class="progress"><span style="width:${(ratio * 100).toFixed(1)}%"></span></span>` : ''}
@@ -882,6 +898,12 @@ function skeleton(n, kind = 'stream') {
 
 function emptyState(text, iconName = 'radio') {
   return `<div class="empty">${icon(iconName, 28)}<p>${esc(text)}</p></div>`
+}
+
+/** État d'erreur avec un bouton « Actualiser » ; `attrs` : ce qu'il relance
+ *  (data-action…), déjà échappé. */
+function retryState(text, attrs) {
+  return `<div class="empty">${icon('refresh', 28)}<p>${esc(text)}</p><button class="btn ghost sm" type="button" ${attrs}>${icon('refresh', 15)}<span>${esc(t('refresh'))}</span></button></div>`
 }
 
 // ── Accueil ────────────────────────────────────────────────────────────────
@@ -938,7 +960,19 @@ const isStandalone = () => Boolean(window.matchMedia?.('(display-mode: standalon
 function pushState() { try { return JSON.parse(localStorage.getItem(PUSH_STATE) || '{}') } catch { return {} } }
 function savePushState(s) { try { localStorage.setItem(PUSH_STATE, JSON.stringify(s)) } catch {} }
 const pushOn = () => pushSupported() && Notification.permission === 'granted' && pushState().on === true
-const pushChannels = () => [...new Set([...(state.accountFollows ?? []), ...localFollows()])].slice(0, 500)
+/** Plafond de chaînes par abonnement (PUSH_MAX_CHANNELS du Worker). */
+const PUSH_MAX = 500
+/** Chaînes des notifications : les épinglées (suivies), puis celles suivies
+ *  sur cet appareil, puis celles du compte. Au-delà du plafond, ce sont les
+ *  dernières du compte qui restent sans notification : celles de l'appareil
+ *  passaient après le compte, et étaient coupées les premières. */
+function pushChannelsAll() {
+  const account = state.accountFollows ?? []
+  const local = localFollows()
+  const followed = new Set([...account, ...local])
+  return [...new Set([...pinnedLogins().filter((l) => followed.has(l)), ...local, ...account])]
+}
+const pushChannels = () => pushChannelsAll().slice(0, PUSH_MAX)
 // La langue en fait partie : la changer change celle des notifications.
 const pushHash = (list) => `${lang()}:${list.slice().sort().join(',')}`
 
@@ -1060,6 +1094,8 @@ function pushStatusText() {
   if (!pushOn()) return ''
   if (pushLost) return t('push_lost')
   const n = pushState().n ?? pushChannels().length
+  // Plus de chaînes suivies que le plafond : on le dit, et lesquelles passent.
+  if (pushChannelsAll().length > PUSH_MAX) return t('push_capped', { n })
   return t(n ? 'push_active' : 'push_no_channels', { n })
 }
 
@@ -1245,7 +1281,7 @@ async function loadFollowed({ silent = false } = {}) {
     // Jeton que Twitch n'a pas pu vérifier, sans compte déjà validé avec lui
     // sur cet appareil : l'accueil restait vide sans rien dire.
     if (session.unverified) {
-      grid.innerHTML = `<div class="empty">${icon('refresh', 28)}<p>${esc(t('session_unverified'))}</p><button class="btn ghost sm" type="button" data-action="revalidate">${icon('refresh', 15)}<span>${esc(t('refresh'))}</span></button></div>`
+      grid.innerHTML = retryState(t('session_unverified'), 'data-action="revalidate"')
       offlineFailed()
     }
     return
@@ -1582,7 +1618,9 @@ function setHomeTab(tab) {
 }
 
 // ── Catégories ─────────────────────────────────────────────────────────
-const cat = { tab: 'all', items: [], cursor: null, q: '', loaded: 0, ready: false, current: null, streams: null, streamsCursor: null, locked: false }
+// `seq` / `streamsSeq` : numéro du dernier chargement de la grille et des
+// lives de la catégorie ouverte ; une réponse plus ancienne est ignorée.
+const cat = { tab: 'all', items: [], cursor: null, q: '', loaded: 0, ready: false, current: null, streams: null, streamsCursor: null, locked: false, seq: 0, streamsSeq: 0 }
 const followedCats = () => store.prefs.followedCategories ?? []
 /** Jaquette en 285×380 quelle que soit la taille enregistrée (les catégories
  *  suivies gardent l'adresse en 188×250 des versions précédentes). */
@@ -1606,6 +1644,9 @@ function catCard(c, { hideable = false } = {}) {
 }
 
 async function loadCategories({ more = false } = {}) {
+  // Onglet ou recherche changés pendant le chargement : la réponse d'avant
+  // écrasait la grille (et un « Charger plus » s'affichait sous les suivies).
+  const seq = ++cat.seq
   const grid = $('#cat-grid')
   for (const b of $$('#cat-seg [data-cat-tab]')) b.classList.toggle('active', b.dataset.catTab === cat.tab)
   $('#cat-search-wrap').hidden = cat.tab !== 'all'
@@ -1618,7 +1659,7 @@ async function loadCategories({ more = false } = {}) {
     // Audience à jour, triées de la plus regardée à la moins regardée.
     try {
       const fresh = await api.getCategoriesByIds(list.map((c) => c.id))
-      if (cat.tab !== 'followed') return
+      if (seq !== cat.seq) return
       const byId = Object.fromEntries(fresh.map((c) => [c.id, c]))
       grid.innerHTML = list.map((c) => byId[c.id] ?? c).sort((a, b) => (b.viewers ?? 0) - (a.viewers ?? 0)).map((c) => catCard(c)).join('')
     } catch {}
@@ -1629,9 +1670,13 @@ async function loadCategories({ more = false } = {}) {
   cat.ready = false
   try {
     if (cat.q) {
-      cat.items = await api.searchCategories(cat.q); cat.cursor = null
+      const items = await api.searchCategories(cat.q)
+      if (seq !== cat.seq) return
+      cat.items = items
+      cat.cursor = null
     } else {
       const page = await api.getTopCategories(more ? cat.cursor : null)
+      if (seq !== cat.seq) return
       cat.items = more ? [...cat.items, ...page.items.filter((x) => !cat.items.some((y) => y.id === x.id))] : page.items
       cat.cursor = page.cursor
       cat.locked = page.locked
@@ -1641,6 +1686,7 @@ async function loadCategories({ more = false } = {}) {
     paintCats()
     if (!cat.q) $('#cat-more').innerHTML = moreHtml({ cursor: cat.cursor, locked: cat.locked }, 'cat-more')
   } catch {
+    if (seq !== cat.seq) return
     grid.innerHTML = emptyState(t('err_loading'), 'refresh')
   }
 }
@@ -1663,6 +1709,10 @@ function moreHtml(page, action) {
 }
 
 async function openCategory(c, { more = false } = {}) {
+  // « Charger plus » cliqué deux fois, ou langue changée pendant le
+  // chargement (même catégorie) : la réponse d'avant s'ajoutait à la liste —
+  // lives en double, ou d'une autre langue.
+  const seq = ++cat.streamsSeq
   cat.current = c
   $('#cat-browser').hidden = true
   const box = $('#cat-detail')
@@ -1692,16 +1742,20 @@ async function openCategory(c, { more = false } = {}) {
     window.scrollTo({ top: 0 })
     cat.streams = null
   }
+  const moreBtn = more ? $('#cat-streams-more button') : null
+  if (moreBtn) moreBtn.disabled = true
   try {
     const page = await api.getCategoryStreams(c.id, more ? cat.streamsCursor : null, catLangCode())
-    if (cat.current !== c) return
+    if (cat.current !== c || seq !== cat.streamsSeq) return
     cat.streamsCursor = page.cursor
     // Lives bruts gardés : un masquage repeint la grille sans recharger.
     cat.streams = more ? [...(cat.streams ?? []), ...page.items] : page.items
     paintCatStreams()
     $('#cat-streams-more').innerHTML = moreHtml(page, 'cat-streams-more')
   } catch {
+    if (seq !== cat.streamsSeq) return
     if (!more) $('#cat-streams').innerHTML = emptyState(t('err_loading'), 'refresh')
+    else { if (moreBtn) moreBtn.disabled = false; toast(t('err_loading'), 'error') }
   }
 }
 
@@ -1915,7 +1969,9 @@ function startLiveTicker() {
     if (state.tab !== 'discover' || document.hidden || !$('#watch').hidden && !$('#watch').classList.contains('minimized')) return
     const now = Date.now()
     if (now - state.loaded.top > 60_000 && !topExtended()) loadTop(state.topLang, { silent: true })
-    if (session.userId && now - state.loaded.followed > 60_000) loadFollowed({ silent: true })
+    // Sans compte aussi, pour les chaînes suivies sur l'appareil : elles
+    // n'étaient jamais relues (nouveaux lives, spectateurs).
+    if ((session.userId || (!session.token && localFollows().length)) && now - state.loaded.followed > 60_000) loadFollowed({ silent: true })
   }, 1000)
 }
 
@@ -2284,13 +2340,23 @@ async function searchChannel(raw, { tab } = {}) {
 
   out.innerHTML = `<div class="channel-hero skeleton"></div><div class="grid vods">${skeleton(8, 'vod')}</div>`
   const seq = ++searchSeq
+  // Une requête en échec (réseau, Twitch et Worker injoignables) n'est pas
+  // une chaîne introuvable : la page le disait pourtant.
+  let failed = false
+  const miss = () => { failed = true; return null }
   const [info, videos] = await Promise.all([
-    api.getChannelInfo(login).catch(() => null),
-    api.getChannelVideos(login).catch(() => null),
+    api.getChannelInfo(login).catch(miss),
+    api.getChannelVideos(login).catch(miss),
   ])
   if (seq !== searchSeq) return   // une recherche plus récente a pris la main
   if (!info && (!videos || videos.error)) {
-    out.innerHTML = emptyState(t('not_found'), 'search')
+    // Plus rien de la chaîne précédente : son minuteur relisait son direct
+    // et pouvait réécrire cette page avec elle (un changement de langue aussi).
+    clearInterval(channelTimer)
+    state.channel = null
+    out.innerHTML = failed
+      ? retryState(t('err_network'), `data-action="retry-channel" data-raw="${esc(raw)}" data-retry-tab="${esc(tab ?? '')}"`)
+      : emptyState(t('not_found'), 'search')
     return
   }
   if (tab) state.channelTab = tab
@@ -2414,7 +2480,9 @@ async function loadChannelHighlights() {
   }
   if (state.channel?.login !== login || !$('#channel-highlights')) return
   const name = state.channel.info?.displayName || login
-  $('#channel-highlights').innerHTML = list?.length ? list.map((v) => vodCard(v, name)).join('') : emptyState(t('no_highlights'), 'film')
+  // Chargement en échec : pas « aucun temps fort », et de quoi réessayer.
+  $('#channel-highlights').innerHTML = !list ? retryState(t('err_loading'), 'data-action="retry-highlights"')
+    : list.length ? list.map((v) => vodCard(v, name)).join('') : emptyState(t('no_highlights'), 'film')
 }
 
 // ── VODs non listées (supprimées ou masquées) ──────────────────────────────
