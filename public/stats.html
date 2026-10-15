@@ -334,6 +334,12 @@
       <p class="sub" data-t="annSub"></p>
       <div class="ann-current" id="ann-current"></div>
       <form class="ann-form" id="ann-form">
+        <div class="ann-row">
+          <select id="ann-template" aria-label="Modèle"></select>
+          <button class="btn sm" type="button" id="ann-tpl-save" data-t="annTplSave"></button>
+          <button class="btn sm danger" type="button" id="ann-tpl-del" data-t="annTplDel" hidden></button>
+          <span class="sub" style="margin:0" data-t="annTplHint"></span>
+        </div>
         <input id="ann-title" type="text" maxlength="80" data-tp="annTitlePh" autocomplete="off">
         <textarea id="ann-message" maxlength="500" rows="3" data-tp="annMsgPh"></textarea>
         <input id="ann-link" type="url" maxlength="300" data-tp="annLinkPh" autocomplete="off">
@@ -446,7 +452,7 @@
       deleted: '{n} entrée(s) supprimée(s)', remaining: ' · {n} restante(s), relance l’action', fail: 'Échec : {e}',
       lAnonWeb: 'Supprimer tous les anonymes web', lAnon: 'Supprimer tous les anonymes', lOnce: 'Supprimer les entrées vues un seul jour', lAll: 'Supprimer TOUTES les données d’utilisation', lKey: 'Supprimer {k}',
       syncConfirm: 'Effacer la sauvegarde (historique et progression) de {u} ?', syncDone: 'Sauvegarde de {u} effacée.', syncNone: '{u} n’avait pas de sauvegarde.',
-      annTitle: 'Annonce (app et site)', annSub: 'Affichée en haut de l’accueil de l’app iOS et du site jusqu’à expiration. Une seule à la fois ; en publier une remplace la précédente.', annTitlePh: 'Titre', annMsgPh: 'Message', annLinkPh: 'Lien (facultatif, https://…)', annFor: 'Durée', annPublish: 'Publier', annCustom: 'Personnalisée…', unitMin: 'minutes', unitHour: 'heures', unitDay: 'jours', annBadDuration: 'Durée : entre 1 minute et 30 jours.', annClear: 'Retirer', annEdit: 'Modifier', annReactions: 'Réactions', annReactTotal: '{n} réaction(s) · une par appareil', annSave: 'Enregistrer', annCancel: 'Annuler', annKeep: 'Garder l’échéance actuelle', annRenotify: 'Réafficher à ceux qui l’avaient fermée', annSaved: 'Annonce modifiée.', annEdited: 'modifiée', annNone: 'Aucune annonce en cours.', annLive: 'En cours jusqu’au {d} :', annPublished: 'Annonce publiée.', annCleared: 'Annonce retirée.', annConfirmClear: 'Retirer l’annonce en cours ?', pollTitle: 'Sondage (app et site)', pollSub: 'Affiché sous l’annonce dans l’app iOS et sur le site. Vote anonyme par appareil, modifiable jusqu’à la fin ; chacun voit les résultats après avoir voté, et tout le monde à la fin (24 h). Le bot poste les résultats sur Discord. Un seul à la fois ; en lancer un remplace le précédent.', pollQuestionPh: 'Question', pollOptionsPh: 'Choix, un par ligne (2 à 6)', pollMulti: 'Plusieurs choix par personne', pollStart: 'Lancer', pollEnd: 'Terminer', pollNone: 'Aucun sondage en cours.', pollLive: 'En cours jusqu’au {d} :', pollEndedAt: 'Terminé le {d} :', pollSingleTag: 'un choix', pollMultiTag: 'plusieurs choix', pollVoters: '{n} votant(s) · un vote par appareil', pollStarted: 'Sondage lancé.', pollEndedMsg: 'Sondage terminé : résultats affichés à tous pendant 24 h.', pollCleared: 'Sondage retiré.', pollConfirmEnd: 'Terminer le sondage maintenant ?', pollConfirmClear: 'Retirer le sondage (il disparaît de l’app et du site) ?', pollConfirmReplace: 'Un sondage est déjà en cours : le remplacer ?', pollBadOptions: 'Il faut entre 2 et 6 choix, un par ligne.',
+      annTitle: 'Annonce (app et site)', annSub: 'Affichée en haut de l’accueil de l’app iOS et du site jusqu’à expiration. Une seule à la fois ; en publier une remplace la précédente.', annTitlePh: 'Titre', annMsgPh: 'Message', annLinkPh: 'Lien (facultatif, https://…)', annFor: 'Durée', annPublish: 'Publier', annCustom: 'Personnalisée…', unitMin: 'minutes', unitHour: 'heures', unitDay: 'jours', annBadDuration: 'Durée : entre 1 minute et 30 jours.', annClear: 'Retirer', annEdit: 'Modifier', annReactions: 'Réactions', annReactTotal: '{n} réaction(s) · une par appareil', annSave: 'Enregistrer', annCancel: 'Annuler', annKeep: 'Garder l’échéance actuelle', annRenotify: 'Réafficher à ceux qui l’avaient fermée', annSaved: 'Annonce modifiée.', annEdited: 'modifiée', annNone: 'Aucune annonce en cours.', annLive: 'En cours jusqu’au {d} :', annPublished: 'Annonce publiée.', annCleared: 'Annonce retirée.', annConfirmClear: 'Retirer l’annonce en cours ?', annTplPick: 'Modèle…', annTplSave: 'Enregistrer comme modèle', annTplUpdate: 'Mettre à jour le modèle', annTplDel: 'Supprimer le modèle', annTplName: 'Nom du modèle :', annTplSaved: 'Modèle enregistré.', annTplUpdated: 'Modèle mis à jour.', annTplDeleted: 'Modèle supprimé.', annTplEmpty: 'Écris d’abord un titre ou un message.', annTplConfirmDel: 'Supprimer le modèle « {n} » ?', annTplHint: 'Les modèles servent aussi à /announce sur Discord (option template).', pollTitle: 'Sondage (app et site)', pollSub: 'Affiché sous l’annonce dans l’app iOS et sur le site. Vote anonyme par appareil, modifiable jusqu’à la fin ; chacun voit les résultats après avoir voté, et tout le monde à la fin (24 h). Le bot poste les résultats sur Discord. Un seul à la fois ; en lancer un remplace le précédent.', pollQuestionPh: 'Question', pollOptionsPh: 'Choix, un par ligne (2 à 6)', pollMulti: 'Plusieurs choix par personne', pollStart: 'Lancer', pollEnd: 'Terminer', pollNone: 'Aucun sondage en cours.', pollLive: 'En cours jusqu’au {d} :', pollEndedAt: 'Terminé le {d} :', pollSingleTag: 'un choix', pollMultiTag: 'plusieurs choix', pollVoters: '{n} votant(s) · un vote par appareil', pollStarted: 'Sondage lancé.', pollEndedMsg: 'Sondage terminé : résultats affichés à tous pendant 24 h.', pollCleared: 'Sondage retiré.', pollConfirmEnd: 'Terminer le sondage maintenant ?', pollConfirmClear: 'Retirer le sondage (il disparaît de l’app et du site) ?', pollConfirmReplace: 'Un sondage est déjà en cours : le remplacer ?', pollBadOptions: 'Il faut entre 2 et 6 choix, un par ligne.',
       fAllKinds: 'Tous les types', fAccounts: 'Comptes', fAnon: 'Anonymes', fAllPlats: 'Toutes plateformes', fIosOnly: 'iOS seulement', fWebOnly: 'Web seulement', fBoth: 'iOS + Web', fAllVersions: 'Toutes versions',
       fbTitle: 'Retours (bugs, idées)', fbSub: 'Envoyés depuis le site et l’app. Ta réponse et l’état choisi s’affichent chez la personne (« Mes signalements »), qui peut répondre à son tour, photos comprises. Gardés 180 jours après le dernier message. Avec le secret FEEDBACK_WEBHOOK posé sur le Worker, chaque retour et chaque réponse arrivent aussi sur Discord.',
       fbStatus_new: 'Nouveau', fbStatus_seen: 'Vu', fbMarkSeen: 'Marquer comme vu', fbStatus_accepted: 'Accepté', fbStatus_progress: 'En cours', fbStatus_done: 'Fait', fbStatus_refused: 'Refusé',
@@ -502,7 +508,7 @@
       deleted: '{n} entry(ies) deleted', remaining: ' · {n} left, run the action again', fail: 'Failed: {e}',
       lAnonWeb: 'Delete all anonymous web entries', lAnon: 'Delete all anonymous entries', lOnce: 'Delete entries seen on one day only', lAll: 'Delete ALL usage data', lKey: 'Delete {k}',
       syncConfirm: 'Erase the backup (history and progress) of {u}?', syncDone: 'Backup of {u} erased.', syncNone: '{u} had no backup.',
-      annTitle: 'Announcement (app and site)', annSub: 'Shown at the top of the iOS app and website home until it expires. One at a time; publishing replaces the previous one.', annTitlePh: 'Title', annMsgPh: 'Message', annLinkPh: 'Link (optional, https://…)', annFor: 'Duration', annPublish: 'Publish', annCustom: 'Custom…', unitMin: 'minutes', unitHour: 'hours', unitDay: 'days', annBadDuration: 'Duration: between 1 minute and 30 days.', annClear: 'Remove', annEdit: 'Edit', annReactions: 'Reactions', annReactTotal: '{n} reaction(s) · one per device', annSave: 'Save', annCancel: 'Cancel', annKeep: 'Keep current end time', annRenotify: 'Show again to people who closed it', annSaved: 'Announcement updated.', annEdited: 'edited', annNone: 'No announcement running.', annLive: 'Running until {d}:', annPublished: 'Announcement published.', annCleared: 'Announcement removed.', annConfirmClear: 'Remove the current announcement?', pollTitle: 'Poll (app and site)', pollSub: 'Shown under the announcement in the iOS app and on the website. Anonymous vote per device, can be changed until it ends; people see the results after voting, and everyone once it ends (24 h). The bot posts the results on Discord. One at a time; starting one replaces the previous one.', pollQuestionPh: 'Question', pollOptionsPh: 'Choices, one per line (2 to 6)', pollMulti: 'Several choices per person', pollStart: 'Start', pollEnd: 'End', pollNone: 'No poll running.', pollLive: 'Running until {d}:', pollEndedAt: 'Ended on {d}:', pollSingleTag: 'one choice', pollMultiTag: 'several choices', pollVoters: '{n} voter(s) · one vote per device', pollStarted: 'Poll started.', pollEndedMsg: 'Poll ended: results shown to everyone for 24 h.', pollCleared: 'Poll removed.', pollConfirmEnd: 'End the poll now?', pollConfirmClear: 'Remove the poll (it disappears from the app and the site)?', pollConfirmReplace: 'A poll is already running: replace it?', pollBadOptions: 'Between 2 and 6 choices, one per line.',
+      annTitle: 'Announcement (app and site)', annSub: 'Shown at the top of the iOS app and website home until it expires. One at a time; publishing replaces the previous one.', annTitlePh: 'Title', annMsgPh: 'Message', annLinkPh: 'Link (optional, https://…)', annFor: 'Duration', annPublish: 'Publish', annCustom: 'Custom…', unitMin: 'minutes', unitHour: 'hours', unitDay: 'days', annBadDuration: 'Duration: between 1 minute and 30 days.', annClear: 'Remove', annEdit: 'Edit', annReactions: 'Reactions', annReactTotal: '{n} reaction(s) · one per device', annSave: 'Save', annCancel: 'Cancel', annKeep: 'Keep current end time', annRenotify: 'Show again to people who closed it', annSaved: 'Announcement updated.', annEdited: 'edited', annNone: 'No announcement running.', annLive: 'Running until {d}:', annPublished: 'Announcement published.', annCleared: 'Announcement removed.', annConfirmClear: 'Remove the current announcement?', annTplPick: 'Template…', annTplSave: 'Save as template', annTplUpdate: 'Update template', annTplDel: 'Delete template', annTplName: 'Template name:', annTplSaved: 'Template saved.', annTplUpdated: 'Template updated.', annTplDeleted: 'Template deleted.', annTplEmpty: 'Write a title or a message first.', annTplConfirmDel: 'Delete the template “{n}”?', annTplHint: 'Templates also work with /announce on Discord (template option).', pollTitle: 'Poll (app and site)', pollSub: 'Shown under the announcement in the iOS app and on the website. Anonymous vote per device, can be changed until it ends; people see the results after voting, and everyone once it ends (24 h). The bot posts the results on Discord. One at a time; starting one replaces the previous one.', pollQuestionPh: 'Question', pollOptionsPh: 'Choices, one per line (2 to 6)', pollMulti: 'Several choices per person', pollStart: 'Start', pollEnd: 'End', pollNone: 'No poll running.', pollLive: 'Running until {d}:', pollEndedAt: 'Ended on {d}:', pollSingleTag: 'one choice', pollMultiTag: 'several choices', pollVoters: '{n} voter(s) · one vote per device', pollStarted: 'Poll started.', pollEndedMsg: 'Poll ended: results shown to everyone for 24 h.', pollCleared: 'Poll removed.', pollConfirmEnd: 'End the poll now?', pollConfirmClear: 'Remove the poll (it disappears from the app and the site)?', pollConfirmReplace: 'A poll is already running: replace it?', pollBadOptions: 'Between 2 and 6 choices, one per line.',
       fAllKinds: 'All types', fAccounts: 'Accounts', fAnon: 'Anonymous', fAllPlats: 'All platforms', fIosOnly: 'iOS only', fWebOnly: 'Web only', fBoth: 'iOS + Web', fAllVersions: 'All versions',
       fbTitle: 'Feedback (bugs, ideas)', fbSub: 'Sent from the website and the app. Your reply and the status you pick show up for the person (“My reports”), who can answer back, photos included. Kept 180 days after the last message. With the FEEDBACK_WEBHOOK secret set on the Worker, each report and each reply also lands on Discord.',
       fbStatus_new: 'New', fbStatus_seen: 'Seen', fbMarkSeen: 'Mark as seen', fbStatus_accepted: 'Accepted', fbStatus_progress: 'In progress', fbStatus_done: 'Done', fbStatus_refused: 'Declined',
@@ -966,7 +972,7 @@
     $('#ann-custom').hidden = $('#ann-hours').value !== 'custom'
   }
   async function loadAnnouncement() {
-    try { const r = await (await authed('/announcement')).json(); renderAnnouncement(r.announcement, r.reactions) } catch {}
+    try { const r = await (await authed('/announcement')).json(); renderAnnouncement(r.announcement, r.reactions); if (Array.isArray(r.templates)) { annTemplates = r.templates; renderTemplates() } } catch {}
   }
   async function postAnnouncement(body, okMsg) {
     try {
@@ -991,11 +997,55 @@
     if (annEditing) Object.assign(body, { edit: true, renotify: $('#ann-renotify').checked }, choice === 'keep' ? { keepUntil: true } : { hours })
     else body.hours = hours
     const ok = await postAnnouncement(body, t(annEditing ? 'annSaved' : 'annPublished'))
-    if (ok) setEditing(false)
+    if (ok) { setEditing(false); $('#ann-template').value = ''; renderTemplates() }
   })
   $('#ann-cancel').addEventListener('click', () => setEditing(false))
   $('#ann-hours').addEventListener('change', () => { $('#ann-custom').hidden = $('#ann-hours').value !== 'custom' })
   $('#ann-clear').addEventListener('click', () => { if (confirm(t('annConfirmClear'))) postAnnouncement({ clear: true }, t('annCleared')) })
+
+  // Modèles d'annonce : choisir remplit le formulaire ; gardés par le Worker.
+  let annTemplates = []
+  function renderTemplates() {
+    const sel = $('#ann-template')
+    const cur = sel.value
+    sel.innerHTML = `<option value="">${esc(t('annTplPick'))}</option>` + annTemplates.map((x) => `<option value="${esc(x.id)}">${esc(x.name)}</option>`).join('')
+    sel.value = annTemplates.some((x) => x.id === cur) ? cur : ''
+    $('#ann-tpl-del').hidden = !sel.value
+    $('#ann-tpl-save').textContent = t(sel.value ? 'annTplUpdate' : 'annTplSave')
+  }
+  $('#ann-template').addEventListener('change', () => {
+    const x = annTemplates.find((y) => y.id === $('#ann-template').value)
+    if (x) { $('#ann-title').value = x.title || ''; $('#ann-message').value = x.message || ''; $('#ann-link').value = x.link || '' }
+    renderTemplates()
+  })
+  async function saveTemplates(list, okMsg) {
+    try {
+      const res = await authed('/announcement', { method: 'POST', body: JSON.stringify({ templates: list }) })
+      const r = await res.json()
+      if (!res.ok) throw new Error(r.error || `HTTP ${res.status}`)
+      annTemplates = r.templates || []
+      renderTemplates()
+      devMsg(okMsg, 'ok')
+      return true
+    } catch (e) { devMsg(t('fail', { e: e.message }), 'err'); return false }
+  }
+  $('#ann-tpl-save').addEventListener('click', async () => {
+    const fields = { title: $('#ann-title').value.trim(), message: $('#ann-message').value.trim(), link: $('#ann-link').value.trim() }
+    if (!fields.title && !fields.message) return devMsg(t('annTplEmpty'), 'err')
+    const id = $('#ann-template').value
+    if (id) return saveTemplates(annTemplates.map((x) => (x.id === id ? { ...x, ...fields } : x)), t('annTplUpdated'))
+    const name = (prompt(t('annTplName'), fields.title.slice(0, 40)) || '').trim()
+    if (!name) return
+    const nid = Date.now().toString(36)
+    if (await saveTemplates([...annTemplates, { id: nid, name: name.slice(0, 40), ...fields }], t('annTplSaved'))) {
+      $('#ann-template').value = nid
+      renderTemplates()
+    }
+  })
+  $('#ann-tpl-del').addEventListener('click', () => {
+    const x = annTemplates.find((y) => y.id === $('#ann-template').value)
+    if (x && confirm(t('annTplConfirmDel', { n: x.name }))) saveTemplates(annTemplates.filter((y) => y.id !== x.id), t('annTplDeleted'))
+  })
 
   // ── Sondage (app et site) ───────────────────────────────────────────
   let pollAdmin = null

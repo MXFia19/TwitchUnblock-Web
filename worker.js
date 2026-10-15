@@ -1338,6 +1338,38 @@ async function readAnnouncement(env) {
     return value;
 }
 
+// Modèles d'annonce (/stats, et /announce du bot) : modifiables, gardés ici ;
+// ces deux-là tant qu'aucune liste n'a été enregistrée.
+const ANNOUNCE_TEMPLATES_KEY = 'announcement_templates';
+const DEFAULT_ANNOUNCE_TEMPLATES = [
+    { id: 'star', name: '⭐ Star the repo', title: 'Enjoying TwitchUnblock?', message: 'A ⭐ on GitHub helps more people find the project, and it only takes a second.', link: 'https://github.com/MXFia19/TwitchUnblock' },
+    { id: 'discord', name: '💬 Join the Discord', title: 'Join the Discord', message: 'News, help, test builds and polls: come and say hi!', link: 'https://discord.gg/cEsMRdxsVq' },
+];
+
+async function readAnnounceTemplates(env) {
+    try {
+        const list = await store(env).get(ANNOUNCE_TEMPLATES_KEY, 'json');
+        if (Array.isArray(list)) return list;
+    } catch (e) { /* illisible : ceux par défaut */ }
+    return DEFAULT_ANNOUNCE_TEMPLATES;
+}
+
+/** Liste envoyée par /stats : 20 modèles au plus, nettoyés ; un modèle sans
+ *  nom, vide ou au lien non https est écarté. */
+function cleanAnnounceTemplates(list) {
+    const out = [];
+    for (const [n, x] of list.slice(0, 20).entries()) {
+        const name = cleanText(x?.name, 40);
+        const title = cleanText(x?.title, 80);
+        const message = cleanText(x?.message, 500);
+        const link = cleanText(x?.link, 300);
+        if (!name || (!title && !message) || (link && !/^https:\/\/[^\s]+$/i.test(link))) continue;
+        const id = /^[a-z0-9_-]{1,24}$/i.test(String(x?.id || '')) ? String(x.id) : `${Date.now().toString(36)}${n}`;
+        out.push({ id, name, title, message, link });
+    }
+    return out;
+}
+
 // GET /api/announcement — { announcement: null | { id, title, message, link, until } }
 async function handleAnnouncementGet(env) {
     if (!env.DB) return jsonResponse({ announcement: null });
@@ -1355,11 +1387,20 @@ async function handleAdminAnnouncement(request, env) {
     if (denied) return denied;
     if (request.method === 'GET') {
         const announcement = await readAnnouncement(env);
-        return jsonResponse({ announcement, reactions: announcement ? await countReactions(env, announcement.id) : null });
+        return jsonResponse({
+            announcement, reactions: announcement ? await countReactions(env, announcement.id) : null,
+            templates: await readAnnounceTemplates(env),
+        });
     }
     if (request.method !== 'POST') return jsonError('Method Not Allowed', 405);
     let body;
     try { body = await request.json(); } catch (e) { return jsonError('JSON invalide', 400); }
+    // Modèles modifiés dans /stats : la liste entière, remplacée.
+    if (Array.isArray(body.templates)) {
+        const templates = cleanAnnounceTemplates(body.templates);
+        await store(env).put(ANNOUNCE_TEMPLATES_KEY, JSON.stringify(templates));
+        return jsonResponse({ ok: true, templates });
+    }
     announcementCache = null;
     if (body.clear === true) {
         await store(env).delete(ANNOUNCEMENT_KEY);
@@ -2313,6 +2354,9 @@ async function feedbackBotTool(env, body) {
         }
         case 'poll-state':
             return jsonResponse(await pollAdminView(env));
+        // Modèles d'annonce (/announce template:), modifiés dans /stats.
+        case 'announce-templates':
+            return jsonResponse({ templates: await readAnnounceTemplates(env) });
     }
     return null;
 }

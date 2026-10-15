@@ -94,7 +94,10 @@ const COMMANDS = [
     name: 'merge', description: 'Merge this report into another one (duplicate)', default_member_permissions: ADMIN,
     options: [{ type: 3, name: 'into', description: 'Link or ID of the other report’s post', required: true }],
   },
-  { name: 'announce', description: 'Show an announcement in the app and on the website', default_member_permissions: ADMIN },
+  {
+    name: 'announce', description: 'Show an announcement in the app and on the website', default_member_permissions: ADMIN,
+    options: [{ type: 3, name: 'template', description: 'Start from a saved template (edit them in /stats)', required: false, autocomplete: true }],
+  },
   { name: 'announce-clear', description: 'Remove the current announcement', default_member_permissions: ADMIN },
   { name: 'poll', description: 'Start a poll in the app and on the website', default_member_permissions: ADMIN },
   { name: 'poll-end', description: 'End the current poll and post its results', default_member_permissions: ADMIN },
@@ -123,8 +126,9 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 const snowflakeTime = (id) => Number((BigInt(id) >> 22n) + 1420070400000n)
 const row = (...components) => ({ type: 1, components })
 const button = (label, custom_id, style = 2) => ({ type: 2, style, label, custom_id })
-const textInput = (custom_id, label, style, { min, max, required = true, placeholder } = {}) =>
-  ({ type: 4, custom_id, label, style, required, ...(min ? { min_length: min } : {}), ...(max ? { max_length: max } : {}), ...(placeholder ? { placeholder } : {}) })
+const textInput = (custom_id, label, style, { min, max, required = true, placeholder, value } = {}) =>
+  ({ type: 4, custom_id, label, style, required, ...(min ? { min_length: min } : {}), ...(max ? { max_length: max } : {}), ...(placeholder ? { placeholder } : {}),
+    ...(value ? { value: String(value).slice(0, max || 4000) } : {}) })
 // Formulaire « Send screenshots » : chaque champ dans un « Label » (type 18,
 // libellé de 45 caractères au plus, description de 100), les fichiers dans
 // un « File Upload » (type 19).
@@ -692,13 +696,14 @@ export function startDiscordBridge({
       row(textInput('where', 'App or website, and version (optional)', 1, { max: 60, required: false, placeholder: 'e.g. iOS app 1.3.0, or the website' })),
     ],
   })
-  const announceModal = () => ({
+  /** `tpl` : modèle choisi (/announce template:), qui pré-remplit le formulaire. */
+  const announceModal = (tpl = null) => ({
     custom_id: 'announce',
     title: 'Announcement (app and website)',
     components: [
-      row(textInput('title', 'Title (optional)', 1, { max: 80, required: false })),
-      row(textInput('message', 'Message', 2, { max: 500, required: false })),
-      row(textInput('link', 'Link (optional, https://…)', 1, { max: 300, required: false })),
+      row(textInput('title', 'Title (optional)', 1, { max: 80, required: false, value: tpl?.title })),
+      row(textInput('message', 'Message', 2, { max: 500, required: false, value: tpl?.message })),
+      row(textInput('link', 'Link (optional, https://…)', 1, { max: 300, required: false, value: tpl?.link })),
       row(textInput('hours', 'Show it for how many hours? (default 24)', 1, { max: 4, required: false })),
     ],
   })
@@ -719,7 +724,18 @@ export function startDiscordBridge({
     if (!user) return
     if (i.type === 2) return onCommand(i, user)
     if (i.type === 3) return onComponent(i, user)
+    if (i.type === 4) return onAutocomplete(i, user)
     if (i.type === 5) return onModal(i, user)
+  }
+
+  /** /announce template: : les modèles enregistrés (modifiés dans /stats). */
+  async function onAutocomplete(i, user) {
+    if (!isAdmin(user.id)) return respond(i, 8, { choices: [] })
+    const typed = String(i.data?.options?.find((o) => o.focused)?.value || '').toLowerCase()
+    const r = await call({ action: 'announce-templates' }).catch(() => null)
+    const choices = (r?.templates || []).filter((x) => String(x.name).toLowerCase().includes(typed))
+      .slice(0, 25).map((x) => ({ name: String(x.name).slice(0, 100), value: String(x.id) }))
+    return respond(i, 8, { choices })
   }
 
   /** Capture passée en option de /bug ou /idea : gardée 10 minutes, le
@@ -746,7 +762,12 @@ export function startDiscordBridge({
     if (name === 'bug' || name === 'idea') return respond(i, 9, reportModal(name, keepShot(i, user)))
     if (!isAdmin(user.id)) return adminOnly(i)
     switch (name) {
-      case 'announce': return respond(i, 9, announceModal())
+      case 'announce': {
+        // Modèle choisi : formulaire pré-rempli (à relire avant d'envoyer).
+        const id = opt(i, 'template')
+        const tpl = id ? (await call({ action: 'announce-templates' }).catch(() => null))?.templates?.find((x) => x.id === id) : null
+        return respond(i, 9, announceModal(tpl))
+      }
       case 'announce-clear':
         return deferred(i, async () => { await call({ action: 'announce', clear: true }); return 'Announcement removed from the app and the website.' })
       case 'poll': return respond(i, 9, pollModal())
