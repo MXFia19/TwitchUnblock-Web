@@ -1532,7 +1532,11 @@ async function backfillOne(env, hook, key, ttl) {
     await linkDiscordThread(env, key, r.thread, true, ttl);
     const rest = thread.slice(1);
     if (rest.length) {
-        await discordHook(hook, { username: 'TwitchUnblock', allowed_mentions: { parse: [] }, embeds: [historyEmbed(rest)] }, [], { threadId: r.thread });
+        // Copiable sur mobile (texte du message) quand il y tient, sinon encadré.
+        const h = historyEmbed(rest);
+        const plain = `**${h.title}**\n${h.description}`;
+        await discordHook(hook, { username: 'TwitchUnblock', allowed_mentions: { parse: [] },
+            ...(plain.length <= 2000 ? { content: plain } : { embeds: [h] }) }, [], { threadId: r.thread });
     }
     return { ok: true };
 }
@@ -1853,12 +1857,17 @@ async function postFeedbackToDiscord(webhook, e, photos = [], { inReplyTo = null
     if (e.c) fields.push({ name: 'Contact', value: e.c, inline: true });
     if (inReplyTo) fields.push({ name: 'In reply to', value: inReplyTo.slice(0, 300) });
     else if (e.i) fields.push({ name: 'Info', value: readableInfo(e.i).slice(0, 1000) });
+    const text = String(e.m || '').trim();
     const payload = {
         username: 'TwitchUnblock',
         allowed_mentions: { parse: [] },
+        // Le texte dans le message même : sur mobile, « Copier le texte » de
+        // Discord ne prend que lui, jamais celui d'un encadré. Plus long que
+        // ce qu'un message tient : en entier dans l'encadré aussi.
+        ...(text ? { content: discordText(text) } : {}),
         embeds: [{
             title: inReplyTo ? `↩️ Reply · ${kind}` : kind,
-            description: (e.m || '📷').slice(0, 4000),
+            ...(!text ? { description: '📷' } : text.length > 2000 ? { description: text.slice(0, 4000) } : {}),
             color: COLORS[e.k] ?? COLORS.other,
             fields,
             // Avec le bot du relais, on répond dans le post même.
@@ -1870,6 +1879,15 @@ async function postFeedbackToDiscord(webhook, e, photos = [], { inReplyTo = null
     const first = String(inReplyTo ?? e.m ?? '').replace(/\s+/g, ' ').trim();
     const threadName = test ? 'Webhook test' : `${kind} · ${first || '📷'}`.slice(0, 100);
     return discordHook(webhook, payload, photoFiles(photos), { threadId: e.dt, threadName, requireThread });
+}
+
+/** Début d'un texte tenant dans un message Discord (2 000 caractères), sans
+ *  couper un emoji en deux ; « … » quand la suite manque. */
+function discordText(text, max = 2000) {
+    if (text.length <= max) return text;
+    let cut = text.slice(0, max - 1);
+    if (/[\ud800-\udbff]$/.test(cut)) cut = cut.slice(0, -1);
+    return `${cut}…`;
 }
 
 /** Photos d'un message en fichiers joints pour Discord. */
