@@ -1954,6 +1954,21 @@ async function discordHook(webhook, payload, files = [], { threadId = null, thre
  *  Discord du retour, pour que la discussion y soit entière ; le bot du
  *  relais y relit l'état pour son étiquette. Ce que fait le bot n'y est pas
  *  recopié : c'est déjà sur Discord. */
+/** Posts Discord de retours supprimés dans /stats : un webhook ne peut pas
+ *  supprimer un post, alors ils vont dans la liste `trash` de la mémoire du
+ *  bot du relais, qui les supprime. Un mot dans le premier le prévient tout
+ *  de suite ; sinon, il vide la liste toutes les 10 min. */
+async function trashDiscordPosts(env, ctx, threads) {
+    const ids = threads.filter((t) => /^\d{5,25}$/.test(t));
+    if (!ids.length || !env.FEEDBACK_BOT_SECRET) return;
+    const k = `${BOT_STORE_PREFIX}trash`;
+    let list = [];
+    try { list = JSON.parse(await store(env).get(k) || '[]'); } catch (e) { /* illisible : repart vide */ }
+    list = [...new Set([...(Array.isArray(list) ? list : []), ...ids])].slice(-500);
+    await store(env).put(k, JSON.stringify(list), { expirationTtl: 7 * 86400 });
+    echoTeamToDiscord(env, ctx, { dt: ids[0] }, { note: '🗑️ Report deleted from /stats: this post is being deleted.' });
+}
+
 function echoTeamToDiscord(env, ctx, meta, { message = '', photos = [], status = null, note = null }) {
     if (!env.FEEDBACK_WEBHOOK || !meta?.dt) return Promise.resolve();
     const content = note
@@ -2434,6 +2449,8 @@ async function handleAdminFeedback(request, env, ctx) {
             await store(env).delete(body.delete);
             if (metadata?.dt) await store(env).delete(`${FEEDBACK_DISCORD_PREFIX}${metadata.dt}`);
             for (const k of (await listAll(`${FEEDBACK_PHOTO_PREFIX}${body.delete}_`)).slice(0, 200)) await store(env).delete(k.name);
+            // Son post Discord part aussi (supprimé par le bot du relais).
+            if (metadata?.dt) await trashDiscordPosts(env, ctx, [metadata.dt]);
             return jsonResponse({ ok: true, deleted: 1 });
         }
         if (body.clear === true) {
@@ -2444,6 +2461,7 @@ async function handleAdminFeedback(request, env, ctx) {
             for (const k of pics) await store(env).delete(k.name);
             const links = (await listAll(FEEDBACK_DISCORD_PREFIX)).slice(0, 500);
             for (const k of links) await store(env).delete(k.name);
+            await trashDiscordPosts(env, ctx, links.map((k) => k.name.slice(FEEDBACK_DISCORD_PREFIX.length)));
             return jsonResponse({ ok: true, deleted: keys.length });
         }
         return jsonError('Action inconnue', 400);

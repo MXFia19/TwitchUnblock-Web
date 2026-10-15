@@ -623,6 +623,9 @@ export function startDiscordBridge({
     // les réponses partent en message privé, un nouveau retour reçoit ses
     // réponses rapides.
     if (m.webhook_id) {
+      // Retour supprimé dans /stats : le Worker l'annonce par un mot dans
+      // son post, que la corbeille supprime.
+      if ((await emptyTrash().catch(() => [])).includes(thread)) return
       const prev = st.states.get(thread)?.value?.status
       const s = await stateOf(thread, { wait: true, fresh: true })
       if (!s) return
@@ -1117,7 +1120,35 @@ export function startDiscordBridge({
     await postSummary(st.settings.alerts)
   }
 
+  /** Posts des retours supprimés dans /stats (liste `trash` écrite par le
+   *  Worker, qui ne peut pas les supprimer lui-même) : supprimés ici, au mot
+   *  du Worker et toutes les 10 min. Rend ceux qui sont partis. */
+  async function emptyTrash() {
+    const list = await kvGet('trash').catch(() => null)
+    if (!Array.isArray(list) || !list.length) return []
+    const done = []
+    for (const t of list.slice(0, 50)) {
+      if (!/^\d{5,25}$/.test(String(t))) { done.push(t); continue }
+      try {
+        await rest('DELETE', `/channels/${t}`)
+      } catch (e) {
+        // Déjà supprimé (10003) : rien à faire ; autre refus : retenté plus tard.
+        if (e.code !== 10003) { log.warn(`Discord bridge: post ${t} not deleted (${e.message})`); continue }
+      }
+      forget(String(t))
+      done.push(t)
+    }
+    if (done.length) {
+      // Relue : le Worker a pu en ajouter pendant ce temps.
+      const now = (await kvGet('trash').catch(() => null)) || []
+      await kvSet('trash', now.filter((t) => !done.includes(t)), 7 * 86400)
+      log.log(`Discord bridge: ${done.length} post(s) of reports deleted in /stats removed`)
+    }
+    return done
+  }
+
   async function heartbeat() {
+    emptyTrash().catch((e) => log.warn(`Discord bridge: trash — ${e.message}`))
     const c = await call({ action: 'config' })
     if (c.forum !== st.forum) {
       log.log(`Discord bridge: the webhook moved to channel ${c.forum}`)
