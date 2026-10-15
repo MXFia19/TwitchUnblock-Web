@@ -507,10 +507,15 @@ export function startDiscordBridge({
   }
 
   // ── Après une réponse ou un état du développeur ─────────────────────────
-  async function postQuickReplies(thread) {
+  /** Nouveau retour : réponses rapides, et le propriétaire du serveur
+   *  mentionné (notification Discord) avec son genre (`kind` : titre de
+   *  l'encadré du webhook, « 💡 Idea », « 🐞 Bug »…). */
+  async function postQuickReplies(thread, kind = '') {
     if (st.quickDone.has(thread)) return
     st.quickDone.add(thread)
-    await say(thread, '⚡ **Quick replies** — sent to the user as your reply:', {
+    const ping = st.owner ? `🔔 <@${st.owner}> New report${kind ? `: ${kind}` : ''}\n` : ''
+    await say(thread, `${ping}⚡ **Quick replies** — sent to the user as your reply:`, {
+      ...(st.owner ? { allowed_mentions: { parse: [], users: [st.owner] } } : {}),
       components: [
         row(...QUICK.slice(0, 3).map((q, n) => button(q.label, `qr:${n}`))),
         row(...QUICK.slice(3).map((q, n) => button(q.label, `qr:${n + 3}`))),
@@ -637,7 +642,7 @@ export function startDiscordBridge({
       const s = await stateOf(thread, { wait: true, fresh: true })
       if (!s) return
       await afterTeamUpdate(thread, s, prev)
-      if (m.id === thread && s.status === 'new') await postQuickReplies(thread)
+      if (m.id === thread && s.status === 'new') await postQuickReplies(thread, m.embeds?.[0]?.title || '')
       return
     }
     if (m.author?.bot || !isAdmin(m.author?.id)) return
