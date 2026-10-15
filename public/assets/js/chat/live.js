@@ -91,17 +91,21 @@ export class LiveChat {
     // sur « Connexion au chat… » sans fin : au plus START_WAIT d'attente,
     // ce qui arrive ensuite sert aux messages suivants.
     let waited
+    const assets = Promise.all([
+      loadGlobalBadges(),
+      loadChannelBadges(this.o.channel),
+      loadGlobalEmotes(),
+      loadChannelEmotes(this.o.channelId, this.o.channel),
+    ])
     await Promise.race([
-      Promise.all([
-        loadGlobalBadges(),
-        loadChannelBadges(this.o.channel),
-        loadGlobalEmotes(),
-        loadChannelEmotes(this.o.channelId, this.o.channel),
-      ]),
+      assets,
       new Promise((resolve) => { waited = setTimeout(resolve, START_WAIT) }),
     ])
     clearTimeout(waited)
     if (gen !== this.generation) return
+    // Emotes arrivées, même après START_WAIT : la vue redessine ce qu'elle a
+    // rendu sans elles — le message épinglé, lu en même temps.
+    assets.then(() => { if (gen === this.generation) this.emit('emotes') }, () => {})
     // BTTV en direct : emotes personnelles (Pro), emotes ajoutées en live.
     joinBttvLive(this.o.channelId)
     if (this.o.loadRecent) this.loadRecent(gen)

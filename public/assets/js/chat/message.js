@@ -78,6 +78,17 @@ export function tokenizeSegment(segment, userId, own = false) {
   return out
 }
 
+/** Mots restés en texte parce que les emotes n'étaient pas encore chargées
+ *  (message épinglé, lu en même temps qu'elles) : ceux qui en sont. Un jeton
+ *  inchangé reste le même objet. */
+export function resolveWords(tokens, userId) {
+  return tokens.map((tk) => {
+    if (tk.kind !== 'text') return tk
+    const emote = resolveEmote(tk.value, userId)
+    return emote ? { kind: 'emote', emote } : tk
+  })
+}
+
 function base(overrides) {
   return {
     id: uid(),

@@ -17,8 +17,9 @@ let loadedChannelId = null
 const personal = new Map()
 
 /** Réponse JSON, ou null (refus, par exemple chaîne absente de BTTV), ou
- *  undefined quand la requête n'a pas abouti (délai, réseau, corps
- *  illisible) : celle-là sera refaite au prochain chargement du chat. */
+ *  undefined quand la requête n'a pas abouti (délai, réseau, serveur en
+ *  panne ou saturé, corps illisible) : celle-là sera refaite au prochain
+ *  chargement du chat. */
 async function getJSON(url) {
   // Abandon après 8 s sans réponse : sans délai, une API injoignable
   // (réseau filtré) gardait la requête ouverte des minutes durant. Le délai
@@ -35,7 +36,9 @@ async function getJSON(url) {
   } finally {
     clearTimeout(timer)
   }
-  if (!res.ok) return null
+  // Une panne de 7TV (5xx) restait gardée comme « aucune emote » toute la
+  // séance, comme un vrai refus.
+  if (!res.ok) return res.status >= 500 || res.status === 429 ? undefined : null
   try {
     return await res.json()
   } catch {

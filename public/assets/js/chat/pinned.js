@@ -28,10 +28,15 @@ const QUERY = `query($l: String!) {
   }
 }`
 
-/** Le message épinglé en cours, ou `null`. */
+/** Le message épinglé en cours, ou `null`. Lève quand Twitch ne donne pas
+ *  la liste : sans épinglage, elle est vide (`edges: []`) ; une erreur de
+ *  Twitch (HTTP 200 sans données) n'est pas « plus de message épinglé » —
+ *  le bandeau disparaissait puis revenait à la relecture suivante. */
 export async function fetchPinned(login) {
   const data = await gql(QUERY, { l: login })
-  const node = data?.channel?.pinnedChatMessages?.edges?.[0]?.node
+  const edges = data?.channel?.pinnedChatMessages?.edges
+  if (!Array.isArray(edges)) throw new Error('pinned')
+  const node = edges[0]?.node
   const msg = node?.pinnedMessage
   if (!node || !msg) return null
   // Un épinglage peut avoir une durée : passé son terme, il n'a plus lieu d'être.

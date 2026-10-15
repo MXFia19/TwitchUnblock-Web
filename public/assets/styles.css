@@ -727,12 +727,12 @@ a.card, a.cat-card { display: block; }
 .pin-meta { margin: 1px 0 0 20px; font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .pin-progress { position: absolute; left: 0; right: 0; bottom: 0; height: 2px; background: rgba(145, 70, 255, 0.15); }
 .pin-progress i { display: block; height: 100%; background: var(--purple); transform-origin: left center; }
-/* Réduit : pastille flottante en haut de la liste. */
+/* Réduit : pastille dans l'en-tête du chat. Flottante en haut de la liste,
+   elle couvrait la croix des drops, du raid ou de la prédiction. */
 .pin-chip {
-  position: absolute; top: 52px; right: 10px; z-index: 3; display: inline-flex; align-items: center; gap: 5px;
+  flex: none; display: inline-flex; align-items: center; gap: 5px;
   height: 26px; padding: 0 10px; border-radius: 13px; border: 1px solid rgba(145, 70, 255, 0.4);
   background: var(--card-hi); color: var(--purple); font: inherit; font-size: 12px; font-weight: 700; cursor: pointer;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
 }
 .pin-chip:hover { background: var(--card); }
 .lang-hint { margin-top: 8px; }

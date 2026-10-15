@@ -2,8 +2,8 @@
 //  Analyse des lignes IRC de Twitch.
 //
 //  Port de Sources/Chat/IRCParser.swift (app iOS). Les plages d'emotes du tag
-//  `emotes` sont en unités UTF-16 : les chaînes JavaScript l'étant déjà, les
-//  bornes s'utilisent telles quelles.
+//  `emotes` sont comptées en points de code (un emoji en vaut un), pas en
+//  unités UTF-16 comme les chaînes JavaScript : parseEmoteRanges convertit.
 // ═══════════════════════════════════════════════════════════════════════════
 
 export function parseIRC(raw) {
@@ -71,11 +71,20 @@ export function unescapeTag(value) {
 }
 
 /**
- * Plages d'emotes Twitch depuis le tag `emotes`.
- * Format : `id:debut-fin,debut-fin/id2:debut-fin`, bornes incluses.
+ * Plages d'emotes Twitch depuis le tag `emotes`, en positions UTF-16 du texte.
+ * Format : `id:debut-fin,debut-fin/id2:debut-fin`, bornes incluses, comptées
+ * en points de code : un emoji hors du plan de base occupe deux unités dans
+ * une chaîne JavaScript, et décalait d'autant les emotes qui le suivaient
+ * (« 😂 Kappa » donnait « ␠Kapp »).
  */
 export function parseEmoteRanges(raw, text) {
   if (!raw) return []
+  // Position UTF-16 de chaque point de code, plus celle de la fin du texte.
+  const at = []
+  let pos = 0
+  for (const ch of text) { at.push(pos); pos += ch.length }
+  at.push(pos)
+  const count = at.length - 1
   const out = []
   for (const part of raw.split('/')) {
     const [id, ranges] = part.split(':')
@@ -84,9 +93,9 @@ export function parseEmoteRanges(raw, text) {
       const [a, b] = r.split('-')
       const start = Number(a)
       const end = Number(b)
-      if (!Number.isFinite(start) || !Number.isFinite(end)) continue
-      if (start < 0 || end >= text.length) continue
-      out.push({ id, start, end: end + 1 })
+      if (!Number.isInteger(start) || !Number.isInteger(end)) continue
+      if (start < 0 || start > end || end >= count) continue
+      out.push({ id, start: at[start], end: at[end + 1] })
     }
   }
   return out.sort((x, y) => x.start - y.start)

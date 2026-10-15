@@ -25,25 +25,39 @@ function index(list, into, titles) {
   }
 }
 
+// Un échec (réseau, ou erreur de Twitch en HTTP 200 : réponse sans la liste)
+// n'est pas gardé : la prochaine ouverture d'un chat redemande. Avant, plus
+// aucun badge ne s'affichait jusqu'au rechargement de la page.
 export function loadGlobalBadges() {
   globalsPromise ??= gql('query { badges { setID version title description imageURL(size: DOUBLE) } }')
-    .then((d) => index(d?.badges, globalBadges, globalTitles))
-    .catch(() => {})
+    .then((d) => {
+      if (!Array.isArray(d?.badges)) throw new Error('badges')
+      index(d.badges, globalBadges, globalTitles)
+    })
+    .catch(() => { globalsPromise = null })
   return globalsPromise
 }
 
+/** Badges propres à la chaîne. Sans login (chaîne d'une VOD inconnue), ceux
+ *  de la chaîne précédente sont retirés : ils s'appliquaient à tort. */
 export async function loadChannelBadges(login) {
-  if (!login || loadedLogin === login) return
-  loadedLogin = login
+  if (login && loadedLogin === login) return
+  loadedLogin = login || null
   for (const k of Object.keys(channelBadges)) delete channelBadges[k]
   for (const k of Object.keys(channelTitles)) delete channelTitles[k]
+  if (!login) return
   try {
     const d = await gql(
       'query($l: String!) { user(login: $l) { broadcastBadges { setID version title description imageURL(size: DOUBLE) } } }',
       { l: login },
     )
-    if (loadedLogin === login) index(d?.user?.broadcastBadges, channelBadges, channelTitles)
-  } catch { /* décoratif : leur absence ne casse rien */ }
+    if (loadedLogin !== login) return
+    if (!d?.user) throw new Error('badges')
+    index(d.user.broadcastBadges, channelBadges, channelTitles)
+  } catch {
+    // Décoratifs : leur absence ne casse rien, mais ils seront redemandés.
+    if (loadedLogin === login) loadedLogin = null
+  }
 }
 
 /** Le badge de chaîne l'emporte : un abonnement a son propre visuel par canal. */

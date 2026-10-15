@@ -13,7 +13,7 @@ import { fetchBotCommands } from './botcmds.js'
 import { VodChat } from './vod.js'
 import { badgeInfo, parseBadgeTag } from './badges.js'
 import { emoteCatalog, findEmote, suggestEmotes } from './emotes.js'
-import { linkifyHtml, plainText, systemMessage } from './message.js'
+import { linkifyHtml, plainText, resolveWords, systemMessage } from './message.js'
 import { clipSlugFrom, gql } from '../api.js'
 import { lang, t } from '../i18n.js'
 import { $, debounce, esc, formatClock, icon, toast } from '../util.js'
@@ -232,6 +232,7 @@ export class ChatView {
       <header class="chat-head">
         <span class="chat-title">${icon('chat', 16)}<span class="chat-title-text"></span></span>
         <span class="chat-status"></span>
+        <button class="pin-chip" type="button" hidden>${icon('pin', 13)}<span data-i18n="pinned_short">${esc(t('pinned_short'))}</span></button>
         <button class="icon-btn sm chat-cmds-btn" type="button" data-i18n-title="bot_commands" title="${esc(t('bot_commands'))}">${icon('terminal', 17)}</button>
         <button class="icon-btn sm chat-hide" type="button" data-i18n-title="close">${icon('x', 18)}</button>
       </header>
@@ -239,7 +240,6 @@ export class ChatView {
       <div class="chat-pinned" hidden role="region"></div>
       <div class="chat-drops" hidden role="region"></div>
       <div class="chat-events"></div>
-      <button class="pin-chip" type="button" hidden>${icon('pin', 13)}<span data-i18n="pinned_short">${esc(t('pinned_short'))}</span></button>
       <div class="chat-list" role="log" aria-live="off" tabindex="0"></div>
       <button class="chat-resume" type="button" hidden>${icon('arrowDown', 14)}<span></span></button>
       <div class="chat-empty" hidden></div>
@@ -495,7 +495,7 @@ export class ChatView {
   }
 
   // ── Message épinglé ────────────────────────────────────────────────────
-  /** Interrogé à l'ouverture puis toutes les 30 s : un épinglage peut
+  /** Interrogé à l'ouverture puis toutes les 20 s : un épinglage peut
    *  arriver, changer ou disparaître en cours de live. */
   startPinned(channel) {
     clearInterval(this.pinTimer)
@@ -504,16 +504,22 @@ export class ChatView {
       if (document.hidden && this.pin !== undefined) return
       let pin = null
       try { pin = await fetchPinned(channel) } catch { return }
-      if (this.mode !== 'live' || this.channel !== channel) return
-      // Un nouvel épinglage attend le retard du chat synchronisé : il ne doit
-      // pas apparaître avant l'image qui le montre.
-      const delay = pin && pin.id !== this.pin?.id && this.pin !== undefined ? this.o.getDelay?.() ?? 0 : 0
-      if (delay >= 0.5) setTimeout(() => { if (this.channel === channel && this.mode === 'live') this.renderPinned(pin) }, delay * 1000)
-      else this.renderPinned(pin)
+      this.applyPin(pin, channel)
     }
     this.pin = undefined
     load()
     this.pinTimer = setInterval(load, 20_000)
+  }
+
+  /** Message épinglé relu (relecture régulière ou signal Hermes). Un nouvel
+   *  épinglage attend le retard du chat synchronisé : il ne doit pas
+   *  apparaître avant l'image qui le montre — le signal Hermes l'affichait
+   *  tout de suite. */
+  applyPin(pin, channel) {
+    if (this.mode !== 'live' || this.channel !== channel) return
+    const delay = pin && pin.id !== this.pin?.id && this.pin !== undefined ? this.o.getDelay?.() ?? 0 : 0
+    if (delay >= 0.5) setTimeout(() => { if (this.channel === channel && this.mode === 'live') this.renderPinned(pin) }, delay * 1000)
+    else this.renderPinned(pin)
   }
 
   // ── Drops de la chaîne ─────────────────────────────────────────────────
@@ -664,7 +670,7 @@ export class ChatView {
     clearTimeout(this.pinExpiry)
     // La pastille n'a de sens que s'il y a un message épinglé réduit.
     this.el.pinBtn.hidden = !pin || pin.id !== this.dismissedPin
-    if (!pin || pin.id === this.dismissedPin) { box.hidden = true; return }
+    if (!pin || pin.id === this.dismissedPin) { box.hidden = true; this.pinResize?.disconnect(); return }
     // Fin programmée : masqué à l'échéance, sans attendre la prochaine requête.
     if (pin.endsAt) {
       const left = pin.endsAt - Date.now()
@@ -676,10 +682,13 @@ export class ChatView {
     box.classList.remove('open', 'can-open')
     box.style.height = ''
     const badges = pin.badges.map((b) => `<img class="badge" src="${esc(b.url)}" alt="" title="${esc(badgeInfo(b.set, b.version)?.title || b.set)}" data-badge="${esc(b.version ? `${b.set}/${b.version}` : b.set)}">`).join('')
+    // Lu en même temps que les emotes de la chaîne : celles arrivées depuis
+    // remplacent les mots restés en texte (voir l'évènement « emotes »).
+    const tokens = resolveWords(pin.tokens)
     box.innerHTML = `<div class="pin-panel">
       <div class="pin-row">
         <span class="pin-ic">${icon('pin', 14)}</span>
-        <div class="pin-body">${badges}<span class="pin-sender" style="color:${esc(pin.color)}">${esc(pin.sender)}</span><span class="pin-colon">:</span> ${this.renderTokens(pin.tokens, this.o.session().login)}</div>
+        <div class="pin-body">${badges}<span class="pin-sender" style="color:${esc(pin.color)}">${esc(pin.sender)}</span><span class="pin-colon">:</span> ${this.renderTokens(tokens, this.o.session().login)}</div>
         <button class="icon-btn xs pin-toggle" type="button" data-pin-toggle aria-expanded="false" aria-label="${esc(t('pinned'))}" hidden>${icon('chevronDown', 16)}</button>
         <button class="icon-btn xs" type="button" data-pin-close aria-label="${esc(t('close'))}">${icon('x', 14)}</button>
       </div>
@@ -688,35 +697,52 @@ export class ChatView {
     for (const img of box.querySelectorAll('img.badge')) img.addEventListener('error', () => img.remove(), { once: true })
     box.hidden = false
     this.updatePinMeta()
+    this.layoutPin(pin)
+  }
 
-    // Chevron seulement si le texte est coupé.
-    requestAnimationFrame(() => {
-      const body = $('.pin-body', box)
-      if (body && body.scrollWidth > body.clientWidth + 1) {
-        box.classList.add('can-open')
-        $('[data-pin-toggle]', box).hidden = false
-      }
-    })
-    // Barre de durée : part de la fraction restante et file jusqu'à zéro.
+  /** Chevron (seulement si le texte est coupé) et barre de durée, refaits
+   *  dès que le bandeau a une taille. Rendu pendant que le chat était
+   *  masqué, il mesurait 0 : pas de chevron, et une barre déjà vide (une
+   *  transition ne court pas sur un élément non affiché). */
+  layoutPin(pin) {
+    const box = this.el.pinned
+    const body = $('.pin-body', box)
     const bar = $('.pin-progress i', box)
-    if (bar) {
-      const total = pin.endsAt - pin.startsAt
+    const measure = () => {
+      // Déplié, le texte passe à la ligne : la mesure ne dirait plus rien.
+      if (box.classList.contains('open')) return
+      const cut = body.scrollWidth > body.clientWidth + 1
+      box.classList.toggle('can-open', cut)
+      $('[data-pin-toggle]', box).hidden = !cut
+    }
+    // Barre de durée : part de la fraction restante et file jusqu'à zéro.
+    const runBar = () => {
+      if (!bar) return
       const left = pin.endsAt - Date.now()
-      bar.style.transform = `scaleX(${Math.max(0, Math.min(1, left / total))})`
+      bar.style.transition = 'none'
+      bar.style.transform = `scaleX(${Math.max(0, Math.min(1, left / (pin.endsAt - pin.startsAt)))})`
       requestAnimationFrame(() => requestAnimationFrame(() => {
-        bar.style.transition = `transform ${left}ms linear`
+        bar.style.transition = `transform ${Math.max(0, left)}ms linear`
         bar.style.transform = 'scaleX(0)'
       }))
     }
+    this.pinResize?.disconnect()
+    if (!('ResizeObserver' in window)) { requestAnimationFrame(measure); runBar(); return }
+    // Largeur nulle : chat masqué. La barre repart quand il réapparaît.
+    let sized = false
+    this.pinResize = new ResizeObserver(() => {
+      if (!body.clientWidth) { sized = false; return }
+      measure()
+      if (!sized) { sized = true; runBar() }
+    })
+    this.pinResize.observe(body)
   }
 
   /** Changement signalé en temps réel (Hermes) : relecture immédiate. */
   refreshPinned() {
     if (this.mode !== 'live' || !this.channel) return
     const channel = this.channel
-    fetchPinned(channel).then((pin) => {
-      if (this.mode === 'live' && this.channel === channel) this.renderPinned(pin)
-    }).catch(() => {})
+    fetchPinned(channel).then((pin) => this.applyPin(pin, channel)).catch(() => {})
   }
 
   // ── Raid ───────────────────────────────────────────────────────────────
@@ -975,8 +1001,11 @@ export class ChatView {
     this.rules = []
     this.renderModes({})
     this.el.rules.hidden = true
+    // Commandes des bots : celles de la chaîne quittée restaient affichées.
+    $('.bot-cmds', this.root).hidden = true
     clearInterval(this.pinTimer)
     clearTimeout(this.pinExpiry)
+    this.pinResize?.disconnect()
     clearInterval(this.dropsTimer)
     this.renderDrops(null)
     this.el.info.hidden = true
@@ -1124,6 +1153,14 @@ export class ChatView {
       case 'timeout':
         this.enqueue(systemMessage(t('chat_timed_out', { d: secondsLabel(payload.seconds) })))
         break
+      case 'emotes': {
+        // Emotes de la chaîne arrivées après le message épinglé : redessiné
+        // avec elles s'il en contient (ses emotes BTTV, FFZ ou 7TV restaient
+        // en texte jusqu'au prochain épinglage).
+        const pin = this.pin
+        if (pin && !this.el.pinned.hidden && resolveWords(pin.tokens).some((tk, i) => tk !== pin.tokens[i])) this.renderPinned(pin, true)
+        break
+      }
     }
   }
 
