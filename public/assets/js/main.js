@@ -3996,10 +3996,15 @@ function openInSheet() {
   const url = currentStreamUrl()
   if (!url) return
   const name = (state.watch?.login || state.watch?.id || 'Twitch').replace(/[^a-zA-Z0-9]/g, '_')
+  // Les trois applis reçoivent l'adresse du flux telle quelle, celle que le
+  // Worker et le relais servent (/api/proxy?url=…) : celle d'Infuse devenait
+  // « /api/proxy/<nom>.m3u8 », une route qui n'existe pas (404). Infuse la
+  // veut encodée dans son paramètre « url », VLC et Outplayer après leur
+  // préfixe.
   const apps = isMobile ? `
     <a class="sheet-row" href="vlc://${esc(url)}"><span class="app-dot vlc"></span><span>VLC</span>${icon('chevronRight', 16)}</a>
     <a class="sheet-row" href="outplayer://${esc(url)}"><span class="app-dot outplayer"></span><span>Outplayer</span>${icon('chevronRight', 16)}</a>
-    <a class="sheet-row" href="infuse://x-callback-url/play?url=${esc(encodeURIComponent(url.replace('/api/proxy', `/api/proxy/${name}.m3u8`)))}"><span class="app-dot infuse"></span><span>Infuse</span>${icon('chevronRight', 16)}</a>` : ''
+    <a class="sheet-row" href="infuse://x-callback-url/play?url=${esc(encodeURIComponent(url))}"><span class="app-dot infuse"></span><span>Infuse</span>${icon('chevronRight', 16)}</a>` : ''
   openSheet(`
     <div class="sheet-head"><h2>${esc(t('open_in'))}</h2><button class="icon-btn" type="button" data-sheet-close>${icon('x', 20)}</button></div>
     <p class="muted sheet-sub">${esc(t('quality'))} : ${esc(player.quality ? qualityText(player.quality) : '')}</p>
