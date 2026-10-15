@@ -2501,7 +2501,8 @@ async function countReactions(env, announcementId) {
 
 // ── Commandes Moobot (relais pour le site) ───────────────────────────────
 // Nightbot, StreamElements et Fossabot sont appelés directement par le site ;
-// Moobot n'autorise que moo.bot (CORS), d'où ce relais. Cache 10 min par chaîne.
+// Moobot n'autorise que moo.bot (CORS), d'où ce relais. Cache 10 min par
+// chaîne, sauf quand Moobot n'a pas répondu.
 const moobotCache = new Map();   // chaîne → { at, body }
 async function handleMoobotCommands(url) {
     const channel = String(url.searchParams.get('channel') || '').toLowerCase();
@@ -2511,17 +2512,28 @@ async function handleMoobotCommands(url) {
         return new Response(hit.body, { headers: { ...RESPONSE_HEADERS, 'Content-Type': 'application/json' } });
     }
     let commands = [];
+    const moo = async (u) => {
+        const res = await fetch(u);
+        if (!res.ok) throw new Error(`Moobot ${res.status}`);
+        return res.json();
+    };
     try {
-        const meta = await (await fetch(`https://api.moo.bot/1/channel/meta?name=${channel}`)).json();
+        // Chaîne absente de Moobot : 200 sans `channel`, donc aucune commande.
+        const meta = await moo(`https://api.moo.bot/1/channel/meta?name=${channel}`);
         const id = meta?.channel?.userid;
         if (id) {
-            const list = await (await fetch(`https://api.moo.bot/1/channel/public/commands/list?channel=${encodeURIComponent(id)}`)).json();
+            const list = await moo(`https://api.moo.bot/1/channel/public/commands/list?channel=${encodeURIComponent(id)}`);
             commands = (list?.list ?? [])
                 .filter((c) => c?.identifier)
                 .map((c) => ({ name: String(c.identifier).startsWith('!') ? String(c.identifier) : `!${c.identifier}`, response: String(c.response ?? '') }))
                 .slice(0, 500);
         }
-    } catch (e) {}
+    } catch (e) {
+        // Moobot injoignable ou réponse illisible : ce n'est pas « aucune
+        // commande ». Rien n'est gardé 10 min, et le site le sait
+        // (`unavailable`, que ses anciennes versions ignorent).
+        return new Response(JSON.stringify({ commands: [], unavailable: true }), { headers: { ...RESPONSE_HEADERS, 'Content-Type': 'application/json' } });
+    }
     const body = JSON.stringify({ commands });
     if (moobotCache.size > 500) moobotCache.clear();
     moobotCache.set(channel, { at: Date.now(), body });

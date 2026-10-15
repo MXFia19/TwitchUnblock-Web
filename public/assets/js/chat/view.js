@@ -1508,15 +1508,16 @@ export class ChatView {
       <input class="bot-cmds-filter" type="search" autocomplete="off" placeholder="${esc(t('bot_commands_filter'))}">
       <div class="bot-cmds-list"><p class="muted small">${esc(t('loading'))}</p></div>`
     box.querySelector('[data-close]').onclick = () => { box.hidden = true }
-    const sets = await fetchBotCommands(channel)
+    const { sets, failed } = await fetchBotCommands(channel)
     if (box.hidden || this.channel !== channel) return
     const list = box.querySelector('.bot-cmds-list')
     const render = (q = '') => {
       q = q.trim().toLowerCase()
       const shown = sets.map((s) => ({ ...s, commands: q ? s.commands.filter((c) => c.name.toLowerCase().includes(q) || c.response.toLowerCase().includes(q)) : s.commands }))
         .filter((s) => s.commands.length)
+      // Aucun bot n'a répondu (réseau) : pas « aucune commande ».
       list.innerHTML = !sets.length
-        ? `<p class="muted small">${esc(t('bot_commands_none'))}</p>`
+        ? `<p class="muted small">${esc(t(failed >= 4 ? 'err_loading' : 'bot_commands_none'))}</p>`
         : shown.map((s) => `<section><h4><img src="${esc(s.icon)}" alt="">${esc(s.bot)} <span class="muted">${s.commands.length}</span></h4>
             ${s.commands.map((c) => `<div class="bot-cmd" role="button" tabindex="0" data-cmd="${esc(c.name)}"><code>${esc(c.name)}</code>${c.response ? `<span>${linkifyHtml(c.response)}</span>` : ''}</div>`).join('')}</section>`).join('')
     }

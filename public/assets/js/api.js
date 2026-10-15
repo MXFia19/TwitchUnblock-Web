@@ -273,12 +273,18 @@ async function json(url, init) {
 /** Toujours avec des variables : un nom saisi n'est jamais recollé tel quel
  *  dans le texte de la requête. */
 export async function gql(query, variables = {}) {
-  const data = await json('https://gql.twitch.tv/gql', {
+  const data = await gqlRaw(query, variables)
+  return data?.data ?? null
+}
+
+/** Réponse entière : Twitch signale ses erreurs en HTTP 200, dans `errors`,
+ *  avec des champs nuls dans `data` — à distinguer d'un vrai « rien ». */
+export async function gqlRaw(query, variables = {}) {
+  return json('https://gql.twitch.tv/gql', {
     method: 'POST',
     headers: { 'Client-ID': GQL_CLIENT_ID, 'Content-Type': 'application/json' },
     body: JSON.stringify({ query, variables }),
   })
-  return data?.data ?? null
 }
 
 /** Page suivante d'une liste, avec le Client-ID Android (voir

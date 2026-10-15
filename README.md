@@ -76,7 +76,8 @@ Watch Twitch lives and VODs in your browser, no subscription needed, with the re
 - Click someone to see their latest messages, mention them or reply
 - Moderation honoured: deleted messages struck through or removed; a moderator's `/clear` says so in the chat
 - Scrolling pauses when you scroll up, with a “new messages” button
-- **VOD chat**, replayed in sync with the video
+- **VOD chat**, replayed in sync with the video: after a jump it opens on the messages just before that point (up to 40), and an error from Twitch is retried instead of ending the replay
+- **Bot commands** (Nightbot, StreamElements, Fossabot, Moobot) without typing `!commands`: searchable, a click puts one in your message (or copies it when you can't write). A bot that doesn't answer is asked again next time, instead of showing “no commands” for 10 minutes
 
 ### Everything else
 - **Themes** (Settings → Appearance): light, dark, OLED black or slate background — or your device's — and the app's seven accent colors, applied before the page shows
