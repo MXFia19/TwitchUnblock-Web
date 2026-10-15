@@ -1112,8 +1112,8 @@ export function startDiscordBridge({
     const now = localTime()
     if (now.hour !== summaryHour || st.summaryDay === now.day || !st.settings.alerts) return
     st.summaryDay = now.day
-    if ((await kvGet('summaryDay').catch(() => null)) === now.day) return
-    await kvSet('summaryDay', now.day)
+    if ((await kvGet('summary_day').catch(() => null)) === now.day) return
+    await kvSet('summary_day', now.day)
     await postSummary(st.settings.alerts)
   }
 
