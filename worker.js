@@ -1186,7 +1186,7 @@ async function handleStats(env) {
 }
 
 function jsonResponse(obj) { return new Response(JSON.stringify(obj), { headers: { ...RESPONSE_HEADERS, 'Content-Type': 'application/json' } }); }
-function jsonError(msg, status) { return new Response(JSON.stringify({ error: msg }), { status, headers: { ...RESPONSE_HEADERS, 'Content-Type': 'application/json' } }); }
+function jsonError(msg, status, extra = {}) { return new Response(JSON.stringify({ error: msg, ...extra }), { status, headers: { ...RESPONSE_HEADERS, 'Content-Type': 'application/json' } }); }
 
 // ═══════════════════════════════════════════════════════════════════════════
 //  Administration : réservé aux comptes de ADMIN_IDS (jeton Twitch vérifié).
@@ -1548,33 +1548,54 @@ function clientKey(request) {
     return groups.slice(0, 4).map((g) => g.padStart(4, '0')).join(':') + '::/64';
 }
 
-// Photos des retours : un plafond par jour pour tout le Worker, gardé en D1
-// (les limites par adresse ne tiennent qu'en mémoire d'une instance), et
-// plus aucune quand la base approche de sa taille maximale (500 Mo en
-// gratuit : pleine, plus rien ne s'y écrit — sauvegardes, comptage,
-// notifications). Le message passe toujours, sans ses photos. Les réponses
-// de l'équipe n'y sont pas soumises.
-const FEEDBACK_PHOTOS_PER_DAY = 30 * 1024 * 1024;   // caractères base64 (~22 Mo d'images)
-const FEEDBACK_PHOTOS_DB_MAX = 400 * 1024 * 1024;   // octets de base
+// Photos des retours : chaque jour, une part par personne et un plafond pour
+// tout le Worker, gardés en D1 (les limites par adresse ne tiennent qu'en
+// mémoire d'une instance), et plus aucune quand la base approche de sa
+// taille maximale (500 Mo en gratuit : pleine, plus rien ne s'y écrit —
+// sauvegardes, comptage, notifications). Sans la part par personne, une
+// seule adresse vidait le plafond du jour en une seconde, et les captures
+// des autres étaient ensuite jetées sans un mot. Le message passe toujours,
+// sans ses photos, et la réponse le dit (photosDropped). Le plafond reste
+// modeste : un /48 IPv6 compte 65 536 « personnes », et c'est lui qui
+// protège la base. Les réponses de l'équipe n'y sont pas soumises.
+const FEEDBACK_PHOTOS_PER_DAY = 60 * 1024 * 1024;     // caractères base64 (~45 Mo d'images)
+const FEEDBACK_PHOTOS_PER_PERSON = 6 * 1024 * 1024;   // une adresse (/64 en IPv6) ou un compte Discord
+const FEEDBACK_PHOTOS_DB_MAX = 400 * 1024 * 1024;     // octets de base
 
-/** Photos d'une personne, ou [] quand le plafond du jour ou la taille de la
- *  base l'interdisent ; celles qui passent sont comptées. */
-async function photoAllowance(env, photos) {
+/** Photos de la personne `who` (clientKey, ou « du:<compte Discord> »), ou []
+ *  quand sa part du jour, le plafond du jour ou la taille de la base
+ *  l'interdisent ; celles qui passent sont comptées. Sa part est comptée
+ *  dans l'une des 65 536 cases tirées de l'empreinte du jour et de `who` :
+ *  la base ne garde aucune adresse, ni de quoi suivre quelqu'un d'un jour
+ *  à l'autre. */
+async function photoAllowance(env, photos, who) {
     if (!photos.length) return photos;
     const size = photos.reduce((n, p) => n + p.b64.length, 0);
     const day = new Date().toISOString().slice(0, 10);
+    const mine = `fbp_${(await sha256hex(`photos|${day}|${who}`)).slice(0, 4)}`;
+    // Ajouté et relu d'un coup (RETURNING) : lu avant d'écrire, le compteur
+    // laissait passer ensemble des envois simultanés.
+    const add = (metric, n) => env.DB.prepare(`INSERT INTO stats_day (day, metric, n) VALUES (?1, ?2, ?3)
+        ON CONFLICT(day, metric) DO UPDATE SET n = n + excluded.n RETURNING n`).bind(day, metric, n);
+    let total, person, dbSize;
     try {
         await ensureSchema(env);
-        const r = await env.DB.prepare(`SELECT n FROM stats_day WHERE day = ?1 AND metric = 'fb_photo_b64'`).bind(day).all();
-        const used = Number(r.results?.[0]?.n) || 0;
-        const dbSize = Number(r.meta?.size_after) || 0;   // taille de la base (D1)
-        if (used + size > FEEDBACK_PHOTOS_PER_DAY || dbSize > FEEDBACK_PHOTOS_DB_MAX) {
-            console.warn(`retours : photos refusées (${Math.round(used / 1e6)} Mo aujourd'hui, base de ${Math.round(dbSize / 1e6)} Mo)`);
-            return [];
-        }
-        await bumpDaily(env, day, { fb_photo_b64: size });
-    } catch (e) { console.warn('retours : plafond des photos illisible,', e.message); }
-    return photos;
+        const [all, own] = await env.DB.batch([add('fb_photo_b64', size), add(mine, size)]);
+        total = Number(all?.results?.[0]?.n) || 0;
+        person = Number(own?.results?.[0]?.n) || 0;
+        dbSize = Number(own?.meta?.size_after) || 0;   // taille de la base (D1)
+    } catch (e) {
+        console.warn('retours : plafond des photos illisible,', e.message);
+        return photos;
+    }
+    const why = person > FEEDBACK_PHOTOS_PER_PERSON ? 'part de la personne'
+        : total > FEEDBACK_PHOTOS_PER_DAY ? 'plafond du jour'
+        : dbSize > FEEDBACK_PHOTOS_DB_MAX ? 'base pleine' : null;
+    if (!why) return photos;
+    // Rien n'est rangé : rien n'est compté.
+    await env.DB.batch([add('fb_photo_b64', -size), add(mine, -size)]).catch(() => {});
+    console.warn(`retours : photos refusées (${why} ; ${Math.round((total - size) / 1e6)} Mo aujourd'hui, base de ${Math.round(dbSize / 1e6)} Mo)`);
+    return [];
 }
 
 /** Texte libre : sans caractères de contrôle (sauf retours à la ligne), borné. */
@@ -1660,7 +1681,8 @@ async function handleFeedback(request, env, ctx) {
     if (message.length < 5) return jsonError('Message trop court', 400);
     let info = body.info;
     if (info && typeof info === 'object') { try { info = JSON.stringify(info); } catch (e) { info = ''; } }
-    const photos = await photoAllowance(env, cleanPhotos(body.photos));
+    const asked = cleanPhotos(body.photos);
+    const photos = await photoAllowance(env, asked, clientKey(request));
 
     const now = Date.now();
     const key = `${FEEDBACK_PREFIX}${now.toString(36)}_${crypto.randomUUID().slice(0, 8)}`;
@@ -1681,7 +1703,10 @@ async function handleFeedback(request, env, ctx) {
     await store(env).put(key, JSON.stringify(thread), { metadata: entry, expirationTtl: FEEDBACK_TTL });
     const hook = notifyDiscord(env, ctx, entry, photos, { key });
     if (!ctx?.waitUntil) await hook;
-    return jsonResponse({ ok: true, id: key, token });
+    // photosDropped : captures non gardées (part ou plafond du jour), que le
+    // site signale ; les anciens clients l'ignorent.
+    const dropped = asked.length - photos.length;
+    return jsonResponse({ ok: true, id: key, token, ...(dropped ? { photosDropped: dropped } : {}) });
 }
 
 // POST /api/feedback/thread — les retours de l'appareil (30 au plus).
@@ -1722,8 +1747,9 @@ async function handleFeedbackReply(request, env, ctx) {
     const { meta, thread } = found;
     if (meta.bl) return jsonError('This conversation was closed by the developer', 403);
     if (thread.length >= FEEDBACK_MAX_MESSAGES) return jsonError('Discussion trop longue', 409);
-    const photos = await photoAllowance(env, asked);
-    if (!message && !photos.length) return jsonError('Photos en pause pour aujourd’hui, réessaie demain', 429);
+    const photos = await photoAllowance(env, asked, clientKey(request));
+    const dropped = asked.length - photos.length;
+    if (!message && !photos.length) return jsonError('Photos en pause pour aujourd’hui, réessaie demain', 429, { photosDropped: dropped });
 
     const now = Date.now();
     const ph = await saveFeedbackPhotos(env, id, photos, meta.ph || 0);
@@ -1732,7 +1758,7 @@ async function handleFeedbackReply(request, env, ctx) {
     await store(env).put(id, JSON.stringify(thread), { metadata: next, expirationTtl: FEEDBACK_TTL });
     const hook = notifyDiscord(env, ctx, { ...next, m: message }, photos, { key: id, inReplyTo: meta.m });
     if (!ctx?.waitUntil) await hook;
-    return jsonResponse({ ok: true, item: publicFeedback(id, next, thread) });
+    return jsonResponse({ ok: true, item: publicFeedback(id, next, thread), ...(dropped ? { photosDropped: dropped } : {}) });
 }
 
 // GET /api/feedback/photo?id=…&n=…&token=… — une photo d'une discussion, pour
@@ -2104,7 +2130,8 @@ async function feedbackBotTool(env, body) {
             if (overLimit(discordReportHits, du, 5)) return jsonError('Too many reports — try again in an hour', 429);
             const message = cleanText(body.message, 2000);
             if (message.length < 5) return jsonError('Message too short', 400);
-            const photos = await photoAllowance(env, cleanPhotos(body.photos));
+            // Le bot compare `photos` (gardées) à ce qu'il a envoyé et le dit.
+            const photos = await photoAllowance(env, cleanPhotos(body.photos), `du:${du}`);
             const now = Date.now();
             const key = `${FEEDBACK_PREFIX}${now.toString(36)}_${crypto.randomUUID().slice(0, 8)}`;
             const token = (crypto.randomUUID() + crypto.randomUUID()).replace(/-/g, '').slice(0, 48);
@@ -2137,7 +2164,7 @@ async function feedbackBotTool(env, body) {
             const thread = feedbackThread(value, m);
             if (thread.length >= FEEDBACK_MAX_MESSAGES) return jsonError('Conversation too long', 409);
             if (overLimit(discordReplyHits, m.du, 20)) return jsonError('Too many replies — try again in an hour', 429);
-            const photos = await photoAllowance(env, asked);
+            const photos = await photoAllowance(env, asked, `du:${m.du}`);
             if (!message && !photos.length) return jsonError('Screenshots are paused for today — try again tomorrow', 429);
             const now = Date.now();
             const ph = await saveFeedbackPhotos(env, key, photos, m.ph || 0);

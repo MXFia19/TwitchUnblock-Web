@@ -772,6 +772,9 @@ async function feedbackPost(path, body) {
   if (!res.ok) {
     const err = new Error(`HTTP ${res.status}`)
     err.status = res.status
+    // Réponse faite seulement de captures, refusées (limite du jour) : le
+    // Worker le précise, le message affiché n'est pas « trop de messages ».
+    err.photosDropped = (await res.json().catch(() => null))?.photosDropped || 0
     throw err
   }
   return res.json()

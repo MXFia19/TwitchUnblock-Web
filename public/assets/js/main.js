@@ -3634,7 +3634,9 @@ function openFeedback(kind = 'bug', { prefill = '' } = {}) {
         saveMyFeedback([{ id: r.id, token: r.token, at: now, kind: current, text: message.slice(0, 200), status: 'new', updatedAt: now, lastFrom: 'u', seen: now }, ...myFeedback()])
       }
       closeSheet()
-      toast(t(r?.token ? 'fb_thanks_follow' : 'fb_thanks'), 'success')
+      // Captures non gardées (limite du jour) : le message est parti, on le dit.
+      if (r?.photosDropped) toast(t('fb_sent_no_photos'), 'error')
+      else toast(t(r?.token ? 'fb_thanks_follow' : 'fb_thanks'), 'success')
     } catch (err) {
       btn.disabled = false
       toast(t(err?.status === 429 ? 'fb_too_many' : 'fb_failed'), 'error')
@@ -3752,8 +3754,10 @@ function openFeedbackThread(id) {
       $('#fb-reply').value = ''
       picker.reset()
       if (r?.item) apply(r.item)
+      if (r?.photosDropped) toast(t('fb_sent_no_photos'), 'error')
     } catch (err) {
-      toast(t(err?.status === 429 ? 'fb_too_many' : 'fb_reply_failed'), 'error')
+      // Réponse faite seulement de captures, refusées (limite du jour).
+      toast(t(err?.photosDropped ? 'fb_photos_paused' : err?.status === 429 ? 'fb_too_many' : 'fb_reply_failed'), 'error')
     } finally { btn.disabled = false }
   }
 }
