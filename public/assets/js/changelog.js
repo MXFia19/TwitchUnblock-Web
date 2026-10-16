@@ -6,6 +6,23 @@
 
 export const CHANGELOG = [
   {
+    version: '2026.10.16a',
+    items: {
+      fr: [
+        'Chat : l’heure des messages s’affiche en 12 h (AM/PM) ou en 24 h selon ton appareil, ou comme tu préfères (Réglages → Chat → Format de l’heure).',
+      ],
+      en: [
+        'Chat: message times show in 12-hour (AM/PM) or 24-hour format depending on your device, or the way you prefer (Settings → Chat → Time format).',
+      ],
+      es: [
+        'Chat: la hora de los mensajes se muestra en formato de 12 h (a. m./p. m.) o de 24 h según tu dispositivo, o como prefieras (Ajustes → Chat → Formato de hora).',
+      ],
+      ru: [
+        'Чат: время сообщений показывается в 12-часовом (AM/PM) или 24-часовом формате, как на устройстве, или как вам удобнее (Настройки → Чат → Формат времени).',
+      ],
+    },
+  },
+  {
     version: '2026.10.15b',
     items: {
       fr: [

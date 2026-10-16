@@ -4142,6 +4142,10 @@ function openSettings() {
       ${toggle('set-multichat', t('multi_chat'), p.multiChat !== false, t('multi_chat_sub'))}
       ${toggle('set-raid', t('auto_raid'), p.autoRaid, t('auto_raid_sub'))}
       ${toggle('set-ts', t('timestamps'), p.timestamps)}
+      <label class="setting setting-col">
+        <span class="setting-text"><span>${esc(t('time_format'))}</span><small>${esc(t('time_format_sub'))}</small></span>
+        <select class="text-input" id="set-timefmt">${[['auto', t('time_auto')], ['12', '12 h'], ['24', '24 h']].map(([v, l]) => `<option value="${v}"${(p.timeFormat || 'auto') === v ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select>
+      </label>
       ${toggle('set-deleted', t('keep_deleted'), p.keepDeleted)}
       ${toggle('set-history', t('load_history'), p.loadHistory)}
       ${toggle('set-bots', t('hide_bots'), p.hideBots, t('hide_bots_sub'))}
@@ -4252,6 +4256,7 @@ function openSettings() {
   sheet.onchange = (e) => {
     const id = e.target.id
     if (id === 'set-ts') p.timestamps = e.target.checked
+    if (id === 'set-timefmt') p.timeFormat = ['12', '24'].includes(e.target.value) ? e.target.value : 'auto'
     if (id === 'set-sync') p.chatSync = e.target.checked
     if (id === 'set-multichat') { setMultiChat(e.target.checked); return }
     if (id === 'set-push') { togglePush(e.target); return }
@@ -4335,6 +4340,7 @@ const BACKUP_SETTINGS = {
   themeBg: (v) => (THEME_BGS.includes(v) ? v : undefined),
   themeAccent: (v) => (THEME_ACCENTS.some(([id]) => id === v) ? v : undefined),
   timestamps: okBool,
+  timeFormat: (v) => (['auto', '12', '24'].includes(v) ? v : undefined),
   keepDeleted: okBool,
   loadHistory: okBool,
   chatSize: (v) => (Number.isFinite(v) ? Math.min(20, Math.max(12, Math.round(v))) : undefined),

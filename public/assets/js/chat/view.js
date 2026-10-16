@@ -153,9 +153,20 @@ function formatPoints(n) {
   return n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${(n / 1e3).toFixed(1)}k` : String(n)
 }
 
-/** Heure d'un message, dans la langue du site (pas celle du navigateur). */
-function timeLabel(ts) {
-  return new Date(ts).toLocaleTimeString(lang(), { hour: '2-digit', minute: '2-digit' })
+/** L'appareil affiche-t-il l'heure en 12 h (AM/PM) ? Lu une fois, d'après
+ *  sa langue (navigateur), pas celle du site. */
+const DEVICE_12H = (() => {
+  try {
+    const o = new Intl.DateTimeFormat(navigator.language, { hour: 'numeric' }).resolvedOptions()
+    return o.hour12 ?? (o.hourCycle === 'h11' || o.hourCycle === 'h12')
+  } catch { return false }
+})()
+
+/** Heure d'un message, dans la langue du site ; 12 h ou 24 h selon le
+ *  réglage (`pref` : « auto », celui de l'appareil, « 12 » ou « 24 »). */
+function timeLabel(ts, pref = 'auto') {
+  const twelve = pref === '12' || (pref !== '24' && DEVICE_12H)
+  return new Date(ts).toLocaleTimeString(lang(), { hour: twelve ? 'numeric' : '2-digit', minute: '2-digit', hour12: twelve })
 }
 
 /** Nom à écrire après « @ » : Twitch ne notifie que le pseudo, et un nom
@@ -1310,7 +1321,7 @@ export class ChatView {
     if (m.replyTo) {
       html += `<div class="msg-reply">${icon('reply', 12)}<span>${esc(t('reply_to', { u: m.replyTo }))}${m.replyBody ? ` : ${esc(m.replyBody)}` : ''}</span></div>`
     }
-    const time = this.mode === 'vod' && m.offset !== null ? formatClock(m.offset) : timeLabel(m.timestamp)
+    const time = this.mode === 'vod' && m.offset !== null ? formatClock(m.offset) : timeLabel(m.timestamp, this.o.prefs.timeFormat)
     html += `<span class="msg-time">${esc(time)}</span>`
     m.badgeList ??= parseBadgeTag(m.badgeTag)
     // Une image en échec garderait sa place, vide, et décalerait le pseudo.
@@ -1736,7 +1747,7 @@ export class ChatView {
       </div>
       <div class="user-card-label">${esc(t('user_messages'))}</div>
       <div class="user-card-msgs">${theirs.length
-        ? theirs.map((m) => `<div class="uc-msg${m.isDeleted ? ' deleted' : ''}"><span class="msg-time">${esc(this.mode === 'vod' && m.offset !== null ? formatClock(m.offset) : timeLabel(m.timestamp))}</span> ${this.renderTokens(m.tokens, null)}</div>`).join('')
+        ? theirs.map((m) => `<div class="uc-msg${m.isDeleted ? ' deleted' : ''}"><span class="msg-time">${esc(this.mode === 'vod' && m.offset !== null ? formatClock(m.offset) : timeLabel(m.timestamp, this.o.prefs.timeFormat))}</span> ${this.renderTokens(m.tokens, null)}</div>`).join('')
         : '<div class="muted">—</div>'}</div>`
     card.hidden = false
     const list = $('.user-card-msgs', card)

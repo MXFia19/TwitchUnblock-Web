@@ -28,6 +28,7 @@ const DEFAULT_PREFS = {
   localFollows: [],  // chaînes suivies sans compte Twitch (sur cet appareil)
   pinned: [],        // streamers épinglés en tête des suivis (logins en minuscules)     // langue du top des lives ; null = celle de l'appareil
   timestamps: false,
+  timeFormat: 'auto', // heure du chat : 'auto' (celle de l'appareil), '12' ou '24'
   keepDeleted: true,
   loadHistory: true,
   chatSize: 14,

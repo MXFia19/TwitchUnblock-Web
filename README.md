@@ -75,6 +75,7 @@ Watch Twitch lives and VODs in your browser, no subscription needed, with the re
 - **Banned from a channel's chat**: when Twitch refuses your account in that chat, the chat keeps going read-only without your account (like a logged-out viewer), with a banner in place of the message box and a “Retry with my account” button for when you're unbanned — remembered for that channel until the page is reloaded. A timeout shows a line with its duration
 - Click someone to see their latest messages, mention them or reply
 - Moderation honoured: deleted messages struck through or removed; a moderator's `/clear` says so in the chat
+- Message times (Settings → Chat) in 12 h or 24 h: Auto follows the device's language, or pick one
 - Scrolling pauses when you scroll up, with a “new messages” button
 - **VOD chat**, replayed in sync with the video: after a jump it opens on the messages just before that point (up to 40), and an error from Twitch is retried instead of ending the replay
 - **Bot commands** (Nightbot, StreamElements, Fossabot, Moobot) without typing `!commands`: searchable, a click puts one in your message (or copies it when you can't write). A bot that doesn't answer is named (“No answer from …”) and asked again next time, instead of showing “no commands”
