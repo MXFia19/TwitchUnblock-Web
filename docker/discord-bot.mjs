@@ -1119,11 +1119,15 @@ export function startDiscordBridge({
   async function watchReleases() {
     const seen = (await kvGet('seen').catch(() => null)) || {}
     const next = { ...seen }
-    const rels = await gh(`/repos/${repos.ios}/releases?per_page=20`)
+    const rels = await gh(`/repos/${repos.ios}/releases?per_page=50`)
     if (Array.isArray(rels)) {
-      const stable = rels.find((r) => !r.prerelease && !r.draft && /^TwitchUnblock \d/.test(r.name || ''))
-      const test = rels.find((r) => r.prerelease && /^test-/.test(r.tag_name || ''))
-      const tv = rels.find((r) => r.prerelease && /^tv-test-/.test(r.tag_name || ''))
+      // La plus récemment publiée de chaque sorte : l'API ne les trie pas par
+      // date (tv-test-10 arrivait après tv-test-6, et n'était jamais annoncée).
+      const latest = (keep) => rels.filter(keep)
+        .sort((a, b) => Date.parse(b.published_at || b.created_at || 0) - Date.parse(a.published_at || a.created_at || 0))[0]
+      const stable = latest((r) => !r.prerelease && !r.draft && /^TwitchUnblock \d/.test(r.name || ''))
+      const test = latest((r) => r.prerelease && /^test-/.test(r.tag_name || ''))
+      const tv = latest((r) => r.prerelease && /^tv-test-/.test(r.tag_name || ''))
       if (stable) {
         const v = stable.name.replace(/^TwitchUnblock\s+/, '').trim()
         if (seen.ios && seen.ios !== v) await draftRelease('ios', v, stable)
