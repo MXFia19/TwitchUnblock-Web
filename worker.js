@@ -883,7 +883,8 @@ const USAGE_ACCOUNT_PREFIX = 'usage_a_';
  *  contacts, comptes du comptage, effacements, annonces. */
 let ADMIN_IDS = [];
 const USAGE_RETENTION_DAYS = 35;
-const PLATFORMS = ['ios', 'web'];
+// tvos : l'app Apple TV (comptée à part depuis la 0.1.15).
+const PLATFORMS = ['ios', 'web', 'tvos'];
 // Le site officiel : un ping « web » venu d'ailleurs (copie locale, tests,
 // préversions) n'est pas compté. L'app iOS n'envoie pas d'en-tête Origin.
 let USAGE_ORIGINS = ['https://twitchunblock.vercel.app', 'https://test2-fawn-eta.vercel.app'];
@@ -893,6 +894,8 @@ const BOT_UA = /headless|bot\b|crawler|spider|slurp|playwright|puppeteer|seleniu
 // d'appareil, version majeure d'iOS, et des compteurs de lectures — la source
 // qui a servi un direct, les échecs. Jamais de chaîne ni de titre.
 const USAGE_DEVICES = ['iphone', 'ipad', 'tv', 'mobile', 'desktop'];
+// Langue (l) et appareil (d) par plateforme : i(OS), w(eb), t(vOS) ; version d'iOS.
+const USAGE_META_FIELDS = ['li', 'lw', 'lt', 'di', 'dw', 'dt', 'os'];
 // live_account : direct de l'app servi par le compte d'un abonné sans pub ;
 // live_ad_break : pause pub de la chaîne affichée (une fois par pause).
 const USAGE_EVENTS = ['live_as', 'live_al', 'live_eu', 'live_twitch', 'live_account', 'live_worker', 'live_unknown',
@@ -900,6 +903,9 @@ const USAGE_EVENTS = ['live_as', 'live_al', 'live_eu', 'live_twitch', 'live_acco
 
 // POST /api/ping — { id, version, platform } enregistre ; { id, forget: true } efface.
 async function handlePing(request, env) {
+    // GET : les plateformes comptées. L'app Apple TV ne signale rien tant que
+    // « tvos » n'y figure pas (un Worker d'avant la compterait comme l'iPhone).
+    if (request.method === 'GET') return jsonResponse({ ok: true, platforms: PLATFORMS });
     if (request.method !== 'POST') return jsonError('Method Not Allowed', 405);
     if (!env.DB) return jsonError("Base D1 'DB' non liée au Worker.", 500);
     let body;
@@ -980,8 +986,8 @@ async function handlePing(request, env) {
 
     // Langue et appareil, par plateforme (un compte peut utiliser l'app et le
     // site) ; gardés tels quels si le client ne les envoie pas (anciennes versions).
-    const suffix = platform === 'web' ? 'w' : 'i';
-    for (const f of ['li', 'lw', 'di', 'dw', 'os']) if (prev[f] !== undefined) meta[f] = prev[f];
+    const suffix = platform === 'web' ? 'w' : platform === 'tvos' ? 't' : 'i';
+    for (const f of USAGE_META_FIELDS) if (prev[f] !== undefined) meta[f] = prev[f];
     const lang = String(body.lang || '').toLowerCase();
     if (/^[a-z]{2}$/.test(lang)) meta['l' + suffix] = lang;
     if (USAGE_DEVICES.includes(body.device)) meta['d' + suffix] = body.device;
@@ -1006,7 +1012,7 @@ async function handlePing(request, env) {
     // Rien de neuf aujourd'hui : pas d'écriture.
     const same = (f) => prev[f] === meta[f];
     if (prev.last === day && prev.v === version && prev.ps === platforms && (!who || prev.l === meta.l)
-        && ['li', 'lw', 'di', 'dw', 'os'].every(same)) {
+        && USAGE_META_FIELDS.every(same)) {
         return jsonResponse({ ok: true, days, unchanged: true });
     }
     await store(env).put(key, '', { expirationTtl: 60 * 60 * 24 * USAGE_RETENTION_DAYS, metadata: meta });
@@ -1046,7 +1052,7 @@ async function handleStats(env) {
     // dernière fois ce jour-là, par plateforme.
     const dayKey = (offset) => new Date(todayMs - offset * 86400000).toISOString().slice(0, 10);
     const daily = {};
-    for (let i = 29; i >= 0; i--) daily[dayKey(i)] = { date: dayKey(i), newIos: 0, newWeb: 0, lastIos: 0, lastWeb: 0 };
+    for (let i = 29; i >= 0; i--) daily[dayKey(i)] = { date: dayKey(i), newIos: 0, newWeb: 0, newTv: 0, lastIos: 0, lastWeb: 0, lastTv: 0 };
 
     // Rétention : parmi ceux arrivés il y a au moins N jours, la part revue N
     // jours ou plus après son premier jour (J+1, J+7, J+14), au total et par
@@ -1059,7 +1065,7 @@ async function handleStats(env) {
         return new Date(d.getTime() - ((d.getUTCDay() + 6) % 7) * 86400000).toISOString().slice(0, 10);
     };
     // Appareils : personnes actives sur 30 jours qui envoient ces infos.
-    const devices = { reporting: { ios: 0, web: 0 }, lang: { ios: {}, web: {} }, os: {}, device: { ios: {}, web: {} } };
+    const devices = { reporting: { ios: 0, web: 0, tvos: 0 }, lang: { ios: {}, web: {}, tvos: {} }, os: {}, device: { ios: {}, web: {}, tvos: {} } };
     const tally = (obj, k) => { obj[k] = (obj[k] || 0) + 1; };
 
     // list() renvoie les métadonnées sans lecture par clé ; 1000 clés par page.
@@ -1071,10 +1077,10 @@ async function handleStats(env) {
             const age = Number.isNaN(then) ? Infinity : Math.floor((todayMs - then) / 86400000);
             const firstThen = Date.parse((meta.first || meta.last || '') + 'T00:00:00Z');
             const firstAge = Number.isNaN(firstThen) ? Infinity : Math.floor((todayMs - firstThen) / 86400000);
-            // Une seule plateforme par identifiant : utilisé sur l'app ET le
-            // site, il compte comme iOS (l'app est le vrai signe d'adoption).
+            // Une seule plateforme par identifiant : l'app iPhone d'abord (le
+            // vrai signe d'adoption), puis l'Apple TV, puis le site.
             const plats = meta.ps ? String(meta.ps).split(',') : [meta.p || 'ios'];
-            const plat = plats.includes('ios') || !plats.includes('web') ? 'ios' : 'web';
+            const plat = plats.includes('ios') ? 'ios' : plats.includes('tvos') ? 'tvos' : plats.includes('web') ? 'web' : 'ios';
             const buckets = [platforms[plat]];
             const kind = meta.k === 'a' ? kinds.accounts : kinds.anonymous;
             // Une seule fois par période, quel que soit le nombre de jours où
@@ -1091,7 +1097,7 @@ async function handleStats(env) {
             if (d >= 2) { returning++; kind.returning++; for (const b of buckets) b.returning++; }
             if (d === 1) loyalty.once++; else if (d < 7) loyalty.few++; else if (d < 30) loyalty.regular++; else loyalty.daily++;
             if (meta.first && (!oldestFirst || meta.first < oldestFirst)) oldestFirst = meta.first;
-            const p = plat === 'web' ? 'Web' : 'Ios';
+            const p = plat === 'web' ? 'Web' : plat === 'tvos' ? 'Tv' : 'Ios';
             if (daily[meta.first]) daily[meta.first]['new' + p]++;
             if (daily[meta.last]) daily[meta.last]['last' + p]++;
 
@@ -1110,6 +1116,9 @@ async function handleStats(env) {
             if (age <= 30) {
                 if (meta.li || meta.di || meta.os) devices.reporting.ios++;
                 if (meta.lw || meta.dw) devices.reporting.web++;
+                if (meta.lt || meta.dt) devices.reporting.tvos++;
+                if (meta.lt) tally(devices.lang.tvos, meta.lt);
+                if (meta.dt) tally(devices.device.tvos, meta.dt);
                 if (meta.li) tally(devices.lang.ios, meta.li);
                 if (meta.lw) tally(devices.lang.web, meta.lw);
                 if (meta.os) tally(devices.os, meta.os);
@@ -1122,9 +1131,9 @@ async function handleStats(env) {
 
     // Actifs par jour et santé du direct : compteurs de stats_day (depuis
     // leur mise en place seulement, l'historique d'avant n'existe pas).
-    const activeDaily = Object.keys(daily).map((date) => ({ date, total: 0, ios: 0, web: 0, acct: 0, anon: 0 }));
+    const activeDaily = Object.keys(daily).map((date) => ({ date, total: 0, ios: 0, web: 0, tvos: 0, acct: 0, anon: 0 }));
     const byDate = Object.fromEntries(activeDaily.map((d) => [d.date, d]));
-    const health = { week: { ios: {}, web: {} }, month: { ios: {}, web: {} }, since: null };
+    const health = { week: { ios: {}, web: {}, tvos: {} }, month: { ios: {}, web: {}, tvos: {} }, since: null };
     let activeSince = null;
     // Notifications : envois réussis par jour (et le reste des compteurs).
     const pushDaily = Object.keys(daily).map((date) => ({ date, ok_web: 0, ok_ntfy: 0 }));

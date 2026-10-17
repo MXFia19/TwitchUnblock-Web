@@ -26,6 +26,7 @@
       --purple: #bf94ff;
       --ios: #d95926;
       --web: #3987e5;
+      --tvos: #2c9f6e;
       --grid: rgba(255, 255, 255, 0.06);
       --warn: #f0b429;
     }
@@ -56,6 +57,7 @@
     .dot { width: 9px; height: 9px; border-radius: 3px; flex: none; }
     .dot.ios { background: var(--ios); }
     .dot.web { background: var(--web); }
+    .dot.tvos { background: var(--tvos); }
 
     .grid2 { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); gap: 12px; margin-bottom: 12px; }
     h2 { margin: 0 0 4px; font-size: 16px; font-weight: 700; }
@@ -218,7 +220,7 @@
     <div class="card">
       <h2 data-t="actTitle"></h2>
       <p class="sub" id="act-sub"></p>
-      <div class="legend"><span><i class="dot ios"></i><span data-t="ios"></span></span><span><i class="dot web"></i><span data-t="web"></span></span></div>
+      <div class="legend"><span><i class="dot ios"></i><span data-t="ios"></span></span><span><i class="dot tvos"></i><span data-t="tvos"></span></span><span><i class="dot web"></i><span data-t="web"></span></span></div>
       <div class="chart" id="chart-active"></div>
       <details>
         <summary data-t="showTable"></summary>
@@ -269,7 +271,7 @@
     <div class="card">
       <h2 data-t="newTitle"></h2>
       <p class="sub" data-t="newSub"></p>
-      <div class="legend"><span><i class="dot ios"></i><span data-t="ios"></span></span><span><i class="dot web"></i><span data-t="web"></span></span></div>
+      <div class="legend"><span><i class="dot ios"></i><span data-t="ios"></span></span><span><i class="dot tvos"></i><span data-t="tvos"></span></span><span><i class="dot web"></i><span data-t="web"></span></span></div>
       <div class="chart" id="chart-new"></div>
       <details>
         <summary data-t="showTable"></summary>
@@ -396,7 +398,7 @@
     <div class="dev-filter">
       <input id="dev-search" type="search" data-tp="filterPh" style="height:32px;padding:0 10px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--text);font:inherit;font-size:13px;min-width:200px">
       <select id="dev-kind" style="height:32px;padding:0 8px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--text);font:inherit;font-size:13px"><option value="" data-t="fAllKinds"></option><option value="account" data-t="fAccounts"></option><option value="anonymous" data-t="fAnon"></option></select>
-      <select id="dev-plat" style="height:32px;padding:0 8px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--text);font:inherit;font-size:13px"><option value="" data-t="fAllPlats"></option><option value="ios" data-t="fIosOnly"></option><option value="web" data-t="fWebOnly"></option><option value="both" data-t="fBoth"></option></select>
+      <select id="dev-plat" style="height:32px;padding:0 8px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--text);font:inherit;font-size:13px"><option value="" data-t="fAllPlats"></option><option value="ios" data-t="fIosOnly"></option><option value="web" data-t="fWebOnly"></option><option value="tvos" data-t="fTvOnly"></option><option value="both" data-t="fBoth"></option></select>
       <select id="dev-version" style="height:32px;padding:0 8px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--text);font:inherit;font-size:13px"></select>
       <span class="sub" id="dev-count" style="margin:0"></span>
     </div>
@@ -419,7 +421,7 @@
     fr: {
       title: 'Utilisation · TwitchUnblock', h1: 'utilisation', refresh: '↻ Actualiser', back: 'Retour au site',
       newTitle: 'Nouveaux utilisateurs par jour', newSub: 'Premier jour où chaque identifiant a été vu, 30 derniers jours.',
-      ios: 'App iOS', web: 'Site web', showTable: 'Voir le tableau',
+      ios: 'App iOS', web: 'Site web', tvos: 'App Apple TV', showTable: 'Voir le tableau',
       loyTitle: 'Fidélité', loySub: 'Nombre de jours différents où chaque identifiant est revenu.',
       retTitle: 'Revenus au moins un 2ᵉ jour', retSub: 'Le meilleur indicateur de vrais utilisateurs : un essai unique ne compte pas.',
       verTitle: 'Versions', verSub: 'Identifiants actifs sur 30 jours, par version.',
@@ -434,7 +436,7 @@
       hlTitle: 'Santé du direct (7 jours)', hlSub: 'Source qui a servi chaque live lancé, et échecs. Compteurs anonymes : aucune chaîne, aucun titre.',
       hlLives: '{n} lives lancés', hlVods: '{n} VODs lancées', hlFail: '{n} échecs au lancement ({p} %)', hlPlayFail: '{n} pendant la lecture', hlAdBreaks: '{n} pauses pub de la chaîne vues', hlNone: 'Pas encore de données : elles arrivent avec les nouvelles versions de l’app et du site.',
       hs_as: 'Luminous Asie', hs_al: 'Proxy Albanie', hs_eu: 'Luminous Europe', hs_twitch: 'Twitch officiel', hs_account: 'Compte abonné', hs_worker: 'Worker (secours)', hs_unknown: 'Inconnue',
-      dvTitle: 'Appareils et langues', dvSub: 'Personnes actives sur 30 jours qui envoient ces infos : {ios} sur l’app, {web} sur le site (nouvelles versions seulement).',
+      dvTitle: 'Appareils et langues', dvSub: 'Personnes actives sur 30 jours qui envoient ces infos : {ios} sur l’app, {tv} sur l’Apple TV, {web} sur le site (nouvelles versions seulement).', dvLangTv: 'Langue (Apple TV)',
       dvLangIos: 'Langue de l’app', dvLangWeb: 'Langue du site', dvOs: 'Version d’iOS', dvDevIos: 'Appareil (app)', dvDevWeb: 'Appareil (site)', dvMobile: 'Mobile ou tablette', dvDesktop: 'Ordinateur', dvNone: 'Pas encore de données : elles arrivent avec les nouvelles versions de l’app et du site.',
       tNew: '{n} nouvelles', tOld: '{n} déjà venues avant',
       uniqueNote: 'Personnes uniques : chacune compte une seule fois par période, même si elle revient plusieurs jours (une par compte Twitch connecté, sinon une par appareil ou navigateur).',
@@ -453,7 +455,7 @@
       lAnonWeb: 'Supprimer tous les anonymes web', lAnon: 'Supprimer tous les anonymes', lOnce: 'Supprimer les entrées vues un seul jour', lAll: 'Supprimer TOUTES les données d’utilisation', lKey: 'Supprimer {k}',
       syncConfirm: 'Effacer la sauvegarde (historique et progression) de {u} ?', syncDone: 'Sauvegarde de {u} effacée.', syncNone: '{u} n’avait pas de sauvegarde.',
       annTitle: 'Annonce (app et site)', annSub: 'Affichée en haut de l’accueil de l’app iOS et du site jusqu’à expiration. Une seule à la fois ; en publier une remplace la précédente.', annTitlePh: 'Titre', annMsgPh: 'Message', annLinkPh: 'Lien (facultatif, https://…)', annFor: 'Durée', annPublish: 'Publier', annCustom: 'Personnalisée…', unitMin: 'minutes', unitHour: 'heures', unitDay: 'jours', annBadDuration: 'Durée : entre 1 minute et 30 jours.', annClear: 'Retirer', annEdit: 'Modifier', annReactions: 'Réactions', annReactTotal: '{n} réaction(s) · une par appareil', annSave: 'Enregistrer', annCancel: 'Annuler', annKeep: 'Garder l’échéance actuelle', annRenotify: 'Réafficher à ceux qui l’avaient fermée', annSaved: 'Annonce modifiée.', annEdited: 'modifiée', annNone: 'Aucune annonce en cours.', annLive: 'En cours jusqu’au {d} :', annPublished: 'Annonce publiée.', annCleared: 'Annonce retirée.', annConfirmClear: 'Retirer l’annonce en cours ?', annTplPick: 'Modèle…', annTplSave: 'Enregistrer comme modèle', annTplUpdate: 'Mettre à jour le modèle', annTplDel: 'Supprimer le modèle', annTplName: 'Nom du modèle :', annTplSaved: 'Modèle enregistré.', annTplUpdated: 'Modèle mis à jour.', annTplDeleted: 'Modèle supprimé.', annTplEmpty: 'Écris d’abord un titre ou un message.', annTplConfirmDel: 'Supprimer le modèle « {n} » ?', annTplHint: 'Les modèles servent aussi à /announce sur Discord (option template).', pollTitle: 'Sondage (app et site)', pollSub: 'Affiché sous l’annonce dans l’app iOS et sur le site. Vote anonyme par appareil, modifiable jusqu’à la fin ; chacun voit les résultats après avoir voté, et tout le monde à la fin (24 h). Le bot poste les résultats sur Discord. Un seul à la fois ; en lancer un remplace le précédent.', pollQuestionPh: 'Question', pollOptionsPh: 'Choix, un par ligne (2 à 6)', pollMulti: 'Plusieurs choix par personne', pollStart: 'Lancer', pollEnd: 'Terminer', pollNone: 'Aucun sondage en cours.', pollLive: 'En cours jusqu’au {d} :', pollEndedAt: 'Terminé le {d} :', pollSingleTag: 'un choix', pollMultiTag: 'plusieurs choix', pollVoters: '{n} votant(s) · un vote par appareil', pollStarted: 'Sondage lancé.', pollEndedMsg: 'Sondage terminé : résultats affichés à tous pendant 24 h.', pollCleared: 'Sondage retiré.', pollConfirmEnd: 'Terminer le sondage maintenant ?', pollConfirmClear: 'Retirer le sondage (il disparaît de l’app et du site) ?', pollConfirmReplace: 'Un sondage est déjà en cours : le remplacer ?', pollBadOptions: 'Il faut entre 2 et 6 choix, un par ligne.',
-      fAllKinds: 'Tous les types', fAccounts: 'Comptes', fAnon: 'Anonymes', fAllPlats: 'Toutes plateformes', fIosOnly: 'iOS seulement', fWebOnly: 'Web seulement', fBoth: 'iOS + Web', fAllVersions: 'Toutes versions',
+      fAllKinds: 'Tous les types', fAccounts: 'Comptes', fAnon: 'Anonymes', fAllPlats: 'Toutes plateformes', fIosOnly: 'iOS seulement', fWebOnly: 'Web seulement', fTvOnly: 'Apple TV seulement', fBoth: 'iOS + Web', fAllVersions: 'Toutes versions',
       fbTitle: 'Retours (bugs, idées)', fbSub: 'Envoyés depuis le site et l’app. Ta réponse et l’état choisi s’affichent chez la personne (« Mes signalements »), qui peut répondre à son tour, photos comprises. Gardés 180 jours après le dernier message. Avec le secret FEEDBACK_WEBHOOK posé sur le Worker, chaque retour et chaque réponse arrivent aussi sur Discord.',
       fbStatus_new: 'Nouveau', fbStatus_seen: 'Vu', fbMarkSeen: 'Marquer comme vu', fbStatus_accepted: 'Accepté', fbStatus_progress: 'En cours', fbStatus_done: 'Fait', fbStatus_refused: 'Refusé',
       fbHookOk: 'Discord : dernier envoi réussi ({d})', fbHookFail: 'Discord : dernier envoi refusé ({d}) — {e}', fbHookMissing: 'Discord : secret FEEDBACK_WEBHOOK absent du Worker. À poser comme « Secret » (pas « Texte ») dans Cloudflare → Workers → test2 → Paramètres → Variables et secrets.', fbHookInvalid: 'Discord : FEEDBACK_WEBHOOK ne ressemble pas à une adresse de webhook (https://discord.com/api/webhooks/…).', fbHookNever: 'Discord : aucun envoi depuis la mise à jour.', fbHookTest: 'Tester l’envoi Discord', fbHookTestOk: 'Message de test envoyé : regarde le salon Discord.', fbHookTestFail: 'Échec du test : {e}', fbBridgeOk: 'Pont Discord : bot actif (vu il y a {n} min) — réponds et change l’état dans le post du retour', fbBridgeLost: 'Pont Discord : bot muet depuis le {d} (relais arrêté ?)', fbBridgeNever: 'Pont Discord : le bot du relais ne s’est jamais annoncé (jeton, secret partagé, Worker à jour ?)',
@@ -475,7 +477,7 @@
     en: {
       title: 'Usage · TwitchUnblock', h1: 'usage', refresh: '↻ Refresh', back: 'Back to site',
       newTitle: 'New users per day', newSub: 'First day each identifier was seen, last 30 days.',
-      ios: 'iOS app', web: 'Website', showTable: 'Show table',
+      ios: 'iOS app', web: 'Website', tvos: 'Apple TV app', showTable: 'Show table',
       loyTitle: 'Loyalty', loySub: 'Number of different days each identifier came back.',
       retTitle: 'Came back on a 2nd day', retSub: 'The best signal of real users: a one-off try doesn’t count.',
       verTitle: 'Versions', verSub: 'Identifiers active over 30 days, by version.',
@@ -490,7 +492,7 @@
       hlTitle: 'Live health (7 days)', hlSub: 'Source that served each live started, and failures. Anonymous counters: no channel, no title.',
       hlLives: '{n} lives started', hlVods: '{n} VODs started', hlFail: '{n} failed to start ({p} %)', hlPlayFail: '{n} during playback', hlAdBreaks: '{n} channel ad breaks seen', hlNone: 'No data yet: it comes with the new versions of the app and the website.',
       hs_as: 'Luminous Asia', hs_al: 'Albania proxy', hs_eu: 'Luminous Europe', hs_twitch: 'Official Twitch', hs_account: 'Subscriber account', hs_worker: 'Worker (fallback)', hs_unknown: 'Unknown',
-      dvTitle: 'Devices and languages', dvSub: 'People active over 30 days who send this info: {ios} on the app, {web} on the website (new versions only).',
+      dvTitle: 'Devices and languages', dvSub: 'People active over 30 days who send this info: {ios} on the app, {tv} on the Apple TV, {web} on the website (new versions only).', dvLangTv: 'Language (Apple TV)',
       dvLangIos: 'App language', dvLangWeb: 'Website language', dvOs: 'iOS version', dvDevIos: 'Device (app)', dvDevWeb: 'Device (website)', dvMobile: 'Phone or tablet', dvDesktop: 'Computer', dvNone: 'No data yet: it comes with the new versions of the app and the website.',
       tNew: '{n} new', tOld: '{n} had come before',
       uniqueNote: 'Unique people: each one counts once per period, even if they come back on several days (one per signed-in Twitch account, otherwise one per device or browser).',
@@ -509,7 +511,7 @@
       lAnonWeb: 'Delete all anonymous web entries', lAnon: 'Delete all anonymous entries', lOnce: 'Delete entries seen on one day only', lAll: 'Delete ALL usage data', lKey: 'Delete {k}',
       syncConfirm: 'Erase the backup (history and progress) of {u}?', syncDone: 'Backup of {u} erased.', syncNone: '{u} had no backup.',
       annTitle: 'Announcement (app and site)', annSub: 'Shown at the top of the iOS app and website home until it expires. One at a time; publishing replaces the previous one.', annTitlePh: 'Title', annMsgPh: 'Message', annLinkPh: 'Link (optional, https://…)', annFor: 'Duration', annPublish: 'Publish', annCustom: 'Custom…', unitMin: 'minutes', unitHour: 'hours', unitDay: 'days', annBadDuration: 'Duration: between 1 minute and 30 days.', annClear: 'Remove', annEdit: 'Edit', annReactions: 'Reactions', annReactTotal: '{n} reaction(s) · one per device', annSave: 'Save', annCancel: 'Cancel', annKeep: 'Keep current end time', annRenotify: 'Show again to people who closed it', annSaved: 'Announcement updated.', annEdited: 'edited', annNone: 'No announcement running.', annLive: 'Running until {d}:', annPublished: 'Announcement published.', annCleared: 'Announcement removed.', annConfirmClear: 'Remove the current announcement?', annTplPick: 'Template…', annTplSave: 'Save as template', annTplUpdate: 'Update template', annTplDel: 'Delete template', annTplName: 'Template name:', annTplSaved: 'Template saved.', annTplUpdated: 'Template updated.', annTplDeleted: 'Template deleted.', annTplEmpty: 'Write a title or a message first.', annTplConfirmDel: 'Delete the template “{n}”?', annTplHint: 'Templates also work with /announce on Discord (template option).', pollTitle: 'Poll (app and site)', pollSub: 'Shown under the announcement in the iOS app and on the website. Anonymous vote per device, can be changed until it ends; people see the results after voting, and everyone once it ends (24 h). The bot posts the results on Discord. One at a time; starting one replaces the previous one.', pollQuestionPh: 'Question', pollOptionsPh: 'Choices, one per line (2 to 6)', pollMulti: 'Several choices per person', pollStart: 'Start', pollEnd: 'End', pollNone: 'No poll running.', pollLive: 'Running until {d}:', pollEndedAt: 'Ended on {d}:', pollSingleTag: 'one choice', pollMultiTag: 'several choices', pollVoters: '{n} voter(s) · one vote per device', pollStarted: 'Poll started.', pollEndedMsg: 'Poll ended: results shown to everyone for 24 h.', pollCleared: 'Poll removed.', pollConfirmEnd: 'End the poll now?', pollConfirmClear: 'Remove the poll (it disappears from the app and the site)?', pollConfirmReplace: 'A poll is already running: replace it?', pollBadOptions: 'Between 2 and 6 choices, one per line.',
-      fAllKinds: 'All types', fAccounts: 'Accounts', fAnon: 'Anonymous', fAllPlats: 'All platforms', fIosOnly: 'iOS only', fWebOnly: 'Web only', fBoth: 'iOS + Web', fAllVersions: 'All versions',
+      fAllKinds: 'All types', fAccounts: 'Accounts', fAnon: 'Anonymous', fAllPlats: 'All platforms', fIosOnly: 'iOS only', fWebOnly: 'Web only', fTvOnly: 'Apple TV only', fBoth: 'iOS + Web', fAllVersions: 'All versions',
       fbTitle: 'Feedback (bugs, ideas)', fbSub: 'Sent from the website and the app. Your reply and the status you pick show up for the person (“My reports”), who can answer back, photos included. Kept 180 days after the last message. With the FEEDBACK_WEBHOOK secret set on the Worker, each report and each reply also lands on Discord.',
       fbStatus_new: 'New', fbStatus_seen: 'Seen', fbMarkSeen: 'Mark as seen', fbStatus_accepted: 'Accepted', fbStatus_progress: 'In progress', fbStatus_done: 'Done', fbStatus_refused: 'Declined',
       fbHookOk: 'Discord: last delivery succeeded ({d})', fbHookFail: 'Discord: last delivery refused ({d}) — {e}', fbHookMissing: 'Discord: the FEEDBACK_WEBHOOK secret is missing from the Worker. Add it as a “Secret” (not “Text”) in Cloudflare → Workers → test2 → Settings → Variables and Secrets.', fbHookInvalid: 'Discord: FEEDBACK_WEBHOOK doesn’t look like a webhook address (https://discord.com/api/webhooks/…).', fbHookNever: 'Discord: nothing sent since the update.', fbHookTest: 'Test Discord delivery', fbHookTestOk: 'Test message sent: check the Discord channel.', fbHookTestFail: 'Test failed: {e}', fbBridgeOk: 'Discord bridge: bot running (seen {n} min ago) — reply and change the status in the report’s post', fbBridgeLost: 'Discord bridge: bot silent since {d} (relay down?)', fbBridgeNever: 'Discord bridge: the relay’s bot never checked in (token, shared secret, Worker up to date?)',
@@ -531,7 +533,7 @@
     es: {
       title: 'Uso · TwitchUnblock', h1: 'uso', refresh: '↻ Actualizar', back: 'Volver al sitio',
       newTitle: 'Nuevos usuarios por día', newSub: 'Primer día en que se vio cada identificador, últimos 30 días.',
-      ios: 'App iOS', web: 'Sitio web', showTable: 'Ver la tabla',
+      ios: 'App iOS', web: 'Sitio web', tvos: 'App Apple TV', showTable: 'Ver la tabla',
       loyTitle: 'Fidelidad', loySub: 'Número de días distintos en que volvió cada identificador.',
       retTitle: 'Volvieron al menos un 2.º día', retSub: 'El mejor indicador de usuarios reales: una prueba única no cuenta.',
       verTitle: 'Versiones', verSub: 'Identificadores activos en 30 días, por versión.',
@@ -546,7 +548,7 @@
       hlTitle: 'Salud del directo (7 días)', hlSub: 'Fuente que sirvió cada directo iniciado, y fallos. Contadores anónimos: ningún canal, ningún título.',
       hlLives: '{n} directos iniciados', hlVods: '{n} VODs iniciados', hlFail: '{n} fallos al iniciar ({p} %)', hlPlayFail: '{n} durante la reproducción', hlAdBreaks: '{n} pausas publicitarias del canal vistas', hlNone: 'Aún no hay datos: llegan con las nuevas versiones de la app y del sitio.',
       hs_as: 'Luminous Asia', hs_al: 'Proxy de Albania', hs_eu: 'Luminous Europa', hs_twitch: 'Twitch oficial', hs_account: 'Cuenta suscrita', hs_worker: 'Worker (respaldo)', hs_unknown: 'Desconocida',
-      dvTitle: 'Dispositivos e idiomas', dvSub: 'Personas activas en 30 días que envían estos datos: {ios} en la app, {web} en el sitio (solo versiones nuevas).',
+      dvTitle: 'Dispositivos e idiomas', dvSub: 'Personas activas en 30 días que envían estos datos: {ios} en la app, {tv} en el Apple TV, {web} en el sitio (solo versiones nuevas).', dvLangTv: 'Idioma (Apple TV)',
       dvLangIos: 'Idioma de la app', dvLangWeb: 'Idioma del sitio', dvOs: 'Versión de iOS', dvDevIos: 'Dispositivo (app)', dvDevWeb: 'Dispositivo (sitio)', dvMobile: 'Móvil o tableta', dvDesktop: 'Ordenador', dvNone: 'Aún no hay datos: llegan con las nuevas versiones de la app y del sitio.',
       tNew: '{n} nuevas', tOld: '{n} ya habían venido',
       uniqueNote: 'Personas únicas: cada una cuenta una sola vez por periodo, aunque vuelva varios días (una por cuenta de Twitch conectada; si no, una por dispositivo o navegador).',
@@ -565,7 +567,7 @@
       lAnonWeb: 'Eliminar todos los anónimos web', lAnon: 'Eliminar todos los anónimos', lOnce: 'Eliminar las entradas vistas un solo día', lAll: 'Eliminar TODOS los datos de uso', lKey: 'Eliminar {k}',
       syncConfirm: '¿Borrar la copia (historial y progreso) de {u}?', syncDone: 'Copia de {u} borrada.', syncNone: '{u} no tenía copia.',
       annTitle: 'Anuncio (app y sitio)', annSub: 'Se muestra arriba del inicio de la app iOS y del sitio hasta que caduca. Uno a la vez; publicar uno reemplaza al anterior.', annTitlePh: 'Título', annMsgPh: 'Mensaje', annLinkPh: 'Enlace (opcional, https://…)', annFor: 'Duración', annPublish: 'Publicar', annCustom: 'Personalizada…', unitMin: 'minutos', unitHour: 'horas', unitDay: 'días', annBadDuration: 'Duración: entre 1 minuto y 30 días.', annClear: 'Retirar', annEdit: 'Editar', annReactions: 'Reacciones', annReactTotal: '{n} reacción(es) · una por dispositivo', annSave: 'Guardar', annCancel: 'Cancelar', annKeep: 'Mantener el fin actual', annRenotify: 'Volver a mostrar a quien lo cerró', annSaved: 'Anuncio modificado.', annEdited: 'editado', annNone: 'Ningún anuncio activo.', annLive: 'Activo hasta el {d}:', annPublished: 'Anuncio publicado.', annCleared: 'Anuncio retirado.', annConfirmClear: '¿Retirar el anuncio activo?',
-      fAllKinds: 'Todos los tipos', fAccounts: 'Cuentas', fAnon: 'Anónimos', fAllPlats: 'Todas las plataformas', fIosOnly: 'Solo iOS', fWebOnly: 'Solo web', fBoth: 'iOS + Web', fAllVersions: 'Todas las versiones',
+      fAllKinds: 'Todos los tipos', fAccounts: 'Cuentas', fAnon: 'Anónimos', fAllPlats: 'Todas las plataformas', fIosOnly: 'Solo iOS', fWebOnly: 'Solo web', fTvOnly: 'Solo Apple TV', fBoth: 'iOS + Web', fAllVersions: 'Todas las versiones',
       fbTitle: 'Comentarios (errores, ideas)', fbSub: 'Enviados desde la web y la app. Tu respuesta y el estado elegido le aparecen a la persona («Mis reportes»), que puede contestar, fotos incluidas. Se guardan 180 días tras el último mensaje. Con el secreto FEEDBACK_WEBHOOK en el Worker, cada comentario y cada respuesta llegan también a Discord.',
       fbStatus_new: 'Nuevo', fbStatus_seen: 'Visto', fbMarkSeen: 'Marcar como visto', fbStatus_accepted: 'Aceptado', fbStatus_progress: 'En curso', fbStatus_done: 'Hecho', fbStatus_refused: 'Rechazado',
       fbHookOk: 'Discord: último envío correcto ({d})', fbHookFail: 'Discord: último envío rechazado ({d}) — {e}', fbHookMissing: 'Discord: falta el secreto FEEDBACK_WEBHOOK en el Worker. Añádelo como «Secret» (no «Text») en Cloudflare → Workers → test2 → Settings → Variables and Secrets.', fbHookInvalid: 'Discord: FEEDBACK_WEBHOOK no parece una dirección de webhook (https://discord.com/api/webhooks/…).', fbHookNever: 'Discord: nada enviado desde la actualización.', fbHookTest: 'Probar el envío a Discord', fbHookTestOk: 'Mensaje de prueba enviado: mira el canal de Discord.', fbHookTestFail: 'La prueba falló: {e}', fbBridgeOk: 'Puente Discord: bot activo (visto hace {n} min) — responde y cambia el estado en la publicación del comentario', fbBridgeLost: 'Puente Discord: bot sin señal desde el {d} (¿relé caído?)', fbBridgeNever: 'Puente Discord: el bot del relé nunca se ha anunciado (token, secreto compartido, ¿Worker actualizado?)',
@@ -610,6 +612,7 @@
         <div class="value">${fmt(s[key])}</div>
         <div class="split">
           <span><i class="dot ios"></i>iOS ${fmt(p.ios?.[key])}</span>
+          <span><i class="dot tvos"></i>TV ${fmt(p.tvos?.[key])}</span>
           <span><i class="dot web"></i>Web ${fmt(p.web?.[key])}</span>
         </div>
         ${s[key + 'New'] != null ? `<div class="fresh">${esc(t('tNew', { n: fmt(s[key + 'New']) }))} · ${esc(t('tOld', { n: fmt(s[key] - s[key + 'New']) }))}</div>` : ''}
@@ -617,15 +620,24 @@
     $('#tiles').innerHTML = tile(t('today'), 'today') + tile(t('week'), 'week', 6) + tile(t('month'), 'month', 29)
   }
 
-  /** Barres empilées iOS (bas) + web (haut), 2 px d'écart, haut arrondi. */
+  /** Séries par défaut : les nouveaux du jour, iOS en bas, puis Apple TV, puis web. */
+  const PLATFORM_SERIES = (keys) => [
+    { key: keys[0], name: 'iOS', color: 'var(--ios)' },
+    { key: keys[1], name: 'TV', color: 'var(--tvos)' },
+    { key: keys[2], name: 'Web', color: 'var(--web)' },
+  ]
+
+  /** Barres empilées (dans l'ordre des séries, de bas en haut), 2 px d'écart, haut arrondi. */
   function chartNew(days, opt = {}) {
-    const { box: boxSel = '#chart-new', table = '#table-new', a = 'newIos', b = 'newWeb', label = t('newTitle'), empty = t('noDaily') } = opt
+    const { box: boxSel = '#chart-new', table = '#table-new', label = t('newTitle'), empty = t('noDaily'),
+      series = PLATFORM_SERIES(['newIos', 'newTv', 'newWeb']) } = opt
+    const val = (d, sr) => d[sr.key] || 0
     const box = $(boxSel)
     if (!days?.length) { box.innerHTML = `<p class="sub">${esc(empty)}</p>`; $(table).innerHTML = ''; return }
     // Dessiné à la largeur réelle : rien n'est étiré (textes nets sur mobile).
     const W = Math.max(280, Math.round(box.clientWidth || 640)), H = 220, L = 30, R = 6, T = 8, B = 24
     const labelEvery = W < 480 ? 7 : 5
-    const max = Math.max(1, ...days.map((d) => d[a] + d[b]))
+    const max = Math.max(1, ...days.map((d) => series.reduce((n, sr) => n + val(d, sr), 0)))
     const step = Math.ceil(max / 4)
     const top = step * 4
     const y = (v) => T + (H - T - B) * (1 - v / top)
@@ -647,12 +659,17 @@
     }
     days.forEach((d, i) => {
       const x = L + i * bw + (bw - barW) / 2
-      const yIos = y(d[a])
-      const yAll = y(d[a] + d[b])
-      const webBottom = d[a] > 0 ? yIos - 2 : y(0)   // 2 px d'écart entre segments
       svg += `<g class="col" data-i="${i}">`
-      svg += bar(x, y(0), yIos, 'var(--ios)', d[b] === 0)
-      if (d[b] > 0) svg += bar(x, webBottom, Math.min(yAll, webBottom - 1), 'var(--web)', true)
+      // Segments non vides, empilés ; 2 px d'écart entre eux, haut arrondi au dernier.
+      const shown = series.filter((sr) => val(d, sr) > 0)
+      let sum = 0, prevTop = y(0)
+      shown.forEach((sr, j) => {
+        sum += val(d, sr)
+        const y0 = j === 0 ? y(0) : prevTop - 2
+        const y1 = j === 0 ? y(sum) : Math.min(y(sum), y0 - 1)
+        svg += bar(x, y0, y1, sr.color, j === shown.length - 1)
+        prevTop = y1
+      })
       svg += `<rect class="hit" x="${L + i * bw}" y="${T}" width="${bw}" height="${H - T - B}"/></g>`
       // Un libellé tous les N jours, plus le dernier ; un libellé trop proche
       // du dernier est sauté pour ne pas le chevaucher.
@@ -671,8 +688,7 @@
       svgEl.classList.add('dim')
       for (const c of svgEl.querySelectorAll('.col')) c.classList.toggle('active', c === g)
       tip.innerHTML = `<b>${esc(dayLabel(d.date, { weekday: 'long', day: 'numeric', month: 'long' }))}</b>
-        <div><i class="dot ios"></i>iOS<em>${fmt(d[a])}</em></div>
-        <div><i class="dot web"></i>Web<em>${fmt(d[b])}</em></div>`
+        ${series.map((sr) => `<div><i class="dot" style="background:${sr.color}"></i>${esc(sr.name)}<em>${fmt(val(d, sr))}</em></div>`).join('')}`
       const hit = g.querySelector('.hit').getBoundingClientRect()
       const host = box.getBoundingClientRect()
       tip.style.left = `${Math.min(host.width - 80, Math.max(80, hit.left - host.left + hit.width / 2))}px`
@@ -686,15 +702,15 @@
     }
     svgEl.addEventListener('pointerleave', hide)
 
-    $(table).innerHTML = `<thead><tr><th>${t('thDay')}</th><th class="n">iOS</th><th class="n">Web</th></tr></thead><tbody>${
-      days.slice().reverse().map((d) => `<tr><td>${esc(dayLabel(d.date, { weekday: 'short', day: 'numeric', month: 'short' }))}</td><td class="n">${fmt(d[a])}</td><td class="n">${fmt(d[b])}</td></tr>`).join('')}</tbody>`
+    $(table).innerHTML = `<thead><tr><th>${t('thDay')}</th>${series.map((sr) => `<th class="n">${esc(sr.name)}</th>`).join('')}</tr></thead><tbody>${
+      days.slice().reverse().map((d) => `<tr><td>${esc(dayLabel(d.date, { weekday: 'short', day: 'numeric', month: 'short' }))}</td>${series.map((sr) => `<td class="n">${fmt(val(d, sr))}</td>`).join('')}</tr>`).join('')}</tbody>`
   }
 
   /** Actifs par jour : depuis la mise en place de la mesure seulement. */
   function chartActive(s) {
     const days = s.activeSince ? (s.activeDaily ?? []).filter((d) => d.date >= s.activeSince) : []
     $('#act-sub').textContent = t('actSub') + (s.activeSince ? ' ' + t('actSince', { d: dayLabel(s.activeSince, { day: 'numeric', month: 'long' }) }) : '')
-    chartNew(days, { box: '#chart-active', table: '#table-active', a: 'ios', b: 'web', label: t('actTitle'), empty: t('actNone') })
+    chartNew(days, { box: '#chart-active', table: '#table-active', series: PLATFORM_SERIES(['ios', 'tvos', 'web']), label: t('actTitle'), empty: t('actNone') })
   }
 
   function retention(s) {
@@ -715,7 +731,7 @@
     const box = $('#health')
     if (!h) { box.innerHTML = `<p class="sub">${esc(t('redeploy'))}</p>`; return }
     const pct = (a, b) => (b ? Math.round((a / b) * 100) : 0)
-    const blocks = ['ios', 'web'].map((plat) => {
+    const blocks = ['ios', 'tvos', 'web'].map((plat) => {
       const w = h.week?.[plat] ?? {}
       const lives = SOURCES.reduce((n, k) => n + (w['live_' + k] || 0), 0)
       const vods = w.vod || 0
@@ -739,7 +755,7 @@
     const d = s.devices
     const box = $('#devices')
     if (!d) { box.innerHTML = `<p class="sub">${esc(t('redeploy'))}</p>`; $('#dv-sub').textContent = ''; return }
-    $('#dv-sub').textContent = t('dvSub', { ios: fmt(d.reporting?.ios), web: fmt(d.reporting?.web) })
+    $('#dv-sub').textContent = t('dvSub', { ios: fmt(d.reporting?.ios), tv: fmt(d.reporting?.tvos), web: fmt(d.reporting?.web) })
     let names = null
     try { names = new Intl.DisplayNames([LOCALE], { type: 'language' }) } catch {}
     const langName = (c) => { const n = names?.of(c) || c; return n.charAt(0).toUpperCase() + n.slice(1) }
@@ -756,6 +772,7 @@
     const html = block(t('dvLangIos'), d.lang?.ios, langName, 'var(--ios)')
       + block(t('dvOs'), d.os, (k) => `iOS ${k}`, 'var(--ios)')
       + block(t('dvDevIos'), d.device?.ios, devName, 'var(--ios)')
+      + block(t('dvLangTv'), d.lang?.tvos, langName, 'var(--tvos)')
       + block(t('dvLangWeb'), d.lang?.web, langName, 'var(--web)')
       + block(t('dvDevWeb'), d.device?.web, devName, 'var(--web)')
     box.innerHTML = html || `<p class="sub">${esc(t('dvNone'))}</p>`
@@ -807,7 +824,7 @@
   function chartPush(s) {
     const p = s.push
     $('#pu-sent-sub').textContent = t('puSentSub') + (p?.since ? ' ' + t('actSince', { d: dayLabel(p.since, { day: 'numeric', month: 'long' }) }) : '')
-    chartNew(p?.daily ?? [], { box: '#chart-push', table: '#table-push', a: 'ok_ntfy', b: 'ok_web', label: t('puSentTitle'), empty: t(p ? 'puNone' : 'redeploy') })
+    chartNew(p?.daily ?? [], { box: '#chart-push', table: '#table-push', series: [{ key: 'ok_ntfy', name: t('puLegendApp'), color: 'var(--ios)' }, { key: 'ok_web', name: t('puLegendWeb'), color: 'var(--web)' }], label: t('puSentTitle'), empty: t(p ? 'puNone' : 'redeploy') })
     const w = p?.week ?? {}
     const both = (k) => (w[k + '_web'] || 0) + (w[k + '_ntfy'] || 0)
     const parts = [
@@ -829,7 +846,7 @@
   }
 
   function platformReturning(s) {
-    const rows = [[t('ios'), 'ios'], [t('web'), 'web']].map(([name, k]) => {
+    const rows = [[t('ios'), 'ios'], [t('tvos'), 'tvos'], [t('web'), 'web']].map(([name, k]) => {
       const p = s.platforms?.[k] ?? {}
       return { name, k, known: p.known || 0, back: p.returning }
     })
@@ -919,7 +936,7 @@
       if (q && ![e.login, e.version, e.platforms, e.key].join(' ').toLowerCase().includes(q)) return false
       if (kind && e.kind !== kind) return false
       if (plat === 'both' && ps.length < 2) return false
-      if ((plat === 'ios' || plat === 'web') && !(ps.length === 1 && ps[0] === plat)) return false
+      if (['ios', 'web', 'tvos'].includes(plat) && !(ps.length === 1 && ps[0] === plat)) return false
       if (ver && String(e.version || '?') !== ver) return false
       return true
     })
@@ -930,7 +947,7 @@
     $('#dev-entries').innerHTML = `<thead><tr>${th('who', t('thWho'))}${th('platforms', t('thPlat'))}${th('version', t('thVersion'))}${th('first', t('thFirst'))}${th('last', t('thLast'))}${th('days', t('thDays'), 'n')}<th></th></tr></thead><tbody>${
       list.slice(0, 400).map((e) => `<tr>
         <td>${e.kind === 'account' ? `<span class="tag acct">${t('tagAcct')}</span> ${esc(e.login)}` : `<span class="tag">${t('tagAnon')}</span> ${esc(e.key.replace('usage_', '').slice(0, 8))}…`}</td>
-        <td>${esc(String(e.platforms).replace('ios', 'iOS').replace('web', 'Web'))}</td><td>${esc(e.version)}</td>
+        <td>${esc(String(e.platforms).replace('tvos', 'Apple TV').replace('ios', 'iOS').replace('web', 'Web'))}</td><td>${esc(e.version)}</td>
         <td>${esc(e.first ?? '')}</td><td>${esc(e.last ?? '')}</td><td class="n">${fmt(e.days)}</td>
         <td><button class="btn sm danger" type="button" data-key="${esc(e.key)}">${t('del')}</button></td></tr>`).join('')}</tbody>`
   }

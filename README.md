@@ -169,7 +169,7 @@ ntfy.sh's free tier counts messages per IP address (250 a day). Every Cloudflare
 
 ## Usage count
 
-To know whether people actually use the website and the app, each browser (and each app install) sends a small signal to the Worker at most once an hour. Numbers are public at **[/stats](https://twitchunblock.vercel.app/stats)**: unique people today, over 7 and 30 days (each one counted once per period), website vs iOS app, logged-in accounts vs anonymous, new vs returning people, active people per day, retention (back after 1, 7 and 14 days), live health (which source served each live, failures, channel ad breaks seen), devices and languages, and live notifications.
+To know whether people actually use the website and the apps, each browser (and each iPhone or Apple TV app install) sends a small signal to the Worker at most once an hour. Numbers are public at **[/stats](https://twitchunblock.vercel.app/stats)**: unique people today, over 7 and 30 days (each one counted once per period), iOS app vs Apple TV app vs website (someone seen on several counts once: the iPhone first, then the Apple TV), logged-in accounts vs anonymous, new vs returning people, active people per day, retention (back after 1, 7 and 14 days), live health (which source served each live, failures, channel ad breaks seen), devices and languages, and live notifications.
 
 | Sent | Never sent |
 |---|---|
