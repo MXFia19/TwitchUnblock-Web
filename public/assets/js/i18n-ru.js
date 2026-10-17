@@ -180,6 +180,7 @@ export const RU = {
   multi_add: 'Добавить в мульти-просмотр',
   pin_streamer: 'Закрепить вверху подписок', unpin_streamer: 'Открепить',
   multi_remove: 'Убрать из мульти-просмотра',
+  multi_earlier: 'Переместить на одно место раньше',
   multi_added: 'Добавлено в мульти-просмотр ({n}/{max})',
   multi_removed: 'Убрано из мульти-просмотра',
   multi_already: 'Уже в мульти-просмотре',

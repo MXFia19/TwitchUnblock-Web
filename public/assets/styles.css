@@ -617,7 +617,8 @@ a.card, a.cat-card { display: block; }
 .p-live .dot { width: 7px; height: 7px; border-radius: 50%; background: #fff; }
 .p-live.behind { background: rgba(255, 255, 255, 0.18); }
 .p-live.behind .dot { background: var(--live); }
-.p-latency { margin-left: 8px; font-size: 12px; color: rgba(255, 255, 255, 0.7); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.p-latency { margin-left: 8px; padding: 0; border: 0; background: none; font: inherit; font-size: 12px; color: rgba(255, 255, 255, 0.7); font-variant-numeric: tabular-nums; white-space: nowrap; cursor: pointer; }
+.p-latency:hover { color: #fff; }
 .p-spacer { flex: 1; }
 .p-quality { width: auto; gap: 4px; padding: 0 8px; display: flex; }
 .p-q-label, .p-q-speed { font-size: 12px; font-weight: 800; white-space: nowrap; }
@@ -1022,6 +1023,8 @@ html.multi-open { overflow: hidden; }
 .multi-grid.n2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .multi-grid.n3, .multi-grid.n4 { grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: repeat(2, minmax(0, 1fr)); }
 .multi-grid.n3 .mtile:first-child { grid-row: span 2; }
+/* La première tuile est déjà en tête : rien à avancer. */
+.multi-grid .mtile:first-child [data-mt="earlier"] { display: none; }
 /* En hauteur (téléphone) : les uns sous les autres, plus grands qu'en 2 × 2. */
 @media (orientation: portrait) {
   .multi-grid.n2, .multi-grid.n3, .multi-grid.n4 { grid-template-columns: minmax(0, 1fr); grid-template-rows: none; }

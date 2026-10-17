@@ -129,6 +129,7 @@ export function init(o) {
     const key = tile.dataset.key
     const b = e.target.closest('[data-mt]')?.dataset.mt
     if (b === 'remove') return remove(key)
+    if (b === 'earlier') return moveEarlier(key)
     if (b === 'retry') return restart(key)
     if (b === 'replay') return replay(key)
     if (b === 'play') return togglePlay(key)
@@ -285,6 +286,19 @@ export function remove(key) {
   hooks.onUrl?.(sharePath(), true)
 }
 
+/** Une place plus tôt dans la mosaïque (la première est la grande, à trois) ;
+ *  les vidéos continuent, seule la disposition change. */
+function moveEarlier(key) {
+  const i = list.findIndex((x) => keyOf(x) === key)
+  if (i <= 0) return
+  list.splice(i - 1, 2, list[i], list[i - 1])
+  save()
+  renderBar()
+  if (!isOpen()) return
+  sync()
+  hooks.onUrl?.(sharePath(), true)
+}
+
 export function clear() {
   list = []
   save()
@@ -388,6 +402,7 @@ function mountTile(entry) {
       <span class="mt-name"${entry.title ? ` title="${esc(entry.title)}"` : ''}>${esc(entry.vod ? entry.name || entry.vod : entry.name || entry.login)}</span>
       <span class="mt-gap"></span>
       <span class="mt-btns">
+        <button class="icon-btn xs" type="button" data-mt="earlier" title="${esc(t('multi_earlier'))}">${icon('chevronLeft', 15)}</button>
         <button class="icon-btn xs" type="button" data-mt="watch" title="${esc(t('multi_open'))}">${icon('maximize', 14)}</button>
         <button class="icon-btn xs" type="button" data-mt="remove" title="${esc(t('multi_remove'))}">${icon('x', 15)}</button>
       </span>

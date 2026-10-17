@@ -483,7 +483,7 @@ export class Player {
             </div>
             <span class="p-time vod-only"></span>
             <button class="p-live live-only" type="button"><span class="dot"></span><span class="p-live-text"></span></button>
-            <span class="p-latency live-only"></span>
+            <button class="p-latency live-only" type="button" data-i18n-title="go_live"></button>
             <button class="p-btn p-chapters vod-only" type="button" hidden data-i18n-title="chapters">${icon('list', 18)}<span class="p-chap-label"></span>${icon('chevronUp', 14)}</button>
             <span class="p-spacer"></span>
             <button class="p-btn p-quality" type="button" data-i18n-title="quality">${icon('settings', 20)}<span class="p-q-label"></span><span class="p-q-speed"></span></button>
@@ -551,6 +551,8 @@ export class Player {
     on(this.el.fwd, () => this.seekBy(10))
     on(this.el.mute, () => this.toggleMute())
     on(this.el.live, () => this.goLive())
+    // La latence aussi : un clic ramène au bord du direct, sans recharger.
+    on(this.el.latency, () => this.goLive())
     on(this.el.quality, () => this.toggleMenu())
     on(this.el.chapBtn, () => this.toggleChapters())
     this.video.addEventListener('timeupdate', () => this.updateChapterLabel())

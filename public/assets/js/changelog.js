@@ -6,6 +6,27 @@
 
 export const CHANGELOG = [
   {
+    version: '2026.10.17a',
+    items: {
+      fr: [
+        'Multi-live : avance une vidéo d’une place avec la flèche de sa tuile (à trois, la première passe en grand).',
+        'Direct : un clic sur la latence ramène au direct, sans recharger le flux.',
+      ],
+      en: [
+        'Multi-live: move a video one place earlier with the arrow on its tile (with three, the first one is the big one).',
+        'Live: clicking the latency brings you back to live, without reloading the stream.',
+      ],
+      es: [
+        'Multi-live: adelanta un vídeo un puesto con la flecha de su recuadro (con tres, el primero se ve en grande).',
+        'Directo: un clic en la latencia te devuelve al directo, sin recargar la transmisión.',
+      ],
+      ru: [
+        'Мульти-просмотр: стрелка на плитке перемещает видео на одно место раньше (при трёх видео первое показывается крупно).',
+        'Трансляция: клик по задержке возвращает к прямому эфиру без перезагрузки потока.',
+      ],
+    },
+  },
+  {
     version: '2026.10.16a',
     items: {
       fr: [
