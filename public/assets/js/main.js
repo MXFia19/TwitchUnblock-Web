@@ -968,12 +968,22 @@ const PUSH_MAX = 500
  *  sur cet appareil, puis celles du compte. Au-delà du plafond, ce sont les
  *  dernières du compte qui restent sans notification : celles de l'appareil
  *  passaient après le compte, et étaient coupées les premières. */
-function pushChannelsAll() {
+function pushFollowed() {
   const account = state.accountFollows ?? []
   const local = localFollows()
   const followed = new Set([...account, ...local])
   return [...new Set([...pinnedLogins().filter((l) => followed.has(l)), ...local, ...account])]
 }
+/** Moins celles coupées dans « Chaînes notifiées » (sur cet appareil). */
+function pushChannelsAll() {
+  const muted = pushMuted()
+  return pushFollowed().filter((l) => !muted.has(l))
+}
+/** Chaînes suivies sans notification (choix de cet appareil) : elles ne
+ *  partent pas au Worker. Une chaîne suivie plus tard est notifiée d'office. */
+const PUSH_MUTED = 'tu_push_muted'
+function pushMuted() { try { return new Set(JSON.parse(localStorage.getItem(PUSH_MUTED) || '[]')) } catch { return new Set() } }
+function savePushMuted(set) { try { localStorage.setItem(PUSH_MUTED, JSON.stringify([...set])) } catch {} }
 const pushChannels = () => pushChannelsAll().slice(0, PUSH_MAX)
 // La langue en fait partie : la changer change celle des notifications.
 const pushHash = (list) => `${lang()}:${list.slice().sort().join(',')}`
@@ -1105,12 +1115,85 @@ function refreshPushUi() {
   const on = pushOn()
   const test = $('#push-test')
   if (test) test.hidden = !on
+  const pick = $('#push-channels')
+  if (pick) pick.hidden = !on
   const status = $('#push-status')
   if (status) {
     status.hidden = !on
     status.textContent = pushStatusText()
   }
 }
+
+/** « Chaînes notifiées » : une case par chaîne suivie (épinglées, appareil,
+ *  compte), cochée par défaut. La liste part au Worker un instant après le
+ *  dernier changement (il limite les envois par minute). */
+let pushChannelsTimer = 0
+function openPushChannels() {
+  const info = new Map()
+  for (const s of state.followedView?.live ?? []) info.set(String(s.login).toLowerCase(), { name: s.name, avatar: s.avatar })
+  for (const c of state.followedView?.offline ?? []) info.set(String(c.login).toLowerCase(), { name: c.name, avatar: c.avatar })
+  const all = pushFollowed()
+  const nameOf = (l) => info.get(l)?.name || l
+  const sorted = all.slice().sort((a, b) => nameOf(a).localeCompare(nameOf(b), undefined, { sensitivity: 'base' }))
+  const muted = pushMuted()
+  const row = (l) => {
+    const avatar = info.get(l)?.avatar
+    return `<label class="setting push-ch" data-name="${esc(`${l} ${nameOf(l)}`.toLowerCase())}">
+      <span class="push-ch-who">${avatar ? `<img src="${esc(avatar)}" alt="" loading="lazy">` : ''}<span>${esc(nameOf(l))}</span></span>
+      <input type="checkbox" class="switch" data-push-ch="${esc(l)}" ${muted.has(l) ? '' : 'checked'}>
+    </label>`
+  }
+  openSheet(`
+    <div class="sheet-head"><button class="icon-btn" type="button" data-push-back>${icon('chevronLeft', 20)}</button>
+      <h2>${esc(t('push_channels'))}</h2>
+      <button class="icon-btn" type="button" data-sheet-close>${icon('x', 20)}</button></div>
+    <div class="sheet-section">
+      <p class="muted small">${esc(t('push_channels_sub'))}</p>
+      ${all.length ? `
+      <div class="push-ch-tools">
+        <input class="text-input" type="search" id="push-ch-search" placeholder="${esc(t('search'))}" autocomplete="off">
+        <button class="btn ghost sm" type="button" data-push-all="on">${esc(t('push_channels_all_on'))}</button>
+        <button class="btn ghost sm" type="button" data-push-all="off">${esc(t('push_channels_all_off'))}</button>
+      </div>
+      <p class="muted small" id="push-ch-count"></p>
+      <div class="push-ch-list" id="push-ch-list">${sorted.map(row).join('')}</div>` : `<p class="muted">${esc(t('push_channels_none'))}</p>`}
+    </div>`)
+  const count = () => {
+    const el = $('#push-ch-count')
+    if (el) el.textContent = t('push_channels_count', { n: pushChannelsAll().length, total: all.length })
+  }
+  const changed = (set) => {
+    savePushMuted(set)
+    count()
+    clearTimeout(pushChannelsTimer)
+    pushChannelsTimer = setTimeout(syncPush, 1500)
+  }
+  count()
+  const sheet = $('#sheet')
+  sheet.onclick = (e) => {
+    if (e.target.closest('[data-sheet-close]')) return closeSheet()
+    if (e.target.closest('[data-push-back]')) return openSettings()
+    const allBtn = e.target.closest('[data-push-all]')
+    if (!allBtn) return
+    const on = allBtn.dataset.pushAll === 'on'
+    for (const box of sheet.querySelectorAll('[data-push-ch]')) box.checked = on
+    changed(on ? new Set() : new Set(all))
+  }
+  sheet.onchange = (e) => {
+    const l = e.target.dataset?.pushCh
+    if (!l) return
+    const set = pushMuted()
+    if (e.target.checked) set.delete(l)
+    else set.add(l)
+    changed(set)
+  }
+  sheet.oninput = (e) => {
+    if (e.target.id !== 'push-ch-search') return
+    const q = e.target.value.trim().toLowerCase()
+    for (const r of sheet.querySelectorAll('.push-ch')) r.hidden = Boolean(q) && !r.dataset.name.includes(q)
+  }
+}
+actions['push-channels'] = () => openPushChannels()
 
 async function togglePush(input) {
   input.disabled = true
@@ -4133,6 +4216,7 @@ function openSettings() {
       <p class="muted small push-status" id="push-status" ${pushOn() ? '' : 'hidden'}>${esc(pushStatusText())}</p>
       <div class="push-actions">
         <button class="btn ghost sm" type="button" id="push-test" data-action="push-test" ${pushOn() ? '' : 'hidden'}>${icon('send', 15)}<span>${esc(t('push_test'))}</span></button>
+        <button class="btn ghost sm" type="button" id="push-channels" data-action="push-channels" ${pushOn() ? '' : 'hidden'}>${icon('list', 15)}<span>${esc(t('push_channels'))}</span></button>
         ${isIOS && !isStandalone() && installKind() ? `<button class="link-btn" type="button" data-action="install-how">${esc(t('install_how'))}</button>` : ''}
       </div>
     </div>

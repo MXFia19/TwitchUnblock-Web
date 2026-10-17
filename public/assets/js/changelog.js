@@ -6,6 +6,23 @@
 
 export const CHANGELOG = [
   {
+    version: '2026.10.17b',
+    items: {
+      fr: [
+        'Notifications de live : choisis quelles chaînes suivies te préviennent (Réglages → Notifications → Chaînes notifiées).',
+      ],
+      en: [
+        'Live notifications: pick which followed channels notify you (Settings → Notifications → Notified channels).',
+      ],
+      es: [
+        'Notificaciones de directos: elige qué canales seguidos te avisan (Ajustes → Notificaciones → Canales notificados).',
+      ],
+      ru: [
+        'Уведомления о трансляциях: выберите, какие отслеживаемые каналы будут вас уведомлять (Настройки → Уведомления → Каналы с уведомлениями).',
+      ],
+    },
+  },
+  {
     version: '2026.10.17a',
     items: {
       fr: [

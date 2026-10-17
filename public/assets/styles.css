@@ -887,6 +887,13 @@ a.card, a.cat-card { display: block; }
 .setting-text { display: flex; flex-direction: column; gap: 2px; }
 .setting-text span { font-weight: 600; }
 .setting-text small { font-size: 12px; color: var(--muted); line-height: 1.4; }
+/* « Chaînes notifiées » : recherche, tout activer / couper, une case par chaîne. */
+.push-ch-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 10px 0 4px; }
+.push-ch-tools .text-input { flex: 1 1 160px; min-width: 0; }
+.push-ch-list { max-height: 55vh; overflow-y: auto; }
+.push-ch-who { display: flex; align-items: center; gap: 10px; min-width: 0; font-weight: 600; }
+.push-ch-who img { flex: none; width: 28px; height: 28px; border-radius: 50%; object-fit: cover; }
+.push-ch-who span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .switch { appearance: none; -webkit-appearance: none; position: relative; flex: none; width: 46px; height: 28px; border-radius: 999px; background: var(--surface-hi); cursor: pointer; transition: background 0.2s; }
 .switch::after { content: ''; position: absolute; top: 3px; left: 3px; width: 22px; height: 22px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4); transition: transform 0.2s; }
 .switch:checked { background: var(--primary); }
