@@ -1088,7 +1088,12 @@ async function subscribePush() {
 /** Abonnement et chaînes envoyés au Worker. Il renvoie le nombre de chaînes
  *  qu'il retient vraiment (noms valides, plafond) : c'est celui qu'on montre. */
 async function sendPush(sub, channels) {
-  const r = await api.pushSubscribe(sub.toJSON(), channels, lang())
+  // Abonnement renouvelé depuis le dernier envoi : l'ancien est effacé.
+  const before = pushState().ep
+  const r = await api.pushSubscribe(sub.toJSON(), channels, lang(), before && before !== sub.endpoint ? before : '')
+  // Pour le service worker : où renvoyer un abonnement que le navigateur
+  // renouvelle hors de toute visite (pushsubscriptionchange, voir sw.js).
+  globalThis.caches?.open('tu-shell-v1').then((c) => c.put('/__push-api', new Response(api.API_URL))).catch(() => {})
   savePushState({
     on: true, hash: pushHash(channels), at: Date.now(), ep: sub.endpoint,
     n: Number.isFinite(r?.channels) ? r.channels : channels.length,
@@ -3869,7 +3874,8 @@ async function refreshFeedbackInbox(force = false, notify = true) {
     const before = new Map(list.map((r) => [r.id, r.updatedAt || 0]))
     const next = list.filter((r) => !byId.get(r.id)?.gone).map((r) => {
       const it = byId.get(r.id)
-      return it ? { ...r, status: it.status, updatedAt: it.updatedAt, lastFrom: it.lastFrom, thread: it.thread } : r
+      return it ? { ...r, status: it.status, updatedAt: it.updatedAt, lastFrom: it.lastFrom, thread: it.thread,
+                    closed: Boolean(it.closed), full: Boolean(it.full) } : r
     })
     saveMyFeedback(next)
     // Réponse (ou nouvel état) du développeur depuis la dernière lecture.
@@ -4112,18 +4118,31 @@ function openFeedbackThread(id) {
           <button class="btn primary sm" type="submit" id="fb-reply-send">${icon('send', 15)}<span>${esc(t('fb_reply_send'))}</span></button>
         </div>
       </form>
+      <p class="fb-locked" id="fb-locked" hidden></p>
     </div>`)
   const scrollEnd = () => { const c = $('#fb-chat'); if (c) c.scrollTop = c.scrollHeight }
   scrollEnd()
   markSeen()
   const picker = photoPicker($('#fb-reply-photos'), $('#fb-reply-file'), $('#fb-reply-attach'), $('#fb-reply'))
+  // Discussion fermée par le développeur, ou pleine : plus de champ de
+  // réponse, et la raison (l'envoi échouait sans rien dire).
+  const lock = (r) => {
+    const why = r?.closed ? 'fb_closed_note' : r?.full ? 'fb_full_note' : ''
+    if (!$('#fb-reply-form')) return
+    $('#fb-reply-form').hidden = Boolean(why)
+    $('#fb-locked').hidden = !why
+    $('#fb-locked').textContent = why ? t(why) : ''
+  }
+  lock(rec)
   const apply = (item) => {
-    const list = myFeedback().map((r) => (r.id === id ? { ...r, status: item.status, updatedAt: item.updatedAt, lastFrom: item.lastFrom, thread: item.thread, seen: Date.now() } : r))
+    const list = myFeedback().map((r) => (r.id === id ? { ...r, status: item.status, updatedAt: item.updatedAt, lastFrom: item.lastFrom, thread: item.thread,
+      closed: Boolean(item.closed), full: Boolean(item.full), seen: Date.now() } : r))
     saveMyFeedback(list)
     const r = list.find((x) => x.id === id)
     if (!r || !$('#fb-chat')) return
     $('#fb-chat').innerHTML = chatHtml(r)
     $('#fb-thread-status').innerHTML = fbStatus(r.status)
+    lock(r)
     scrollEnd()
   }
   // Version à jour (réponse arrivée depuis la dernière vérification) — même
@@ -4152,7 +4171,7 @@ function openFeedbackThread(id) {
       const { items } = await api.feedbackThreads([{ id, token: rec.token }])
       const it = items?.[0]
       const known = myFeedback().find((r) => r.id === id)
-      if (it && !it.gone && it.updatedAt !== known?.updatedAt) apply(it)
+      if (it && !it.gone && (it.updatedAt !== known?.updatedAt || Boolean(it.closed) !== Boolean(known?.closed))) apply(it)
     } catch {}
   }, 20000)
   $('#fb-reply-form').onsubmit = async (e) => {
@@ -4168,6 +4187,13 @@ function openFeedbackThread(id) {
       if (r?.item) apply(r.item)
       if (r?.photosDropped) toast(t('fb_sent_no_photos'), 'error')
     } catch (err) {
+      // Fermée ou pleine entre-temps : dit, et le champ part.
+      if (err?.closed || err?.full) {
+        const locked = { closed: err.closed, full: !err.closed }
+        saveMyFeedback(myFeedback().map((r) => (r.id === id ? { ...r, ...locked } : r)))
+        lock(locked)
+        return toast(t(locked.closed ? 'fb_closed_note' : 'fb_full_note'), 'error')
+      }
       // Réponse faite seulement de captures, refusées (limite du jour).
       toast(t(err?.photosDropped ? 'fb_photos_paused' : err?.status === 429 ? 'fb_too_many' : 'fb_reply_failed'), 'error')
     } finally { btn.disabled = false }

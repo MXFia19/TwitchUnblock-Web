@@ -160,7 +160,8 @@ async function publishNtfy(messages) {
       message: String(m.message ?? '').slice(0, 1000),
       priority: Math.min(5, Math.max(1, Math.round(Number(m.priority)) || 3)),
     }
-    if (typeof m.click === 'string' && m.click.startsWith('twitchunblock://')) msg.click = m.click.slice(0, 300)
+    // « TU Test » a son propre schéma (twitchunblock-test://).
+    if (typeof m.click === 'string' && /^twitchunblock(-test)?:\/\//.test(m.click)) msg.click = m.click.slice(0, 300)
     if (Array.isArray(m.tags)) msg.tags = m.tags.slice(0, 5).map((t) => String(t).slice(0, 40))
     try {
       const r = await fetch(NTFY_URL, {

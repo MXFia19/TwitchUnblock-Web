@@ -51,14 +51,25 @@ self.addEventListener('push', (e) => {
 })
 
 // Abonnement remplacé par le navigateur (Firefox surtout) : on en reprend un
-// avec la même clé. La page remarque le nouvel abonnement à la visite
-// suivante (adresse différente) et le renvoie au Worker avec les chaînes.
+// avec la même clé, et le Worker remplace l'ancien, chaînes et langue
+// reprises (adresse du Worker notée par la page dans le cache). Avant, rien
+// n'arrivait plus jusqu'à la visite suivante du site.
 self.addEventListener('pushsubscriptionchange', (e) => {
-  const key = e.oldSubscription?.options?.applicationServerKey
+  const old = e.oldSubscription
+  const key = old?.options?.applicationServerKey
   if (!key) return
-  e.waitUntil(self.registration.pushManager.getSubscription()
-    .then((sub) => sub ?? self.registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key }))
-    .catch(() => {}))
+  e.waitUntil((async () => {
+    const sub = e.newSubscription ?? await self.registration.pushManager.getSubscription()
+      ?? await self.registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key })
+    if (!sub || !old.endpoint || sub.endpoint === old.endpoint) return
+    const api = await (await caches.open(CACHE)).match('/__push-api').then((r) => r?.text())
+    if (!api) return
+    await fetch(`${api}/api/push/subscribe`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ subscription: sub.toJSON(), replaces: old.endpoint }),
+    })
+  })().catch(() => {}))
 })
 
 self.addEventListener('notificationclick', (e) => {

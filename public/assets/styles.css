@@ -1383,6 +1383,7 @@ html.multi-open { overflow: hidden; }
 .fb-pics { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
 .fb-pics img { width: 110px; height: 110px; object-fit: cover; border-radius: 8px; display: block; background: var(--surface); }
 .fb-reply-form { margin-top: 10px; }
+.fb-locked { margin: 10px 2px 0; font-size: 13px; line-height: 1.45; color: var(--muted); }
 .fb-reply-form textarea.text-input { min-height: 64px; }
 .fb-reply-actions { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .switch-account { margin-top: 8px; }

@@ -756,7 +756,9 @@ export async function pushKey() {
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
   return (await res.json()).key
 }
-export const pushSubscribe = (subscription, channels, lang) => pushPost('/api/push/subscribe', { subscription, channels, lang })
+/** `replaces` : adresse de l'abonnement précédent, effacé par le Worker. */
+export const pushSubscribe = (subscription, channels, lang, replaces = '') =>
+  pushPost('/api/push/subscribe', { subscription, channels, lang, ...(replaces ? { replaces } : {}) })
 export const pushUnsubscribe = (subscription) => pushPost('/api/push/unsubscribe', { subscription })
 export const pushTest = (subscription, lang) => pushPost('/api/push/test', { subscription, lang })
 
@@ -794,7 +796,11 @@ async function feedbackPost(path, body) {
     err.status = res.status
     // Réponse faite seulement de captures, refusées (limite du jour) : le
     // Worker le précise, le message affiché n'est pas « trop de messages ».
-    err.photosDropped = (await res.json().catch(() => null))?.photosDropped || 0
+    const data = await res.json().catch(() => null)
+    err.photosDropped = data?.photosDropped || 0
+    // Discussion fermée par le développeur, ou pleine.
+    err.closed = Boolean(data?.closed)
+    err.full = Boolean(data?.full)
     throw err
   }
   return res.json()

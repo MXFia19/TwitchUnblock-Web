@@ -6,6 +6,27 @@
 
 export const CHANGELOG = [
   {
+    version: '2026.10.18d',
+    items: {
+      fr: [
+        'Mes signalements : une discussion fermée par le développeur, ou arrivée à 100 messages, le dit au lieu d’afficher le champ de réponse puis un échec. Deux réponses envoyées au même moment ne s’effacent plus l’une l’autre.',
+        'Notifications de live : quand le navigateur renouvelle l’abonnement, il est remplacé tout de suite, chaînes comprises (avant, plus rien n’arrivait jusqu’à la visite suivante).',
+      ],
+      en: [
+        'My reports: a conversation closed by the developer, or one that reached 100 messages, says so instead of showing the reply box and then failing. Two replies sent at the same time no longer erase each other.',
+        'Live notifications: when the browser renews its subscription, it is replaced right away, channels included (before, nothing arrived until your next visit).',
+      ],
+      es: [
+        'Mis reportes: una conversación cerrada por el desarrollador, o que llegó a 100 mensajes, lo indica en lugar de mostrar el campo de respuesta y luego fallar. Dos respuestas enviadas al mismo tiempo ya no se borran entre sí.',
+        'Notificaciones de directos: cuando el navegador renueva la suscripción, se sustituye al momento, canales incluidos (antes no llegaba nada hasta la siguiente visita).',
+      ],
+      ru: [
+        'Мои обращения: обсуждение, закрытое разработчиком или дошедшее до 100 сообщений, теперь сообщает об этом, а не показывает поле ответа с последующей ошибкой. Два ответа, отправленные одновременно, больше не стирают друг друга.',
+        'Уведомления о трансляциях: когда браузер обновляет подписку, она сразу заменяется вместе с каналами (раньше ничего не приходило до следующего посещения).',
+      ],
+    },
+  },
+  {
     version: '2026.10.18c',
     items: {
       fr: [

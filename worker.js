@@ -885,6 +885,9 @@ const USAGE_ACCOUNT_PREFIX = 'usage_a_';
  *  contacts, comptes du comptage, effacements, annonces. */
 let ADMIN_IDS = [];
 const USAGE_RETENTION_DAYS = 35;
+// Nouvelles installations anonymes comptées par jour et par adresse (/64 en
+// IPv6) : au-delà, des UUID tirés au hasard gonfleraient /stats.
+const USAGE_NEW_PER_PERSON = 20;
 // tvos : l'app Apple TV (comptée à part depuis la 0.1.15).
 const PLATFORMS = ['ios', 'web', 'tvos'];
 // Le site officiel : un ping « web » venu d'ailleurs (copie locale, tests,
@@ -932,7 +935,9 @@ async function handlePing(request, env) {
     // est déjà filtré par son origine ; le retrait (forget) passe toujours.
     // Inactif tant que PING_KEY n'est pas défini sur le Worker : rien ne change
     // d'ici là, et aucune installation officielle existante n'est perdue avant
-    // qu'elle n'embarque le jeton.
+    // qu'elle n'embarque le jeton. Un simple marqueur, pas une protection : il
+    // se lit dans l'IPA publique (d'où le plafond des nouvelles installations,
+    // plus bas).
     const fromOfficialSite = origin && USAGE_ORIGINS.includes(origin);
     if (env.PING_KEY && !fromOfficialSite && body.forget !== true
         && request.headers.get('X-TU-Key') !== env.PING_KEY) {
@@ -976,6 +981,16 @@ async function handlePing(request, env) {
             prev.ps = [...seen].filter((x) => PLATFORMS.includes(x)).sort().join(',');
             await store(env).delete(anonKey);
         }
+    }
+
+    // Nouvelle installation anonyme : plafonnée par adresse et par jour (un
+    // compte Twitch, lui, ne se fabrique pas en série). Refusée sans erreur.
+    if (!who && !prev.first) {
+        const mine = `pnew_${(await sha256hex(`ping|${day}|${clientKey(request)}`)).slice(0, 4)}`;
+        let fresh = true;
+        try { await ensureSchema(env); fresh = await takeNtfyLimits(env, [[mine, USAGE_NEW_PER_PERSON]]); }
+        catch (e) { logCaught('ping/limit', e); }
+        if (!fresh) return jsonResponse({ ok: true, ignored: true });
     }
 
     const platforms = [...new Set([...(prev.ps ? String(prev.ps).split(',') : (prev.p ? [prev.p] : [])), platform])].filter((x) => PLATFORMS.includes(x)).sort().join(',');
@@ -1800,6 +1815,34 @@ async function saveFeedbackPhotos(env, key, photos, first) {
     return ids;
 }
 
+/** Numéros de photos réservés d'un coup (compteur `ph` du retour) : deux
+ *  envois simultanés prenaient les mêmes, et l'un écrasait les photos de
+ *  l'autre. Rend le premier, ou null si le retour n'existe plus. */
+async function reserveFeedbackPhotos(env, key, count) {
+    if (!count) return 0;
+    await ensureSchema(env);
+    const row = await env.DB.prepare(`UPDATE kv SET meta = json_set(COALESCE(meta, '{}'), '$.ph', COALESCE(json_extract(meta, '$.ph'), 0) + ?2)
+        WHERE key = ?1 AND ${alive(Date.now())} RETURNING json_extract(meta, '$.ph') AS ph`).bind(key, count).first();
+    return row ? Number(row.ph) - count : null;
+}
+
+/** Change la discussion d'un retour sans perdre une écriture simultanée
+ *  (réponse de la personne, du développeur, du bot) : relue et rejouée si
+ *  une autre est passée entre la lecture et l'écriture. `change(thread,
+ *  metadata)` rend { thread, metadata } à écrire, ou autre chose (erreur,
+ *  rien à faire), rendu tel quel. { gone } : retour effacé. */
+async function updateFeedbackThread(env, key, change) {
+    for (let attempt = 0; attempt < 5; attempt++) {
+        const read = await store(env).getWithMetadata(key);
+        if (!read.metadata) return { gone: true };
+        const out = await change(feedbackThread(read.value, read.metadata), read.metadata);
+        if (!out?.thread || out.unchanged) return out;
+        if (await store(env).putIf(key, JSON.stringify(out.thread), { metadata: out.metadata, expirationTtl: FEEDBACK_TTL }, read)) return out;
+    }
+    logCaught('feedback/update', new Error(`écriture concurrente sans fin : ${key}`));
+    return { busy: true };
+}
+
 /** Discussion stockée ; un retour d'avant les discussions n'a que son message. */
 function feedbackThread(value, meta) {
     try {
@@ -1818,8 +1861,12 @@ async function ownedFeedback(env, id, token) {
 }
 
 /** Ce que l'appareil voit d'un retour : état et messages, sans les infos techniques. */
+/** Ce que voit la personne. `closed` : discussion fermée par le
+ *  développeur ; `full` : plus de place (FEEDBACK_MAX_MESSAGES). Sans eux,
+ *  le champ de réponse s'affichait, puis l'envoi échouait sans raison. */
 function publicFeedback(id, meta, thread) {
-    return { id, kind: meta.k || 'other', status: meta.s || 'new', updatedAt: meta.u || meta.at || 0, lastFrom: meta.r || 'u', thread };
+    return { id, kind: meta.k || 'other', status: meta.s || 'new', updatedAt: meta.u || meta.at || 0, lastFrom: meta.r || 'u', thread,
+             ...(meta.bl ? { closed: true } : {}), ...(thread.length >= FEEDBACK_MAX_MESSAGES ? { full: true } : {}) };
 }
 
 async function handleFeedback(request, env, ctx) {
@@ -1909,21 +1956,32 @@ async function handleFeedbackReply(request, env, ctx) {
     const asked = cleanPhotos(body.photos);
     if (!message && !asked.length) return jsonError('Message vide', 400);
     const { meta, thread } = found;
-    if (meta.bl) return jsonError('This conversation was closed by the developer', 403);
-    if (thread.length >= FEEDBACK_MAX_MESSAGES) return jsonError('Discussion trop longue', 409);
+    // `closed` / `full` : le site et l'app retirent le champ de réponse.
+    if (meta.bl) return jsonError('This conversation was closed by the developer', 403, { closed: true });
+    if (thread.length >= FEEDBACK_MAX_MESSAGES) return jsonError('Discussion trop longue', 409, { full: true });
     const photos = await photoAllowance(env, asked, clientKey(request));
     const dropped = asked.length - photos.length;
     if (!message && !photos.length) return jsonError('Photos en pause pour aujourd’hui, réessaie demain', 429, { photosDropped: dropped });
 
     const now = Date.now();
-    const ph = await saveFeedbackPhotos(env, id, photos, meta.ph || 0);
-    thread.push({ f: 'u', m: message, at: now, ...(ph.length ? { ph } : {}) });
-    const next = { ...meta, u: now, r: 'u', n: (meta.n || 1) + 1, ph: (meta.ph || 0) + ph.length };
-    await store(env).put(id, JSON.stringify(thread), { metadata: next, expirationTtl: FEEDBACK_TTL });
+    const first = await reserveFeedbackPhotos(env, id, photos.length);
+    if (first === null) return jsonError('Retour introuvable', 404);
+    const ph = await saveFeedbackPhotos(env, id, photos, first);
+    const out = await updateFeedbackThread(env, id, (th, m) => {
+        if (m.bl) return { closed: true };
+        if (th.length >= FEEDBACK_MAX_MESSAGES) return { full: true };
+        th.push({ f: 'u', m: message, at: now, ...(ph.length ? { ph } : {}) });
+        return { thread: th, metadata: { ...m, u: now, r: 'u', n: (m.n || 1) + 1 } };
+    });
+    if (out.gone) return jsonError('Retour introuvable', 404);
+    if (out.closed) return jsonError('This conversation was closed by the developer', 403, { closed: true });
+    if (out.full) return jsonError('Discussion trop longue', 409, { full: true });
+    if (out.busy) return jsonError('Réessaie dans un instant', 503);
+    const next = out.metadata;
     const hook = notifyDiscord(env, ctx, { ...next, m: message }, photos,
-        { key: id, inReplyTo: meta.m, waitLink: !meta.dt && now - (meta.at || 0) < 120000 });
+        { key: id, inReplyTo: meta.m, waitLink: !next.dt && now - (meta.at || 0) < 120000 });
     if (!ctx?.waitUntil) await hook;
-    return jsonResponse({ ok: true, item: publicFeedback(id, next, thread), ...(dropped ? { photosDropped: dropped } : {}) });
+    return jsonResponse({ ok: true, item: publicFeedback(id, next, out.thread), ...(dropped ? { photosDropped: dropped } : {}) });
 }
 
 // GET /api/feedback/photo?id=…&n=…&token=… — une photo d'une discussion, pour
@@ -2115,25 +2173,32 @@ function echoTeamToDiscord(env, ctx, meta, { message = '', photos = [], status =
  * { error, code }.
  */
 async function feedbackTeamUpdate(env, key, { message = '', photos = [], status = null, extra = null, follow = true }) {
-    const { value, metadata } = await store(env).getWithMetadata(key);
-    if (!metadata) return { error: 'Retour introuvable', en: 'Report not found', code: 404 };
-    const thread = feedbackThread(value, metadata);
-    if (thread.length >= FEEDBACK_MAX_MESSAGES) return { error: 'Discussion trop longue', en: 'Conversation too long', code: 409 };
+    if (status !== null && !FEEDBACK_STATUSES.includes(status)) return { error: 'État inconnu', en: 'Unknown status', code: 400 };
+    if (status === null && !message && !photos.length) return { error: 'Message vide', en: 'Empty message', code: 400 };
     const now = Date.now();
-    const next = { ...metadata, u: now, r: 'a', sa: now, ...(extra || {}) };
-    if (status !== null) {
-        if (!FEEDBACK_STATUSES.includes(status)) return { error: 'État inconnu', en: 'Unknown status', code: 400 };
-        if (status === (metadata.s || 'new')) return { metadata, thread, unchanged: true };
-        thread.push({ f: 'a', s: status, at: now });
-        next.s = status;
-    } else {
-        if (!message && !photos.length) return { error: 'Message vide', en: 'Empty message', code: 400 };
-        const ph = await saveFeedbackPhotos(env, key, photos, metadata.ph || 0);
-        thread.push({ f: 'a', m: message, at: now, ...(ph.length ? { ph } : {}) });
-        next.n = (metadata.n || 1) + 1;
-        next.ph = (metadata.ph || 0) + ph.length;
+    let ph = [];
+    if (status === null && photos.length) {
+        const first = await reserveFeedbackPhotos(env, key, photos.length);
+        if (first === null) return { error: 'Retour introuvable', en: 'Report not found', code: 404 };
+        ph = await saveFeedbackPhotos(env, key, photos, first);
     }
-    await store(env).put(key, JSON.stringify(thread), { metadata: next, expirationTtl: FEEDBACK_TTL });
+    const out = await updateFeedbackThread(env, key, (thread, metadata) => {
+        if (thread.length >= FEEDBACK_MAX_MESSAGES) return { error: 'Discussion trop longue', en: 'Conversation too long', code: 409 };
+        const next = { ...metadata, u: now, r: 'a', sa: now, ...(extra || {}) };
+        if (status !== null) {
+            if (status === (metadata.s || 'new')) return { metadata, thread, unchanged: true };
+            thread.push({ f: 'a', s: status, at: now });
+            next.s = status;
+        } else {
+            thread.push({ f: 'a', m: message, at: now, ...(ph.length ? { ph } : {}) });
+            next.n = (metadata.n || 1) + 1;
+        }
+        return { thread, metadata: next };
+    });
+    if (out.gone) return { error: 'Retour introuvable', en: 'Report not found', code: 404 };
+    if (out.busy) return { error: 'Réessaie dans un instant', en: 'Busy, try again', code: 503 };
+    if (out.error || out.unchanged) return out;
+    const { thread, metadata: next } = out;
     if (next.dt) await linkDiscordThread(env, key, next.dt, false);
     // Doublons fusionnés (/merge) : ils suivent l'état de celui-ci.
     const dupThreads = [];
@@ -2248,7 +2313,7 @@ async function handleFeedbackBot(request, env) {
         // `peek` (bot récent) : rien n'est noté ici, le bot dit ensuite ce qui
         // est vraiment parti (`delivered`). Noté d'avance, un envoi raté en
         // message privé était perdu pour de bon.
-        if (body.peek !== true && thread.length > from) await store(env).put(key, value, { metadata: { ...metadata, dd: thread.length }, expirationTtl: FEEDBACK_TTL });
+        if (body.peek !== true && thread.length > from) await store(env).patchMeta(key, 'dd', thread.length);
         return jsonResponse({ du: metadata.du, key, excerpt: String(metadata.m || '').slice(0, 80), items });
     }
     if (body.action === 'delivered') {
@@ -2256,7 +2321,7 @@ async function handleFeedbackBot(request, env) {
         const upTo = Number(body.upTo);
         if (!Number.isInteger(upTo) || upTo < 0 || upTo >= thread.length) return jsonError('Bad index', 400);
         const dd = Math.max(Number(metadata.dd) || 1, upTo + 1);
-        if (dd !== metadata.dd) await store(env).put(key, value, { metadata: { ...metadata, dd }, expirationTtl: FEEDBACK_TTL });
+        if (dd !== metadata.dd) await store(env).patchMeta(key, 'dd', dd);
         return jsonResponse({ ok: true, dd });
     }
     // Une photo du retour, pour la joindre au message privé : le bot n'a ni
@@ -2278,7 +2343,7 @@ async function handleFeedbackBot(request, env) {
     }
     if (body.action === 'block') {
         const meta = { ...metadata, bl: true };
-        await store(env).put(key, value, { metadata: meta, expirationTtl: FEEDBACK_TTL });
+        await store(env).patchMeta(key, 'bl', true);
         return jsonResponse({ ok: true, ...state(meta) });
     }
     if (body.action === 'merge') {
@@ -2294,7 +2359,7 @@ async function handleFeedbackBot(request, env) {
         if (r.error) return jsonError(r.en, r.code);
         if ((other.metadata.s || 'new') !== (r.metadata.s || 'new')) await feedbackTeamUpdate(env, key, { status: other.metadata.s || 'new', follow: false });
         const dups = [...new Set([...(other.metadata.dups || []), ...(metadata.dups || []), key])].slice(-20);
-        await store(env).put(target, other.value, { metadata: { ...other.metadata, dups }, expirationTtl: FEEDBACK_TTL });
+        await store(env).patchMeta(target, 'dups', dups);
         return jsonResponse({ ok: true, key, into: target, intoThread: other.metadata.dt || null });
     }
     // Où partira le correctif : la personne sera prévenue à sa sortie.
@@ -2303,7 +2368,7 @@ async function handleFeedbackBot(request, env) {
         if (!['ios', 'web', 'both', 'none'].includes(p)) return jsonError('Bad platform', 400);
         const meta = { ...metadata };
         meta.fx = p === 'none' ? { p, at: Date.now() } : { p, at: Date.now(), done: {} };
-        await store(env).put(key, value, { metadata: meta, expirationTtl: FEEDBACK_TTL });
+        await store(env).patchMeta(key, 'fx', meta.fx);
         const { metadata: versions } = await store(env).getWithMetadata(FEEDBACK_VERSIONS_KEY);
         return jsonResponse({ ok: true, ...state(meta), versions: versions || {} });
     }
@@ -2386,10 +2451,20 @@ async function feedbackBotTool(env, body) {
             const photos = await photoAllowance(env, asked, `du:${m.du}`);
             if (!message && !photos.length) return jsonError('Screenshots are paused for today — try again tomorrow', 429);
             const now = Date.now();
-            const ph = await saveFeedbackPhotos(env, key, photos, m.ph || 0);
-            thread.push({ f: 'u', m: message, at: now, ...(ph.length ? { ph } : {}) });
-            const next = { ...m, u: now, r: 'u', n: (m.n || 1) + 1, ph: (m.ph || 0) + ph.length };
-            await store(env).put(key, JSON.stringify(thread), { metadata: next, expirationTtl: FEEDBACK_TTL });
+            const first = await reserveFeedbackPhotos(env, key, photos.length);
+            if (first === null) return jsonError('Report not found', 404);
+            const ph = await saveFeedbackPhotos(env, key, photos, first);
+            const out = await updateFeedbackThread(env, key, (th, cur) => {
+                if (cur.bl) return { closed: true };
+                if (th.length >= FEEDBACK_MAX_MESSAGES) return { full: true };
+                th.push({ f: 'u', m: message, at: now, ...(ph.length ? { ph } : {}) });
+                return { thread: th, metadata: { ...cur, u: now, r: 'u', n: (cur.n || 1) + 1 } };
+            });
+            if (out.gone) return jsonError('Report not found', 404);
+            if (out.closed) return jsonError('This conversation was closed by the developer', 403);
+            if (out.full) return jsonError('Conversation too long', 409);
+            if (out.busy) return jsonError('Busy, try again', 503);
+            const next = out.metadata;
             await notifyDiscord(env, null, { ...next, m: message }, photos, { key, inReplyTo: m.m });
             return jsonResponse({ ok: true, photos: ph.length });
         }
@@ -2594,17 +2669,21 @@ async function handleAdminFeedback(request, env, ctx) {
         if (typeof body.seen?.key === 'string') {
             const key = body.seen.key;
             if (!FEEDBACK_KEY_RE.test(key)) return jsonError('Clé invalide', 400);
-            const { value, metadata } = await store(env).getWithMetadata(key);
-            if (!metadata) return jsonError('Retour introuvable', 404);
-            const thread = feedbackThread(value, metadata);
             const now = Date.now();
-            const next = { ...metadata, sa: now };
-            if ((metadata.s || 'new') === 'new' && thread.length < FEEDBACK_MAX_MESSAGES) {
-                thread.push({ f: 'a', s: 'seen', at: now });
-                Object.assign(next, { s: 'seen', u: now, r: 'a' });
-            }
-            await store(env).put(key, JSON.stringify(thread), { metadata: next, expirationTtl: FEEDBACK_TTL });
-            if (next.s !== (metadata.s || 'new')) echoTeamToDiscord(env, ctx, next, { status: next.s });
+            let before = 'new';
+            const out = await updateFeedbackThread(env, key, (thread, metadata) => {
+                before = metadata.s || 'new';
+                const next = { ...metadata, sa: now };
+                if (before === 'new' && thread.length < FEEDBACK_MAX_MESSAGES) {
+                    thread.push({ f: 'a', s: 'seen', at: now });
+                    Object.assign(next, { s: 'seen', u: now, r: 'a' });
+                }
+                return { thread, metadata: next };
+            });
+            if (out.gone) return jsonError('Retour introuvable', 404);
+            if (out.busy) return jsonError('Réessaie dans un instant', 503);
+            const { thread, metadata: next } = out;
+            if (next.s !== before) echoTeamToDiscord(env, ctx, next, { status: next.s });
             return jsonResponse({ ok: true, item: summary(key, next), thread });
         }
 
@@ -2680,6 +2759,18 @@ const REACTIONS = ['👍', '❤️', '🔥', '😂', '👎'];
 const REACTION_PREFIX = 'annr_';
 const reactHits = new Map();   // adresse → { n, until } (mémoire de l'instance)
 
+/** Appareils nouveaux par adresse (/64 en IPv6) et par jour, pour une même
+ *  annonce ou un même sondage (`scope`) : l'identifiant d'appareil est libre
+ *  côté client, et un UUID inventé à chaque requête comptait comme une
+ *  personne de plus. Une réaction ou un vote déjà là se change sans compter. */
+const NEW_DEVICES_PER_PERSON = 8;
+async function takeNewDevice(env, request, scope, key) {
+    const known = await store(env).getWithMetadata(key).then((r) => r.metadata != null).catch(() => true);
+    if (known) return true;
+    const who = `nd_${scope}_${(await sha256hex(`${scope}|${clientKey(request)}`)).slice(0, 6)}`;
+    return takeNtfyLimits(env, [[who, NEW_DEVICES_PER_PERSON]]).catch((e) => { logCaught('newDevice', e); return true; });
+}
+
 async function handleAnnouncementReact(request, env) {
     if (request.method !== 'POST') return jsonError('Method Not Allowed', 405);
     if (!env.DB) return jsonError("Base D1 'DB' non liée au Worker.", 500);
@@ -2700,7 +2791,9 @@ async function handleAnnouncementReact(request, env) {
 
     const key = `${REACTION_PREFIX}${current.id}_${device.toLowerCase()}`;
     if (emoji === null) await store(env).delete(key);
-    else {
+    else if (!(await takeNewDevice(env, request, `a${current.id}`, key))) {
+        return jsonError('Trop de réactions depuis cette adresse', 429);
+    } else {
         const ttl = Math.max(60, Math.round((current.until - now) / 1000) + 7 * 86400);
         await store(env).put(key, '', { expirationTtl: ttl, metadata: { e: emoji } });
     }
@@ -2810,7 +2903,9 @@ async function handlePollVote(request, env) {
     if (!poll.multi && picks.length > 1) return jsonError('Un seul choix', 400);
     const key = `${POLL_VOTE_PREFIX}${poll.id}_${device}`;
     if (!picks.length) await store(env).delete(key);
-    else {
+    else if (!(await takeNewDevice(env, request, `p${poll.id}`, key))) {
+        return jsonError('Trop de votes depuis cette adresse', 429);
+    } else {
         const ttl = Math.max(60, Math.round((poll.until + POLL_SHOW_AFTER - Date.now()) / 1000) + 86400);
         await store(env).put(key, '', { expirationTtl: ttl, metadata: { o: picks } });
     }
@@ -3016,7 +3111,8 @@ function store(env) {
                 const json = type === 'json' || type?.type === 'json';
                 let value = row.value;
                 if (json) { try { value = JSON.parse(row.value); } catch (e) { value = null; } }
-                return { value, metadata: parseMeta(row.meta) };
+                // `rawMeta` : pour putIf (écriture si rien n'a bougé).
+                return { value, metadata: parseMeta(row.meta), rawMeta: row.meta };
             }
             return { value: null, metadata: null };
         },
@@ -3045,6 +3141,19 @@ function store(env) {
             if (!prefix) return;
             await ensureSchema(env);
             await db.prepare(`DELETE FROM kv WHERE substr(key, 1, ?1) = ?2`).bind(prefix.length, prefix).run();
+        },
+        /** Écrit seulement si valeur et métadonnées sont encore celles lues
+         *  (`prev` : rendu par getWithMetadata) ; false sinon. Deux réponses
+         *  presque simultanées se réécrivaient l'une l'autre. */
+        async putIf(key, value, opts = {}, prev = {}) {
+            await ensureSchema(env);
+            const ttl = Number(opts.expirationTtl) || 0;
+            const expires = ttl > 0 ? Date.now() + ttl * 1000 : null;
+            const meta = opts.metadata == null ? null : JSON.stringify(opts.metadata);
+            const r = await db.prepare(`UPDATE kv SET value = ?2, meta = ?3, expires = ?4
+                WHERE key = ?1 AND value = ?5 AND meta IS ?6 AND ${alive(Date.now())}`)
+                .bind(key, String(value ?? ''), meta, expires, String(prev.value ?? ''), prev.rawMeta ?? null).run();
+            return (r?.meta?.changes || 0) > 0;
         },
         /** Une métadonnée changée sur place, sans relire ni réécrire la valeur
          *  (une réponse arrivée entre la lecture et l'écriture était perdue).
@@ -3334,12 +3443,24 @@ function readPushSubscription(body) {
     return { endpoint, p256dh, auth };
 }
 
-/** Abonnement de l'app iOS : sujet ntfy secret créé par elle. */
+/** Schémas de lien des apps iOS : l'app, et « TU Test » (canal de test), qui
+ *  a le sien — avec le même, iOS ouvrait l'une ou l'autre au toucher d'une
+ *  notification. */
+const APP_SCHEMES = new Set(['twitchunblock', 'twitchunblock-test']);
+
+/** Abonnement de l'app iOS : sujet ntfy secret créé par elle. Pas de clés
+ *  Web Push pour ntfy : `auth` garde le schéma du lien de clic quand ce
+ *  n'est pas celui de l'app (« TU Test »). */
 function readNtfySubscription(body) {
     const topic = String(body?.ntfy || '');
     if (!/^tu-[a-z0-9]{20,40}$/.test(topic)) return null;
-    return { kind: 'ntfy', endpoint: `${NTFY_URL}/${topic}`, p256dh: '', auth: '' };
+    const scheme = String(body?.scheme || '');
+    return { kind: 'ntfy', endpoint: `${NTFY_URL}/${topic}`, p256dh: '',
+             auth: scheme !== 'twitchunblock' && APP_SCHEMES.has(scheme) ? scheme : '' };
 }
+
+/** Lien qui ouvre l'app d'un abonnement ntfy (`path` : « live/<chaîne> »). */
+const ntfyClick = (sub, path = '') => `${APP_SCHEMES.has(sub.auth) ? sub.auth : 'twitchunblock'}://${path}`;
 
 const ntfyTopic = (sub) => sub.endpoint.slice(NTFY_URL.length + 1);
 
@@ -3436,7 +3557,8 @@ async function ntfyPausedUntil(env) {
     return p?.via === ntfyRoute(env) && p.until > Date.now() ? p.until : 0;
 }
 
-/** Clé D1 d'un compteur du jour (UTC) des plafonds ntfy. */
+/** Clé D1 d'un compteur du jour (UTC) des plafonds ntfy (et des nouvelles
+ *  installations du comptage). */
 const ntfyLimitKey = (name) => `lim:${name}:${new Date().toISOString().slice(0, 10)}`;
 
 /** Ajoute à ces compteurs du jour ([nom, quantité]) et rend leurs nouvelles
@@ -3485,10 +3607,26 @@ async function handlePushSubscribe(request, env) {
     const body = await request.json().catch(() => null);
     const sub = readPushSubscription(body) ?? readNtfySubscription(body);
     if (!sub) return jsonError('Abonnement invalide', 400);
-    const channels = [...new Set((Array.isArray(body.channels) ? body.channels : [])
-        .map((c) => String(c).toLowerCase()).filter((c) => LOGIN_RE.test(c)))].slice(0, PUSH_MAX_CHANNELS);
-    const lang = pushLang(body.lang);
     await ensureSchema(env);
+    // Abonnement renouvelé par le navigateur : l'ancien (`replaces`) est
+    // effacé, et ses chaînes et sa langue reprises quand le service worker,
+    // qui ne les connaît pas, l'envoie seul (pushsubscriptionchange). Sans
+    // cela, plus rien n'arrivait avant la visite suivante du site, et
+    // l'ancien restait en base.
+    const replaces = sub.kind === 'ntfy' ? '' : String(body.replaces || '');
+    let oldId = null;
+    if (replaces && replaces !== sub.endpoint && replaces.length <= 1000) {
+        try { if (new URL(replaces).protocol === 'https:' && PUSH_HOSTS.test(new URL(replaces).hostname)) oldId = await pushIdOf(replaces); } catch (e) {}
+    }
+    let given = Array.isArray(body.channels) ? body.channels : [];
+    let langAsked = body.lang;
+    if (oldId && !Array.isArray(body.channels)) {
+        given = ((await env.DB.prepare('SELECT login FROM push_follow WHERE sub = ?1').bind(oldId).all()).results || []).map((r) => r.login);
+        langAsked = await env.DB.prepare('SELECT lang FROM push_subs WHERE id = ?1').bind(oldId).first('lang');
+    }
+    const channels = [...new Set(given
+        .map((c) => String(c).toLowerCase()).filter((c) => LOGIN_RE.test(c)))].slice(0, PUSH_MAX_CHANNELS);
+    const lang = pushLang(langAsked);
     const id = await pushIdOf(sub.endpoint);
     const hash = await pushIdOf(channels.slice().sort().join(','));
     const known = await env.DB.prepare('SELECT hash FROM push_subs WHERE id = ?1').bind(id).first();
@@ -3515,6 +3653,12 @@ async function handlePushSubscribe(request, env) {
         ops.push(env.DB.prepare('DELETE FROM push_follow WHERE sub = ?1').bind(id));
         ops.push(env.DB.prepare('INSERT OR IGNORE INTO push_follow (login, sub) SELECT value, ?1 FROM json_each(?2)').bind(id, list));
         ops.push(env.DB.prepare(`INSERT OR IGNORE INTO push_live (login, stream) SELECT value, '?' FROM json_each(?1)`).bind(list));
+    }
+    if (oldId && oldId !== id) {
+        // Notifications en attente reprises par le nouvel abonnement.
+        ops.push(env.DB.prepare('UPDATE push_queue SET sub = ?1 WHERE sub = ?2').bind(id, oldId));
+        ops.push(env.DB.prepare('DELETE FROM push_follow WHERE sub = ?1').bind(oldId));
+        ops.push(env.DB.prepare('DELETE FROM push_subs WHERE id = ?1').bind(oldId));
     }
     await env.DB.batch(ops);
     return jsonResponse({ ok: true, channels: channels.length });
@@ -3564,7 +3708,7 @@ async function handlePushTest(request, env) {
             return refused('trop de tests aujourd\'hui', 429);
         }
         const [r] = await sendNtfy(env, [{ topic: ntfyTopic(sub), title: 'TwitchUnblock', message: text.test,
-                                           click: 'twitchunblock://', tags: ['white_check_mark'] }]);
+                                           click: ntfyClick(sub), tags: ['white_check_mark'] }]);
         await pushStats(env, pushCount({ pu_test: 1 }, 'ntfy', r));
         if (r.status >= 200 && r.status < 300) return jsonResponse({ ok: true, via });
         if (r.relay) return jsonError(`Relais ntfy : ${r.relay}`, 502);
@@ -3711,7 +3855,7 @@ async function pushSend(env, room, counts = {}) {
         const results = await sendNtfy(env, ntfyRows.map((q) => {
             const n = notice(q);
             return { topic: ntfyTopic(q), title: n.title, message: n.body || n.title,
-                     click: `twitchunblock://live/${n.live.login}`, tags: ['red_circle'] };
+                     click: ntfyClick(q, `live/${n.live.login}`), tags: ['red_circle'] };
         }));
         // Relais en panne : un essai compté, pas un par message — ils sont
         // retentés à chaque passage, jusqu'à 30 minutes.
