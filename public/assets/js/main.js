@@ -4658,6 +4658,8 @@ const ANN_REACTIONS = ['👍', '❤️', '🔥', '😂', '👎']
 const ANN_REACTED = 'tu_ann_reacted'
 function annReactions() { try { return JSON.parse(localStorage.getItem(ANN_REACTED) || '{}') } catch { return {} } }
 function annReaction(id) { return annReactions()[id] ?? null }
+let annReactQueue = Promise.resolve()
+let annReactSeq = 0
 async function reactToAnnouncement(a, emoji) {
   const all = annReactions()
   const prev = all[a.id] ?? null
@@ -4671,13 +4673,23 @@ async function reactToAnnouncement(a, emoji) {
     renderAnnouncement()
   }
   save(next)
-  try {
-    const res = await fetch(`${api.API_URL}/api/announcement/react`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ announcementId: a.id, id: usage.installId(), emoji: next }),
-    })
-    if (!res.ok) throw new Error(String(res.status))
-  } catch { save(prev); toast(t('react_failed')) }
+  const seq = ++annReactSeq
+  const send = async () => {
+    try {
+      const res = await fetch(`${api.API_URL}/api/announcement/react`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ announcementId: a.id, id: usage.installId(), emoji: next }),
+      })
+      if (!res.ok) throw new Error(String(res.status))
+    } catch {
+      // Une autre touche a suivi : c'est elle qui compte.
+      if (seq !== annReactSeq) return
+      save(prev)
+      toast(t('react_failed'))
+    }
+  }
+  annReactQueue = annReactQueue.then(send, send)
+  return annReactQueue
 }
 let annFetchedAt = 0
 let annCurrent = null

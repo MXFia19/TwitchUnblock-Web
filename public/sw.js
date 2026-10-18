@@ -65,8 +65,11 @@ self.addEventListener('notificationclick', (e) => {
   e.notification.close()
   const url = new URL(e.notification.data?.url || '/', self.location.origin).href
   e.waitUntil((async () => {
-    const wins = await self.clients.matchAll({ type: 'window', includeUncontrolled: true })
-    const win = wins.find((w) => new URL(w.url).origin === self.location.origin)
+    const wins = (await self.clients.matchAll({ type: 'window', includeUncontrolled: true })).filter((w) => {
+      const u = new URL(w.url)
+      return u.origin === self.location.origin && !u.pathname.startsWith('/stats')
+    })
+    const win = wins.find((w) => w.focused) ?? wins[0]
     if (!win) return self.clients.openWindow(url)
     await win.focus()
     win.postMessage({ type: 'open', url })

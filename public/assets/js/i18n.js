@@ -396,6 +396,7 @@ export const LANGS = [
 ]
 
 let current = 'en'
+const known = (l) => typeof l === 'string' && Object.prototype.hasOwnProperty.call(STRINGS, l)
 
 /** Langue de l'appareil : la première de ses langues préférées que le site
  *  connaît (navigator.languages est déjà triée par préférence). */
@@ -403,20 +404,20 @@ export function deviceLang() {
   const list = navigator.languages?.length ? navigator.languages : [navigator.language || 'en']
   for (const l of list) {
     const code = String(l).slice(0, 2).toLowerCase()
-    if (STRINGS[code]) return code
+    if (known(code)) return code
   }
   return 'en'
 }
 
 /** `saved` vide ou `auto` : on suit l'appareil. */
 export function initLang(saved) {
-  current = STRINGS[saved] ? saved : deviceLang()
+  current = known(saved) ? saved : deviceLang()
   document.documentElement.lang = current
   return current
 }
 
 export function setLang(lang) {
-  if (!STRINGS[lang]) return current
+  if (!known(lang)) return current
   current = lang
   document.documentElement.lang = lang
   return current

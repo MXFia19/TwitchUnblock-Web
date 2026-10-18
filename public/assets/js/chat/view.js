@@ -312,6 +312,11 @@ export class ChatView {
     // on reste calé en bas si on suivait, sinon le suivi semble s'arrêter.
     if ('ResizeObserver' in window) {
       new ResizeObserver(() => { if (this.stick) this.scrollToBottom() }).observe(this.el.list)
+      // Hauteur de la saisie (modes, réponse, règles…) : le bouton « reprendre »
+      // et la fiche d'une emote se posent au-dessus, sans la chevaucher.
+      new ResizeObserver(() => {
+        this.root.style.setProperty('--composer-h', `${this.el.composer.offsetHeight}px`)
+      }).observe(this.el.composer)
     }
     this.el.resume.addEventListener('click', () => this.scrollToBottom(true))
     this.el.list.addEventListener('click', (e) => this.onListClick(e))

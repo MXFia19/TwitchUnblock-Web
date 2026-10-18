@@ -44,6 +44,7 @@
     .btn { display: inline-flex; align-items: center; gap: 8px; height: 36px; padding: 0 14px; border-radius: 10px; border: 1px solid var(--line); background: var(--card); font-weight: 600; font-size: 14px; }
     .btn:hover { background: var(--card-hi); }
     .btn:disabled { opacity: 0.5; cursor: default; }
+    [hidden] { display: none !important; }
 
     .tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-bottom: 16px; }
     .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 18px 20px; }
@@ -70,8 +71,8 @@
     .chart .axis { fill: var(--faint); font-size: 11px; font-variant-numeric: tabular-nums; }
     .chart .gridline { stroke: var(--grid); stroke-width: 1; }
     .chart .hit { fill: transparent; cursor: default; }
-    .chart .col.active rect.bar { opacity: 1; }
-    .chart .dim rect.bar { opacity: 0.45; }
+    .chart .col.active .bar { opacity: 1; }
+    .chart .dim .bar { opacity: 0.45; }
     .tip { position: absolute; pointer-events: none; z-index: 2; min-width: 150px; padding: 8px 10px; border-radius: 10px; background: rgba(9, 9, 11, 0.96); border: 1px solid var(--line); font-size: 12px; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4); transform: translate(-50%, calc(-100% - 10px)); }
     .tip b { display: block; margin-bottom: 4px; font-size: 12px; }
     .tip div { display: flex; align-items: center; gap: 6px; color: var(--muted); font-variant-numeric: tabular-nums; }
@@ -350,7 +351,7 @@
             <select id="ann-hours">
               <option value="keep" data-t="annKeep" hidden></option>
               <option value="1">1 h</option><option value="6">6 h</option><option value="24" selected>24 h</option>
-              <option value="72">3 j</option><option value="168">7 j</option><option value="720">30 j</option>
+              <option value="72" data-t="days3"></option><option value="168" data-t="days7"></option><option value="720" data-t="days30"></option>
               <option value="custom" data-t="annCustom"></option>
             </select>
           </label>
@@ -381,7 +382,7 @@
           <label><span data-t="annFor"></span>
             <select id="poll-hours">
               <option value="1">1 h</option><option value="6">6 h</option><option value="24" selected>24 h</option>
-              <option value="72">3 j</option><option value="168">7 j</option>
+              <option value="72" data-t="days3"></option><option value="168" data-t="days7"></option>
             </select>
           </label>
           <button class="btn" type="submit" data-t="pollStart"></button>
@@ -432,7 +433,7 @@
       today: "Aujourd'hui", week: '7 derniers jours', month: '30 derniers jours', partial: 'données depuis le {d} seulement',
       actTitle: 'Actifs par jour', actSub: 'Personnes différentes chaque jour (une fois par jour, même si elles reviennent plusieurs fois).', actSince: 'Mesuré depuis le {d}.', actNone: 'Pas encore de données : la mesure commence avec cette mise à jour.',
       rtTitle: 'Rétention', rtSub: 'Parmi les personnes arrivées depuis assez longtemps, la part revue au moins 1, 7 ou 14 jours après son premier jour. Par semaine d’arrivée, 5 dernières semaines.',
-      rtD1: 'revenues un autre jour', rtD7: 'encore là 7 jours après', rtD14: 'encore là 14 jours après', rtOf: 'sur {n}', rtWeek: 'Arrivées', rtSize: 'Personnes', rtWeekOf: 'semaine du {d}',
+      rtD1: 'revenues un autre jour', rtD7: 'encore là 7 jours après', rtD14: 'encore là 14 jours après', rtOf: 'sur {n}', rtWeek: 'Arrivées', rtSize: 'Personnes', rtWeekOf: 'semaine du {d}', rtColD1: 'J+1', rtColD7: 'J+7', days3: '3 j', days7: '7 j', days30: '30 j',
       hlTitle: 'Santé du direct (7 jours)', hlSub: 'Source qui a servi chaque live lancé, et échecs. Compteurs anonymes : aucune chaîne, aucun titre.',
       hlLives: '{n} lives lancés', hlVods: '{n} VODs lancées', hlFail: '{n} échecs au lancement ({p} %)', hlPlayFail: '{n} pendant la lecture', hlAdBreaks: '{n} pauses pub de la chaîne vues', hlNone: 'Pas encore de données : elles arrivent avec les nouvelles versions de l’app et du site.',
       hs_as: 'Luminous Asie', hs_al: 'Proxy Albanie', hs_eu: 'Luminous Europe', hs_twitch: 'Twitch officiel', hs_account: 'Compte abonné', hs_worker: 'Worker (secours)', hs_unknown: 'Inconnue',
@@ -488,7 +489,7 @@
       today: 'Today', week: 'Last 7 days', month: 'Last 30 days', partial: 'data only since {d}',
       actTitle: 'Active per day', actSub: 'Different people each day (once per day, even if they come back several times).', actSince: 'Measured since {d}.', actNone: 'No data yet: measuring starts with this update.',
       rtTitle: 'Retention', rtSub: 'Among people who arrived long enough ago, the share seen again at least 1, 7 or 14 days after their first day. By arrival week, last 5 weeks.',
-      rtD1: 'came back another day', rtD7: 'still there 7 days later', rtD14: 'still there 14 days later', rtOf: 'of {n}', rtWeek: 'Arrived', rtSize: 'People', rtWeekOf: 'week of {d}',
+      rtD1: 'came back another day', rtD7: 'still there 7 days later', rtD14: 'still there 14 days later', rtOf: 'of {n}', rtWeek: 'Arrived', rtSize: 'People', rtWeekOf: 'week of {d}', rtColD1: 'Day 1', rtColD7: 'Day 7', days3: '3 days', days7: '7 days', days30: '30 days',
       hlTitle: 'Live health (7 days)', hlSub: 'Source that served each live started, and failures. Anonymous counters: no channel, no title.',
       hlLives: '{n} lives started', hlVods: '{n} VODs started', hlFail: '{n} failed to start ({p} %)', hlPlayFail: '{n} during playback', hlAdBreaks: '{n} channel ad breaks seen', hlNone: 'No data yet: it comes with the new versions of the app and the website.',
       hs_as: 'Luminous Asia', hs_al: 'Albania proxy', hs_eu: 'Luminous Europe', hs_twitch: 'Official Twitch', hs_account: 'Subscriber account', hs_worker: 'Worker (fallback)', hs_unknown: 'Unknown',
@@ -544,7 +545,7 @@
       today: 'Hoy', week: 'Últimos 7 días', month: 'Últimos 30 días', partial: 'datos solo desde el {d}',
       actTitle: 'Activos por día', actSub: 'Personas distintas cada día (una vez por día, aunque vuelvan varias veces).', actSince: 'Medido desde el {d}.', actNone: 'Aún no hay datos: la medición empieza con esta actualización.',
       rtTitle: 'Retención', rtSub: 'Entre las personas que llegaron hace suficiente tiempo, la parte que volvió al menos 1, 7 o 14 días después de su primer día. Por semana de llegada, últimas 5 semanas.',
-      rtD1: 'volvieron otro día', rtD7: 'siguen 7 días después', rtD14: 'siguen 14 días después', rtOf: 'de {n}', rtWeek: 'Llegadas', rtSize: 'Personas', rtWeekOf: 'semana del {d}',
+      rtD1: 'volvieron otro día', rtD7: 'siguen 7 días después', rtD14: 'siguen 14 días después', rtOf: 'de {n}', rtWeek: 'Llegadas', rtSize: 'Personas', rtWeekOf: 'semana del {d}', rtColD1: 'Día 1', rtColD7: 'Día 7', days3: '3 días', days7: '7 días', days30: '30 días',
       hlTitle: 'Salud del directo (7 días)', hlSub: 'Fuente que sirvió cada directo iniciado, y fallos. Contadores anónimos: ningún canal, ningún título.',
       hlLives: '{n} directos iniciados', hlVods: '{n} VODs iniciados', hlFail: '{n} fallos al iniciar ({p} %)', hlPlayFail: '{n} durante la reproducción', hlAdBreaks: '{n} pausas publicitarias del canal vistas', hlNone: 'Aún no hay datos: llegan con las nuevas versiones de la app y del sitio.',
       hs_as: 'Luminous Asia', hs_al: 'Proxy de Albania', hs_eu: 'Luminous Europa', hs_twitch: 'Twitch oficial', hs_account: 'Cuenta suscrita', hs_worker: 'Worker (respaldo)', hs_unknown: 'Desconocida',
@@ -716,10 +717,11 @@
   function retention(s) {
     const r = s.retention
     if (!r) { $('#retention').innerHTML = `<p class="sub">${esc(t('redeploy'))}</p>`; $('#cohorts').innerHTML = ''; return }
-    const pct = (x) => (x?.base ? `${Math.round((x.kept / x.base) * 100)} %` : '—')
+    const percent = new Intl.NumberFormat(LOCALE, { style: 'percent', maximumFractionDigits: 0 })
+    const pct = (x) => (x?.base ? percent.format(x.kept / x.base) : '—')
     const cell = (k, label) => `<div><b>${pct(r[k])}</b><span>${esc(label)}${r[k]?.base ? ` · ${esc(t('rtOf', { n: fmt(r[k].base) }))}` : ''}</span></div>`
     $('#retention').innerHTML = cell('d1', t('rtD1')) + cell('d7', t('rtD7')) + cell('d14', t('rtD14'))
-    $('#cohorts').innerHTML = `<thead><tr><th>${t('rtWeek')}</th><th class="n">${t('rtSize')}</th><th class="n">J+1</th><th class="n">J+7</th></tr></thead><tbody>${
+    $('#cohorts').innerHTML = `<thead><tr><th>${t('rtWeek')}</th><th class="n">${t('rtSize')}</th><th class="n">${t('rtColD1')}</th><th class="n">${t('rtColD7')}</th></tr></thead><tbody>${
       (r.cohorts ?? []).map((c) => `<tr><td>${esc(t('rtWeekOf', { d: dayLabel(c.week) }))}</td><td class="n">${fmt(c.size)}</td><td class="n">${pct(c.d1)}</td><td class="n">${pct(c.d7)}</td></tr>`).join('')
       || '<tr><td colspan="4" class="sub">—</td></tr>'}</tbody>`
   }
@@ -970,7 +972,7 @@
   function setEditing(on) {
     annEditing = on && Boolean(annCurrent)
     const keep = $('#ann-hours option[value="keep"]')
-    keep.hidden = !annEditing
+    keep.hidden = keep.disabled = !annEditing
     $('#ann-renotify-row').hidden = !annEditing
     $('#ann-cancel').hidden = !annEditing
     $('#ann-submit').textContent = t(annEditing ? 'annSave' : 'annPublish')
@@ -989,7 +991,15 @@
     $('#ann-custom').hidden = $('#ann-hours').value !== 'custom'
   }
   async function loadAnnouncement() {
-    try { const r = await (await authed('/announcement')).json(); renderAnnouncement(r.announcement, r.reactions); if (Array.isArray(r.templates)) { annTemplates = r.templates; renderTemplates() } } catch {}
+    try {
+      const res = await authed('/announcement')
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const r = await res.json()
+      renderAnnouncement(r.announcement, r.reactions)
+      if (Array.isArray(r.templates)) { annTemplates = r.templates; renderTemplates() }
+    } catch (e) {
+      $('#ann-current').textContent = t('fail', { e: e.message })
+    }
   }
   async function postAnnouncement(body, okMsg) {
     try {
@@ -1005,6 +1015,7 @@
   $('#ann-form').addEventListener('submit', async (e) => {
     e.preventDefault()
     const choice = $('#ann-hours').value
+    if (choice === 'keep' && !annEditing) return devMsg(t('annBadDuration'), 'err')
     let hours = Number(choice)
     if (choice === 'custom') {
       hours = Number($('#ann-amount').value) * Number($('#ann-unit').value)
@@ -1130,6 +1141,8 @@
       const before = new Map(fbItems.map((f) => [f.key, f.updatedAt]))
       const changed = !quiet || r.items?.length !== fbItems.length || (r.items ?? []).some((f) => before.get(f.key) !== f.updatedAt)
       fbItems = r.items ?? []
+      const keys = new Set(fbItems.map((f) => f.key))
+      for (const key of [...fbOpen]) if (!keys.has(key)) { fbOpen.delete(key); fbThreads.delete(key) }
       renderHook(r.webhook, r.bridge)
       if (!changed) return
       renderFeedback()
@@ -1273,6 +1286,7 @@
   async function loadThread(key) {
     try {
       const res = await authed(`/feedback?key=${encodeURIComponent(key)}`)
+      if (res.status === 404) { fbOpen.delete(key); fbThreads.delete(key); renderFeedback(); return }
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const r = await res.json()
       fbThreads.set(key, r.thread)

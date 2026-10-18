@@ -6,6 +6,36 @@
 
 export const CHANGELOG = [
   {
+    version: '2026.10.18b',
+    items: {
+      fr: [
+        'Couleurs d’accent : texte foncé sur les boutons verts, orange et sarcelle (le blanc s’y lisait mal), version foncée de l’accent pour les textes du thème clair, et les touches violettes qui restaient (sélection, survols, messages, sondages…) suivent la couleur choisie.',
+        'Chat : le bouton « reprendre » et la fiche d’une emote ne recouvrent plus la zone de saisie quand elle s’agrandit.',
+        'Téléphone : les messages en bas d’écran passent au-dessus du lecteur réduit et de la barre du multi-live, et l’iPhone ne zoome plus en touchant un champ.',
+        'Ces messages et l’avis de son coupé ne sont plus limités à la moitié de la largeur, le plein écran s’affiche bien sur les iPad plus anciens, la sauvegarde refait un envoi raté, et deux réactions rapides à une annonce ne se contredisent plus.',
+      ],
+      en: [
+        'Accent colors: dark text on green, orange and teal buttons (white was hard to read), a darker accent for text in the light theme, and the purple touches that were left (selection, hovers, messages, polls…) follow your color.',
+        'Chat: the “resume” button and the emote card no longer cover the message box when it grows.',
+        'Phone: messages at the bottom of the screen go above the mini player and the multi-live bar, and iPhone no longer zooms in when you tap a field.',
+        'Those messages and the muted-audio notice are no longer limited to half the width, full screen looks right on older iPads, the backup retries a failed upload, and two quick reactions to an announcement no longer contradict each other.',
+      ],
+      es: [
+        'Colores de acento: texto oscuro en los botones verdes, naranjas y turquesa (el blanco se leía mal), una versión más oscura del acento para los textos del tema claro, y los toques morados que quedaban (selección, efectos al pasar, mensajes, encuestas…) siguen tu color.',
+        'Chat: el botón «reanudar» y la ficha de un emote ya no tapan el cuadro de mensaje cuando crece.',
+        'Teléfono: los mensajes de la parte inferior pasan por encima del reproductor reducido y de la barra del multi-live, y el iPhone ya no hace zoom al tocar un campo.',
+        'Esos mensajes y el aviso de audio silenciado ya no se limitan a la mitad del ancho, la pantalla completa se ve bien en iPad más antiguos, la copia de seguridad reintenta un envío fallido, y dos reacciones rápidas a un anuncio ya no se contradicen.',
+      ],
+      ru: [
+        'Цвета акцента: тёмный текст на зелёных, оранжевых и бирюзовых кнопках (белый читался плохо), более тёмный акцент для текста в светлой теме, а оставшиеся фиолетовые элементы (выделение, наведение, сообщения, опросы…) теперь следуют выбранному цвету.',
+        'Чат: кнопка «вернуться» и карточка эмоута больше не закрывают поле ввода, когда оно увеличивается.',
+        'Телефон: сообщения внизу экрана показываются над мини-плеером и панелью мультистрима, а iPhone больше не увеличивает страницу при нажатии на поле.',
+        'Эти сообщения и уведомление о заглушённом звуке больше не ограничены половиной ширины, полноэкранный режим правильно выглядит на старых iPad, резервная копия повторяет неудачную отправку, а две быстрые реакции на объявление больше не противоречат друг другу.',
+        'Русский перевод: «отслеживать» и «эмоуты» теперь везде переведены одинаково.',
+      ],
+    },
+  },
+  {
     version: '2026.10.18a',
     items: {
       fr: [
