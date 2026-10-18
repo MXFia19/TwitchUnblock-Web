@@ -851,17 +851,19 @@ export async function syncPull(userId) {
   }
 }
 
+/** true si le Worker a gardé la sauvegarde. */
 export async function syncPush(userId, data) {
   try {
     const body = JSON.stringify({ userId, data })
-    await fetch(`${API_URL}/api/sync/post`, {
+    const res = await fetch(`${API_URL}/api/sync/post`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...authHeader() },
       body,
       // Permet à l'envoi de finir quand l'onglet se ferme (limite : 64 Ko).
       keepalive: body.length < 60_000,
     })
-  } catch { /* la sauvegarde distante est un plus, pas une dépendance */ }
+    return res.ok
+  } catch { return false /* la sauvegarde distante est un plus, pas une dépendance */ }
 }
 
 // ── Helix (compte connecté) ────────────────────────────────────────────────

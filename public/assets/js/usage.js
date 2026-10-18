@@ -118,7 +118,14 @@ function clearSent(sent) {
 /** Appelé au démarrage et à intervalles réguliers. `enabled` : booléen, ou
  *  fonction relue après l'attente — un signal en attente partait après « Ne
  *  pas partager » et réinscrivait l'identifiant qui venait d'être effacé. */
+let inflight = null
 export async function ping(enabled) {
+  if (inflight) return inflight
+  inflight = pingOnce(enabled).finally(() => { inflight = null })
+  return inflight
+}
+
+async function pingOnce(enabled) {
   const on = () => (typeof enabled === 'function' ? enabled() : enabled)
   if (!on()) return
   // Navigateur piloté par un programme (tests automatisés, robots).

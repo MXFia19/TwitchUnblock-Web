@@ -567,7 +567,13 @@ function flushSync({ force = false } = {}) {
   if (body === lastSyncBody) return
   lastSyncBody = body
   lastSyncAt = Date.now()
-  api.syncPush(session.userId, data)
+  // Raté (401, 413, 429, 500, coupure) : refait au passage suivant — il était
+  // compté comme parti et jamais renvoyé.
+  api.syncPush(session.userId, data).then((ok) => {
+    if (ok || lastSyncBody !== body) return
+    lastSyncBody = ''
+    syncDirty = true
+  })
 }
 
 setInterval(() => flushSync(), 60_000)
@@ -4501,7 +4507,6 @@ const BACKUP_SETTINGS = {
   mutedWords: okWords(50),
   highlightWords: okWords(30),
   blockedUsers: okLogins(500),
-  shareUsage: okBool,
   clickPause: okBool,
   theatre: okBool,
   qualityPref: (v) => (validQualityPref(v) ? v : undefined),

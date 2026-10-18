@@ -914,7 +914,7 @@ async function handlePing(request, env) {
     // Chaque ping est une écriture D1 (100 000 par jour en gratuit) : une même
     // adresse ne peut pas en enchaîner des centaines. Compté en mémoire
     // seulement, jamais stocké.
-    if (overLimit(pingHits, clientKey(request), 10)) return jsonError('Trop de requêtes', 429);
+    if (body?.forget !== true && overLimit(pingHits, clientKey(request), 10)) return jsonError('Trop de requêtes', 429);
 
     // Bruit écarté sans erreur (le client n'a rien à corriger) : robots et
     // navigateurs automatisés, et pings « web » hors du site officiel.
@@ -1088,10 +1088,10 @@ async function handleStats(env) {
             for (const c of [total, kind, ...buckets]) {
                 c.known++;
                 if (age === 0) { c.today++; if (firstAge === 0) c.todayNew++; }
-                if (age <= 7) { c.week++; if (firstAge <= 7) c.weekNew++; }
-                if (age <= 30) { c.month++; if (firstAge <= 30) c.monthNew++; }
+                if (age < 7) { c.week++; if (firstAge < 7) c.weekNew++; }
+                if (age < 30) { c.month++; if (firstAge < 30) c.monthNew++; }
             }
-            if (age <= 30) { const v = `${meta.p || 'ios'} ${meta.v || '?'}`; versions[v] = (versions[v] || 0) + 1; }
+            if (age < 30) { const v = `${meta.p || 'ios'} ${meta.v || '?'}`; versions[v] = (versions[v] || 0) + 1; }
             const d = meta.days || 1;
             totalDays += d;
             if (d >= 2) { returning++; kind.returning++; for (const b of buckets) b.returning++; }
@@ -1101,7 +1101,7 @@ async function handleStats(env) {
             if (daily[meta.first]) daily[meta.first]['new' + p]++;
             if (daily[meta.last]) daily[meta.last]['last' + p]++;
 
-            if (meta.first && Number.isFinite(firstAge)) {
+            if (meta.first && Number.isFinite(firstAge) && firstAge <= USAGE_RETENTION_DAYS) {
                 const span = Math.round((then - firstThen) / 86400000);
                 const week = weekOf(meta.first);
                 const c = cohorts[week] ??= { week, size: 0, d1: { base: 0, kept: 0 }, d7: { base: 0, kept: 0 } };
@@ -1113,7 +1113,7 @@ async function handleStats(env) {
                     if (c[k]) { c[k].base++; if (span >= n) c[k].kept++; }
                 }
             }
-            if (age <= 30) {
+            if (age < 30) {
                 if (meta.li || meta.di || meta.os) devices.reporting.ios++;
                 if (meta.lw || meta.dw) devices.reporting.web++;
                 if (meta.lt || meta.dt) devices.reporting.tvos++;
@@ -3510,7 +3510,7 @@ async function pushCheckLives(env, now, counts = {}) {
     // avec 20 tranches, une chaîne attendait jusqu'à 8 vérifications sans
     // être lue (~18 min) ; c'est au plus une maintenant (~4 min), jusqu'à
     // 2 × PUSH_GQL_PER_RUN tranches. Autant de requêtes qu'avant.
-    const rows = (await db.prepare('SELECT login, stream FROM push_live').all()).results || [];
+    const rows = (await db.prepare('SELECT login, stream FROM push_live ORDER BY login').all()).results || [];
     const known = new Map(rows.map((r) => [r.login, r.stream]));
     const logins = [...known.keys()];
     const batches = Math.ceil(logins.length / 100);
