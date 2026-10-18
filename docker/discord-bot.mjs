@@ -149,6 +149,38 @@ function changelogItems(src, version) {
   return [...en[1].matchAll(/'((?:[^'\\]|\\.)*)'/g)].map((m) => m[1].replace(/\\(.)/g, '$1'))
 }
 
+/** Compare deux versions (« 1.4.12 », « 2026.10.18a ») : nombres comparés en
+ *  nombres, lettres en texte. < 0, 0 ou > 0. */
+export function compareVersions(a, b) {
+  const parts = (v) => String(v).match(/\d+|[^\d.]+/g) || []
+  const x = parts(a), y = parts(b)
+  for (let i = 0; i < Math.max(x.length, y.length); i++) {
+    if (x[i] === undefined) return -1
+    if (y[i] === undefined) return 1
+    const c = /^\d+$/.test(x[i]) && /^\d+$/.test(y[i]) ? Number(x[i]) - Number(y[i]) : x[i].localeCompare(y[i])
+    if (c) return c
+  }
+  return 0
+}
+
+/** Texte en morceaux de `max` caractères au plus, coupés aux lignes (une
+ *  ligne trop longue est coupée elle aussi, plutôt que tronquée). */
+function chunks(text, max = 1900) {
+  const parts = []
+  let cur = ''
+  for (let line of String(text).split('\n')) {
+    while (line.length > max) {
+      if (cur) { parts.push(cur); cur = '' }
+      parts.push(line.slice(0, max))
+      line = line.slice(max)
+    }
+    if (cur && cur.length + line.length + 1 > max) { parts.push(cur); cur = '' }
+    cur = cur ? `${cur}\n${line}` : line
+  }
+  if (cur) parts.push(cur)
+  return parts
+}
+
 export function startDiscordBridge({
   token, secret, worker, admins = [],
   api = 'https://discord.com/api/v10',
@@ -166,6 +198,14 @@ export function startDiscordBridge({
   if (!token || !secret || !worker) {
     log.warn('Discord bridge off: DISCORD_BOT_TOKEN, FEEDBACK_BOT_SECRET and FEEDBACK_WORKER are needed')
     return null
+  }
+  try { new Intl.DateTimeFormat('en', { timeZone: summaryTz }) } catch {
+    log.warn(`Discord bridge: SUMMARY_TZ “${summaryTz}” isn’t a time zone — Europe/Paris used instead`)
+    summaryTz = 'Europe/Paris'
+  }
+  if (!Number.isInteger(summaryHour) || summaryHour < 0 || summaryHour > 23) {
+    log.warn('Discord bridge: SUMMARY_HOUR must be between 0 and 23 — 9 used instead')
+    summaryHour = 9
   }
   worker = worker.replace(/\/+$/, '')
   api = api.replace(/\/+$/, '')
@@ -278,13 +318,7 @@ export function startDiscordBridge({
   /** Texte en messages de 1900 caractères au plus, coupés aux lignes ;
    *  `components` sur le dernier. */
   async function sendChunks(channel, text, { components, allowed_mentions = { parse: [] } } = {}) {
-    const parts = []
-    let cur = ''
-    for (const line of text.split('\n')) {
-      if (cur && cur.length + line.length + 1 > 1900) { parts.push(cur); cur = '' }
-      cur = cur ? `${cur}\n${line}` : line.slice(0, 1900)
-    }
-    if (cur) parts.push(cur)
+    const parts = chunks(text)
     let last = null
     for (let n = 0; n < parts.length; n++) {
       last = await rest('POST', `/channels/${channel}/messages`, {
@@ -445,7 +479,8 @@ export function startDiscordBridge({
   // ── Messages privés (retours envoyés depuis Discord) ────────────────────
   const dmChannels = new Map()
   /** `key` : boutons pour répondre, en texte (« Reply », le formulaire le
-   *  plus simple, lu par tous les clients) ou en captures. */
+   *  plus simple, lu par tous les clients) ou en captures. Long texte : en
+   *  plusieurs messages (photos sur le premier, boutons sur le dernier). */
   async function sendDm(userId, content, key, files = []) {
     let ch = dmChannels.get(userId)
     if (!ch) {
@@ -453,10 +488,13 @@ export function startDiscordBridge({
       if (!ch) throw new Error('no DM channel')
       dmChannels.set(userId, ch)
     }
-    await rest('POST', `/channels/${ch}/messages`, {
-      content: content.slice(0, 1900), allowed_mentions: { parse: [] },
-      ...(key ? { components: [row(button('Reply', `ur:${key}`, 1), button('Send screenshots', `us:${key}`))] } : {}),
-    }, files)
+    const parts = chunks(content)
+    for (let n = 0; n < parts.length; n++) {
+      await rest('POST', `/channels/${ch}/messages`, {
+        content: parts[n], allowed_mentions: { parse: [] },
+        ...(key && n === parts.length - 1 ? { components: [row(button('Reply', `ur:${key}`, 1), button('Send screenshots', `us:${key}`))] } : {}),
+      }, n === 0 ? files : [])
+    }
   }
 
   /** Réponses du développeur pas encore envoyées à qui a écrit depuis
@@ -477,11 +515,7 @@ export function startDiscordBridge({
           if (p?.b64) files.push({ bytes: Buffer.from(p.b64, 'base64'), type: p.type, name: `picture${files.length + 1}.${EXT[p.type] || 'jpg'}` })
         }
         const ph = it.ph || 0
-        // Mention ajoutée après la coupe : une longue réponse ne la cache pas.
-        const withLost = (text, k) => {
-          const note = k > 0 ? `\n(📷 ${plural(k, 'picture')} couldn’t be sent here)` : ''
-          return text.slice(0, 1900 - note.length) + note
-        }
+        const withLost = (text, k) => (k > 0 ? `${text}\n(📷 ${plural(k, 'picture')} couldn’t be sent here)` : text)
         const text = it.m || ph
           ? `💬 **The developer replied** about your report “${r.excerpt}”:${it.m ? `\n${it.m}` : ''}`
           : `📌 Your report “${r.excerpt}” is now **${it.label}**.`
@@ -540,8 +574,19 @@ export function startDiscordBridge({
   async function afterTeamUpdate(thread, s, prevStatus) {
     if (!s) return
     await syncTags(thread, s.status)
-    if (s.status === 'done' && prevStatus && prevStatus !== 'done' && !s.fix) await fixPrompt(thread)
+    // État précédent inconnu (bot redémarré, changement fait dans /stats) :
+    // la question est posée quand même (une fois) — la personne n'était
+    // sinon jamais prévenue.
+    if (s.status === 'done' && prevStatus !== 'done' && !s.fix) await fixPrompt(thread)
     if (s.discord) await deliverDm(thread)
+    // Doublons fusionnés ici : leur état a suivi (Worker) ; leur étiquette et
+    // leurs messages privés aussi.
+    for (const dt of s.dupThreads || []) {
+      const ds = await stateOf(dt, { fresh: true }).catch(() => null)
+      if (!ds) continue
+      await syncTags(dt, ds.status)
+      if (ds.discord) await deliverDm(dt)
+    }
   }
 
   /** Retours d'avant le pont : le Worker en publie quelques-uns par appel,
@@ -664,6 +709,11 @@ export function startDiscordBridge({
     if (m.author?.bot || !isAdmin(m.author?.id)) return
     const text = String(m.content || '').trim()
     if (text.startsWith('//')) return   // note privée
+    if (text.length > 2000) {
+      await react(thread, m.id, '⚠️')
+      say(thread, `⚠️ Not sent: ${text.length} characters, 2000 at most — split it into several messages.`)
+      return
+    }
     const photos = await photosOf(m.attachments || [])
     if (!text && !photos.ok.length) {
       if (photos.skipped) say(thread, `⚠️ Nothing sent: too big, or not a ${PHOTO_TYPES} image.`)
@@ -835,6 +885,9 @@ export function startDiscordBridge({
       await say(r.intoThread, `🔀 Duplicate merged here: <#${thread}>.`)
     }
     await deliverDm(thread)
+    // Son étiquette suit l'état repris de l'autre retour.
+    const s = await stateOf(thread, { fresh: true }).catch(() => null)
+    if (s) await syncTags(thread, s.status)
     await rest('PATCH', `/channels/${thread}`, { archived: true }).catch(() => {})
     return 'Merged.'
   }
@@ -842,7 +895,7 @@ export function startDiscordBridge({
   async function setup(i) {
     const use = String(opt(i, 'use') || '')
     const role = opt(i, 'role') || null
-    const settings = { ...st.settings }
+    const settings = { ...((await kvGet('settings').catch(() => null)) || st.settings) }
     if (use === 'alerts') settings.alerts = i.channel_id
     else if (use === 'announcements') settings.announcements = i.channel_id
     else if (use === 'testers') { settings.testers = i.channel_id; settings.testersRole = role }
@@ -856,6 +909,7 @@ export function startDiscordBridge({
     }[use]
   }
 
+  const publishing = new Set()   // brouillons de notes en cours de publication
   async function onComponent(i, user) {
     const [kind, a, b] = String(i.data?.custom_id || '').split(':')
     // Boutons d'un message privé : « Reply » (texte seul) et « Send
@@ -911,11 +965,17 @@ export function startDiscordBridge({
         await respond(i, 6)
         try {
           await call({ action: 'delete', thread })
-          await editOriginal(i, { content: 'Deleted.', components: [] })
-          await rest('DELETE', `/channels/${thread}`)
-          forget(thread)
         } catch (e) {
           await editOriginal(i, { content: `❌ ${e.message}`, components: [] })
+          return
+        }
+        forget(thread)
+        await editOriginal(i, { content: 'Deleted.', components: [] })
+        try {
+          await rest('DELETE', `/channels/${thread}`)
+        } catch (e) {
+          await rest('PATCH', `/channels/${thread}`, { archived: true, locked: true }).catch(() => {})
+          await editOriginal(i, { content: `Report deleted, but this post couldn’t be (${e.message}): it’s closed instead — delete it by hand.`, components: [] })
         }
         return
       }
@@ -927,11 +987,20 @@ export function startDiscordBridge({
         }
         const channel = st.settings.announcements
         if (!channel) return respond(i, 4, { flags: 64, content: 'Pick the announcements channel first: run /setup there with “Release announcements”.' })
+        if (publishing.has(b)) return respond(i, 4, { flags: 64, content: 'Already being published.' })
+        publishing.add(b)
         await respond(i, 6)
-        const draft = await kvGet(`draft_${b}`).catch(() => null)
-        if (!draft?.text) return editOriginal(i, { content: `${head}\n❌ This draft expired.`, components: [] })
-        await sendChunks(channel, draft.text)
-        await editOriginal(i, { content: `${head}\n✅ Published in <#${channel}>.`, components: [] })
+        try {
+          const draft = await kvGet(`draft_${b}`).catch(() => null)
+          if (!draft?.text) return editOriginal(i, { content: `${head}\n❌ This draft expired.`, components: [] })
+          await sendChunks(channel, draft.text)
+          await kvSet(`draft_${b}`, null, 60).catch(() => {})
+          await editOriginal(i, { content: `${head}\n✅ Published in <#${channel}>.`, components: [] })
+        } catch (e) {
+          await editOriginal(i, { content: `${head}\n❌ Not published: ${e.message}`, components: i.message?.components })
+        } finally {
+          publishing.delete(b)
+        }
         return
       }
     }
@@ -1151,15 +1220,18 @@ export function startDiscordBridge({
       const tv = latest((r) => r.prerelease && /^tv-test-/.test(r.tag_name || ''))
       if (stable) {
         const v = stable.name.replace(/^TwitchUnblock\s+/, '').trim()
-        if (seen.ios && seen.ios !== v) await draftRelease('ios', v, stable)
-        next.ios = v
+        if (!seen.ios || compareVersions(v, seen.ios) > 0) {
+          if (seen.ios) await draftRelease('ios', v, stable)
+          next.ios = v
+        }
       }
-      if (test && test.tag_name !== seen.iosTest) { if (seen.iosTest) await postTestBuild(test); next.iosTest = test.tag_name }
-      if (tv && tv.tag_name !== seen.tvTest) { if (seen.tvTest) await postTestBuild(tv); next.tvTest = tv.tag_name }
+      const num = (tag) => Number(String(tag || '').match(/(\d+)$/)?.[1]) || 0
+      if (test && num(test.tag_name) > num(seen.iosTest)) { if (seen.iosTest) await postTestBuild(test); next.iosTest = test.tag_name }
+      if (tv && num(tv.tag_name) > num(seen.tvTest)) { if (seen.tvTest) await postTestBuild(tv); next.tvTest = tv.tag_name }
     }
     const web = await siteVersion()
-    if (web) {
-      if (seen.web && seen.web !== web) await draftRelease('web', web)
+    if (web && (!seen.web || compareVersions(web, seen.web) > 0)) {
+      if (seen.web) await draftRelease('web', web)
       next.web = web
     }
     if (JSON.stringify(next) !== JSON.stringify(seen)) await kvSet('seen', next)
@@ -1265,9 +1337,15 @@ export function startDiscordBridge({
     // Worker plus ancien (sans sondages) : refus attendu, rien à signaler.
     checkPoll().catch(() => {})
     const c = await call({ action: 'config' })
-    if (c.forum !== st.forum) {
+    if (c.forum !== st.forum || c.guild !== st.guild) {
       log.log(`Discord bridge: the webhook moved to channel ${c.forum}`)
-      Object.assign(st, { forum: c.forum, guild: c.guild })
+      const newGuild = c.guild !== st.guild
+      Object.assign(st, { forum: c.forum, guild: c.guild, labels: c.labels || st.labels })
+      if (newGuild) {
+        const g = await rest('GET', `/guilds/${c.guild}`).catch(() => null)
+        st.owner = g?.owner_id || null
+        await registerCommands()
+      }
       st.threads.clear()
       st.parents.clear()
       st.states.clear()
@@ -1309,6 +1387,16 @@ export function startDiscordBridge({
     intervals.push(first)
   }
 
+  // Événements d'un même post traités l'un après l'autre : en parallèle, deux
+  // écritures dans le Worker pouvaient s'écraser (réponse perdue, ✅ affiché).
+  const queues = new Map()
+  function serial(key, fn) {
+    const run = (queues.get(key) || Promise.resolve()).catch(() => {}).then(fn)
+    queues.set(key, run)
+    run.catch(() => {}).finally(() => { if (queues.get(key) === run) queues.delete(key) })
+    return run
+  }
+
   async function dispatch(t, d) {
     switch (t) {
       case 'READY':
@@ -1335,7 +1423,7 @@ export function startDiscordBridge({
         if (d.parent_id === st.forum) st.threads.set(d.id, d.applied_tags || [])
         break
       case 'THREAD_UPDATE':
-        await onThreadUpdate(d)
+        await serial(d.id, () => onThreadUpdate(d))
         break
       case 'THREAD_DELETE':
         forget(d.id)
@@ -1344,7 +1432,7 @@ export function startDiscordBridge({
         for (const th of d.threads || []) if (th.parent_id === st.forum) st.threads.set(th.id, th.applied_tags || [])
         break
       case 'MESSAGE_CREATE':
-        await onMessage(d)
+        await serial(d.channel_id, () => onMessage(d))
         break
       case 'INTERACTION_CREATE':
         await onInteraction(d)
@@ -1421,7 +1509,7 @@ export function startDiscordBridge({
         st.forum = c.forum
         st.guild = c.guild
         st.labels = c.labels || {}
-        st.settings = (await kvGet('settings').catch(() => null)) || {}
+        st.settings = (await kvGet('settings')) || {}
         break
       } catch (e) {
         log.warn(`Discord bridge: the Worker doesn’t answer (${e.message}) — trying again in 1 min`

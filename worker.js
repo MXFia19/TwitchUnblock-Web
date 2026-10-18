@@ -909,7 +909,7 @@ async function handlePing(request, env) {
     if (request.method !== 'POST') return jsonError('Method Not Allowed', 405);
     if (!env.DB) return jsonError("Base D1 'DB' non liée au Worker.", 500);
     let body;
-    try { body = await request.json(); } catch (e) { return jsonError('JSON invalide', 400); }
+    if (!(body = await readJsonObject(request))) return jsonError('JSON invalide', 400);
 
     // Chaque ping est une écriture D1 (100 000 par jour en gratuit) : une même
     // adresse ne peut pas en enchaîner des centaines. Compté en mémoire
@@ -1241,6 +1241,14 @@ async function handleStats(env) {
 
 function jsonResponse(obj) { return new Response(JSON.stringify(obj), { headers: { ...RESPONSE_HEADERS, 'Content-Type': 'application/json' } }); }
 function jsonError(msg, status, extra = {}) { return new Response(JSON.stringify({ error: msg, ...extra }), { status, headers: { ...RESPONSE_HEADERS, 'Content-Type': 'application/json' } }); }
+/** Corps JSON d'une requête s'il s'agit d'un objet ; null sinon (JSON
+ *  invalide, ou `null`, nombre, tableau… qui faisaient des erreurs 500). */
+async function readJsonObject(request) {
+    try {
+        const v = await request.json();
+        return v && typeof v === 'object' && !Array.isArray(v) ? v : null;
+    } catch (e) { return null; }
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 //  Administration : réservé aux comptes de ADMIN_IDS (jeton Twitch vérifié).
@@ -1294,7 +1302,7 @@ async function handleAdminUsageDelete(request, env) {
     const { denied } = await requireAdmin(request);
     if (denied) return denied;
     let body;
-    try { body = await request.json(); } catch (e) { return jsonError('JSON invalide', 400); }
+    if (!(body = await readJsonObject(request))) return jsonError('JSON invalide', 400);
     const target = String(body.target || '');
     const keys = await listUsage(env);
     const match = {
@@ -1319,7 +1327,7 @@ async function handleAdminSyncDelete(request, env) {
     const { denied } = await requireAdmin(request);
     if (denied) return denied;
     let body;
-    try { body = await request.json(); } catch (e) { return jsonError('JSON invalide', 400); }
+    if (!(body = await readJsonObject(request))) return jsonError('JSON invalide', 400);
     const login = String(body.login || '').trim().toLowerCase();
     if (!LOGIN_RE.test(login)) return jsonError('Nom invalide', 400);
     const d = await twitchGQL('query($l: String!) { user(login: $l) { id } }', { l: login });
@@ -1339,7 +1347,10 @@ const ANNOUNCEMENT_KEY = 'announcement';
 let announcementCache = null;   // { value, until } — l'app la relit à chaque ouverture
 
 async function readAnnouncement(env) {
-    if (announcementCache && announcementCache.until > Date.now()) return announcementCache.value;
+    if (announcementCache && announcementCache.until > Date.now()) {
+        const v = announcementCache.value;
+        return v && v.until > Date.now() ? v : null;
+    }
     let value = null;
     try { value = await store(env).get(ANNOUNCEMENT_KEY, 'json'); } catch (e) {}
     if (value && !(value.until > Date.now())) value = null;
@@ -1403,7 +1414,7 @@ async function handleAdminAnnouncement(request, env) {
     }
     if (request.method !== 'POST') return jsonError('Method Not Allowed', 405);
     let body;
-    try { body = await request.json(); } catch (e) { return jsonError('JSON invalide', 400); }
+    if (!(body = await readJsonObject(request))) return jsonError('JSON invalide', 400);
     // Modèles modifiés dans /stats : la liste entière, remplacée.
     if (Array.isArray(body.templates)) {
         const templates = cleanAnnounceTemplates(body.templates);
@@ -1502,6 +1513,13 @@ const FEEDBACK_STATUS_LABELS = { new: 'New', seen: 'Seen', accepted: 'Accepted',
 function notifyDiscord(env, ctx, entry, photos = [], opts = {}) {
     const hook = env.FEEDBACK_WEBHOOK ? String(env.FEEDBACK_WEBHOOK) : '';
     const job = (async () => {
+        if (opts.waitLink && opts.key && !entry.dt) {
+            for (let i = 0; i < 5 && !entry.dt; i++) {
+                await new Promise((r) => setTimeout(r, 2000));
+                const { metadata } = await store(env).getWithMetadata(opts.key);
+                if (metadata?.dt) entry = { ...entry, dt: metadata.dt };
+            }
+        }
         const r = hook
             ? await postFeedbackToDiscord(hook, entry, photos, { ...opts, bot: Boolean(env.FEEDBACK_BOT_SECRET) })
             : { ok: false, status: 0, detail: 'missing' };
@@ -1519,11 +1537,7 @@ function notifyDiscord(env, ctx, entry, photos = [], opts = {}) {
  *  `ttl` : ce qui reste au retour (reprise des anciens : on ne le prolonge
  *  pas). */
 async function linkDiscordThread(env, key, thread, fresh, ttl = FEEDBACK_TTL) {
-    if (fresh) {
-        const { value, metadata } = await store(env).getWithMetadata(key);
-        if (!metadata) return;
-        await store(env).put(key, value, { metadata: { ...metadata, dt: thread }, expirationTtl: ttl });
-    }
+    if (fresh && !(await store(env).patchMeta(key, 'dt', thread))) return;
     await store(env).put(`${FEEDBACK_DISCORD_PREFIX}${thread}`, key, { expirationTtl: ttl });
 }
 
@@ -1560,6 +1574,7 @@ async function backfillDiscord(env) {
         const r = await backfillOne(env, hook, name, ttl);
         if (r.notForum) return { error: 'The webhook isn’t in a Forum channel', done, remaining: todo.length - done };
         if (r.retryAfter) return { done, remaining: todo.length - done, retryAfter: r.retryAfter };
+        if (r.transient) return { error: `Discord unreachable (${r.transient})`, done, remaining: todo.length - done };
         done++;
     }
     return { done, remaining: todo.length - done };
@@ -1579,8 +1594,9 @@ async function backfillOne(env, hook, key, ttl) {
         { bot: Boolean(env.FEEDBACK_BOT_SECRET), requireThread: true });
     if (r.notForum) return r;
     if (r.status === 429) return { retryAfter: r.retryAfter || 5 };
+    if (!r.ok && (!r.status || r.status >= 500)) return { transient: r.status ? `HTTP ${r.status}` : r.detail || 'network' };
     if (!r.ok || !r.thread) {
-        await store(env).put(key, value, { metadata: { ...m, dtf: (m.dtf || 0) + 1 }, expirationTtl: ttl });
+        await store(env).patchMeta(key, 'dtf', (m.dtf || 0) + 1);
         return { ok: false };
     }
     await linkDiscordThread(env, key, r.thread, true, ttl);
@@ -1785,7 +1801,7 @@ async function handleFeedback(request, env, ctx) {
     }
 
     let body;
-    try { body = await request.json(); } catch (e) { return jsonError('JSON invalide', 400); }
+    if (!(body = await readJsonObject(request))) return jsonError('JSON invalide', 400);
     const message = cleanText(body.message, 2000);
     if (message.length < 5) return jsonError('Message trop court', 400);
     let info = body.info;
@@ -1826,7 +1842,7 @@ async function handleFeedbackThread(request, env) {
     // par heure et par adresse laissent de la marge à plusieurs appareils.
     if (overLimit(threadHits, clientKey(request), 600)) return jsonError('Trop de requêtes', 429);
     let body;
-    try { body = await request.json(); } catch (e) { return jsonError('JSON invalide', 400); }
+    if (!(body = await readJsonObject(request))) return jsonError('JSON invalide', 400);
     const list = Array.isArray(body.items) ? body.items.slice(0, 30) : [];
     const items = [];
     for (const it of list) {
@@ -1846,7 +1862,7 @@ async function handleFeedbackReply(request, env, ctx) {
         return jsonError('Trop de messages, réessaie dans une heure', 429);
     }
     let body;
-    try { body = await request.json(); } catch (e) { return jsonError('JSON invalide', 400); }
+    if (!(body = await readJsonObject(request))) return jsonError('JSON invalide', 400);
     const id = String(body.id || '');
     const found = await ownedFeedback(env, id, body.token);
     if (!found) return jsonError('Retour introuvable', 404);
@@ -1865,7 +1881,8 @@ async function handleFeedbackReply(request, env, ctx) {
     thread.push({ f: 'u', m: message, at: now, ...(ph.length ? { ph } : {}) });
     const next = { ...meta, u: now, r: 'u', n: (meta.n || 1) + 1, ph: (meta.ph || 0) + ph.length };
     await store(env).put(id, JSON.stringify(thread), { metadata: next, expirationTtl: FEEDBACK_TTL });
-    const hook = notifyDiscord(env, ctx, { ...next, m: message }, photos, { key: id, inReplyTo: meta.m });
+    const hook = notifyDiscord(env, ctx, { ...next, m: message }, photos,
+        { key: id, inReplyTo: meta.m, waitLink: !meta.dt && now - (meta.at || 0) < 120000 });
     if (!ctx?.waitUntil) await hook;
     return jsonResponse({ ok: true, item: publicFeedback(id, next, thread), ...(dropped ? { photosDropped: dropped } : {}) });
 }
@@ -2079,10 +2096,14 @@ async function feedbackTeamUpdate(env, key, { message = '', photos = [], status 
     await store(env).put(key, JSON.stringify(thread), { metadata: next, expirationTtl: FEEDBACK_TTL });
     if (next.dt) await linkDiscordThread(env, key, next.dt, false);
     // Doublons fusionnés (/merge) : ils suivent l'état de celui-ci.
+    const dupThreads = [];
     if (follow && status !== null && Array.isArray(next.dups)) {
-        for (const dup of next.dups.slice(0, 20)) await feedbackTeamUpdate(env, dup, { status, follow: false });
+        for (const dup of next.dups.slice(0, 20)) {
+            const d = await feedbackTeamUpdate(env, dup, { status, follow: false });
+            if (d.metadata?.dt && !d.unchanged && !d.error) dupThreads.push(d.metadata.dt);
+        }
     }
-    return { metadata: next, thread };
+    return { metadata: next, thread, ...(dupThreads.length ? { dupThreads } : {}) };
 }
 
 // ── Pont Discord (bot du relais) ───────────────────────────────────────────
@@ -2119,7 +2140,7 @@ async function handleFeedbackBot(request, env) {
         return jsonError('Access denied', 403);
     }
     let body;
-    try { body = await request.json(); } catch (e) { return jsonError('Bad JSON', 400); }
+    if (!(body = await readJsonObject(request))) return jsonError('Bad JSON', 400);
 
     if (body.action === 'config') {
         const hook = String(env.FEEDBACK_WEBHOOK || '').trim();
@@ -2150,7 +2171,7 @@ async function handleFeedbackBot(request, env) {
     if (body.action === 'state') return jsonResponse(state(metadata));
     if (body.action === 'status') {
         const r = await feedbackTeamUpdate(env, key, { status: String(body.status || '') });
-        return r.error ? jsonError(r.en, r.code) : jsonResponse({ ok: true, ...state(r.metadata) });
+        return r.error ? jsonError(r.en, r.code) : jsonResponse({ ok: true, ...state(r.metadata), dupThreads: r.dupThreads || [] });
     }
     if (body.action === 'reply') {
         const message = cleanText(body.message, 2000);
@@ -2163,7 +2184,7 @@ async function handleFeedbackBot(request, env) {
         // Réponse rapide « corrigé » : passe à « Fait » dans la foulée.
         if (body.status && FEEDBACK_STATUSES.includes(body.status)) {
             const s = await feedbackTeamUpdate(env, key, { status: body.status });
-            if (!s.error) return jsonResponse({ ok: true, ...state(s.metadata) });
+            if (!s.error) return jsonResponse({ ok: true, ...state(s.metadata), dupThreads: s.dupThreads || [] });
         }
         return jsonResponse({ ok: true, ...state(r.metadata) });
     }
@@ -2211,7 +2232,7 @@ async function handleFeedbackBot(request, env) {
     }
     if (body.action === 'delete') {
         await store(env).delete(key);
-        for (const k of (await listStoreKeys(env, `${FEEDBACK_PHOTO_PREFIX}${key}_`)).slice(0, 200)) await store(env).delete(k.name);
+        await store(env).deletePrefix(`${FEEDBACK_PHOTO_PREFIX}${key}_`);
         await store(env).delete(`${FEEDBACK_DISCORD_PREFIX}${thread}`);
         return jsonResponse({ ok: true, key });
     }
@@ -2227,10 +2248,12 @@ async function handleFeedbackBot(request, env) {
         if (!target || !FEEDBACK_KEY_RE.test(target) || target === key) return jsonError('Other report not found', 404);
         const other = await store(env).getWithMetadata(target);
         if (!other.metadata) return jsonError('Other report not found', 404);
+        if (metadata.mg) return jsonError('This report is already merged into another one', 409);
+        if (other.metadata.mg) return jsonError('The other report is itself merged: merge into the one it points to', 409);
         const r = await feedbackTeamUpdate(env, key, { message: FEEDBACK_MERGED_MESSAGE, extra: { mg: target } });
         if (r.error) return jsonError(r.en, r.code);
         if ((other.metadata.s || 'new') !== (r.metadata.s || 'new')) await feedbackTeamUpdate(env, key, { status: other.metadata.s || 'new', follow: false });
-        const dups = [...new Set([...(other.metadata.dups || []), key])].slice(-20);
+        const dups = [...new Set([...(other.metadata.dups || []), ...(metadata.dups || []), key])].slice(-20);
         await store(env).put(target, other.value, { metadata: { ...other.metadata, dups }, expirationTtl: FEEDBACK_TTL });
         return jsonResponse({ ok: true, key, into: target, intoThread: other.metadata.dt || null });
     }
@@ -2239,8 +2262,7 @@ async function handleFeedbackBot(request, env) {
         const p = String(body.platform || '');
         if (!['ios', 'web', 'both', 'none'].includes(p)) return jsonError('Bad platform', 400);
         const meta = { ...metadata };
-        if (p === 'none') delete meta.fx;
-        else meta.fx = { p, at: Date.now(), done: {} };
+        meta.fx = p === 'none' ? { p, at: Date.now() } : { p, at: Date.now(), done: {} };
         await store(env).put(key, value, { metadata: meta, expirationTtl: FEEDBACK_TTL });
         const { metadata: versions } = await store(env).getWithMetadata(FEEDBACK_VERSIONS_KEY);
         return jsonResponse({ ok: true, ...state(meta), versions: versions || {} });
@@ -2405,6 +2427,20 @@ async function feedbackBotTool(env, body) {
  * aussi, et son post Discord le note. La première fois, on retient
  * seulement les versions.
  */
+/** Compare deux versions (« 1.4.12 », « 2026.10.18a ») : nombres comparés en
+ *  nombres, lettres en texte. < 0, 0 ou > 0. */
+function compareVersions(a, b) {
+    const parts = (v) => String(v).match(/\d+|[^\d.]+/g) || [];
+    const x = parts(a), y = parts(b);
+    for (let i = 0; i < Math.max(x.length, y.length); i++) {
+        if (x[i] === undefined) return -1;
+        if (y[i] === undefined) return 1;
+        const c = /^\d+$/.test(x[i]) && /^\d+$/.test(y[i]) ? Number(x[i]) - Number(y[i]) : x[i].localeCompare(y[i]);
+        if (c) return c;
+    }
+    return 0;
+}
+
 async function feedbackReleased(env, versions) {
     const { metadata: known } = await store(env).getWithMetadata(FEEDBACK_VERSIONS_KEY);
     const prev = known || {};
@@ -2413,6 +2449,7 @@ async function feedbackReleased(env, versions) {
     for (const p of ['ios', 'web']) {
         const v = cleanText(versions?.[p], 40);
         if (!v || v === prev[p]) continue;
+        if (prev[p] && compareVersions(v, prev[p]) < 0) continue;
         next[p] = v;
         if (prev[p]) shipped.push({ p, v });
     }
@@ -2509,7 +2546,7 @@ async function handleAdminFeedback(request, env, ctx) {
 
     if (request.method === 'POST') {
         let body;
-        try { body = await request.json(); } catch (e) { return jsonError('JSON invalide', 400); }
+        if (!(body = await readJsonObject(request))) return jsonError('JSON invalide', 400);
 
         // « Vu » : un retour nouveau passe à l'état « Vu », que la personne
         // voit ; ce qu'elle a écrit jusque-là n'est plus « à répondre ». Rien
@@ -2541,8 +2578,10 @@ async function handleAdminFeedback(request, env, ctx) {
                 : { status: String(body.status.status || '') };
             const r = await feedbackTeamUpdate(env, target, update);
             if (r.error) return jsonError(r.error, r.code);
-            // Recopié dans le post Discord du retour (salon forum).
+            // Recopié dans le post Discord du retour (salon forum), et dans
+            // ceux de ses doublons qui ont suivi son état.
             if (!r.unchanged) echoTeamToDiscord(env, ctx, r.metadata, update);
+            for (const dt of r.dupThreads || []) echoTeamToDiscord(env, ctx, { dt }, update);
             return jsonResponse({ ok: true, item: summary(target, r.metadata), thread: r.thread });
         }
 
@@ -2556,21 +2595,19 @@ async function handleAdminFeedback(request, env, ctx) {
             const { metadata } = await store(env).getWithMetadata(body.delete);
             await store(env).delete(body.delete);
             if (metadata?.dt) await store(env).delete(`${FEEDBACK_DISCORD_PREFIX}${metadata.dt}`);
-            for (const k of (await listAll(`${FEEDBACK_PHOTO_PREFIX}${body.delete}_`)).slice(0, 200)) await store(env).delete(k.name);
+            await store(env).deletePrefix(`${FEEDBACK_PHOTO_PREFIX}${body.delete}_`);
             // Son post Discord part aussi (supprimé par le bot du relais).
             if (metadata?.dt) await trashDiscordPosts(env, ctx, [metadata.dt]);
             return jsonResponse({ ok: true, deleted: 1 });
         }
         if (body.clear === true) {
-            // Une écriture D1 par entrée : 500 retours et 500 photos au plus par action.
-            const keys = (await listAll(FEEDBACK_PREFIX)).slice(0, 500);
-            for (const k of keys) await store(env).delete(k.name);
-            const pics = (await listAll(FEEDBACK_PHOTO_PREFIX)).slice(0, 500);
-            for (const k of pics) await store(env).delete(k.name);
-            const links = (await listAll(FEEDBACK_DISCORD_PREFIX)).slice(0, 500);
-            for (const k of links) await store(env).delete(k.name);
+            // Une requête par préfixe : une écriture par entrée dépassait le
+            // plafond de requêtes D1 d'un appel (erreur 500, effacement partiel).
+            const count = (await listAll(FEEDBACK_PREFIX)).length;
+            const links = await listAll(FEEDBACK_DISCORD_PREFIX);
+            for (const p of [FEEDBACK_PREFIX, FEEDBACK_PHOTO_PREFIX, FEEDBACK_DISCORD_PREFIX]) await store(env).deletePrefix(p);
             await trashDiscordPosts(env, ctx, links.map((k) => k.name.slice(FEEDBACK_DISCORD_PREFIX.length)));
-            return jsonResponse({ ok: true, deleted: keys.length });
+            return jsonResponse({ ok: true, deleted: count });
         }
         return jsonError('Action inconnue', 400);
     }
@@ -2612,7 +2649,7 @@ async function handleAnnouncementReact(request, env) {
     const now = Date.now();
 
     let body;
-    try { body = await request.json(); } catch (e) { return jsonError('JSON invalide', 400); }
+    if (!(body = await readJsonObject(request))) return jsonError('JSON invalide', 400);
     const device = String(body.id || '');
     if (!/^[0-9a-fA-F-]{36}$/.test(device)) return jsonError('ID invalide', 400);
     const current = await readAnnouncement(env);
@@ -2705,8 +2742,7 @@ async function handlePollState(request, env) {
     if (!env.DB) return jsonResponse({ poll: null, mine: null, results: null });
     let device = null;
     if (request.method === 'POST') {
-        let body = {};
-        try { body = await request.json(); } catch (e) {}
+        const body = (await readJsonObject(request)) || {};
         if (POLL_DEVICE_RE.test(String(body.device || ''))) device = String(body.device).toLowerCase();
     } else if (request.method !== 'GET') return jsonError('Method Not Allowed', 405);
     return new Response(JSON.stringify(await pollState(env, await readPoll(env), device)), {
@@ -2722,7 +2758,7 @@ async function handlePollVote(request, env) {
     // Chaque vote est une écriture : 30 par heure et par adresse.
     if (overLimit(pollHits, clientKey(request), 30)) return jsonError('Trop de requêtes', 429);
     let body;
-    try { body = await request.json(); } catch (e) { return jsonError('JSON invalide', 400); }
+    if (!(body = await readJsonObject(request))) return jsonError('JSON invalide', 400);
     const device = String(body.device || '').toLowerCase();
     if (!POLL_DEVICE_RE.test(device)) return jsonError('ID invalide', 400);
     pollCache = null;
@@ -2785,7 +2821,7 @@ async function handleAdminPoll(request, env) {
     if (request.method === 'GET') return jsonResponse(await pollAdminView(env));
     if (request.method !== 'POST') return jsonError('Method Not Allowed', 405);
     let body;
-    try { body = await request.json(); } catch (e) { return jsonError('JSON invalide', 400); }
+    if (!(body = await readJsonObject(request))) return jsonError('JSON invalide', 400);
     if (body.clear === true) {
         await store(env).delete(POLL_KEY);
         pollCache = null;
@@ -2960,6 +2996,23 @@ function store(env) {
         async delete(key) {
             await ensureSchema(env);
             await db.prepare(`DELETE FROM kv WHERE key = ?1`).bind(key).run();
+        },
+        /** Toutes les clés d'un préfixe, en une requête : une suppression par
+         *  clé dépassait le plafond de requêtes D1 d'un appel (retour très
+         *  illustré, « Tout effacer » : erreur 500 et effacement partiel). */
+        async deletePrefix(prefix) {
+            if (!prefix) return;
+            await ensureSchema(env);
+            await db.prepare(`DELETE FROM kv WHERE substr(key, 1, ?1) = ?2`).bind(prefix.length, prefix).run();
+        },
+        /** Une métadonnée changée sur place, sans relire ni réécrire la valeur
+         *  (une réponse arrivée entre la lecture et l'écriture était perdue).
+         *  false si la clé n'existe pas. */
+        async patchMeta(key, field, val) {
+            await ensureSchema(env);
+            const r = await db.prepare(`UPDATE kv SET meta = json_set(COALESCE(meta, '{}'), ?2, json(?3)) WHERE key = ?1 AND ${alive(Date.now())}`)
+                .bind(key, `$.${field}`, JSON.stringify(val)).run();
+            return (r?.meta?.changes || 0) > 0;
         },
         /** { keys: [{ name, metadata, expiration }], list_complete, cursor } — le curseur est la dernière clé. */
         async list({ prefix = '', limit = 1000, cursor } = {}) {
