@@ -6,6 +6,35 @@
 
 export const CHANGELOG = [
   {
+    version: '2026.10.18a',
+    items: {
+      fr: [
+        'Sauvegarde : l’historique de chaque compte Twitch reste le sien (appareil partagé), ce qui a été regardé sur un autre appareil n’est plus perdu à la synchro, et une synchro ratée n’écrase plus la sauvegarde.',
+        'Thème clair : l’écran d’erreur du lecteur, l’en-tête posé sur la vidéo en paysage et les pseudos du chat redeviennent lisibles.',
+        'Téléphone : la barre du lecteur ne coupe plus le plein écran ni l’image dans l’image, la saisie du chat n’est plus sous la barre d’accueil, et le menu des chapitres tient dans un petit lecteur.',
+        'La liste des VODs s’affiche même avec les cookies bloqués, et « Ne pas partager » est respecté par un comptage déjà en attente.',
+      ],
+      en: [
+        'Backup: each Twitch account keeps its own history (shared device), what you watched on another device is no longer lost when syncing, and a failed sync no longer overwrites the backup.',
+        'Light theme: the player\'s error screen, the header over the video in landscape and chat usernames are readable again.',
+        'Phone: the player bar no longer cuts off full screen and picture in picture, the chat box is no longer under the home bar, and the chapters menu fits in a small player.',
+        'The VOD list shows even with cookies blocked, and “Don’t share” is respected by a usage count already waiting to go.',
+      ],
+      es: [
+        'Copia de seguridad: cada cuenta de Twitch conserva su propio historial (dispositivo compartido), lo que viste en otro dispositivo ya no se pierde al sincronizar, y una sincronización fallida ya no sobrescribe la copia.',
+        'Tema claro: la pantalla de error del reproductor, el encabezado sobre el vídeo en horizontal y los nombres del chat vuelven a leerse bien.',
+        'Teléfono: la barra del reproductor ya no corta la pantalla completa ni la imagen en imagen, el cuadro del chat ya no queda bajo la barra de inicio y el menú de capítulos cabe en un reproductor pequeño.',
+        'La lista de VODs se muestra aunque las cookies estén bloqueadas, y «No compartir» se respeta aunque un recuento ya estuviera en espera.',
+      ],
+      ru: [
+        'Резервная копия: у каждого аккаунта Twitch своя история (общее устройство), просмотренное на другом устройстве больше не теряется при синхронизации, а неудачная синхронизация больше не перезаписывает копию.',
+        'Светлая тема: экран ошибки плеера, заголовок поверх видео в горизонтальном положении и ники в чате снова читаются.',
+        'Телефон: панель плеера больше не обрезает кнопки полноэкранного режима и «картинки в картинке», поле чата больше не уходит под полосу «Домой», а меню глав помещается в маленьком плеере.',
+        'Список VOD показывается даже при заблокированных cookie, а «Не делиться» соблюдается и для уже ожидающего подсчёта.',
+      ],
+    },
+  },
+  {
     version: '2026.10.17b',
     items: {
       fr: [

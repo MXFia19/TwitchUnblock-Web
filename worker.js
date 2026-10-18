@@ -1715,7 +1715,10 @@ function cleanPhotos(list) {
     const out = [];
     for (const raw of list.slice(0, FEEDBACK_MAX_PHOTOS)) {
         const s = String(raw || '').replace(/^data:image\/[a-z]+;base64,/, '');
-        if (!s || s.length > FEEDBACK_MAX_PHOTO_B64 || !/^[A-Za-z0-9+/]+={0,2}$/.test(s)) continue;
+        if (!s || s.length > FEEDBACK_MAX_PHOTO_B64 || s.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(s)) continue;
+        // Longueur invalide ou base64 illisible : atob() levait plus tard, à
+        // l'envoi sur Discord, et la reprise restait bloquée sur ce retour.
+        try { atob(s); } catch { continue; }
         const type = s.startsWith('/9j/') ? 'image/jpeg'
             : s.startsWith('iVBORw0KGgo') ? 'image/png'
             : s.startsWith('UklGR') ? 'image/webp' : null;
@@ -1772,6 +1775,13 @@ async function handleFeedback(request, env, ctx) {
     // 5 retours par heure et par adresse : de quoi tout dire, pas de quoi inonder.
     if (overLimit(feedbackHits, clientKey(request), 5)) {
         return jsonError('Trop de messages, réessaie dans une heure', 429);
+    }
+    // Compté aussi en base : le compteur en mémoire ne vaut que pour une
+    // instance du Worker. 10 retours par jour et par personne (adresse hachée).
+    const fbDay = new Date().toISOString().slice(0, 10);
+    const fbWho = `fbn_${(await sha256hex(`fb|${fbDay}|${clientKey(request)}`)).slice(0, 8)}`;
+    if (!(await takeNtfyLimits(env, [[fbWho, 10]]).catch(() => true))) {
+        return jsonError('Trop de messages aujourd\x27hui, réessaie demain', 429);
     }
 
     let body;
@@ -1947,7 +1957,13 @@ function discordText(text, max = 2000) {
 /** Photos d'un message en fichiers joints pour Discord. */
 function photoFiles(photos) {
     const ext = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' };
-    return photos.map((p, i) => ({ bytes: b64Bytes(p.b64), type: p.type, name: `photo${i + 1}.${ext[p.type] || 'jpg'}` }));
+    // Une photo illisible (enregistrée avant le contrôle de sa longueur) est
+    // laissée de côté : elle bloquait l'envoi, et la reprise, pour de bon.
+    const out = [];
+    photos.forEach((p, i) => {
+        try { out.push({ bytes: b64Bytes(p.b64), type: p.type, name: `photo${i + 1}.${ext[p.type] || 'jpg'}` }); } catch {}
+    });
+    return out;
 }
 
 /**
@@ -2161,14 +2177,26 @@ async function handleFeedbackBot(request, env) {
         const thread = feedbackThread(value, metadata);
         const from = Math.max(1, Number(metadata.dd) || 1);
         const withPics = body.pics === true;
-        const items = thread.slice(from)
-            .filter((x) => x.f === 'a' && (x.m || (withPics && x.ph?.length) || (x.s && x.s !== 'seen')))
-            .map((x) => ({
-                m: x.m || null, s: x.s || null, label: x.s ? FEEDBACK_STATUS_LABELS[x.s] || x.s : null, ph: x.ph?.length || 0,
+        // `i` : place de l'élément dans la discussion, pour `delivered`.
+        const items = thread.slice(from).map((x, k) => ({ x, i: from + k }))
+            .filter(({ x }) => x.f === 'a' && (x.m || (withPics && x.ph?.length) || (x.s && x.s !== 'seen')))
+            .map(({ x, i }) => ({
+                i, m: x.m || null, s: x.s || null, label: x.s ? FEEDBACK_STATUS_LABELS[x.s] || x.s : null, ph: x.ph?.length || 0,
                 ...(withPics ? { pics: (x.ph || []).slice(0, FEEDBACK_MAX_PHOTOS) } : {}),
             }));
-        if (thread.length > from) await store(env).put(key, value, { metadata: { ...metadata, dd: thread.length }, expirationTtl: FEEDBACK_TTL });
+        // `peek` (bot récent) : rien n'est noté ici, le bot dit ensuite ce qui
+        // est vraiment parti (`delivered`). Noté d'avance, un envoi raté en
+        // message privé était perdu pour de bon.
+        if (body.peek !== true && thread.length > from) await store(env).put(key, value, { metadata: { ...metadata, dd: thread.length }, expirationTtl: FEEDBACK_TTL });
         return jsonResponse({ du: metadata.du, key, excerpt: String(metadata.m || '').slice(0, 80), items });
+    }
+    if (body.action === 'delivered') {
+        const thread = feedbackThread(value, metadata);
+        const upTo = Number(body.upTo);
+        if (!Number.isInteger(upTo) || upTo < 0 || upTo >= thread.length) return jsonError('Bad index', 400);
+        const dd = Math.max(Number(metadata.dd) || 1, upTo + 1);
+        if (dd !== metadata.dd) await store(env).put(key, value, { metadata: { ...metadata, dd }, expirationTtl: FEEDBACK_TTL });
+        return jsonResponse({ ok: true, dd });
     }
     // Une photo du retour, pour la joindre au message privé : le bot n'a ni
     // le jeton du retour ni de jeton Twitch (/api/feedback/photo). Une par
@@ -2388,11 +2416,16 @@ async function feedbackReleased(env, versions) {
         next[p] = v;
         if (prev[p]) shipped.push({ p, v });
     }
-    if (JSON.stringify(next) !== JSON.stringify(prev)) await store(env).put(FEEDBACK_VERSIONS_KEY, '', { metadata: next });
-    let notified = 0;
+    let notified = 0, complete = true;
     if (shipped.length) {
-        const waiting = (await listStoreKeys(env, FEEDBACK_PREFIX)).filter(({ metadata: m }) => m?.fx);
-        for (const { name } of waiting.slice(0, 30)) {
+        // Seulement ceux qui attendent encore cette sortie : tous les retours
+        // « correctif » restaient dans la liste, et passé 30 (les plus anciens,
+        // déjà prévenus), les nouveaux ne l'étaient plus jamais.
+        const pending = (await listStoreKeys(env, FEEDBACK_PREFIX)).filter(({ metadata: m }) => m?.fx
+            && shipped.some(({ p }) => (m.fx.p === p || m.fx.p === 'both') && !m.fx.done?.[p]));
+        // Par lots de 30 (requêtes par appel) : le reste au passage suivant du bot.
+        if (pending.length > 30) complete = false;
+        for (const { name } of pending.slice(0, 30)) {
             for (const { p, v } of shipped) {
                 const { metadata: m } = await store(env).getWithMetadata(name);
                 if (!m?.fx || !(m.fx.p === p || m.fx.p === 'both') || m.fx.done?.[p]) continue;
@@ -2410,7 +2443,11 @@ async function feedbackReleased(env, versions) {
             }
         }
     }
-    return { versions: next, shipped, notified };
+    // Versions enregistrées une fois tout le monde prévenu : une erreur en route
+    // ou un reste à traiter fait repasser l'appel suivant (les prévenus sont
+    // sautés, voir fx.done). Enregistrées avant, les avis restants se perdaient.
+    if (complete && JSON.stringify(next) !== JSON.stringify(prev)) await store(env).put(FEEDBACK_VERSIONS_KEY, '', { metadata: next });
+    return { versions: complete ? next : prev, shipped, notified };
 }
 
 // ── Surveillance du relais (facultative) ───────────────────────────────────

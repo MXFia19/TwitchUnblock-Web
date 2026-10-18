@@ -18,7 +18,7 @@
 import { API_URL } from './api.js'
 import { uid } from './util.js'
 
-export const SITE_VERSION = '2026.10.17b'
+export const SITE_VERSION = '2026.10.18a'
 const ID_KEY = 'tu_install_id'
 const LAST_KEY = 'tu_last_ping'
 const EV_KEY = 'tu_usage_ev'
@@ -115,13 +115,17 @@ function clearSent(sent) {
   } catch {}
 }
 
-/** Appelé au démarrage et à intervalles réguliers. */
+/** Appelé au démarrage et à intervalles réguliers. `enabled` : booléen, ou
+ *  fonction relue après l'attente — un signal en attente partait après « Ne
+ *  pas partager » et réinscrivait l'identifiant qui venait d'être effacé. */
 export async function ping(enabled) {
-  if (!enabled) return
+  const on = () => (typeof enabled === 'function' ? enabled() : enabled)
+  if (!on()) return
   // Navigateur piloté par un programme (tests automatisés, robots).
   if (navigator.webdriver) return
   if (!storageWorks()) return
   await visibleFor(5 * 60_000)
+  if (!on()) return
   let last = 0
   try { last = Number(localStorage.getItem(LAST_KEY)) || 0 } catch {}
   if (Date.now() - last < PING_EVERY) return

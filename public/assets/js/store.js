@@ -121,8 +121,11 @@ export const store = {
   },
 
   // ── Progression des VODs ────────────────────────────────────────────────
+  // Stockage bloqué (cookies refusés) : localStorage lève une erreur, et la
+  // grille des VODs comme l'ouverture d'une VOD plantaient.
   getProgress(vodId) {
-    const v = Number.parseFloat(localStorage.getItem(`vod_progress_${vodId}`))
+    let v = NaN
+    try { v = Number.parseFloat(localStorage.getItem(`vod_progress_${vodId}`)) } catch {}
     return Number.isFinite(v) ? v : 0
   },
   setProgress(vodId, seconds) {
@@ -139,13 +142,15 @@ export const store = {
 
   allProgress() {
     const out = {}
-    for (let i = 0; i < localStorage.length; i++) {
-      const k = localStorage.key(i)
-      if (k?.startsWith('vod_progress_')) {
-        const v = Number.parseFloat(localStorage.getItem(k))
-        if (Number.isFinite(v)) out[k.slice('vod_progress_'.length)] = v
+    try {
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i)
+        if (k?.startsWith('vod_progress_')) {
+          const v = Number.parseFloat(localStorage.getItem(k))
+          if (Number.isFinite(v)) out[k.slice('vod_progress_'.length)] = v
+        }
       }
-    }
+    } catch {}
     return out
   },
 }

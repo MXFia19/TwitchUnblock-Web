@@ -1184,6 +1184,17 @@
   // La personne a répondu, et rien depuis : ni réponse, ni état, ni « Vu ».
   const awaiting = (f) => f.lastFrom === 'u' && f.count > 1 && (f.updatedAt || 0) > (f.seenAt || 0)
   function renderFeedback() {
+    // Réponses en cours d’écriture (texte, photos, curseur) : gardées à travers
+    // le redessin. Ouvrir une autre discussion, « Vu », un changement d’état ou
+    // « Actualiser » effaçaient ce qu’on écrivait ailleurs.
+    const drafts = new Map()
+    for (const form of document.querySelectorAll('#fb-list form[data-fb-reply]')) {
+      const ta = form.querySelector('textarea'), file = form.querySelector('input[type=file]')
+      const focused = Boolean(ta) && document.activeElement === ta
+      if (ta?.value || file?.files?.length || focused) {
+        drafts.set(form.dataset.fbReply, { text: ta?.value || '', files: file?.files, focused, start: ta?.selectionStart, end: ta?.selectionEnd })
+      }
+    }
     const items = fbItems
     const filter = $('#fb-status').value
     const list = items.filter((f) => !filter || (filter === 'await' ? awaiting(f) : f.status === filter))
@@ -1213,6 +1224,16 @@
         <div class="fb-thread" ${fbOpen.has(f.key) ? '' : 'hidden'}>${fbThreads.has(f.key) ? threadHtml(f, fbThreads.get(f.key)) : `<p class="sub">…</p>`}</div>
       </div>`).join('')
     for (const img of document.querySelectorAll('#fb-list img[data-pic]')) showPic(img)
+    for (const [key, d] of drafts) {
+      const form = document.querySelector(`#fb-list form[data-fb-reply="${CSS.escape(key)}"]`)
+      if (!form) continue
+      const ta = form.querySelector('textarea'), file = form.querySelector('input[type=file]')
+      if (ta) {
+        ta.value = d.text
+        if (d.focused) { ta.focus(); try { ta.setSelectionRange(d.start, d.end) } catch {} }
+      }
+      if (file && d.files?.length) { try { file.files = d.files } catch {} }
+    }
   }
   function threadHtml(f, thread) {
     const when = (at) => new Date(at).toLocaleString(LOCALE, { dateStyle: 'short', timeStyle: 'short' })

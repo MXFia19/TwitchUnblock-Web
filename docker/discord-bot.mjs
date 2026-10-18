@@ -183,6 +183,7 @@ export function startDiscordBridge({
     quickDone: new Set(),  // posts qui ont leurs réponses rapides
     fixAsked: new Set(),   // posts où l'on a demandé où sort le correctif
     dmWarned: new Set(),
+    alerts: null,          // pannes en cours (watchHealth), copie dans le Worker
     shots: new Map(),      // personne → capture de /bug ou /idea, le temps du formulaire
     dmHints: new Map(),    // personne → dernier renvoi vers les boutons (MP tapé)
     summaryDay: null,
@@ -465,7 +466,9 @@ export function startDiscordBridge({
   const dmQueue = new Map()
   function deliverDm(thread) {
     const run = (dmQueue.get(thread) || Promise.resolve()).then(async () => {
-      const r = await call({ action: 'deliver', thread, pics: true })
+      // `peek` : le Worker ne note rien ; ce qui part vraiment est noté
+      // après coup (delivered). Noté d'avance, un envoi raté était perdu.
+      const r = await call({ action: 'deliver', thread, pics: true, peek: true })
       if (!r?.du || !r.items?.length) return
       for (const it of r.items) {
         const files = []
@@ -496,10 +499,13 @@ export function startDiscordBridge({
           if (e.code !== 50007) log.warn(`Discord bridge: DM to the user of post ${thread} not sent (${e.message})`)
           if (!st.dmWarned.has(thread)) {
             st.dmWarned.add(thread)
-            await say(thread, '⚠️ I couldn’t send this to the user in a direct message (their DMs are closed).')
+            // La vraie raison : ce n'est pas toujours des MP fermés. Le reste
+            // repartira à la prochaine réponse (rien n'a été noté comme livré).
+            await say(thread, `⚠️ I couldn’t send this to the user in a direct message (${e.code === 50007 ? 'their DMs are closed' : e.message}). It will be tried again with the next reply.`)
           }
           break
         }
+        if (Number.isInteger(it.i)) await call({ action: 'delivered', thread, upTo: it.i }).catch(() => {})
       }
     }).catch((e) => log.warn(`Discord bridge: DM delivery failed (${e.message})`))
     dmQueue.set(thread, run)
@@ -586,6 +592,7 @@ export function startDiscordBridge({
 
   async function onThreadUpdate(d) {
     if (d.parent_id !== st.forum) return
+    const wasKnown = st.threads.has(d.id)
     const prev = st.threads.get(d.id) || []
     const tags = d.applied_tags || []
     st.threads.set(d.id, tags)
@@ -593,6 +600,15 @@ export function startDiscordBridge({
     if (expected) {
       st.expected.delete(d.id)
       if (expected.length === tags.length && expected.every((t) => tags.includes(t))) return   // notre changement
+    }
+    // Post inconnu (archivé avant un redémarrage du bot) : ses étiquettes ne
+    // disent rien d'un changement — toutes passaient pour « ajoutées », et
+    // rouvert après un changement d'état depuis /stats, l'ancienne étiquette
+    // l'annulait. L'état du Worker fait foi.
+    if (!wasKnown) {
+      const known = await stateOf(d.id)
+      if (known) await syncTags(d.id, known.status)
+      return
     }
     const added = tags.filter((t) => st.stateOf.has(t) && !prev.includes(t))
     if (!added.length) return
@@ -1019,7 +1035,11 @@ export function startDiscordBridge({
   /** Workers (principal et secours), ntfy, webhook : prévenu à la panne,
    *  puis au retour. */
   async function watchHealth() {
-    const prev = (await kvGet('alerts').catch(() => null)) || {}
+    // État gardé en mémoire : relu dans le Worker lui-même, il revenait vide
+    // pendant sa panne — l'alerte repartait toutes les 5 min, et le retour
+    // n'était jamais annoncé. La copie du Worker ne sert qu'après un redémarrage.
+    if (!st.alerts) st.alerts = (await kvGet('alerts').catch(() => null)) || null
+    const prev = st.alerts || {}
     const next = { ...prev }
     // La racine répond sans base de données (un Worker de secours n'en a
     // pas : /api/push/key y vaut 503) et passe en 429 au quota du jour.
@@ -1051,7 +1071,8 @@ export function startDiscordBridge({
         next.hookAt = hook.at
       }
     }
-    if (JSON.stringify(next) !== JSON.stringify(prev)) await kvSet('alerts', next)
+    st.alerts = next
+    if (JSON.stringify(next) !== JSON.stringify(prev)) await kvSet('alerts', next).catch(() => {})
   }
 
   /** CI de l'app et du site : un échec, une alerte (une seule fois). */

@@ -64,6 +64,8 @@ html { -webkit-text-size-adjust: 100%; background: var(--bg); color-scheme: dark
 :root[data-bg="light"] .login-card p { color: var(--muted); }
 :root[data-bg="light"] .chat-mode, :root[data-bg="light"] .chat-banned { color: #8a6d00; background: rgba(230, 180, 0, 0.14); }
 :root[data-bg="light"] .fb-kind.bug, :root[data-bg="light"] .fb-status.refused { color: #c42b2b; }
+:root[data-bg="light"] :is(.msg-name, .pin-sender) { filter: brightness(0.62) saturate(1.3); }
+:root[data-bg="light"] :is(.player, .watch-body:fullscreen .chat) :is(.msg-name, .pin-sender) { filter: none; }
 :root[data-bg="light"] .fb-status.accepted { color: #1d5fb8; }
 :root[data-bg="light"] .fb-status.progress { color: #8a6d00; }
 :root[data-bg="light"] .fb-status.done { color: #0b7a4c; }
@@ -71,7 +73,7 @@ html { -webkit-text-size-adjust: 100%; background: var(--bg); color-scheme: dark
    fin de live, le chat posé sur l'image en plein écran et les tuiles du
    multi-live gardent la palette sombre (sinon texte et icônes foncés sur
    fond noir). */
-:root[data-bg="light"] :is(.player, .watch-ended, .watch-body:fullscreen .chat, .mtile) {
+:root[data-bg="light"] :is(.player, .watch-ended, .watch-body:fullscreen .chat, .mtile, .watch-error, .watch-loading) {
   --bg: #0e0e10; --card: #18181b; --card-hi: #1f1f23; --surface: #26262c; --surface-hi: #303036;
   --line: rgba(255, 255, 255, 0.08); --line-strong: #3a3a40; --text: #efeff1; --muted: #adadb8;
   color: var(--text);
@@ -792,7 +794,7 @@ a.card, a.cat-card { display: block; }
 .chat:not(:has(.chat-composer:not([hidden]))) .chat-resume { bottom: 16px; }
 .chat-empty { position: absolute; top: 44px; left: 0; right: 0; padding: 40px 20px; color: var(--muted); text-align: center; pointer-events: none; }
 
-.chat-composer { position: relative; flex: none; padding: 10px; border-top: 1px solid var(--line); }
+.chat-composer { position: relative; flex: none; padding: 10px 10px calc(10px + var(--safe-b)); border-top: 1px solid var(--line); }
 .chat-input-row { display: flex; align-items: center; gap: 2px; padding: 3px 4px 3px 12px; border-radius: var(--r-control); background: var(--surface); border: 1px solid transparent; transition: border-color 0.15s; }
 .chat-input-row:focus-within { border-color: var(--primary); }
 .chat-input { flex: 1; min-width: 0; height: 36px; background: none; border: 0; outline: none; color: var(--text); font-size: 15px; }
@@ -1197,6 +1199,16 @@ html.multi-open { overflow: hidden; }
   .p-q-speed { position: absolute; right: 0; bottom: 2px; padding: 1px 3px; border-radius: 6px; background: var(--primary); font-size: 9px; line-height: 1.1; }
   .p-bar { gap: 0; }
   .p-btn { width: 38px; }
+  .p-time, .p-live { min-width: 0; flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; }
+}
+@media (max-width: 400px) { .p-back, .p-fwd { display: none; } }
+/* Entre 761 et 1 100 px, la barre du haut débordait : les onglets gardent
+   leur icône (texte lu par les lecteurs d'écran), le compte son logo. */
+@media (min-width: 761px) and (max-width: 1100px) {
+  .nav button { padding: 8px 12px; }
+  .nav button span[data-i18n] { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  .account-btn:not(.logged) span { display: none; }
+  .account-btn:not(.logged) { width: 38px; padding: 0; justify-content: center; }
 }
 
 /* Téléphone en paysage : vidéo à gauche, chat à droite, en-tête en surimpression. */
@@ -1209,6 +1221,7 @@ html.multi-open { overflow: hidden; }
   }
   .watch:has(.player.ui) .watch-head, .watch:has(.player.paused) .watch-head, .watch.error .watch-head { opacity: 1; pointer-events: auto; }
   .watch:not(.chat-hidden) .watch-head { right: 40%; }
+  :root[data-bg="light"] .watch-head { --text: #efeff1; --muted: #adadb8; color: var(--text); }
   .watch-body { grid-template-columns: minmax(0, 1fr) 40%; grid-template-rows: minmax(0, 1fr); grid-template-areas: 'video chat'; }
   .watch.chat-hidden .watch-body { grid-template-columns: minmax(0, 1fr) 0; grid-template-rows: minmax(0, 1fr); }
   .watch-video { aspect-ratio: auto; height: 100%; max-height: none; }
@@ -1412,7 +1425,7 @@ html.multi-open { overflow: hidden; }
 .p-btn.p-chapters { display: inline-flex; flex-direction: row; align-items: center; height: 36px; border-radius: 18px; background: rgba(255, 255, 255, 0.08); width: auto; max-width: 240px; gap: 6px; padding: 0 10px; font-size: 13px; font-weight: 700; }
 .p-chap-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 @media (max-width: 600px) { .p-btn.p-chapters { max-width: 130px; } }
-.p-menu[data-kind='chapters'] { max-height: min(60vh, 420px); overflow-y: auto; width: min(360px, 90vw); }
+.p-menu[data-kind='chapters'] { max-height: min(60vh, 420px, calc(100% - 80px)); overflow-y: auto; width: min(360px, 90vw); }
 .p-chap-row { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
 .p-chap-row b { font-variant-numeric: tabular-nums; color: var(--muted); margin-right: 6px; }
 .p-menu[data-kind='chapters'] { left: 12px; right: auto; }

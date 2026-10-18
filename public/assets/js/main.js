@@ -92,8 +92,8 @@ async function boot() {
   renderContinue()
   renderRecentChannels()
   startLiveTicker()
-  usage.ping(store.prefs.shareUsage)
-  setInterval(() => usage.ping(store.prefs.shareUsage), 15 * 60 * 1000)
+  usage.ping(() => store.prefs.shareUsage)
+  setInterval(() => usage.ping(() => store.prefs.shareUsage), 15 * 60 * 1000)
   // Installable comme une app (et la coque s'ouvre hors ligne).
   if (shellInstallable()) {
     navigator.serviceWorker.register('/sw.js').catch(() => {})
@@ -346,7 +346,7 @@ async function adoptToken(token, { silent = false } = {}) {
     api.getAvatars([session.login]).then((a) => { session.avatar = a[session.login] ?? null; renderAccount() })
   }
   if (session.userId) await pullSync()
-  if (!silent) usage.pingNow(store.prefs.shareUsage)
+  if (!silent) usage.pingNow(() => store.prefs.shareUsage)
   state.loaded.followed = 0
   if (state.tab === 'discover') loadFollowed()
   // Revalidation du même compte : le chat ne se reconnecte pas pour rien.
@@ -357,6 +357,7 @@ async function adoptToken(token, { silent = false } = {}) {
 function dropToken({ silent = false } = {}) {
   store.token = null
   forgetAccount()
+  stashAccountHistory()
   Object.assign(session, { token: null, userId: null, login: null, avatar: null, scopes: [], unverified: false })
   toast(t('session_expired'), silent ? 'info' : 'error')
   renderAccount()
@@ -406,6 +407,7 @@ function logout() {
   }
   store.token = null
   forgetAccount()
+  stashAccountHistory()
   Object.assign(session, { token: null, userId: null, login: null, avatar: null, scopes: [], unverified: false })
   // La prochaine connexion passera par la page d'autorisation de Twitch :
   // sans elle, il reconnectait aussitôt le compte dont il se souvient.
@@ -457,18 +459,72 @@ function renderAccount() {
 }
 
 // ── Sauvegarde distante ────────────────────────────────────────────────────
-async function pullSync() {
-  const data = await api.syncPull(session.userId)
-  if (!data) return
-  if (Array.isArray(data.history) && data.history.length) {
-    // Fusion plutôt que remplacement : ce qui a été vu ici depuis la dernière
-    // sauvegarde ne doit pas disparaître.
-    const seen = new Set(store.history.map((h) => String(h.term).toLowerCase()))
-    store.history = [...store.history, ...data.history.filter((h) => !seen.has(String(h.term).toLowerCase()))].slice(0, 30)
-    store.saveHistory()
+// Historique propre à chaque compte : rangé à la déconnexion, repris à la
+// connexion du même compte. Sinon le compte suivant héritait de l'historique
+// du précédent et le publiait dans sa propre sauvegarde (appareil partagé).
+const HISTORY_OWNER_KEY = 'tu_history_owner'
+const historyStashKey = (id) => `tu_history_acct_${id}`
+
+function stashAccountHistory() {
+  const id = session.userId
+  if (!id) return
+  flushSync({ force: true })   // dernier envoi, encore au nom de ce compte
+  try {
+    localStorage.setItem(historyStashKey(id), JSON.stringify(store.history))
+    localStorage.removeItem(HISTORY_OWNER_KEY)
+  } catch {}
+  store.history = []
+  store.saveHistory()
+  syncDirty = false
+  lastSyncBody = ''
+  pulledFor = null
+  renderContinue()
+  renderRecentChannels()
+}
+
+/** Fusion élément par élément : le plus récent d'abord (`addedAt`), sans
+ *  doublon, 30 au plus. Ce qui venait d'un autre appareil passait après tout
+ *  l'historique d'ici, était coupé à 30, puis effacé du serveur à l'envoi. */
+function mergeHistory(a, b) {
+  const byTerm = new Map()
+  for (const h of [...a, ...b]) {
+    const k = String(h.term).toLowerCase()
+    const prev = byTerm.get(k)
+    if (!prev || (h.addedAt || 0) > (prev.addedAt || 0)) byTerm.set(k, h)
   }
-  for (const [id, time] of Object.entries(data.progress ?? {})) {
-    if (time > store.getProgress(id)) store.setProgress(id, time)
+  return [...byTerm.values()].sort((x, y) => (y.addedAt || 0) - (x.addedAt || 0)).slice(0, 30)
+}
+
+async function pullSync() {
+  const userId = session.userId
+  if (!userId) return
+  // Historique d'un autre compte resté ici : rangé à son nom, pas fusionné.
+  let owner = null
+  try { owner = localStorage.getItem(HISTORY_OWNER_KEY) } catch {}
+  if (owner && owner !== String(userId)) {
+    try { localStorage.setItem(historyStashKey(owner), JSON.stringify(store.history)) } catch {}
+    store.history = []
+  }
+  // Celui de ce compte, rangé à sa dernière déconnexion : repris.
+  let stashed = null
+  try { stashed = JSON.parse(localStorage.getItem(historyStashKey(userId)) || 'null') } catch {}
+  if (Array.isArray(stashed)) {
+    store.history = mergeHistory(store.history, stashed)
+    try { localStorage.removeItem(historyStashKey(userId)) } catch {}
+  }
+  const data = await api.syncPull(userId)
+  if (session.userId !== userId) return
+  if (data && Array.isArray(data.history) && data.history.length) {
+    store.history = mergeHistory(store.history, data.history)
+  }
+  store.saveHistory()
+  if (data) {
+    // Relecture réussie : les envois peuvent partir (voir flushSync).
+    pulledFor = userId
+    try { localStorage.setItem(HISTORY_OWNER_KEY, String(userId)) } catch {}
+    for (const [id, time] of Object.entries(data.progress ?? {})) {
+      if (time > store.getProgress(id)) store.setProgress(id, time)
+    }
   }
   renderContinue()
   renderRecentChannels()
@@ -484,12 +540,21 @@ const SYNC_EVERY = 10 * 60_000
 let syncDirty = false
 let lastSyncBody = ''
 let lastSyncAt = 0
+/** Compte dont la sauvegarde a été relue : pas d'envoi avant (une relecture
+ *  ratée laissait l'envoi suivant écraser toute la sauvegarde du serveur). */
+let pulledFor = null
+let pulling = false
 
 /** Un changement à sauvegarder. Aucun envoi immédiat. */
 function pushSync() { syncDirty = true }
 
 function flushSync({ force = false } = {}) {
   if (!syncDirty || !session.userId) return
+  if (pulledFor !== session.userId) {
+    // Relecture d'abord (une fois à la fois) ; l'envoi suivra au prochain passage.
+    if (!pulling) { pulling = true; pullSync().finally(() => { pulling = false }) }
+    return
+  }
   if (!force && Date.now() - lastSyncAt < SYNC_EVERY) return
   // Seule la progression des VODs de l'historique part : le Worker garde
   // déjà les autres (il fusionne), inutile d'alourdir chaque envoi.
@@ -4376,7 +4441,7 @@ function openSettings() {
     }
     if (id === 'set-usage') {
       p.shareUsage = e.target.checked
-      if (p.shareUsage) usage.ping(true)
+      if (p.shareUsage) usage.ping(() => store.prefs.shareUsage)
       else usage.forget()
     }
     store.savePrefs()
