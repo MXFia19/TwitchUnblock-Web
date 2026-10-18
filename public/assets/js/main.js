@@ -13,6 +13,7 @@ import * as usage from './usage.js'
 import * as multi from './multi.js'
 import * as dl from './download.js'
 import { CHANGELOG } from './changelog.js'
+import { captureGlobalErrors, clearErrors, errorCount, errorLines, logError } from './errlog.js'
 import {
   $, $$, debounce, esc, formatClock, formatDuration, formatViewers, icon, isIOS, isMobile,
   thumb, toast, twitchTime, uptimeSince,
@@ -87,6 +88,8 @@ async function boot() {
   renderIcons()
   bindGlobal()
   setupPlayer()
+  // Erreurs non rattrapées du site : dans le journal des erreurs.
+  captureGlobalErrors()
   setupMulti()
   dl.init({ openSheet, closeSheet })
   renderContinue()
@@ -827,6 +830,7 @@ const actions = {
   'unhide-all': () => unhideAll(),
   'whats-new': () => showWhatsNew(CHANGELOG, 'changelog'),
   feedback: () => openFeedback(),
+  errlog: () => openErrorLog(),
   'feedback-bug': () => openFeedback('bug'),
   'replay-tutorial': () => startTour(),
   'home-offline': () => setHomeTab('offline'),
@@ -3024,6 +3028,7 @@ function setupPlayer() {
       // Lecture qui échoue après le chargement (proxy en panne, flux noir…).
       const kind = state.watch?.kind
       if (kind === 'live' || kind === 'vod') usage.count(`${kind}_play_fail`, store.prefs.shareUsage)
+      logError('lecteur', `${kind || '?'} ${state.watch?.login || state.watch?.id || ''} : la lecture s'est arrêtée (${player?.debugInfo?.() || '?'})`)
       showWatchError(t(kind === 'live' ? 'err_live' : kind === 'clip' ? 'err_clip' : 'err_vod'))
     },
     onWorkerDown: (base) => switchWorker(base),
@@ -3355,6 +3360,9 @@ async function openLive(rawLogin) {
   const sourcesDown = !liveOk && links?.error === 'missing' && Boolean(info?.stream)
   if (liveOk) usage.count(`live_${links.source || 'unknown'}`, store.prefs.shareUsage)
   else if (links?.error !== 'missing' || sourcesDown) usage.count('live_fail', store.prefs.shareUsage)
+  if (!liveOk && (links?.error !== 'missing' || sourcesDown)) {
+    logError('direct', `${login} : ${sourcesDown ? 'toutes les sources ont échoué' : links?.error || 'aucun lien'}`)
+  }
   if (!liveOk) {
     return showWatchError(links?.error === 'network' ? t('err_network')
       : sourcesDown ? t('err_live_sources')
@@ -3654,6 +3662,7 @@ async function openVod(id, preset, { keepPlaylist = false, at = null } = {}) {
   if (state.watch !== token) return
   usage.count(links && !links.error && links.links && Object.keys(links.links).length ? 'vod' : 'vod_fail', store.prefs.shareUsage)
   if (!links || links.error || !links.links || !Object.keys(links.links).length) {
+    logError('vod', `${vodId} : ${links?.error || 'aucun lien'}`)
     return showWatchError(links?.error === 'network' ? t('err_network') : t('err_vod'))
   }
   token.links = links.links
@@ -3956,9 +3965,38 @@ function photoPicker(box, input, attach, textarea) {
   return { photos, reset: () => { photos.length = 0; draw() } }
 }
 
+/** Journal des erreurs du site (errlog.js) : lu, copié, effacé. */
+function openErrorLog() {
+  const lines = errorLines()
+  openSheet(`
+    <div class="sheet-head"><h2>${esc(t('errlog_title'))}</h2>
+      <button class="icon-btn" type="button" data-sheet-close>${icon('x', 20)}</button></div>
+    <div class="sheet-section">
+      <p class="muted small">${esc(t('errlog_sub'))}</p>
+      ${lines.length
+        ? `<pre class="errlog">${esc(lines.join('\n'))}</pre>
+           <div class="row-actions">
+             <button class="btn primary sm" type="button" data-errlog="copy">${esc(t('errlog_copy'))}</button>
+             <button class="btn ghost sm" type="button" data-errlog="clear">${esc(t('errlog_clear'))}</button>
+           </div>`
+        : `<p class="muted">${esc(t('errlog_empty'))}</p>`}
+    </div>`)
+  const sheet = $('#sheet')
+  sheet.onclick = async (e) => {
+    if (e.target.closest('[data-sheet-close]')) return closeSheet()
+    const b = e.target.closest('[data-errlog]')
+    if (!b) return
+    if (b.dataset.errlog === 'clear') { clearErrors(); return openErrorLog() }
+    const text = `TwitchUnblock ${usage.SITE_VERSION} · ${navigator.userAgent}\n${lines.join('\n')}`
+    try { await navigator.clipboard.writeText(text); toast(t('errlog_copied'), 'success') } catch { toast(t('errlog_copied'), 'error') }
+  }
+}
+
 function openFeedback(kind = 'bug', { prefill = '' } = {}) {
   const info = feedbackInfo()
-  const summary = [info.browser, info.os, `v${usage.SITE_VERSION}`, info.page, info.watching, info.player].filter(Boolean).join(' · ')
+  const errCount = Math.min(20, errorCount())
+  const summary = [info.browser, info.os, `v${usage.SITE_VERSION}`, info.page, info.watching, info.player,
+    errCount ? t('fb_errors_attached', { n: errCount }) : null].filter(Boolean).join(' · ')
   let current = FEEDBACK_KINDS.includes(kind) ? kind : 'bug'
   const mine = myFeedback()
   openSheet(`
@@ -4001,6 +4039,7 @@ function openFeedback(kind = 'bug', { prefill = '' } = {}) {
       const r = await api.sendFeedback({
         kind: current, message, contact: $('#fb-contact').value.trim(),
         platform: 'web', version: usage.SITE_VERSION, info, photos: picker.photos,
+        errors: errorLines(20),
       })
       if (r?.id && r?.token) {
         const now = Date.now()
@@ -4359,6 +4398,7 @@ function openSettings() {
         <a class="sheet-row" href="${api.APP_GITHUB_URL}" target="_blank" rel="noopener">${icon('github', 18)}<span>${esc(t('source_app'))}</span>${icon('external', 16)}</a>
         <a class="sheet-row" href="${api.DISCORD_URL}" target="_blank" rel="noopener">${icon('discord', 18)}<span>${esc(t('discord_join'))}</span>${icon('external', 16)}</a>
         <button class="sheet-row" type="button" data-action="feedback">${icon('bug', 18)}<span>${esc(t('feedback'))}</span></button>
+        <button class="sheet-row" type="button" data-action="errlog">${icon('terminal', 18)}<span>${esc(t('errlog_title'))}${errorCount() ? ` (${errorCount()})` : ''}</span></button>
         <button class="sheet-row" type="button" data-action="whats-new">${icon('sparkles', 18)}<span>${esc(t('changelog'))}</span></button>
         <button class="sheet-row" type="button" data-action="replay-tutorial">${icon('play', 18)}<span>${esc(t('replay_tutorial'))}</span></button>
       </div>

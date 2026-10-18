@@ -6,6 +6,23 @@
 
 export const CHANGELOG = [
   {
+    version: '2026.10.18c',
+    items: {
+      fr: [
+        'Journal des erreurs : les erreurs du site (code, lecteur, Worker, Twitch) sont gardées dans ton navigateur, lisibles et copiables dans Réglages → À propos, et jointes à tes signalements pour que le problème soit trouvé plus vite.',
+      ],
+      en: [
+        'Error log: the site’s errors (code, player, Worker, Twitch) are kept in your browser, readable and copyable in Settings → About, and attached to your reports so problems get found faster.',
+      ],
+      es: [
+        'Registro de errores: los errores del sitio (código, reproductor, Worker, Twitch) se guardan en tu navegador, se pueden leer y copiar en Ajustes → Acerca de, y se adjuntan a tus reportes para encontrar los problemas más rápido.',
+      ],
+      ru: [
+        'Журнал ошибок: ошибки сайта (код, плеер, Worker, Twitch) сохраняются в вашем браузере, их можно прочитать и скопировать в «Настройки → О сайте», и они прикрепляются к вашим сообщениям об ошибках, чтобы проблемы находились быстрее.',
+      ],
+    },
+  },
+  {
     version: '2026.10.18b',
     items: {
       fr: [

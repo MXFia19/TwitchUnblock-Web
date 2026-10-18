@@ -32,8 +32,8 @@ export default {
         // n'importe qui pouvait viser : il ne fait rien.
         if (dockerCron(env)) return;
         applyEnvConfig(env);
-        ctx.waitUntil(pushTick(env).catch((e) => console.error(e)));
-        ctx.waitUntil(relayWatch(env, new Date(event?.scheduledTime || Date.now())).catch((e) => console.error(e)));
+        ctx.waitUntil(pushTick(env).catch((e) => recordServerError(env, 'cron/notifications', e)));
+        ctx.waitUntil(relayWatch(env, new Date(event?.scheduledTime || Date.now())).catch((e) => recordServerError(env, 'cron/relay', e)));
     },
 
     async fetch(request, env, ctx) {
@@ -107,8 +107,10 @@ export default {
                     return new Response("Not Found", { status: 404, headers: RESPONSE_HEADERS });
             }
         } catch (e) {
-            // Pas de message interne renvoyé au client : seulement dans les logs.
-            console.error(e);
+            // Pas de message interne renvoyé au client : seulement dans les
+            // journaux (avec la route) et dans /stats (erreurs du serveur).
+            const saving = recordServerError(env, `${request.method} ${url.pathname}`, e);
+            if (ctx?.waitUntil) ctx.waitUntil(saving);
             return new Response(JSON.stringify({ error: "Erreur interne" }), { status: 500, headers: { ...RESPONSE_HEADERS, 'Content-Type': 'application/json' } });
         }
     }
@@ -958,13 +960,13 @@ async function handlePing(request, env) {
     const platform = PLATFORMS.includes(body.platform) ? body.platform : 'ios';
     const version = String(body.version || '?').slice(0, 16);
     let prev = {};
-    try { prev = (await store(env).getWithMetadata(key)).metadata || {}; } catch (e) {}
+    try { prev = (await store(env).getWithMetadata(key)).metadata || {}; } catch (e) { logCaught('ping/read', e); }
 
     // Première connexion sur cet appareil : l'historique anonyme est repris
     // par le compte, puis effacé (sinon la même personne compterait deux fois).
     if (who) {
         let anon = null;
-        try { anon = (await store(env).getWithMetadata(anonKey)).metadata; } catch (e) {}
+        try { anon = (await store(env).getWithMetadata(anonKey)).metadata; } catch (e) { logCaught('ping/anon', e); }
         if (anon) {
             if (!prev.first || (anon.first && anon.first < prev.first)) prev.first = anon.first;
             prev.days = Math.max(prev.days || 0, anon.days || 0);
@@ -1241,6 +1243,42 @@ async function handleStats(env) {
 
 function jsonResponse(obj) { return new Response(JSON.stringify(obj), { headers: { ...RESPONSE_HEADERS, 'Content-Type': 'application/json' } }); }
 function jsonError(msg, status, extra = {}) { return new Response(JSON.stringify({ error: msg, ...extra }), { status, headers: { ...RESPONSE_HEADERS, 'Content-Type': 'application/json' } }); }
+/** Erreur rattrapée mais notée : elle arrive dans les journaux du Worker
+ *  (Cloudflare → Workers → Logs ; observability activée dans wrangler.toml).
+ *  Ces lectures échouaient en silence. */
+function logCaught(where, e) {
+    console.warn(`[${where}]`, e?.message || String(e));
+}
+
+/** Erreurs du serveur gardées pour /stats (50 dernières, 14 jours) : visibles
+ *  sans passer par le tableau de bord de Cloudflare. */
+const SERVER_ERRORS_KEY = 'fbmeta_errors';
+async function recordServerError(env, where, e) {
+    console.error(`[${where}]`, e?.stack || e?.message || String(e));
+    if (!env.DB) return;
+    try {
+        let list = [];
+        try { list = JSON.parse(await store(env).get(SERVER_ERRORS_KEY) || '[]'); } catch (err) { list = []; }
+        if (!Array.isArray(list)) list = [];
+        list.unshift({ at: Date.now(), where: String(where).slice(0, 80), msg: String(e?.message || e).slice(0, 300) });
+        await store(env).put(SERVER_ERRORS_KEY, JSON.stringify(list.slice(0, 50)), { expirationTtl: 14 * 86400 });
+    } catch (err) { console.error('[errors] not saved', err?.message || err); }
+}
+async function readServerErrors(env) {
+    try {
+        const list = JSON.parse(await store(env).get(SERVER_ERRORS_KEY) || '[]');
+        return Array.isArray(list) ? list : [];
+    } catch (e) { logCaught('errors/read', e); return []; }
+}
+
+/** Erreurs récentes du journal de l'app ou du site, jointes à un retour
+ *  (20 lignes, 2 400 caractères au plus) : le bug arrive avec sa trace. */
+function cleanErrors(list) {
+    if (!Array.isArray(list)) return null;
+    const lines = list.slice(0, 20).map((l) => cleanText(l, 240)).filter(Boolean);
+    return lines.length ? lines.join('\n').slice(0, 2400) : null;
+}
+
 /** Corps JSON d'une requête s'il s'agit d'un objet ; null sinon (JSON
  *  invalide, ou `null`, nombre, tableau… qui faisaient des erreurs 500). */
 async function readJsonObject(request) {
@@ -1352,7 +1390,7 @@ async function readAnnouncement(env) {
         return v && v.until > Date.now() ? v : null;
     }
     let value = null;
-    try { value = await store(env).get(ANNOUNCEMENT_KEY, 'json'); } catch (e) {}
+    try { value = await store(env).get(ANNOUNCEMENT_KEY, 'json'); } catch (e) { logCaught('announcement/read', e); }
     if (value && !(value.until > Date.now())) value = null;
     announcementCache = { value, until: Date.now() + 60 * 1000 };
     return value;
@@ -1433,7 +1471,7 @@ async function handleAdminAnnouncement(request, env) {
     if (link && !/^https:\/\/[^\s]+$/i.test(link)) return jsonError('Lien : https:// uniquement', 400);
     let prev = null;
     if (body.edit === true) {
-        try { prev = await store(env).get(ANNOUNCEMENT_KEY, 'json'); } catch (e) {}
+        try { prev = await store(env).get(ANNOUNCEMENT_KEY, 'json'); } catch (e) { logCaught('announcement/edit', e); }
         if (!prev || !(prev.until > Date.now())) return jsonError('Aucune annonce en cours à modifier', 404);
     }
     let ttl;
@@ -1820,6 +1858,7 @@ async function handleFeedback(request, env, ctx) {
         p: PLATFORMS.includes(body.platform) ? body.platform : 'web',
         v: cleanText(body.version, 32) || '?',
         i: cleanText(info, 600) || null,
+        el: cleanErrors(body.errors),
         at: now,
         s: 'new', u: now, r: 'u', n: 1, ph: ph.length,
         h: await sha256hex(token),
@@ -1938,6 +1977,7 @@ async function postFeedbackToDiscord(webhook, e, photos = [], { inReplyTo = null
     if (e.c) fields.push({ name: 'Contact', value: e.c, inline: true });
     if (inReplyTo) fields.push({ name: 'In reply to', value: inReplyTo.slice(0, 300) });
     else if (e.i) fields.push({ name: 'Info', value: readableInfo(e.i).slice(0, 1000) });
+    if (!inReplyTo && e.el) fields.push({ name: 'Recent errors', value: `\`\`\`\n${String(e.el).slice(0, 990)}\n\`\`\`` });
     const text = String(e.m || '').trim();
     const payload = {
         username: 'TwitchUnblock',
@@ -2290,7 +2330,7 @@ async function feedbackBotTool(env, body) {
             const k = String(body.key || '');
             if (!/^[a-z0-9_:-]{1,60}$/.test(k)) return jsonError('Bad key', 400);
             let value = null;
-            try { value = JSON.parse(await store(env).get(BOT_STORE_PREFIX + k) || 'null'); } catch (e) {}
+            try { value = JSON.parse(await store(env).get(BOT_STORE_PREFIX + k) || 'null'); } catch (e) { logCaught('bot/get', e); }
             return jsonResponse({ value });
         }
         case 'set': {
@@ -2374,7 +2414,7 @@ async function feedbackBotTool(env, body) {
         // État des notifications et du webhook, pour les alertes du bot.
         case 'health': {
             let pause = null;
-            try { pause = JSON.parse(await store(env).get('push_ntfy_pause') || 'null'); } catch (e) {}
+            try { pause = JSON.parse(await store(env).get('push_ntfy_pause') || 'null'); } catch (e) { logCaught('ntfy/pause', e); }
             const route = ntfyRoute(env);
             const { metadata: hook } = await store(env).getWithMetadata(FEEDBACK_HOOK_KEY);
             return jsonResponse({
@@ -2501,7 +2541,7 @@ async function relayWatch(env, now = new Date()) {
     const st = { relayDown: 0, botDown: 0, fails: 0, ...(prev || {}) };
     const before = JSON.stringify(st);
     let ok = false;
-    try { ok = (await fetch(`${relay}/health`, { signal: AbortSignal.timeout(10000) })).ok; } catch (e) { /* injoignable */ }
+    try { ok = (await fetch(`${relay}/health`, { signal: AbortSignal.timeout(10000) })).ok; } catch (e) { logCaught('relay/health', e); }
     const t0 = now.getTime();
     const msgs = [];
     st.fails = ok ? 0 : st.fails + 1;
@@ -2537,7 +2577,7 @@ async function handleAdminFeedback(request, env, ctx) {
     const listAll = (prefix) => listStoreKeys(env, prefix);
     const summary = (key, m) => ({
         key, kind: m.k || 'other', message: m.m || '', contact: m.c || null, platform: m.p || '?',
-        version: m.v || '?', info: m.i || null, at: m.at || 0,
+        version: m.v || '?', info: m.i || null, errors: m.el || null, at: m.at || 0,
         status: m.s || 'new', updatedAt: m.u || m.at || 0, lastFrom: m.r || 'u', count: m.n || 1, photos: m.ph || 0,
         // Dernière fois que l'admin l'a vu (« Vu », réponse ou nouvel état).
         seenAt: m.sa || 0,
@@ -2627,6 +2667,7 @@ async function handleAdminFeedback(request, env, ctx) {
         items,
         webhook: { configured: Boolean(env.FEEDBACK_WEBHOOK), last: hook || null },
         bridge: { configured: Boolean(env.FEEDBACK_BOT_SECRET), last: bot || null },
+        serverErrors: await readServerErrors(env),
     }), { headers: noStore });
 }
 
@@ -2697,7 +2738,7 @@ let pollCountCache = null;    // { id, at, value }
 async function readPoll(env) {
     if (pollCache && pollCache.until > Date.now()) return pollCache.value;
     let value = null;
-    try { value = await store(env).get(POLL_KEY, 'json'); } catch (e) {}
+    try { value = await store(env).get(POLL_KEY, 'json'); } catch (e) { logCaught('poll/read', e); }
     if (value && !(value.until + POLL_SHOW_AFTER > Date.now())) value = null;
     pollCache = { value, until: Date.now() + 30 * 1000 };
     return value;
@@ -2796,7 +2837,7 @@ async function createPoll(env, body) {
 /** Fin anticipée : les résultats restent affichés 24 h. */
 async function endPoll(env) {
     let poll = null;
-    try { poll = await store(env).get(POLL_KEY, 'json'); } catch (e) {}
+    try { poll = await store(env).get(POLL_KEY, 'json'); } catch (e) { logCaught('poll/admin', e); }
     if (!poll) return null;
     if (Date.now() < poll.until) {
         poll.until = Date.now();

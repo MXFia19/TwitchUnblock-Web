@@ -144,6 +144,9 @@
     .fb-meta .spacer { flex: 1; }
     .fb-msg { margin: 6px 0 4px; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 14px; }
     .fb-info { font-size: 12px; color: var(--faint); overflow-wrap: anywhere; }
+    .fb-errors summary, .srv-errors summary { cursor: pointer; font-size: 12px; color: var(--danger, #ff4f4d); font-weight: 600; }
+    .fb-errors pre, .srv-errors pre { margin: 6px 0 0; padding: 8px; border-radius: 8px; background: var(--card-hi); font-size: 11px; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 260px; overflow: auto; }
+    .srv-errors { margin: 10px 0; }
     .tag.bug { background: rgba(248, 113, 113, 0.14); color: #fca5a5; }
     .tag.idea { background: rgba(191, 148, 255, 0.16); color: var(--purple); }
     #fb-list { max-height: 720px; overflow-y: auto; margin-top: 8px; }
@@ -312,6 +315,7 @@
       </div>
       <p class="sub" data-t="fbSub"></p>
       <div class="fb-hook" id="fb-hook"></div>
+      <div class="srv-errors" id="srv-errors"></div>
       <div class="fb-filter">
         <select id="fb-status">
           <option value="" data-t="fbAllStatus"></option>
@@ -433,7 +437,7 @@
       today: "Aujourd'hui", week: '7 derniers jours', month: '30 derniers jours', partial: 'données depuis le {d} seulement',
       actTitle: 'Actifs par jour', actSub: 'Personnes différentes chaque jour (une fois par jour, même si elles reviennent plusieurs fois).', actSince: 'Mesuré depuis le {d}.', actNone: 'Pas encore de données : la mesure commence avec cette mise à jour.',
       rtTitle: 'Rétention', rtSub: 'Parmi les personnes arrivées depuis assez longtemps, la part revue au moins 1, 7 ou 14 jours après son premier jour. Par semaine d’arrivée, 5 dernières semaines.',
-      rtD1: 'revenues un autre jour', rtD7: 'encore là 7 jours après', rtD14: 'encore là 14 jours après', rtOf: 'sur {n}', rtWeek: 'Arrivées', rtSize: 'Personnes', rtWeekOf: 'semaine du {d}', rtColD1: 'J+1', rtColD7: 'J+7', days3: '3 j', days7: '7 j', days30: '30 j',
+      rtD1: 'revenues un autre jour', rtD7: 'encore là 7 jours après', rtD14: 'encore là 14 jours après', rtOf: 'sur {n}', rtWeek: 'Arrivées', rtSize: 'Personnes', rtWeekOf: 'semaine du {d}', fbErrors: '{n} erreur(s) récente(s) jointe(s)', srvErrTitle: 'Erreurs du serveur : {n} (14 jours)', srvErrNone: 'Aucune erreur du serveur ces 14 derniers jours.', rtColD1: 'J+1', rtColD7: 'J+7', days3: '3 j', days7: '7 j', days30: '30 j',
       hlTitle: 'Santé du direct (7 jours)', hlSub: 'Source qui a servi chaque live lancé, et échecs. Compteurs anonymes : aucune chaîne, aucun titre.',
       hlLives: '{n} lives lancés', hlVods: '{n} VODs lancées', hlFail: '{n} échecs au lancement ({p} %)', hlPlayFail: '{n} pendant la lecture', hlAdBreaks: '{n} pauses pub de la chaîne vues', hlNone: 'Pas encore de données : elles arrivent avec les nouvelles versions de l’app et du site.',
       hs_as: 'Luminous Asie', hs_al: 'Proxy Albanie', hs_eu: 'Luminous Europe', hs_twitch: 'Twitch officiel', hs_account: 'Compte abonné', hs_worker: 'Worker (secours)', hs_unknown: 'Inconnue',
@@ -489,7 +493,7 @@
       today: 'Today', week: 'Last 7 days', month: 'Last 30 days', partial: 'data only since {d}',
       actTitle: 'Active per day', actSub: 'Different people each day (once per day, even if they come back several times).', actSince: 'Measured since {d}.', actNone: 'No data yet: measuring starts with this update.',
       rtTitle: 'Retention', rtSub: 'Among people who arrived long enough ago, the share seen again at least 1, 7 or 14 days after their first day. By arrival week, last 5 weeks.',
-      rtD1: 'came back another day', rtD7: 'still there 7 days later', rtD14: 'still there 14 days later', rtOf: 'of {n}', rtWeek: 'Arrived', rtSize: 'People', rtWeekOf: 'week of {d}', rtColD1: 'Day 1', rtColD7: 'Day 7', days3: '3 days', days7: '7 days', days30: '30 days',
+      rtD1: 'came back another day', rtD7: 'still there 7 days later', rtD14: 'still there 14 days later', rtOf: 'of {n}', rtWeek: 'Arrived', rtSize: 'People', rtWeekOf: 'week of {d}', fbErrors: '{n} recent error(s) attached', srvErrTitle: 'Server errors: {n} (14 days)', srvErrNone: 'No server errors in the last 14 days.', rtColD1: 'Day 1', rtColD7: 'Day 7', days3: '3 days', days7: '7 days', days30: '30 days',
       hlTitle: 'Live health (7 days)', hlSub: 'Source that served each live started, and failures. Anonymous counters: no channel, no title.',
       hlLives: '{n} lives started', hlVods: '{n} VODs started', hlFail: '{n} failed to start ({p} %)', hlPlayFail: '{n} during playback', hlAdBreaks: '{n} channel ad breaks seen', hlNone: 'No data yet: it comes with the new versions of the app and the website.',
       hs_as: 'Luminous Asia', hs_al: 'Albania proxy', hs_eu: 'Luminous Europe', hs_twitch: 'Official Twitch', hs_account: 'Subscriber account', hs_worker: 'Worker (fallback)', hs_unknown: 'Unknown',
@@ -545,7 +549,7 @@
       today: 'Hoy', week: 'Últimos 7 días', month: 'Últimos 30 días', partial: 'datos solo desde el {d}',
       actTitle: 'Activos por día', actSub: 'Personas distintas cada día (una vez por día, aunque vuelvan varias veces).', actSince: 'Medido desde el {d}.', actNone: 'Aún no hay datos: la medición empieza con esta actualización.',
       rtTitle: 'Retención', rtSub: 'Entre las personas que llegaron hace suficiente tiempo, la parte que volvió al menos 1, 7 o 14 días después de su primer día. Por semana de llegada, últimas 5 semanas.',
-      rtD1: 'volvieron otro día', rtD7: 'siguen 7 días después', rtD14: 'siguen 14 días después', rtOf: 'de {n}', rtWeek: 'Llegadas', rtSize: 'Personas', rtWeekOf: 'semana del {d}', rtColD1: 'Día 1', rtColD7: 'Día 7', days3: '3 días', days7: '7 días', days30: '30 días',
+      rtD1: 'volvieron otro día', rtD7: 'siguen 7 días después', rtD14: 'siguen 14 días después', rtOf: 'de {n}', rtWeek: 'Llegadas', rtSize: 'Personas', rtWeekOf: 'semana del {d}', fbErrors: '{n} error(es) reciente(s) adjunto(s)', srvErrTitle: 'Errores del servidor: {n} (14 días)', srvErrNone: 'Ningún error del servidor en los últimos 14 días.', rtColD1: 'Día 1', rtColD7: 'Día 7', days3: '3 días', days7: '7 días', days30: '30 días',
       hlTitle: 'Salud del directo (7 días)', hlSub: 'Fuente que sirvió cada directo iniciado, y fallos. Contadores anónimos: ningún canal, ningún título.',
       hlLives: '{n} directos iniciados', hlVods: '{n} VODs iniciados', hlFail: '{n} fallos al iniciar ({p} %)', hlPlayFail: '{n} durante la reproducción', hlAdBreaks: '{n} pausas publicitarias del canal vistas', hlNone: 'Aún no hay datos: llegan con las nuevas versiones de la app y del sitio.',
       hs_as: 'Luminous Asia', hs_al: 'Proxy de Albania', hs_eu: 'Luminous Europa', hs_twitch: 'Twitch oficial', hs_account: 'Cuenta suscrita', hs_worker: 'Worker (respaldo)', hs_unknown: 'Desconocida',
@@ -1141,6 +1145,7 @@
       const before = new Map(fbItems.map((f) => [f.key, f.updatedAt]))
       const changed = !quiet || r.items?.length !== fbItems.length || (r.items ?? []).some((f) => before.get(f.key) !== f.updatedAt)
       fbItems = r.items ?? []
+      renderServerErrors(r.serverErrors)
       const keys = new Set(fbItems.map((f) => f.key))
       for (const key of [...fbOpen]) if (!keys.has(key)) { fbOpen.delete(key); fbThreads.delete(key) }
       renderHook(r.webhook, r.bridge)
@@ -1161,6 +1166,16 @@
   /** État du webhook Discord : réussi, refusé (et pourquoi), ou absent. Et
    *  du pont Discord (bot du relais), s'il est configuré sur le Worker. */
   let fbBridge = null
+  /** Erreurs du serveur (Worker), 50 dernières sur 14 jours : sans passer par
+   *  le tableau de bord de Cloudflare. */
+  function renderServerErrors(list) {
+    const box = $('#srv-errors')
+    if (!box) return
+    if (!Array.isArray(list) || !list.length) { box.innerHTML = `<p class="sub">${esc(t('srvErrNone'))}</p>`; return }
+    const when = (at) => new Date(at).toLocaleString(LOCALE, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
+    box.innerHTML = `<details><summary>${esc(t('srvErrTitle', { n: list.length }))}</summary><pre>${
+      esc(list.map((e) => `${when(e.at)} · ${e.where} · ${e.msg}`).join('\n'))}</pre></details>`
+  }
   function renderHook(w, bridge = fbBridge) {
     fbBridge = bridge
     const box = $('#fb-hook')
@@ -1234,6 +1249,7 @@
         </div>
         <p class="fb-msg">${esc(f.message)}</p>
         ${f.info ? `<div class="fb-info">${esc(readableInfo(f.info))}</div>` : ''}
+        ${f.errors ? `<details class="fb-errors"><summary>${esc(t('fbErrors', { n: f.errors.split('\n').length }))}</summary><pre>${esc(f.errors)}</pre></details>` : ''}
         <div class="fb-thread" ${fbOpen.has(f.key) ? '' : 'hidden'}>${fbThreads.has(f.key) ? threadHtml(f, fbThreads.get(f.key)) : `<p class="sub">…</p>`}</div>
       </div>`).join('')
     for (const img of document.querySelectorAll('#fb-list img[data-pic]')) showPic(img)

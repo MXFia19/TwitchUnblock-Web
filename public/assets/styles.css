@@ -1578,6 +1578,10 @@ html.touring { overflow: hidden; }
 .chat-rules .rule { margin: 3px 0; white-space: pre-wrap; }
 .chat-rules-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; }
 
+/* Journal des erreurs (Réglages → À propos). */
+.errlog { margin: 10px 0; padding: 10px; max-height: 50vh; overflow: auto; border-radius: 10px; background: var(--surface); font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.row-actions { display: flex; gap: 8px; }
+
 /* Champs en 16 px sur écran tactile : en dessous, Safari iOS zoomait la
    page à chaque toucher. */
 @media (pointer: coarse) {

@@ -11,6 +11,7 @@
 import { lang, t } from './i18n.js'
 import { API_URL, RELAY_BASE, WORKER_BASES, fixProxiedUrl, liveSourceOrder, proxyBaseOf } from './api.js'
 import { $, esc, formatClock, icon, isIOS } from './util.js'
+import { logError } from './errlog.js'
 
 // Mêmes vitesses que dans l'app. Pas au-delà de 2× : Twitch ne publie pas
 // de playlist I-frame, et le débit double déjà à 2×.
@@ -813,6 +814,7 @@ export class Player {
         // tentatives passent par le relais du Worker.
         if (noteDirectSegmentError(Hls, data, this) && data.fatal) { hls.startLoad(); return }
         if (!data.fatal || token !== this.attachToken) return
+        logError('lecteur', `hls.js ${data.type} · ${data.details}${data.response?.code ? ` · HTTP ${data.response.code}` : ''}`)
         if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
           // Worker hors service en pleine lecture (quota du jour atteint), ou
           // relais du VPS en panne (failedProxy) : plutôt que de relancer
@@ -983,6 +985,7 @@ export class Player {
   onMediaError() {
     const v = this.video
     if (this.hls || !v.currentSrc || v.currentSrc.startsWith('blob:')) return
+    logError('lecteur', `vidéo : erreur ${v.error?.code ?? '?'} ${v.error?.message || ''}`)
     this.el.spinner.hidden = true
     const down = v.error?.code === 2 /* MEDIA_ERR_NETWORK */ && navigator.onLine !== false ? proxyBaseOf(v.currentSrc) : null
     if (down && this.o.onWorkerDown?.(down)) return

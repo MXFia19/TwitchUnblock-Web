@@ -4,6 +4,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { store } from './store.js'
+import { logError } from './errlog.js'
 
 // Auto-hébergement : public/config.js peut remplacer l'adresse du Worker
 // (« same-origin » = le site et le Worker servis ensemble, comme sous Docker)
@@ -220,6 +221,8 @@ export async function workerJson(path, { timeout = 0, avoid = null } = {}) {
     for (const b of failed) markWorkerDown(b)
     if (avoid && base !== avoid) markWorkerDown(avoid)
     if (!res.ok) {
+      // 404 : pas de direct ou VOD introuvable, une réponse normale.
+      if (res.status !== 404) logError('worker', `${path.split('?')[0]} → HTTP ${res.status}`)
       const err = new Error(`HTTP ${res.status}`)
       err.status = res.status
       throw err
@@ -228,6 +231,7 @@ export async function workerJson(path, { timeout = 0, avoid = null } = {}) {
   }
   // Aucun Worker joignable : erreur sans statut, affichée comme un problème
   // de réseau, pas comme une vidéo introuvable.
+  logError('worker', `${path.split('?')[0]} : aucun Worker joignable (${failed.length} essayés)`)
   throw new Error('Worker injoignable')
 }
 /** Liens donnés aux applis externes (VLC, Outplayer, Infuse) : par le proxy
@@ -259,9 +263,19 @@ export function cleanLogin(raw) {
   return LOGIN_RE.test(login) ? login : null
 }
 
+/** « gql.twitch.tv/gql », sans les paramètres (ils peuvent porter un jeton). */
+const where = (url) => { try { const u = new URL(url); return u.host + u.pathname } catch { return '?' } }
+
 async function json(url, init) {
-  const res = await fetch(url, init)
+  let res
+  try {
+    res = await fetch(url, init)
+  } catch (e) {
+    if (e?.name !== 'AbortError') logError('réseau', `${where(url)} : ${e?.message || e}`)
+    throw e
+  }
   if (!res.ok) {
+    logError('réseau', `${where(url)} → HTTP ${res.status}`)
     const err = new Error(`HTTP ${res.status}`)
     err.status = res.status
     throw err
