@@ -888,8 +888,9 @@ const USAGE_RETENTION_DAYS = 35;
 // Nouvelles installations anonymes comptées par jour et par adresse (/64 en
 // IPv6) : au-delà, des UUID tirés au hasard gonfleraient /stats.
 const USAGE_NEW_PER_PERSON = 20;
-// tvos : l'app Apple TV (comptée à part depuis la 0.1.15).
-const PLATFORMS = ['ios', 'web', 'tvos'];
+// tvos : l'app Apple TV (comptée à part depuis la 0.1.15) ; android : l'app
+// Android (téléphone et Android TV, dépôt TwitchUnblock-Android).
+const PLATFORMS = ['ios', 'web', 'tvos', 'android'];
 // Le site officiel : un ping « web » venu d'ailleurs (copie locale, tests,
 // préversions) n'est pas compté. L'app iOS n'envoie pas d'en-tête Origin.
 let USAGE_ORIGINS = ['https://twitchunblock.vercel.app', 'https://test2-fawn-eta.vercel.app'];
@@ -900,7 +901,7 @@ const BOT_UA = /headless|bot\b|crawler|spider|slurp|playwright|puppeteer|seleniu
 // qui a servi un direct, les échecs. Jamais de chaîne ni de titre.
 const USAGE_DEVICES = ['iphone', 'ipad', 'tv', 'mobile', 'desktop'];
 // Langue (l) et appareil (d) par plateforme : i(OS), w(eb), t(vOS) ; version d'iOS.
-const USAGE_META_FIELDS = ['li', 'lw', 'lt', 'di', 'dw', 'dt', 'os'];
+const USAGE_META_FIELDS = ['li', 'lw', 'lt', 'la', 'di', 'dw', 'dt', 'da', 'os'];
 // live_account : direct de l'app servi par le compte d'un abonné sans pub ;
 // live_ad_break : pause pub de la chaîne affichée (une fois par pause).
 const USAGE_EVENTS = ['live_as', 'live_al', 'live_eu', 'live_twitch', 'live_account', 'live_worker', 'live_unknown',
@@ -1003,7 +1004,7 @@ async function handlePing(request, env) {
 
     // Langue et appareil, par plateforme (un compte peut utiliser l'app et le
     // site) ; gardés tels quels si le client ne les envoie pas (anciennes versions).
-    const suffix = platform === 'web' ? 'w' : platform === 'tvos' ? 't' : 'i';
+    const suffix = platform === 'web' ? 'w' : platform === 'tvos' ? 't' : platform === 'android' ? 'a' : 'i';
     for (const f of USAGE_META_FIELDS) if (prev[f] !== undefined) meta[f] = prev[f];
     const lang = String(body.lang || '').toLowerCase();
     if (/^[a-z]{2}$/.test(lang)) meta['l' + suffix] = lang;
@@ -1069,7 +1070,7 @@ async function handleStats(env) {
     // dernière fois ce jour-là, par plateforme.
     const dayKey = (offset) => new Date(todayMs - offset * 86400000).toISOString().slice(0, 10);
     const daily = {};
-    for (let i = 29; i >= 0; i--) daily[dayKey(i)] = { date: dayKey(i), newIos: 0, newWeb: 0, newTv: 0, lastIos: 0, lastWeb: 0, lastTv: 0 };
+    for (let i = 29; i >= 0; i--) daily[dayKey(i)] = { date: dayKey(i), newIos: 0, newWeb: 0, newTv: 0, newAndroid: 0, lastIos: 0, lastWeb: 0, lastTv: 0, lastAndroid: 0 };
 
     // Rétention : parmi ceux arrivés il y a au moins N jours, la part revue N
     // jours ou plus après son premier jour (J+1, J+7, J+14), au total et par
@@ -1082,7 +1083,7 @@ async function handleStats(env) {
         return new Date(d.getTime() - ((d.getUTCDay() + 6) % 7) * 86400000).toISOString().slice(0, 10);
     };
     // Appareils : personnes actives sur 30 jours qui envoient ces infos.
-    const devices = { reporting: { ios: 0, web: 0, tvos: 0 }, lang: { ios: {}, web: {}, tvos: {} }, os: {}, device: { ios: {}, web: {}, tvos: {} } };
+    const devices = { reporting: { ios: 0, web: 0, tvos: 0, android: 0 }, lang: { ios: {}, web: {}, tvos: {}, android: {} }, os: {}, device: { ios: {}, web: {}, tvos: {}, android: {} } };
     const tally = (obj, k) => { obj[k] = (obj[k] || 0) + 1; };
 
     // list() renvoie les métadonnées sans lecture par clé ; 1000 clés par page.
@@ -1094,10 +1095,11 @@ async function handleStats(env) {
             const age = Number.isNaN(then) ? Infinity : Math.floor((todayMs - then) / 86400000);
             const firstThen = Date.parse((meta.first || meta.last || '') + 'T00:00:00Z');
             const firstAge = Number.isNaN(firstThen) ? Infinity : Math.floor((todayMs - firstThen) / 86400000);
-            // Une seule plateforme par identifiant : l'app iPhone d'abord (le
-            // vrai signe d'adoption), puis l'Apple TV, puis le site.
+            // Une seule plateforme par identifiant : les apps d'abord (le vrai
+            // signe d'adoption : iPhone, Android, Apple TV), puis le site.
             const plats = meta.ps ? String(meta.ps).split(',') : [meta.p || 'ios'];
-            const plat = plats.includes('ios') ? 'ios' : plats.includes('tvos') ? 'tvos' : plats.includes('web') ? 'web' : 'ios';
+            const plat = plats.includes('ios') ? 'ios' : plats.includes('android') ? 'android'
+                : plats.includes('tvos') ? 'tvos' : plats.includes('web') ? 'web' : 'ios';
             const buckets = [platforms[plat]];
             const kind = meta.k === 'a' ? kinds.accounts : kinds.anonymous;
             // Une seule fois par période, quel que soit le nombre de jours où
@@ -1114,7 +1116,7 @@ async function handleStats(env) {
             if (d >= 2) { returning++; kind.returning++; for (const b of buckets) b.returning++; }
             if (d === 1) loyalty.once++; else if (d < 7) loyalty.few++; else if (d < 30) loyalty.regular++; else loyalty.daily++;
             if (meta.first && (!oldestFirst || meta.first < oldestFirst)) oldestFirst = meta.first;
-            const p = plat === 'web' ? 'Web' : plat === 'tvos' ? 'Tv' : 'Ios';
+            const p = plat === 'web' ? 'Web' : plat === 'tvos' ? 'Tv' : plat === 'android' ? 'Android' : 'Ios';
             if (daily[meta.first]) daily[meta.first]['new' + p]++;
             if (daily[meta.last]) daily[meta.last]['last' + p]++;
 
@@ -1134,6 +1136,9 @@ async function handleStats(env) {
                 if (meta.li || meta.di || meta.os) devices.reporting.ios++;
                 if (meta.lw || meta.dw) devices.reporting.web++;
                 if (meta.lt || meta.dt) devices.reporting.tvos++;
+                if (meta.la || meta.da) devices.reporting.android++;
+                if (meta.la) tally(devices.lang.android, meta.la);
+                if (meta.da) tally(devices.device.android, meta.da);
                 if (meta.lt) tally(devices.lang.tvos, meta.lt);
                 if (meta.dt) tally(devices.device.tvos, meta.dt);
                 if (meta.li) tally(devices.lang.ios, meta.li);
@@ -1148,9 +1153,9 @@ async function handleStats(env) {
 
     // Actifs par jour et santé du direct : compteurs de stats_day (depuis
     // leur mise en place seulement, l'historique d'avant n'existe pas).
-    const activeDaily = Object.keys(daily).map((date) => ({ date, total: 0, ios: 0, web: 0, tvos: 0, acct: 0, anon: 0 }));
+    const activeDaily = Object.keys(daily).map((date) => ({ date, total: 0, ios: 0, web: 0, tvos: 0, android: 0, acct: 0, anon: 0 }));
     const byDate = Object.fromEntries(activeDaily.map((d) => [d.date, d]));
-    const health = { week: { ios: {}, web: {}, tvos: {} }, month: { ios: {}, web: {}, tvos: {} }, since: null };
+    const health = { week: { ios: {}, web: {}, tvos: {}, android: {} }, month: { ios: {}, web: {}, tvos: {}, android: {} }, since: null };
     let activeSince = null;
     // Notifications : envois réussis par jour (et le reste des compteurs).
     const pushDaily = Object.keys(daily).map((date) => ({ date, ok_web: 0, ok_ntfy: 0 }));
@@ -2030,7 +2035,7 @@ async function postFeedbackToDiscord(webhook, e, photos = [], { inReplyTo = null
     const KINDS = { bug: '🐞 Bug', idea: '💡 Idea', other: '💬 Other' };
     const COLORS = { bug: 0xeb0400, idea: 0x9147ff, other: 0x6b7280 };
     const kind = KINDS[e.k] || KINDS.other;
-    const PLACES = { ios: 'iOS app', discord: 'Discord', web: 'Website' };
+    const PLACES = { ios: 'iOS app', android: 'Android app', discord: 'Discord', web: 'Website' };
     const fields = [{ name: 'Platform', value: `${PLACES[e.p] || PLACES.web} · ${e.v}`, inline: true }];
     if (e.c) fields.push({ name: 'Contact', value: e.c, inline: true });
     if (inReplyTo) fields.push({ name: 'In reply to', value: inReplyTo.slice(0, 300) });
