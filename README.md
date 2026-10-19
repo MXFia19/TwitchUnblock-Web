@@ -132,7 +132,9 @@ worker.js            Backend: Cloudflare Worker
 wrangler.toml        Worker configuration
 docker/relay.mjs     Video relay for your own server (same proxy as the Worker)
 docker/discord-bot.mjs  Discord bot (feedback, alerts, releases), run by the relay
+docker/healthcheck.mjs  Container health check (site or relay)
 relay/               Its docker-compose.yml and Caddyfile (HTTPS)
+.github/workflows/   Docker image (docker.yml), daily database backup (d1-backup.yml)
 vercel.json          Website configuration on Vercel
 ```
 
@@ -158,7 +160,7 @@ The iOS app uses the same Worker.
 
 **Live notifications** (Web Push): the browser subscribes with its push service (Apple, Google, Mozilla, Microsoft) and hands the Worker its delivery address, its keys and the followed channels. Every 2 minutes (Cron Trigger, every minute with the check every other one), the Worker asks Twitch which of them are live — 100 channels per GQL request, 1,200 per check; beyond that, the checks take turns, each one moving on by 1,200 channels, so up to 2,400 every channel is read at least every other check (about 4 minutes) — and a channel that just went live queues a notification for each of its followers, sent encrypted (RFC 8291) and signed (VAPID, keys created on first use and kept in D1). The number of runs doesn't depend on the number of subscribers. On the free plan a run gets about 10 ms of CPU and a notification costs about 0.7 ms, so they leave from a queue, about 480 an hour; the $5 plan lifts that. Expired subscriptions are forgotten.
 
-The iOS app can't use Apple's push service (it needs a paid developer account), so it goes through [ntfy](https://ntfy.sh): the app creates a secret topic, the user subscribes to it in the free ntfy app, and the same scheduled check publishes a plain message there (`twitchunblock://live/<channel>` opens the stream in the app). Topics the app hasn't refreshed for 60 days are dropped.
+The iOS app can't use Apple's push service (it needs a paid developer account), so it goes through [ntfy](https://ntfy.sh): the app creates a secret topic, the user subscribes to it in the free ntfy app, and the same scheduled check publishes a message there, in the subscription's language, with the live's thumbnail (attachment), the channel's picture (icon, shown by ntfy's Android app) and a **Watch** button (`twitchunblock://live/<channel>` opens the stream in the app, like a tap on the notification). Topics the app hasn't refreshed for 60 days are dropped.
 
 ntfy.sh's free tier counts messages per IP address (250 a day). Every Cloudflare Worker sends from the same shared addresses, so ntfy.sh answers them `429 Too Many Requests`. The Worker therefore hands its ntfy messages to the [video relay](#video-relay-on-your-own-server-vps) (`NTFY_RELAY` in `wrangler.toml`), which publishes them from its own address. Messages leave in one batch per run (12 at most, ntfy.sh's pace of one request every 5 seconds), signed with the Worker's VAPID key: the relay checks the signature against the Worker's public key (`/api/push/key`) and refuses anything else, so no secret needs to be shared. After a `429` the Worker stops sending to ntfy for 5 minutes, or until midnight UTC (when ntfy.sh resets its counters) once the daily quota is reached; the app's **Test** button says so. That quota is shared by every user of the app, so daily caps kept in D1 protect it: the **Test** button only works for a topic the app has already subscribed (5 tests a day per topic, 40 in all), new topics are capped (5 a day per IP address, 10 per network — a `/48` in IPv6 —, 40 in all), each topic gets at most 30 live notifications a day, and all topics together at most 200 (below ntfy.sh's 250 with the tests), of which topics younger than 3 days get 100 at most — so new topics can't use up the day for everyone and trigger the pause (without `NTFY_TOKEN` only). Web notifications and ntfy messages are read from the queue separately, so neither can hold up the other. While the relay is down, messages wait in the queue (30 minutes at most): there is no fallback to sending directly, which ntfy.sh would refuse anyway. The relay logs one line per batch (`docker compose logs relay`). With `NTFY_TOKEN` (a paid ntfy account, counted per account rather than per address) the Worker publishes directly, like the Docker image does from your own server.
 
@@ -169,6 +171,8 @@ ntfy.sh's free tier counts messages per IP address (250 a day). Every Cloudflare
 - Rate limits (feedback, replies, pings, notifications) count an IPv6 address by its `/64` block. Screenshots attached to feedback have a daily share per person (address or Discord account, counted in one of 65,536 anonymous buckets: no address is stored), per network (`/48`) and a daily cap for the whole Worker, and stop before the D1 database fills up; the message itself still goes through, and the website says the screenshots weren't kept.
 - Per-address limits only hold in one Worker instance's memory, and a free IPv6 `/48` holds 65,536 `/64`s, so whatever writes to D1 also has daily caps kept in D1, for the whole Worker and per network: feedback (300 new reports a day, 30 per network; 1,000 replies a day; no new report or reply once the database passes 400 MB), new anonymous installs counted (1,000 a day, 100 per network), votes and reactions (2,000 a day per poll or announcement, 40 new devices per network), followed channels for live notifications (only the difference is written: 2,000 changes a day per subscription, 3,000 per network, 10,000 in all, and 1,000 channels new to the server a day). Over a cap the answer is `429` (an install is just not counted), and a cap already reached refuses without writing anything.
 - The developer tools only accept Twitch tokens issued to the official website and apps (or to `TWITCH_CLIENT_ID`): a token of the owner's account issued to another Twitch app doesn't open them.
+- **Admin log**: every admin action — from `/stats`, the apps or Discord: deleting, closing or merging a report, replies and statuses, announcements, polls, erasing someone's data… — is kept 90 days (who, what, when, from where) and listed at the bottom of the developer tools on `/stats`.
+- **Erasing someone's data** (`/stats` → developer tools, or `/forget-user` on Discord): shows what will go first, then erases it — see [Discord bot](#discord-bot-feedback-alerts-releases), *Operations*.
 
 ---
 
@@ -233,7 +237,7 @@ Optional settings, in the Cloudflare dashboard under *Workers & Pages → your W
 | `NTFY_TOKEN` | Secret | Optional. Access token of a **paid** [ntfy](https://ntfy.sh) account, for the iOS app's live notifications: ntfy.sh counts free use per IP address (250 messages a day), which the Worker's shared Cloudflare addresses don't get — hence the relay below. A paid account is counted per account (2,500 a day for $6/month) and lets the Worker publish directly. A free account changes nothing. |
 | `NTFY_RELAY` | Text | Set in `wrangler.toml`: the [video relay](#video-relay-on-your-own-server-vps) that publishes the iOS app's ntfy messages (see [How it works](#how-it-works)). For your own Worker, point it to your own relay (with `NTFY_WORKER` set there) or remove it. |
 
-`wrangler.toml` sets `keep_vars = true`, so deploying again doesn't wipe the ones set in the dashboard. It also declares the Cron Trigger (every minute) behind the live notifications — nothing to set up.
+`wrangler.toml` sets `keep_vars = true`, so deploying again doesn't wipe the ones set in the dashboard. It also declares the Cron Trigger (every minute) behind the live notifications, and binds the deployed version (`version_metadata`), which the [Discord bot](#discord-bot-feedback-alerts-releases) compares with GitHub — nothing to set up.
 
 ### Fallback Worker (daily limit)
 
@@ -256,6 +260,56 @@ already playing switches over by itself and resumes where it was.
 
 A copy of the site with its own Worker lists its fallbacks in
 `public/config.js`: `window.TU_CONFIG = { apiUrl: '…', fallbackApiUrls: ['…'] }`.
+
+### Database backup (daily)
+
+[`.github/workflows/d1-backup.yml`](.github/workflows/d1-backup.yml) exports
+the Worker's D1 database every night (03:23 UTC, `wrangler d1 export
+--remote`), encrypts it (`gpg --symmetric`, AES-256) and keeps it 14 days as
+an artifact of the workflow run. Artifacts of a public repository can be
+downloaded by anyone signed in to GitHub: only the passphrase protects them.
+During the export (a few seconds for a small database), D1 doesn't serve other
+queries.
+
+Repository secrets (*Settings → Secrets and variables → Actions*):
+
+| Name | What it is |
+|---|---|
+| `CLOUDFLARE_API_TOKEN` | A Cloudflare API token (*My Profile → API Tokens → Create Token → Custom*) with **Account → D1 → Edit** on the Worker's account only (exporting needs write access). Its own token, not the Discord bot's. |
+| `CLOUDFLARE_ACCOUNT_ID` | That account's ID (*Workers & Pages*, right-hand column). |
+| `BACKUP_PASSPHRASE` | A long random passphrase (`openssl rand -base64 32`). Keep a copy outside GitHub (a password manager): without it, the backups can't be read. |
+
+Without them, the workflow stops with a notice instead of failing. Run it once
+by hand (*Actions → D1 backup → Run workflow*) to check it.
+
+**Restoring**
+
+1. Download the artifact (*Actions → D1 backup →* the run *→ Artifacts*) and
+   unzip it.
+2. Decrypt it (asks for the passphrase):
+   ```bash
+   gpg --output backup.sql --decrypt d1-twitchunblock-YYYY-MM-DD.sql.gpg
+   ```
+3. Import it into a **new, empty** database (the dump creates its own tables),
+   from a clone of the repository:
+   ```bash
+   npx wrangler d1 create twitchunblock-restored
+   npx wrangler d1 execute twitchunblock-restored --remote --file backup.sql
+   ```
+   Then put the new `database_id` in `wrangler.toml` (`[[d1_databases]]`) and
+   push it to `main`: the Worker deploys with the restored database. The old
+   one stays untouched until you delete it.
+
+**Or, without a backup — D1 Time Travel**: D1 can bring the database back to
+any minute of the last 7 days (30 on the paid plan), in place:
+
+```bash
+npx wrangler d1 time-travel info twitchunblock --timestamp=2026-10-20T03:00:00Z
+npx wrangler d1 time-travel restore twitchunblock --timestamp=2026-10-20T03:00:00Z
+```
+
+`restore` prints a bookmark of the state it replaced: `npx wrangler d1
+time-travel restore twitchunblock --bookmark=<it>` undoes it.
 
 ### Your own Worker, from the settings (no rebuild)
 
@@ -331,7 +385,13 @@ answers for any name under yours, like `relay.yourname.duckdns.org`).
    - **Ports 80/443 are free**: `docker compose --profile caddy up -d` — the
      bundled Caddy gets and renews the HTTPS certificate by itself (open ports
      80 and 443, see below).
-3. Check that `https://myrelay.duckdns.org/health` answers `ok`.
+3. Check that `https://myrelay.duckdns.org/health` answers
+   `{"ok":true,"relay":"ok",…}` — with the image's commit (`version`) and,
+   once the [Discord bot](#discord-bot-feedback-alerts-releases) is set up,
+   its connection (`discord`). It answers 200 as long as the relay runs;
+   `ok` turns `false` when the bot is stopped or disconnected for more than
+   5 minutes, and `docker ps` then shows the container as `unhealthy`
+   (the video relay keeps working).
 4. Set `DEFAULT_RELAY_URL` (or `relayUrl`) to `https://myrelay.duckdns.org`.
 
 To update: `docker compose pull && docker compose up -d` (add `--profile caddy`
@@ -438,6 +498,45 @@ The relay itself can't report its own outage: set the Worker's `ALERT_WEBHOOK`
 secret to a webhook of that channel, and the Worker checks the relay and the
 bot every 5 minutes.
 
+**Operations** (same private channel; each alert once a day at most, or once
+per version):
+
+- **Daily caps at 80%**: new reports, replies, new installs counted, ntfy
+  topics and tests, ntfy live notifications, followed-channel changes, poll
+  votes and announcement reactions, report screenshots — the Worker's own
+  limits (see [Security](#security)): past them, more are refused until
+  midnight UTC.
+- **Database at 70%** of D1's 500 MB (free plan); reports stop at 400 MB.
+- **Scheduled task silent for 5 minutes** (live notifications, relay watch),
+  then back.
+- **Cloudflare free quotas at 70%** — Worker requests (100,000 a day), D1 rows
+  read (5 million) and written (100,000), for the main Worker's account — when
+  `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` are in the relay's `.env`
+  (below). Without them, this check is off.
+- **"VPS not up to date"** when the relay's image is behind GitHub for its own
+  files (`worker.js`, `docker/`, `Dockerfile`), **"Worker not up to date"**
+  when `worker.js` changed on `main` after the deployed version — checked
+  every 30 minutes with GitHub's public API, said 30 minutes after the delay
+  is first seen (the time to build and deploy).
+- `/status` (developer only): main and fallback Workers, database size, ntfy
+  messages sent today against ntfy.sh's 250 and any pause, notification queue,
+  the scheduled task's last run, relay and Worker versions, how long the bot
+  has been connected, and the Cloudflare quotas when set — in one message.
+- `/forget-user who:` (developer only) erases a person's data, after showing
+  what will go: for a **Twitch account** (`@name` or numeric ID) its backup,
+  synced settings and usage entry; for an **install ID** (random ID of an app
+  install or a browser) its usage entry, poll votes and announcement
+  reactions; **reports** (their `fb_…` key, or the link or ID of their
+  Discord post; or a `@Discord user`, for what they sent with `/bug`) with
+  their screenshots, conversation and Discord post; **notification
+  subscriptions** (the iOS app's ntfy topic, `tu-…`). Reports and
+  subscriptions aren't tied to an account or an install, so name them too.
+  Up to 10 at once, separated by spaces. Same tool on `/stats`, and both go
+  to the admin log.
+- What the bot does for the developer (replies, statuses, deletions, merges,
+  announcements, polls, `/setup`, published release notes) goes to the
+  [admin log](#security) with the member's name.
+
 **Community**: `/announce` shows the developer banner in the app and on the
 website (`/announce-clear` removes it). When a new app or website version is
 out, a draft of its release notes appears in the private channel — **Publish**
@@ -474,10 +573,16 @@ Setting it up:
 4. **Relay**: in its `.env`, `DISCORD_BOT_TOKEN=…` and `FEEDBACK_BOT_SECRET=…`
    (for your own Worker, `FEEDBACK_WORKER=https://…`; for other people allowed
    to answer, `DISCORD_ADMIN_IDS=<Discord IDs, comma-separated>`; optional:
-   `FALLBACK_WORKERS`, `SUMMARY_TZ`, `SUMMARY_HOUR`), then
+   `FALLBACK_WORKERS`, `SUMMARY_TZ`, `SUMMARY_HOUR`, and the two below), then
    `docker compose pull && docker compose up -d`. `docker compose logs relay`
    (in the relay's folder) shows `Discord bridge: connected` and `following forum
    “…”`, and `/stats` shows the bot as running.
+   - `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` (optional, Cloudflare
+     quota alerts): a token made in *My Profile → API Tokens → Create Token →
+     Custom* with only **Account → Account Analytics → Read**, limited to the
+     main Worker's account, and that account's ID (*Workers & Pages*,
+     right-hand column). Read-only: it can't change anything. Not the same
+     token as the database backup's.
 5. **Channels**: run `/setup` in the private channel (*Alerts, daily summary
    and release drafts*), in the announcements channel (*Release
    announcements*, optionally with the role to mention at each release), in
@@ -544,6 +649,11 @@ listens inside the container, behind a small front server
 (`docker/front.mjs`), so its local tools under `/cdn-cgi/` — the scheduled
 trigger, the D1 database explorer — can't be reached from outside. The
 wrangler version is pinned in the `Dockerfile`.
+
+The image has a health check (`docker ps` shows `healthy`): `/api/ping` for
+the website, `/health` for the relay. Both `docker-compose.yml` files set
+`init: true`, so a small init process forwards `docker stop` and cleans up
+finished processes.
 
 Data lives in the `twitchunblock-data` volume. Watching lives, VODs and clips,
 the chat (read-only without login), categories and device follows all work

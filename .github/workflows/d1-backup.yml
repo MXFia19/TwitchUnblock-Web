@@ -1,0 +1,100 @@
+# Sauvegarde quotidienne de la base D1 du Worker (README, « Database backup ») :
+# export SQL (wrangler d1 export --remote), chiffré avec une phrase secrète
+# (gpg --symmetric, AES-256), gardé 14 jours en artefact de ce workflow.
+# Les artefacts d'un dépôt public se téléchargent par n'importe quel compte
+# GitHub : seule la phrase secrète les protège.
+#
+# Secrets du dépôt (Settings → Secrets and variables → Actions) :
+#   CLOUDFLARE_API_TOKEN   jeton Cloudflare « D1 : Edit » sur le compte du
+#                          Worker (l'export demande l'écriture) ; pas celui
+#                          du bot (lecture seule des statistiques)
+#   CLOUDFLARE_ACCOUNT_ID  identifiant de ce compte
+#   BACKUP_PASSPHRASE      phrase secrète, longue et tirée au hasard
+# Sans eux, le workflow s'arrête sur un avis, sans échec.
+#
+# Restauration : README, « Database backup ».
+name: D1 backup
+
+on:
+  schedule:
+    # Chaque nuit, à une heure creuse : pendant l'export (quelques secondes
+    # pour une petite base), D1 ne sert pas les autres requêtes.
+    - cron: '23 3 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: d1-backup
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  # Même version que l'image Docker (Dockerfile) ; nom de la base : wrangler.toml.
+  WRANGLER: wrangler@4.151.0
+  DATABASE: twitchunblock
+
+jobs:
+  backup:
+    name: Export, encrypt, keep
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check the secrets
+        id: secrets
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          BACKUP_PASSPHRASE: ${{ secrets.BACKUP_PASSPHRASE }}
+        run: |
+          if [ -n "$CLOUDFLARE_API_TOKEN" ] && [ -n "$CLOUDFLARE_ACCOUNT_ID" ] && [ -n "$BACKUP_PASSPHRASE" ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice title=D1 backup skipped::Set the CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID and BACKUP_PASSPHRASE secrets (README, Database backup)."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # wrangler.toml : le nom de la base mène à son identifiant.
+      - name: Checkout repository
+        if: steps.secrets.outputs.ready == 'true'
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        if: steps.secrets.outputs.ready == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Export and encrypt
+        id: export
+        if: steps.secrets.outputs.ready == 'true'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          BACKUP_PASSPHRASE: ${{ secrets.BACKUP_PASSPHRASE }}
+          WRANGLER_SEND_METRICS: 'false'
+        run: |
+          set -eu
+          umask 077
+          name="d1-$DATABASE-$(date -u +%Y-%m-%d)"
+          npx --yes "$WRANGLER" d1 export "$DATABASE" --remote --output "$RUNNER_TEMP/$name.sql"
+          test -s "$RUNNER_TEMP/$name.sql"
+          echo "Export: $(wc -c < "$RUNNER_TEMP/$name.sql") bytes"
+          # Phrase secrète par l'entrée standard : jamais dans la ligne de commande.
+          printf '%s' "$BACKUP_PASSPHRASE" | gpg --batch --yes --pinentry-mode loopback --passphrase-fd 0 \
+            --symmetric --cipher-algo AES256 --s2k-digest-algo SHA512 --s2k-count 65011712 \
+            --output "$name.sql.gpg" "$RUNNER_TEMP/$name.sql"
+          shred -u "$RUNNER_TEMP/$name.sql" 2>/dev/null || rm -f "$RUNNER_TEMP/$name.sql"
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+
+      - name: Keep for 14 days
+        if: steps.secrets.outputs.ready == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.export.outputs.name }}
+          path: ${{ steps.export.outputs.name }}.sql.gpg
+          retention-days: 14
+          if-no-files-found: error
+          # Déjà compressé (gpg) et chiffré.
+          compression-level: 0
