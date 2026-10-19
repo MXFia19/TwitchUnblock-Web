@@ -3581,8 +3581,8 @@ const NTFY_YOUNG_AGE = 3 * 86400000;
 // synchro de l'app ou du site ne change que quelques chaînes.
 const PUSH_CHANGES_PER_SUB = 2000;        // chaînes ajoutées ou retirées par jour et par abonnement
 const PUSH_CHANGES_PER_NETWORK = 3000;    // … par réseau (/48 en IPv6, l'adresse en IPv4)
-const PUSH_CHANGES_PER_DAY = 10000;       // … en tout
-const PUSH_NEW_LOGINS_PER_DAY = 1000;     // chaînes nouvelles pour le serveur, par jour
+const PUSH_CHANGES_PER_DAY = 20000;       // … en tout (un jour de sortie : ~50 nouveaux abonnés à 400 chaînes)
+const PUSH_NEW_LOGINS_PER_DAY = 3000;     // chaînes nouvelles pour le serveur, par jour
 const PUSH_TEXT = {
     fr: { live: (n) => `${n} est en live`, test: 'Les notifications de live fonctionnent.' },
     en: { live: (n) => `${n} is live`, test: 'Live notifications are working.' },
