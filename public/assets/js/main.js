@@ -180,7 +180,8 @@ function go(path, { replace = false, watch = false } = {}) {
 function watchPath() {
   const w = state.watch
   if (w?.kind === 'live') return `/${w.login}`
-  if (w?.kind === 'vod' && !w.recovered) return `/videos/${w.id}`
+  // Un id de VOD n'a que des chiffres : rien d'autre dans l'adresse ni le lien partagé.
+  if (w?.kind === 'vod' && !w.recovered) return /^\d+$/.test(w.id) ? `/videos/${w.id}` : null
   if (w?.kind === 'clip') return w.login ? `/${w.login}/clip/${encodeURIComponent(w.id)}` : `/clip/${encodeURIComponent(w.id)}`
   return null
 }
@@ -4054,7 +4055,8 @@ async function openClip(slug) {
   if (!clip || !Object.keys(clip.links).length) return showWatchError(t('err_clip'))
   token.links = clip.links
   token.info = clip
-  token.login = clip.broadcaster?.login ?? null
+  // Nom vérifié : il entre dans l'adresse et dans les liens à partager.
+  token.login = api.cleanLogin(clip.broadcaster?.login)
   // Adresse complète, comme sur Twitch, une fois la chaîne connue.
   if (token.login) go(`/${token.login}/clip/${encodeURIComponent(slug)}`, { replace: true, watch: true })
   $('#watch-loading').hidden = true
@@ -4838,7 +4840,7 @@ function openShareSheet() {
   const row = (id, ic, label, url) => `
     <button class="sheet-row share-row" type="button" data-sheet="${id}">${icon(ic, 18)}<span><b>${esc(label)}</b><small>${esc(url.replace(/^https?:\/\//, ''))}</small></span>${icon(native ? 'share' : 'copy', 16)}</button>`
   openSheet(`
-    <div class="sheet-head"><h2>${esc(t('share'))}</h2><button class="icon-btn" type="button" data-sheet-close>${icon('x', 20)}</button></div>
+    <div class="sheet-head"><h2>${esc(t('share'))}</h2><button class="icon-btn" type="button" data-sheet-close aria-label="${esc(t('close'))}">${icon('x', 20)}</button></div>
     ${links.at > 0 ? `<p class="muted sheet-sub">${esc(t('share_at', { t: formatClock(links.at) }))}</p>` : ''}
     <div class="sheet-group">
       ${row('twitch', 'twitch', t('share_twitch'), links.twitch)}
