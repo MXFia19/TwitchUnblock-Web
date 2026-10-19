@@ -21,7 +21,9 @@ function write(key, value) {
   try { localStorage.setItem(key, JSON.stringify(value)) } catch { /* quota, mode privé */ }
 }
 
-const DEFAULT_PREFS = {
+// Exportées pour la synchro des réglages (main.js) : une section encore aux
+// valeurs par défaut ne part pas au serveur.
+export const DEFAULT_PREFS = {
   lang: null,
   topLang: null,
   homeList: false,   // accueil en liste (façon Twitch) plutôt qu'en grille
@@ -54,6 +56,9 @@ const DEFAULT_PREFS = {
   // millisecondes, comme l'app iOS (sauvegarde : clé racine `hidden`).
   hiddenChannels: [],    // { login (minuscules), name, at }, 500 au plus
   hiddenCategories: [],  // { id, name, box, at }, 200 au plus
+  // Synchroniser mes réglages (compte connecté) : voir main.js. Propre à
+  // cet appareil, jamais synchronisé lui-même.
+  syncSettings: true,
 }
 
 /** Réglages enregistrés, avec la qualité d'avant le réglage « Qualité
@@ -94,7 +99,12 @@ export const store = {
 
   // ── Préférences ─────────────────────────────────────────────────────────
   prefs: { ...DEFAULT_PREFS, ...readPrefs() },
-  savePrefs() { write('tu_prefs', this.prefs) },
+  /** Appelé après chaque enregistrement des réglages (synchro, main.js). */
+  onPrefsSaved: null,
+  savePrefs() {
+    write('tu_prefs', this.prefs)
+    this.onPrefsSaved?.()
+  },
 
   // ── Historique (VODs + streamers), même forme que l'ancien site ────────
   history: read('twitch_vod_history', []),

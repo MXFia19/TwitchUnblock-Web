@@ -6,6 +6,27 @@
 
 export const CHANGELOG = [
   {
+    version: '2026.10.20a',
+    items: {
+      fr: [
+        'Réglages synchronisés : connecté à ton compte Twitch, les réglages du chat (heure, messages supprimés, bots, commandes, mots et personnes masqués, mots surlignés), la langue du top, la vitesse des VODs, tes chaînes épinglées et tes chaînes et catégories masquées sont les mêmes sur tes appareils, site et app iPhone. La langue du site, la qualité, les notifications et l’apparence restent propres à chaque appareil.',
+        'Le dernier changement l’emporte, partie par partie (réglages, épinglées, masquées), et les listes d’épinglées et de masquées changées des deux côtés sont fusionnées. Un appareil qui n’a encore rien changé reprend d’abord ce qui est sur ton compte, ses listes en plus. Réglages → Compte → « Synchroniser mes réglages » pour le couper sur un appareil.',
+      ],
+      en: [
+        'Synced settings: signed in with your Twitch account, the chat settings (time, deleted messages, bots, commands, hidden words and people, highlighted words), the top streams language, the VOD speed, your pinned channels and your hidden channels and categories are the same on your devices, website and iPhone app. The site language, quality, notifications and appearance stay specific to each device.',
+        'The latest change wins, part by part (settings, pinned, hidden), and pinned or hidden lists changed on both sides are merged. A device that hasn’t changed anything yet first takes what’s on your account, adding its own lists. Settings → Account → “Sync my settings” turns it off on a device.',
+      ],
+      es: [
+        'Ajustes sincronizados: con tu cuenta de Twitch, los ajustes del chat (hora, mensajes borrados, bots, comandos, palabras y personas ocultas, palabras resaltadas), el idioma del top, la velocidad de los VODs, tus canales fijados y tus canales y categorías ocultos son los mismos en tus dispositivos, sitio y app de iPhone. El idioma del sitio, la calidad, las notificaciones y la apariencia siguen siendo propios de cada dispositivo.',
+        'El último cambio gana, parte por parte (ajustes, fijados, ocultos), y las listas de fijados y ocultos cambiadas en ambos lados se fusionan. Un dispositivo que aún no ha cambiado nada toma primero lo que hay en tu cuenta, más sus propias listas. Ajustes → Cuenta → «Sincronizar mis ajustes» lo desactiva en un dispositivo.',
+      ],
+      ru: [
+        'Синхронизация настроек: после входа в аккаунт Twitch настройки чата (время, удалённые сообщения, боты, команды, скрытые слова и люди, выделенные слова), язык топа, скорость VOD, закреплённые каналы, а также скрытые каналы и категории одинаковы на ваших устройствах — на сайте и в приложении для iPhone. Язык сайта, качество, уведомления и внешний вид у каждого устройства свои.',
+        'Побеждает последнее изменение, по частям (настройки, закреплённые, скрытые), а списки закреплённых и скрытых, изменённые с обеих сторон, объединяются. Устройство, на котором ещё ничего не меняли, сначала берёт то, что есть в аккаунте, добавляя свои списки. Настройки → Аккаунт → «Синхронизировать мои настройки» отключает это на устройстве.',
+      ],
+    },
+  },
+  {
     version: '2026.10.19a',
     items: {
       fr: [

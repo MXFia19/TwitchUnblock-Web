@@ -59,6 +59,8 @@ export default {
                 // Routes Sync (Sauvegarde Cloud)
                 case '/api/sync/get': return await handleSyncGet(url, request, env);
                 case '/api/sync/post': return await handleSyncPost(request, env);
+                // Réglages du compte (GET : lecture, POST : envoi), à part
+                case '/api/sync/prefs': return await handleSyncPrefs(url, request, env);
 
                 // Comptage d'utilisation (app iOS et site)
                 case '/api/ping': return await handlePing(request, env);
@@ -238,6 +240,134 @@ function cleanHistoryItem(it) {
     const streamer = str(it.streamer, 50); if (streamer) out.streamer = streamer;
     const addedAt = Number(it.addedAt); if (Number.isFinite(addedAt) && addedAt > 0) out.addedAt = addedAt;
     return out;
+}
+
+// ── Réglages synchronisés ──────────────────────────────────────────────────
+// Un document « préférences » par compte, sous sa propre clé (`prefs_<id>`,
+// pas `user_<id>`) et sa propre route : l'app iPhone 1.5.0 et l'app Android
+// envoient /api/sync/post sans lui, et cette route-là ne réécrit que
+// l'historique et la progression — elle ne peut donc jamais l'effacer.
+// Sections indépendantes, chacune avec sa date de modification (`at`, en
+// millisecondes, celle de l'appareil qui l'a changée) :
+//   common : réglages communs au site et à l'app (noms de la sauvegarde) ;
+//   pinned : chaînes épinglées (pseudos en minuscules, dans l'ordre) ;
+//   hidden : chaînes et catégories masquées (format de la sauvegarde) ;
+//   ios    : personnalisation et réglages propres à l'app iPhone, gardés
+//            ici pour ses autres appareils, ignorés du site.
+// Un envoi ne remplace que les sections qu'il apporte, et seulement si elles
+// sont plus récentes que celles du serveur : la plus récente gagne, section
+// par section ; une section absente de l'envoi reste telle quelle. La
+// réponse dit lesquelles ont été prises (`accepted`) et rend le document
+// entier. Mêmes contrôles d'accès que la sauvegarde (jeton Twitch du compte).
+const PREFS_SECTIONS = ['common', 'pinned', 'hidden', 'ios'];
+// 500 chaînes et 200 catégories masquées tiennent dedans ; au-delà, les
+// appareils gardent les plus anciennes pour eux.
+const PREFS_MAX_BYTES = 64 * 1024;
+const prefsKey = (userId) => `prefs_${userId}`;
+
+/** Document gardé (ou rien) → { v, sections } avec les seules sections connues. */
+function readPrefsDoc(raw) {
+    const src = raw && typeof raw === 'object' && raw.sections && typeof raw.sections === 'object' ? raw.sections : {};
+    const sections = {};
+    for (const name of PREFS_SECTIONS) {
+        const s = src[name];
+        if (s && typeof s === 'object' && Number.isFinite(s.at) && s.at > 0 && s.data !== undefined) sections[name] = { at: s.at, data: s.data };
+    }
+    return { v: 1, sections };
+}
+
+/** Section d'un envoi ({ at, data }) nettoyée, ou null si elle est
+ *  invalide. Une date dans le futur est ramenée à l'heure du serveur : une
+ *  horloge en avance ne gagnerait sinon plus jamais rien aux autres. */
+function cleanPrefsSection(name, s, now) {
+    if (!s || typeof s !== 'object' || Array.isArray(s)) return null;
+    const at = Number(s.at);
+    if (!Number.isFinite(at) || at <= 0) return null;
+    const data = cleanPrefsData(name, s.data);
+    return data === null ? null : { at: Math.min(Math.round(at), now), data };
+}
+
+// Les listes au format de la sauvegarde ; les réglages (common, ios) en
+// valeurs JSON telles quelles, sous des noms bornés : le site et l'app les
+// valident à la lecture, comme à l'import d'une sauvegarde.
+function cleanPrefsData(name, d) {
+    const str = (v, max) => (typeof v === 'string' ? v.trim().slice(0, max) : '');
+    const stamp = (v) => { const n = Number(v); return Number.isFinite(n) && n >= 0 && n < 1e14 ? Math.round(n) : 0; };
+    if (name === 'pinned') {
+        if (!Array.isArray(d)) return null;
+        return [...new Set(d.filter((x) => typeof x === 'string' && LOGIN_RE.test(x)).map((x) => x.toLowerCase()))].slice(0, 300);
+    }
+    if (!d || typeof d !== 'object' || Array.isArray(d)) return null;
+    if (name === 'hidden') {
+        const list = (v) => (Array.isArray(v) ? v : []);
+        return {
+            channels: list(d.channels).filter((x) => x && typeof x.login === 'string' && LOGIN_RE.test(x.login)).slice(0, 500)
+                .map((x) => ({ login: x.login.toLowerCase(), name: str(x.name, 100) || x.login.toLowerCase(), at: stamp(x.at) })),
+            categories: list(d.categories).filter((x) => x && /^\d{1,20}$/.test(String(x.id ?? ''))).slice(0, 200)
+                .map((x) => {
+                    const box = str(x.box, 500);
+                    return { id: String(x.id), name: str(x.name, 100), box: box.startsWith('https://') ? box : '', at: stamp(x.at) };
+                }),
+        };
+    }
+    const out = {};
+    for (const [k, v] of Object.entries(d).slice(0, 100)) {
+        if (k !== '__proto__' && /^[A-Za-z0-9_]{1,60}$/.test(k)) out[k] = v;
+    }
+    return out;
+}
+
+// GET  /api/sync/prefs?userId=… → { v, sections }
+// POST /api/sync/prefs { userId, sections: { nom: { at, data } } }
+//      → { success, accepted: [noms pris], v, sections }
+async function handleSyncPrefs(url, request, env) {
+    if (!env.DB) return jsonError("Erreur Serveur : base D1 'DB' non liée au Worker.", 500);
+    if (request.method === 'GET') {
+        const userId = String(url.searchParams.get('userId') || '');
+        const denied = await authorizeSync(request, userId);
+        if (denied) return denied;
+        return jsonResponse(readPrefsDoc(await store(env).get(prefsKey(userId), { type: 'json' })));
+    }
+    if (request.method !== 'POST') return jsonError("Method Not Allowed", 405);
+
+    const raw = await request.text();
+    if (raw.length > PREFS_MAX_BYTES) return jsonError("Réglages trop volumineux", 413);
+    let body;
+    try { body = JSON.parse(raw); } catch (e) { return jsonError("JSON invalide", 400); }
+    if (!body || typeof body !== 'object' || Array.isArray(body)) return jsonError("JSON invalide", 400);
+    const userId = String(body.userId || '');
+    const denied = await authorizeSync(request, userId);
+    if (denied) return denied;
+    const incoming = body.sections;
+    if (!incoming || typeof incoming !== 'object' || Array.isArray(incoming)) return jsonError("Sections manquantes", 400);
+
+    const key = prefsKey(userId);
+    const doc = readPrefsDoc(await store(env).get(key, { type: 'json' }));
+    const now = Date.now();
+    const accepted = [];
+    let changed = false;
+    for (const name of PREFS_SECTIONS) {
+        if (!Object.prototype.hasOwnProperty.call(incoming, name)) continue;
+        const s = cleanPrefsSection(name, incoming[name], now);
+        if (!s) continue;
+        const cur = doc.sections[name];
+        if (cur && cur.at >= s.at) {
+            // Même date et même contenu : déjà là (renvoi après une réponse
+            // perdue). Sinon celle du serveur, plus récente, reste.
+            if (cur.at === s.at && JSON.stringify(cur.data) === JSON.stringify(s.data)) accepted.push(name);
+            continue;
+        }
+        doc.sections[name] = s;
+        accepted.push(name);
+        changed = true;
+    }
+    // Rien de neuf : pas d'écriture (quota D1 gratuit : 100 000 lignes par jour).
+    if (changed) {
+        const out = JSON.stringify(doc);
+        if (out.length > PREFS_MAX_BYTES) return jsonError("Réglages trop volumineux", 413);
+        await store(env).put(key, out);
+    }
+    return jsonResponse({ success: true, accepted, ...doc });
 }
 
 // --- HANDLERS CLASSIQUES ---
@@ -1437,7 +1567,8 @@ async function handleAdminUsageDelete(request, env) {
     return jsonResponse({ ok: true, deleted: doomed.length, remaining: keys.filter(match).length - doomed.length });
 }
 
-// POST /api/admin/sync/delete — { login } : efface la sauvegarde d'un compte.
+// POST /api/admin/sync/delete — { login } : efface la sauvegarde d'un compte
+// (historique, progression) et ses réglages synchronisés.
 async function handleAdminSyncDelete(request, env) {
     if (request.method !== 'POST') return jsonError('Method Not Allowed', 405);
     const { denied } = await requireAdmin(request);
@@ -1449,8 +1580,12 @@ async function handleAdminSyncDelete(request, env) {
     const d = await twitchGQL('query($l: String!) { user(login: $l) { id } }', { l: login });
     const id = d?.data?.user?.id;
     if (!id) return jsonError('Compte introuvable', 404);
-    const existed = Boolean(await store(env).get(`user_${id}`));
-    if (existed) await store(env).delete(`user_${id}`);
+    let existed = false;
+    for (const key of [`user_${id}`, prefsKey(id)]) {
+        if (!(await store(env).get(key))) continue;
+        existed = true;
+        await store(env).delete(key);
+    }
     return jsonResponse({ ok: true, existed });
 }
 

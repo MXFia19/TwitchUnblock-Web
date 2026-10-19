@@ -3,7 +3,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import * as api from './api.js'
-import { qualityPrefOf, store } from './store.js'
+import { DEFAULT_PREFS, qualityPrefOf, store } from './store.js'
 import { LANGS, applyStatic, deviceLang, initLang, setLang, t, lang } from './i18n.js'
 import { Player, QUALITY_PREFS, loadHls, qualityText, validQualityPref, validSpeed } from './player.js'
 import { ChatView } from './chat/view.js'
@@ -352,7 +352,11 @@ async function adoptToken(token, { silent = false } = {}) {
   if (session.login) {
     api.getAvatars([session.login]).then((a) => { session.avatar = a[session.login] ?? null; renderAccount() })
   }
-  if (session.userId) await pullSync()
+  if (session.userId) {
+    await pullSync()
+    // Réglages du compte : relus au même moment, sans retenir l'ouverture.
+    syncPrefs({ pull: true })
+  }
   if (!silent) usage.pingNow(() => store.prefs.shareUsage)
   state.loaded.followed = 0
   // Revalidation du même compte : les suivis sont relus sans repasser par le
@@ -418,6 +422,7 @@ function logout() {
   // fois l'envoi fini, ou au bout de 5 s : révoqué avant, il ne passait plus.
   const token = session.token
   const sent = stashAccountHistory()
+  flushPrefs()   // réglages changés à l'instant : partent aussi, avec le jeton
   if (token) {
     const revoke = () => fetch('https://id.twitch.tv/oauth2/revoke', {
       method: 'POST',
@@ -606,7 +611,7 @@ function flushSync({ force = false } = {}) {
 setInterval(() => flushSync(), 60_000)
 // Fermeture d'onglet, changement d'appli sur mobile : dernier envoi.
 document.addEventListener('visibilitychange', () => {
-  if (document.hidden) flushSync({ force: true })
+  if (document.hidden) { flushSync({ force: true }); flushPrefs() }
   else { loadAnnouncement(); loadPoll(); refreshFeedbackInbox(); revalidateSession({ spaced: true }) }
 })
 // Réponses aux retours envoyés d'ici : pastille sur les boutons de retour.
@@ -617,7 +622,351 @@ setTimeout(() => refreshFeedbackInbox(), 4000)
 // Page laissée ouverte : la pastille suit sans recharger (au plus toutes
 // les 3 min, et seulement onglet visible).
 setInterval(() => { if (!document.hidden) refreshFeedbackInbox() }, 3 * 60 * 1000)
-window.addEventListener('pagehide', () => flushSync({ force: true }))
+window.addEventListener('pagehide', () => { flushSync({ force: true }); flushPrefs() })
+
+// ── Synchro des réglages ───────────────────────────────────────────────────
+// Un document « préférences » par compte, gardé par le Worker à côté de la
+// sauvegarde (/api/sync/prefs, même jeton Twitch) et partagé avec l'app
+// iPhone. Chaque section a sa date de modification (`at`, en ms) ; la plus
+// récente gagne, section par section :
+//   common : réglages communs avec l'app, mêmes noms que dans la sauvegarde
+//            (PREFS_COMMON) ;
+//   pinned : chaînes épinglées ;
+//   hidden : chaînes et catégories masquées ;
+//   ios    : propres à l'app, gardés par le Worker : jamais lus ni envoyés
+//            d'ici (un envoi ne touche qu'aux sections qu'il apporte).
+// Ne sont PAS synchronisés, parce qu'ils dépendent de l'appareil :
+//   lang         langue du site (par défaut, celle de chaque appareil) ;
+//   qualityPref  qualité préférée (écran, connexion) ;
+//   shareUsage   comptage anonyme : consentement donné sur chaque appareil ;
+//   homeList     accueil en liste ou en grille (taille de l'écran) ;
+//   et ce que l'app n'a pas sous le même nom : notifications, thème,
+//   volume, taille du chat, sources du direct, Worker personnel, chat du
+//   multi-live, mode théâtre…
+// Un changement se voit à l'empreinte de chaque section, recalculée après
+// chaque enregistrement des réglages : la section prend la date du moment et
+// part quelques secondes après le dernier changement, après une relecture.
+// Ce qui vient du serveur prend sa date et devient l'empreinte : rien ne
+// repart, pas de boucle. Une section jamais changée ici pour ce compte
+// (date 0) adopte celle du serveur, en y ajoutant les listes d'ici
+// (épinglées, masqués, mots et personnes masqués du chat) ; aux valeurs par
+// défaut, elle ne part jamais d'elle-même. Si les deux côtés ont changé
+// depuis le dernier échange : fusion pour les masqués et les épinglés (avec
+// la liste du dernier échange, un retrait fait d'un côté tient), la date la
+// plus récente pour les réglages.
+const PREFS_COMMON = ['topLang', 'showRecent', 'timestamps', 'timeFormat', 'keepDeleted', 'loadHistory', 'hideBots', 'hideCommands', 'mutedWords', 'blockedUsers', 'highlightWords', 'vodSpeed']
+const PREFS_SECTIONS = ['common', 'pinned', 'hidden']
+const PREFS_STATE_KEY = 'tu_prefs_sync'
+const PREFS_DELAY = 4000
+const PREFS_MAX_SEND = 60_000   // le Worker en garde 64 Ko
+let prefsTimer = 0
+let prefsRun = null      // échange en cours
+let prefsQueued = null   // demande arrivée pendant un échange
+
+/** Après chaque enregistrement des réglages : un échange groupé, quelques
+ *  secondes après le dernier changement (rien ne part s'il n'y a rien de
+ *  neuf dans les sections). */
+store.onPrefsSaved = () => {
+  clearTimeout(prefsTimer)
+  prefsTimer = setTimeout(() => { prefsTimer = 0; syncPrefs() }, PREFS_DELAY)
+}
+
+const prefsOn = () => Boolean(session.userId && store.token && store.prefs.syncSettings !== false)
+
+/** Contenu d'une section, au format du document (celui de la sauvegarde). */
+function prefsSection(name, p = store.prefs) {
+  if (name === 'common') return Object.fromEntries(PREFS_COMMON.map((k) => [k, p[k] ?? DEFAULT_PREFS[k] ?? null]))
+  if (name === 'pinned') return Array.isArray(p.pinned) ? [...p.pinned] : []
+  return {
+    channels: Array.isArray(p.hiddenChannels) ? p.hiddenChannels : [],
+    categories: Array.isArray(p.hiddenCategories) ? p.hiddenCategories : [],
+  }
+}
+
+/** Empreinte d'une section (FNV-1a) : de quoi voir qu'elle a changé. */
+function prefsSum(v) {
+  const s = JSON.stringify(v) ?? ''
+  let h = 0x811c9dc5
+  for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 0x01000193)
+  return `${(h >>> 0).toString(36)}.${s.length}`
+}
+
+/** Section valide d'une réponse du Worker ({ at, data }), ou null. */
+const validPrefs = (s) => (s && typeof s === 'object' && Number.isFinite(s.at) && s.at > 0 && s.data !== undefined ? s : null)
+
+/** Par section : `at` (version d'ici ; 0 = jamais changée pour ce compte),
+ *  `srv` (date du serveur au dernier échange), `sum` (empreinte), `base`
+ *  (liste du serveur au dernier échange, pour la fusion). Relu à chaque
+ *  fois : un autre onglet a pu l'écrire. */
+function prefsState() {
+  let s = null
+  try { s = JSON.parse(localStorage.getItem(PREFS_STATE_KEY) || 'null') } catch {}
+  const st = { owner: typeof s?.owner === 'string' ? s.owner : null, sec: {} }
+  for (const n of PREFS_SECTIONS) {
+    const x = s?.sec?.[n] ?? {}
+    st.sec[n] = { at: Number(x.at) || 0, srv: Number(x.srv) || 0, sum: typeof x.sum === 'string' ? x.sum : null, base: x.base ?? null }
+  }
+  return st
+}
+function savePrefsState(st) { try { localStorage.setItem(PREFS_STATE_KEY, JSON.stringify(st)) } catch {} }
+
+/** Sections changées ici depuis leur empreinte : datées de maintenant. La
+ *  toute première empreinte n'est qu'un point de départ. */
+function notePrefsChanges(st) {
+  for (const n of PREFS_SECTIONS) {
+    const x = st.sec[n]
+    const sum = prefsSum(prefsSection(n))
+    if (x.sum === sum) continue
+    if (x.sum !== null) x.at = Math.max(Date.now(), x.srv + 1)
+    x.sum = sum
+  }
+}
+
+/** Dates gardées pour un autre compte : elles ne valent rien pour celui-ci,
+ *  qui repart de ce qu'il a sur le serveur. */
+function adoptPrefsOwner(st, userId) {
+  if (st.owner && st.owner !== userId) {
+    for (const n of PREFS_SECTIONS) Object.assign(st.sec[n], { at: 0, srv: 0, base: null })
+  }
+  st.owner = userId
+}
+
+/** De la liste du serveur, ce que la fusion doit retenir : les pseudos
+ *  épinglés, ou la date de chaque masqué (paires [clé, at]). */
+function prefsBase(name, data) {
+  if (name === 'pinned') return BACKUP_SETTINGS.pinned(data) ?? []
+  if (name !== 'hidden') return null
+  const stamps = (list, clean, keyOf) => (Array.isArray(list) ? list : []).map(clean).filter(Boolean).map((x) => [keyOf(x), x.at])
+  return { c: stamps(data?.channels, cleanHiddenChannel, (x) => x.login), g: stamps(data?.categories, cleanHiddenCat, (x) => x.id) }
+}
+
+/** Épinglées des deux côtés : fusion à trois avec la liste du dernier
+ *  échange (`base`) ; sans elle, réunion. L'ordre du serveur, puis ce qui a
+ *  été épinglé ici. */
+function mergePins(mine, theirs, base) {
+  const a = BACKUP_SETTINGS.pinned(mine) ?? []
+  const b = BACKUP_SETTINGS.pinned(theirs) ?? []
+  const was = new Set(Array.isArray(base) ? base : [])
+  const here = new Set(a)
+  const there = new Set(b)
+  // Désépinglée ici depuis le dernier échange : pas reprise.
+  const out = b.filter((l) => here.has(l) || !was.has(l))
+  // Désépinglée là-bas depuis : retirée ici aussi.
+  for (const l of a) if (!there.has(l) && !was.has(l)) out.push(l)
+  return out.slice(0, 300)
+}
+
+/** Masqués des deux côtés : la fusion de la sauvegarde (mergeHidden, le
+ *  masquage le plus récent l'emporte), sauf ce que la liste du dernier
+ *  échange (`base`) dit retiré d'un côté depuis — un élément qu'elle avait,
+ *  absent d'un côté et pas remasqué de l'autre depuis. Sans base : réunion. */
+function mergeHiddenSync(mine, theirs, base) {
+  const merge = (here, there, clean, keyOf, stamps, max) => {
+    const a = (Array.isArray(here) ? here : []).map(clean).filter(Boolean)
+    const b = (Array.isArray(there) ? there : []).map(clean).filter(Boolean)
+    const was = new Map(Array.isArray(stamps) ? stamps : [])
+    const inA = new Set(a.map(keyOf))
+    const inB = new Set(b.map(keyOf))
+    const keep = (x, other) => !was.has(keyOf(x)) || other.has(keyOf(x)) || x.at > was.get(keyOf(x))
+    return mergeHidden(a.filter((x) => keep(x, inB)), b.filter((x) => keep(x, inA)), clean, keyOf, max)
+  }
+  return {
+    channels: merge(mine?.channels, theirs?.channels, cleanHiddenChannel, (x) => x.login, base?.c, HIDDEN_MAX_CHANNELS),
+    categories: merge(mine?.categories, theirs?.categories, cleanHiddenCat, (x) => x.id, base?.g, HIDDEN_MAX_CATS),
+  }
+}
+
+/** Première rencontre (rien de changé ici pour ce compte) : ce qu'a le
+ *  serveur, plus les listes d'ici — rien de ce qui est ici ne se perd. */
+function prefsFirstMerge(name, mine, theirs) {
+  if (name === 'pinned') return mergePins(mine, theirs, null)
+  if (name === 'hidden') return mergeHiddenSync(mine, theirs, null)
+  const out = theirs && typeof theirs === 'object' && !Array.isArray(theirs) ? { ...theirs } : {}
+  for (const [k, max] of [['mutedWords', 50], ['highlightWords', 30], ['blockedUsers', 500]]) {
+    out[k] = [...new Set([...(Array.isArray(out[k]) ? out[k] : []), ...(mine[k] ?? [])])].slice(0, max)
+  }
+  return out
+}
+
+/** Section reçue appliquée ici, chaque valeur validée comme à l'import
+ *  d'une sauvegarde (une valeur que le site ne connaît pas est ignorée). */
+function applyPrefsSection(name, data) {
+  const p = store.prefs
+  if (name === 'common') {
+    if (!data || typeof data !== 'object' || Array.isArray(data)) return
+    for (const k of PREFS_COMMON) {
+      if (!Object.hasOwn(data, k)) continue
+      const v = BACKUP_SETTINGS[k](data[k])
+      if (v !== undefined) p[k] = v
+    }
+  } else if (name === 'pinned') {
+    p.pinned = BACKUP_SETTINGS.pinned(data) ?? p.pinned
+  } else {
+    const h = data && typeof data === 'object' ? data : {}
+    p.hiddenChannels = mergeHidden([], h.channels, cleanHiddenChannel, (x) => x.login, HIDDEN_MAX_CHANNELS)
+    p.hiddenCategories = mergeHidden([], h.categories, cleanHiddenCat, (x) => x.id, HIDDEN_MAX_CATS)
+  }
+}
+
+/** Après des sections reçues : enregistrées, et ce qui en dépend repeint. */
+function prefsApplied(names, topBefore) {
+  store.savePrefs()
+  if (names.includes('common')) {
+    chat?.applyPrefs()
+    renderRecentChannels()
+    if (store.prefs.topLang !== topBefore) {
+      renderTopLocal()
+      state.loaded.top = 0
+      if (state.tab === 'discover' && state.topLang === 'local') loadTop('local')
+    }
+  }
+  if (names.includes('pinned')) paintFollowed()
+  refreshHidden()
+}
+
+/** Envoi borné (le Worker garde 64 Ko) : au-delà, les masqués les plus
+ *  anciens restent sur cet appareil seulement. */
+function fitPrefs(send) {
+  const h = send.hidden?.data
+  if (!h) return send
+  let { channels, categories } = h
+  while (JSON.stringify(send).length > PREFS_MAX_SEND && (channels.length || categories.length)) {
+    channels = channels.slice(0, Math.floor(channels.length * 0.9))
+    categories = categories.slice(0, Math.floor(categories.length * 0.9))
+    send.hidden = { ...send.hidden, data: { channels, categories } }
+  }
+  return send
+}
+
+/** Un échange à la fois ; une demande faite pendant un échange le suit.
+ *  `pull` : relire même sans rien à envoyer (ouverture, connexion, réglage
+ *  réactivé). */
+function syncPrefs(opts = {}) {
+  if (prefsRun) {
+    prefsQueued = { pull: Boolean(prefsQueued?.pull || opts.pull), retry: Boolean(prefsQueued?.retry && opts.retry) }
+    return prefsRun
+  }
+  prefsRun = prefsExchange(opts).catch(() => {}).finally(() => {
+    prefsRun = null
+    const next = prefsQueued
+    prefsQueued = null
+    if (next) syncPrefs(next)
+  })
+  return prefsRun
+}
+
+async function prefsExchange({ pull = false, retry = false } = {}) {
+  const userId = session.userId
+  let st = prefsState()
+  notePrefsChanges(st)
+  if (!prefsOn()) return savePrefsState(st)
+  adoptPrefsOwner(st, userId)
+  savePrefsState(st)
+  if (!pull && !PREFS_SECTIONS.some((n) => st.sec[n].at > st.sec[n].srv)) return
+  // Rien ne part sans une relecture réussie juste avant.
+  const doc = await api.prefsPull(userId)
+  if (!doc || session.userId !== userId || !prefsOn()) return
+  const remote = doc.sections && typeof doc.sections === 'object' ? doc.sections : {}
+  // Relu : changé ici (ou dans un autre onglet) pendant la relecture.
+  st = prefsState()
+  notePrefsChanges(st)
+  adoptPrefsOwner(st, userId)
+  const topBefore = store.prefs.topLang
+  const send = {}
+  const sentFrom = {}   // `at` d'ici au moment de l'envoi
+  const applied = []
+  for (const n of PREFS_SECTIONS) {
+    const x = st.sec[n]
+    const r = validPrefs(remote[n])
+    const mine = prefsSection(n)
+    if (!r) {
+      // Rien au serveur : ce qui a une date part. Une section jamais
+      // changée part aussi, sauf aux valeurs par défaut, avec la date 1 :
+      // la moindre modification faite ailleurs l'emportera.
+      if (x.at > 0) send[n] = { at: x.at, data: mine }
+      else if (prefsSum(mine) !== prefsSum(prefsSection(n, DEFAULT_PREFS))) send[n] = { at: 1, data: mine }
+      sentFrom[n] = x.at
+      continue
+    }
+    const here = x.at > x.srv      // changée ici depuis le dernier échange
+    const there = r.at !== x.srv   // changée sur le serveur depuis
+    let next
+    if (x.at === 0) next = prefsFirstMerge(n, mine, r.data)
+    else if (!here && there) next = r.data
+    else if (here && !there) { send[n] = { at: x.at, data: mine }; sentFrom[n] = x.at; continue }
+    else if (!here) continue
+    else if (r.at === x.at) {   // la même version (envoyée à la fermeture d'un onglet)
+      x.srv = r.at
+      x.base = prefsBase(n, r.data)
+      continue
+    } else if (n === 'common') {
+      if (r.at < x.at) { send[n] = { at: x.at, data: mine }; sentFrom[n] = x.at; continue }
+      next = r.data
+    } else next = n === 'pinned' ? mergePins(mine, r.data, x.base) : mergeHiddenSync(mine, r.data, x.base)
+    applyPrefsSection(n, next)
+    applied.push(n)
+    x.sum = prefsSum(prefsSection(n))
+    x.srv = r.at
+    x.base = prefsBase(n, r.data)
+    if (prefsSum(next) === prefsSum(r.data)) { x.at = r.at; continue }
+    // Ce qui vient d'ici s'y est ajouté (première rencontre, fusion) : la
+    // section repart, plus récente que celle du serveur.
+    x.at = Math.max(Date.now(), r.at + 1)
+    send[n] = { at: x.at, data: prefsSection(n) }
+    sentFrom[n] = x.at
+  }
+  savePrefsState(st)
+  if (applied.length) prefsApplied(applied, topBefore)
+  if (!Object.keys(send).length) return
+  const res = await api.prefsPush(userId, fitPrefs(send))
+  // Raté : toujours à envoyer, le prochain échange réessaie.
+  if (prefsAccepted(userId, send, sentFrom, res) && !retry) prefsQueued = { pull: true, retry: true }
+}
+
+/** Réponse d'un envoi : les sections prises deviennent la version du
+ *  serveur (date, liste de la prochaine fusion). true si une section a été
+ *  refusée, plus récente au serveur entre-temps (envoi croisé) : à relire. */
+function prefsAccepted(userId, send, sentFrom, res) {
+  if (!res || session.userId !== userId) return false
+  const st = prefsState()
+  if (st.owner !== userId) return false
+  const accepted = Array.isArray(res.accepted) ? res.accepted : []
+  let refused = false
+  for (const n of Object.keys(send)) {
+    const r = validPrefs(res.sections?.[n])
+    if (!accepted.includes(n) || !r) { refused = true; continue }
+    const x = st.sec[n]
+    // Rechangée ici pendant l'envoi : elle repartira.
+    if (x.at === sentFrom[n]) x.at = r.at
+    x.srv = r.at
+    x.base = prefsBase(n, r.data)
+  }
+  savePrefsState(st)
+  return refused
+}
+
+/** Masquage ou fermeture de l'onglet, déconnexion : ce qui attendait part
+ *  tout de suite, sans relecture (pas le temps) ; le Worker ne garde de
+ *  toute façon une section que si elle est plus récente que la sienne. */
+function flushPrefs() {
+  if (!prefsTimer) return
+  clearTimeout(prefsTimer)
+  prefsTimer = 0
+  const userId = session.userId
+  const st = prefsState()
+  notePrefsChanges(st)
+  savePrefsState(st)
+  if (!prefsOn() || st.owner !== userId) return
+  const send = {}
+  const sentFrom = {}
+  for (const n of PREFS_SECTIONS) {
+    const x = st.sec[n]
+    if (x.at > x.srv) { send[n] = { at: x.at, data: prefsSection(n) }; sentFrom[n] = x.at }
+  }
+  if (!Object.keys(send).length) return
+  // Onglet seulement masqué : la réponse arrive, et compte comme un échange.
+  api.prefsPush(userId, fitPrefs(send)).then((res) => prefsAccepted(userId, send, sentFrom, res))
+}
 
 // ── Navigation ─────────────────────────────────────────────────────────────
 function setTab(tab, { url = true } = {}) {
@@ -4533,6 +4882,15 @@ function openSettings() {
       reloadForWorker()
       return
     }
+    // Synchroniser mes réglages : réactivé, relu tout de suite ; coupé, plus
+    // rien ne part ni n'arrive (ce qui attendait reste ici).
+    if (id === 'set-prefsync') {
+      p.syncSettings = e.target.checked
+      store.savePrefs()
+      if (p.syncSettings) syncPrefs({ pull: true })
+      else { clearTimeout(prefsTimer); prefsTimer = 0 }
+      return
+    }
     if (id === 'set-homelist') { p.homeList = e.target.checked; store.savePrefs(); applyLayout(); return }
     if (id === 'set-recent') { p.showRecent = e.target.checked; store.savePrefs(); renderRecentChannels(); return }
     if (id === 'set-toplang') {
@@ -4978,7 +5336,11 @@ function renderSettingsAccount() {
       ${session.canChat ? '' : `<button class="btn sm primary" type="button" data-action="login-again">${esc(t('login'))}</button>`}
       <button class="btn sm danger" type="button" data-action="logout">${icon('logout', 16)}<span>${esc(t('logout'))}</span></button>
     </div>
-    <button class="sheet-row switch-account" type="button" data-action="switch-account">${icon('users', 18)}<span class="setting-text"><span>${esc(t('switch_account'))}</span><small>${esc(t('switch_account_sub'))}</small></span></button>` : `
+    <button class="sheet-row switch-account" type="button" data-action="switch-account">${icon('users', 18)}<span class="setting-text"><span>${esc(t('switch_account'))}</span><small>${esc(t('switch_account_sub'))}</small></span></button>
+    <label class="setting">
+      <span class="setting-text"><span>${esc(t('sync_settings'))}</span><small>${esc(t('sync_settings_sub'))}</small></span>
+      <input type="checkbox" class="switch" id="set-prefsync" ${store.prefs.syncSettings !== false ? 'checked' : ''}>
+    </label>` : `
     <h3>${esc(t('account'))}</h3>
     <div class="account-row">
       <span class="avatar placeholder">${icon('user', 18)}</span>

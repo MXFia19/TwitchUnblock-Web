@@ -886,6 +886,32 @@ export async function syncPush(userId, data) {
   } catch { return false /* la sauvegarde distante est un plus, pas une dépendance */ }
 }
 
+/** Réglages synchronisés du compte (voir main.js) : { v, sections }, ou
+ *  null si le Worker n'a pas pu les rendre. */
+export async function prefsPull(userId) {
+  try {
+    return await json(`${API_URL}/api/sync/prefs?userId=${encodeURIComponent(userId)}`, { headers: authHeader(), signal: AbortSignal.timeout?.(8000) })
+  } catch {
+    return null
+  }
+}
+
+/** Envoie des sections ({ nom: { at, data } }). Réponse du Worker
+ *  ({ accepted, sections }), ou null en cas d'échec. */
+export async function prefsPush(userId, sections) {
+  try {
+    const body = JSON.stringify({ userId, sections })
+    const res = await fetch(`${API_URL}/api/sync/prefs`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeader() },
+      body,
+      // L'envoi finit même si l'onglet se ferme (limite : 64 Ko).
+      keepalive: body.length < 60_000,
+    })
+    return res.ok ? await res.json() : null
+  } catch { return null }
+}
+
 // ── Helix (compte connecté) ────────────────────────────────────────────────
 function helix(path) {
   return json(`https://api.twitch.tv/helix/${path}`, {
