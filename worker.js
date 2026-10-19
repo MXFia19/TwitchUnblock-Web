@@ -263,6 +263,11 @@ const PREFS_SECTIONS = ['common', 'pinned', 'hidden', 'ios'];
 // 500 chaînes et 200 catégories masquées tiennent dedans ; au-delà, les
 // appareils gardent les plus anciennes pour eux.
 const PREFS_MAX_BYTES = 64 * 1024;
+// Document entier : chaque section arrive dans un envoi de 64 Ko au plus,
+// mais l'ensemble peut dépasser (masqués près du plafond et 500 personnes
+// masquées du chat) — borné à 64 Ko, l'envoi des masqués était refusé
+// (413) à chaque essai, sans fin.
+const PREFS_DOC_MAX_BYTES = 256 * 1024;
 const prefsKey = (userId) => `prefs_${userId}`;
 
 /** Document gardé (ou rien) → { v, sections } avec les seules sections connues. */
@@ -281,8 +286,10 @@ function readPrefsDoc(raw) {
  *  horloge en avance ne gagnerait sinon plus jamais rien aux autres. */
 function cleanPrefsSection(name, s, now) {
     if (!s || typeof s !== 'object' || Array.isArray(s)) return null;
-    const at = Number(s.at);
-    if (!Number.isFinite(at) || at <= 0) return null;
+    // Un nombre, au moins 1 ms : Number() laissait passer « 300 », [400] ou
+    // « 1e3 ».
+    const at = s.at;
+    if (typeof at !== 'number' || !Number.isFinite(at) || at < 1) return null;
     const data = cleanPrefsData(name, s.data);
     return data === null ? null : { at: Math.min(Math.round(at), now), data };
 }
@@ -310,9 +317,14 @@ function cleanPrefsData(name, d) {
                 }),
         };
     }
+    // Peu imbriquées : un réglage n'en demande pas plus (ios_customization,
+    // objet de listes), et une valeur imbriquée sur des milliers de niveaux
+    // faisait échouer JSON.stringify (erreur 500).
+    const shallow = (v, depth) => v === null || typeof v !== 'object'
+        || (depth < 4 && Object.values(v).every((x) => shallow(x, depth + 1)));
     const out = {};
     for (const [k, v] of Object.entries(d).slice(0, 100)) {
-        if (k !== '__proto__' && /^[A-Za-z0-9_]{1,60}$/.test(k)) out[k] = v;
+        if (k !== '__proto__' && /^[A-Za-z0-9_]{1,60}$/.test(k) && shallow(v, 0)) out[k] = v;
     }
     return out;
 }
@@ -342,32 +354,42 @@ async function handleSyncPrefs(url, request, env) {
     if (!incoming || typeof incoming !== 'object' || Array.isArray(incoming)) return jsonError("Sections manquantes", 400);
 
     const key = prefsKey(userId);
-    const doc = readPrefsDoc(await store(env).get(key, { type: 'json' }));
-    const now = Date.now();
-    const accepted = [];
-    let changed = false;
-    for (const name of PREFS_SECTIONS) {
-        if (!Object.prototype.hasOwnProperty.call(incoming, name)) continue;
-        const s = cleanPrefsSection(name, incoming[name], now);
-        if (!s) continue;
-        const cur = doc.sections[name];
-        if (cur && cur.at >= s.at) {
-            // Même date et même contenu : déjà là (renvoi après une réponse
-            // perdue). Sinon celle du serveur, plus récente, reste.
-            if (cur.at === s.at && JSON.stringify(cur.data) === JSON.stringify(s.data)) accepted.push(name);
-            continue;
+    // Relu et rejoué si un autre envoi (autre appareil) est passé entre la
+    // lecture et l'écriture : sinon il effaçait la section que l'autre venait
+    // de faire accepter, et cet appareil la reprenait du serveur à
+    // l'ancienne version (voir updateFeedbackThread).
+    for (let attempt = 0; attempt < 5; attempt++) {
+        const read = await store(env).getWithMetadata(key);
+        let stored = null;
+        try { stored = read.value == null ? null : JSON.parse(read.value); } catch (e) { stored = null; }
+        const doc = readPrefsDoc(stored);
+        const now = Date.now();
+        const accepted = [];
+        let changed = false;
+        for (const name of PREFS_SECTIONS) {
+            if (!Object.prototype.hasOwnProperty.call(incoming, name)) continue;
+            const s = cleanPrefsSection(name, incoming[name], now);
+            if (!s) continue;
+            const cur = doc.sections[name];
+            // Même contenu : déjà là (renvoi après une réponse perdue, ou date
+            // seule changée), rien à écrire ; la date du serveur reste.
+            if (cur && JSON.stringify(cur.data) === JSON.stringify(s.data)) { accepted.push(name); continue; }
+            // Celle du serveur, plus récente (ou de la même date), reste.
+            if (cur && cur.at >= s.at) continue;
+            doc.sections[name] = s;
+            accepted.push(name);
+            changed = true;
         }
-        doc.sections[name] = s;
-        accepted.push(name);
-        changed = true;
-    }
-    // Rien de neuf : pas d'écriture (quota D1 gratuit : 100 000 lignes par jour).
-    if (changed) {
+        const done = () => jsonResponse({ success: true, accepted, ...doc });
+        // Rien de neuf : pas d'écriture (quota D1 gratuit : 100 000 lignes par jour).
+        if (!changed) return done();
         const out = JSON.stringify(doc);
-        if (out.length > PREFS_MAX_BYTES) return jsonError("Réglages trop volumineux", 413);
-        await store(env).put(key, out);
+        if (out.length > PREFS_DOC_MAX_BYTES) return jsonError("Réglages trop volumineux", 413);
+        // Premier envoi du compte : rien à comparer.
+        if (read.value == null) { await store(env).put(key, out); return done(); }
+        if (await store(env).putIf(key, out, {}, read)) return done();
     }
-    return jsonResponse({ success: true, accepted, ...doc });
+    return jsonError("Réglages changés pendant l'envoi, réessaie", 409);
 }
 
 // --- HANDLERS CLASSIQUES ---

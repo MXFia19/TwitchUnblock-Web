@@ -723,10 +723,14 @@ function notePrefsChanges(st) {
   }
 }
 
-/** Dates gardées pour un autre compte : elles ne valent rien pour celui-ci,
- *  qui repart de ce qu'il a sur le serveur. */
+/** Dates gardées pour un autre compte, ou d'avant toute connexion : elles ne
+ *  valent rien pour celui-ci, qui repart de ce qu'il a sur le serveur
+ *  (première rencontre). Gardées pour la première connexion, un réglage
+ *  changé avant elle faisait passer la section d'ici, presque toute aux
+ *  valeurs par défaut, devant celle du compte (mots masqués, personnes
+ *  masquées… effacés partout). */
 function adoptPrefsOwner(st, userId) {
-  if (st.owner && st.owner !== userId) {
+  if (st.owner !== userId) {
     for (const n of PREFS_SECTIONS) Object.assign(st.sec[n], { at: 0, srv: 0, base: null })
   }
   st.owner = userId
@@ -946,9 +950,14 @@ function prefsAccepted(userId, send, sentFrom, res) {
   return refused
 }
 
-/** Masquage ou fermeture de l'onglet, déconnexion : ce qui attendait part
- *  tout de suite, sans relecture (pas le temps) ; le Worker ne garde de
- *  toute façon une section que si elle est plus récente que la sienne. */
+/** Masquage ou fermeture de l'onglet, déconnexion : la section commune qui
+ *  attendait part tout de suite, sans relecture (pas le temps) ; le Worker
+ *  ne la garde que si elle est plus récente que la sienne, la règle d'un
+ *  échange. Les épinglées et masquées, elles, se fusionnent avec celles du
+ *  serveur : envoyées telles quelles, elles effaçaient ce qu'un autre
+ *  appareil y avait changé depuis la dernière relecture. Elles passent par
+ *  un échange normal (relecture d'abord) ; s'il n'a pas le temps de finir,
+ *  elles partent au prochain. */
 function flushPrefs() {
   if (!prefsTimer) return
   clearTimeout(prefsTimer)
@@ -958,15 +967,13 @@ function flushPrefs() {
   notePrefsChanges(st)
   savePrefsState(st)
   if (!prefsOn() || st.owner !== userId) return
-  const send = {}
-  const sentFrom = {}
-  for (const n of PREFS_SECTIONS) {
-    const x = st.sec[n]
-    if (x.at > x.srv) { send[n] = { at: x.at, data: prefsSection(n) }; sentFrom[n] = x.at }
+  const x = st.sec.common
+  if (x.at > x.srv) {
+    const send = { common: { at: x.at, data: prefsSection('common') } }
+    // Onglet seulement masqué : la réponse arrive, et compte comme un échange.
+    api.prefsPush(userId, send).then((res) => prefsAccepted(userId, send, { common: x.at }, res))
   }
-  if (!Object.keys(send).length) return
-  // Onglet seulement masqué : la réponse arrive, et compte comme un échange.
-  api.prefsPush(userId, fitPrefs(send)).then((res) => prefsAccepted(userId, send, sentFrom, res))
+  if (PREFS_SECTIONS.some((n) => n !== 'common' && st.sec[n].at > st.sec[n].srv)) syncPrefs()
 }
 
 // ── Navigation ─────────────────────────────────────────────────────────────
