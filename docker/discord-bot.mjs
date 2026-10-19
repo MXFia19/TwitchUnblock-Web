@@ -21,14 +21,16 @@
 //      (« Reply » : texte ; « Send screenshots » : captures) ;
 //    - les retours d'avant le pont reçoivent leur post.
 //  Surveillance (salon privé choisi avec /setup) : Workers en panne, ntfy en
-//  pause, webhook refusé, CI de l'app ou du site en échec ; résumé chaque
-//  matin. Le relais lui-même : le Worker prévient (ALERT_WEBHOOK).
+//  pause, webhook refusé, CI de l'app ou du site en échec, forum des retours
+//  visible de tous ; résumé chaque matin. Le relais lui-même : le Worker
+//  prévient (ALERT_WEBHOOK).
 //  Communauté : /announce (bandeau de l'app et du site), /poll et
 //  /poll-end (sondage, résultats postés à la fin) ; brouillon des
 //  notes de version à chaque sortie, publié d'un bouton (avec la mention du
 //  rôle des sorties choisi par /setup) ; versions de test annoncées aux
 //  testeurs ; /release-pings (ou le bouton posté par /setup, gardé tout en
-//  bas du salon des annonces) : chacun prend ou rend ce rôle.
+//  bas du salon des annonces) : chacun prend ou rend ce rôle (sans
+//  permission ni accès à un salon, vérifié).
 //  À faire : « Add to to-do » (menu Apps d'un message : une bonne idée lue
 //  sur le serveur) et /todo (texte libre) postent une carte dans le salon
 //  choisi par /setup, avec un bouton Done / Reopen.
@@ -131,6 +133,9 @@ const COMMANDS = [
   { name: 'release-pings', description: 'Get pinged when a new version is out (run it again to stop)' },
 ]
 const MAX_PHOTO_B64 = 700_000     // comme le Worker (~500 Ko d'image)
+// Octets d'une image qui tient dans MAX_PHOTO_B64 : au-delà, pas la peine de
+// la télécharger.
+const MAX_PHOTO_BYTES = MAX_PHOTO_B64 / 4 * 3
 const MAX_PHOTOS = 3              // par message, comme le Worker
 const MAX_TAGS = 5                // par post (limite de Discord)
 const EXT = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' }
@@ -200,7 +205,7 @@ export function startDiscordBridge({
   gateway = 'wss://gateway.discord.gg/?v=10&encoding=json',
   github = 'https://api.github.com',
   site = 'https://twitchunblock.vercel.app',
-  repos = { ios: 'MXFia19/TwitchUnblock', web: 'MXFia19/TwitchUnblock-Web' },
+  repos = { ios: 'MXFia19/TwitchUnblock', web: 'MXFia19/TwitchUnblock-Web', android: 'MXFia19/TwitchUnblock-Android' },
   fallbacks = ['https://test2-fallback.vxcraftmanpetit.workers.dev'],
   testSource = 'https://raw.githubusercontent.com/MXFia19/TwitchUnblock/test-17d298/apps-test.json',
   summaryTz = 'Europe/Paris',
@@ -465,8 +470,10 @@ export function startDiscordBridge({
         small = u.href
       }
       const fits = (b64) => Boolean(b64) && b64.length <= MAX_PHOTO_B64
+      // L'original, seulement s'il peut tenir (taille annoncée par Discord).
+      const original = () => (Number(a.size) > MAX_PHOTO_BYTES ? null : fetchB64(a.url))
       let b64 = reduce && small ? await fetchB64(small) : null
-      if (!fits(b64)) b64 = await fetchB64(a.url)
+      if (!fits(b64)) b64 = await original()
       if (!fits(b64) && small && !reduce) b64 = await fetchB64(small)
       if (fits(b64)) ok.push(b64)
       else skipped++
@@ -478,12 +485,26 @@ export function startDiscordBridge({
    *  jour : il ignore les photos) : la personne le sait. */
   const unsavedNote = (sent, r) => (sent && (Number(r?.photos) || 0) < sent ? ' ⚠️ The screenshot(s) couldn’t be saved — please send them again later.' : '')
 
+  /** Fichier en base64, ou null au-delà de MAX_PHOTO_BYTES : lu par
+   *  morceaux, le téléchargement s'arrête dès qu'il dépasse. Chargé en entier
+   *  avant d'être refusé, un faux « .png » de plusieurs centaines de Mo
+   *  (n'importe quel membre, /bug) pouvait faire tomber le processus, qui
+   *  porte aussi le relais vidéo et ntfy. */
   async function fetchB64(url) {
     try {
       const r = await fetch(url, { signal: AbortSignal.timeout(20_000) })
-      if (!r.ok) return null
-      const buf = Buffer.from(await r.arrayBuffer())
-      return buf.length > 4_000_000 ? null : buf.toString('base64')
+      if (!r.ok || Number(r.headers.get('content-length')) > MAX_PHOTO_BYTES) {
+        await r.body?.cancel().catch(() => {})
+        return null
+      }
+      const parts = []
+      let size = 0
+      for await (const chunk of r.body || []) {
+        size += chunk.length
+        if (size > MAX_PHOTO_BYTES) return null   // sortir de la boucle annule le téléchargement
+        parts.push(chunk)
+      }
+      return Buffer.concat(parts).toString('base64')
     } catch {
       return null
     }
@@ -562,13 +583,17 @@ export function startDiscordBridge({
   // ── Après une réponse ou un état du développeur ─────────────────────────
   /** Nouveau retour : réponses rapides, et le propriétaire du serveur
    *  mentionné (notification Discord) avec son genre (`kind` : titre de
-   *  l'encadré du webhook, « 💡 Idea », « 🐞 Bug »…). */
+   *  l'encadré du webhook, « 💡 Idea », « 🐞 Bug »…) — une fois toutes les
+   *  10 min au plus : une rafale de retours le faisait sonner à chacun. */
+  let lastPing = 0
   async function postQuickReplies(thread, kind = '') {
     if (st.quickDone.has(thread)) return
     st.quickDone.add(thread)
-    const ping = st.owner ? `🔔 <@${st.owner}> New report${kind ? `: ${kind}` : ''}\n` : ''
+    const mention = Boolean(st.owner) && Date.now() - lastPing >= 10 * 60_000
+    if (mention) lastPing = Date.now()
+    const ping = mention ? `🔔 <@${st.owner}> New report${kind ? `: ${kind}` : ''}\n` : ''
     await say(thread, `${ping}⚡ **Quick replies** — sent to the user as your reply:`, {
-      ...(st.owner ? { allowed_mentions: { parse: [], users: [st.owner] } } : {}),
+      ...(mention ? { allowed_mentions: { parse: [], users: [st.owner] } } : {}),
       components: [
         row(...QUICK.slice(0, 3).map((q, n) => button(q.label, `qr:${n}`))),
         row(...QUICK.slice(3).map((q, n) => button(q.label, `qr:${n + 3}`))),
@@ -580,7 +605,10 @@ export function startDiscordBridge({
     if (st.fixAsked.has(thread)) return
     st.fixAsked.add(thread)
     await say(thread, '🚀 **Where will the fix ship?** I’ll tell the user as soon as it’s live.', {
-      components: [row(button('In the app', 'fx:ios', 1), button('On the website', 'fx:web', 1), button('Both', 'fx:both', 1), button('Don’t tell them', 'fx:none'))],
+      components: [
+        row(button('In the app', 'fx:ios', 1), button('On the website', 'fx:web', 1), button('Both', 'fx:both', 1), button('Don’t tell them', 'fx:none')),
+        row(button('Apple TV app', 'fx:tvos', 1), button('Android app', 'fx:android', 1)),
+      ],
     })
   }
 
@@ -635,6 +663,15 @@ export function startDiscordBridge({
     }
     st.forumType = forum.type
     if (forum.type !== FORUM) log.warn('Discord bridge: the webhook isn’t in a Forum channel — reports have no post of their own')
+    // Retours, contacts et erreurs récentes (chaînes et vidéos regardées) y
+    // sont publiés : le salon doit être privé (README), comme /stats.
+    // @everyone sans « Voir le salon » (1 << 10), sinon on prévient.
+    const everyone = (forum.permission_overwrites || []).find((o) => o.id === g.id)
+    if (!(everyone && BigInt(everyone.deny || 0) & 1024n)) {
+      const text = `⚠️ The reports channel <#${forum.id}> looks visible to everyone, but reports, contacts and recent errors (channels watched) are posted there: make it private (@everyone without “View Channel”).`
+      log.warn(`Discord bridge: ${text}`)
+      await alert(text)
+    }
     await ensureTags(forum)
     for (const th of g.threads || []) {
       if (th.parent_id === st.forum) st.threads.set(th.id, th.applied_tags || [])
@@ -813,12 +850,23 @@ export function startDiscordBridge({
     if (i.type === 5) return onModal(i, user)
   }
 
-  /** /announce template: : les modèles enregistrés (modifiés dans /stats). */
+  /** Modèles d'annonce (/announce template:, modifiés dans /stats), gardés
+   *  ici : relus par le battement (10 min) et, en arrière-plan, à chaque
+   *  saisie. Discord n'attend que 3 s une réponse ; demandés au Worker avant
+   *  de répondre, un Worker lent ou froid faisait « L'application n'a pas
+   *  répondu ». */
+  const templates = { list: [], at: 0 }
+  async function refreshTemplates() {
+    const r = await call({ action: 'announce-templates' })
+    if (Array.isArray(r?.templates)) Object.assign(templates, { list: r.templates, at: Date.now() })
+  }
+
+  /** /announce template: : les modèles enregistrés. */
   async function onAutocomplete(i, user) {
     if (!isAdmin(user.id)) return respond(i, 8, { choices: [] })
+    if (Date.now() - templates.at > 30_000) refreshTemplates().catch(() => {})
     const typed = String(i.data?.options?.find((o) => o.focused)?.value || '').toLowerCase()
-    const r = await call({ action: 'announce-templates' }).catch(() => null)
-    const choices = (r?.templates || []).filter((x) => String(x.name).toLowerCase().includes(typed))
+    const choices = templates.list.filter((x) => String(x.name).toLowerCase().includes(typed))
       .slice(0, 25).map((x) => ({ name: String(x.name).slice(0, 100), value: String(x.id) }))
     return respond(i, 8, { choices })
   }
@@ -852,9 +900,10 @@ export function startDiscordBridge({
       case 'todo':
         return deferred(i, () => addTodo(i, user))
       case 'announce': {
-        // Modèle choisi : formulaire pré-rempli (à relire avant d'envoyer).
+        // Modèle choisi : formulaire pré-rempli (à relire avant d'envoyer),
+        // depuis les modèles gardés (refreshTemplates).
         const id = opt(i, 'template')
-        const tpl = id ? (await call({ action: 'announce-templates' }).catch(() => null))?.templates?.find((x) => x.id === id) : null
+        const tpl = id ? templates.list.find((x) => String(x.id) === String(id)) : null
         return respond(i, 9, announceModal(tpl))
       }
       case 'announce-clear':
@@ -913,6 +962,10 @@ export function startDiscordBridge({
   async function setup(i) {
     const use = String(opt(i, 'use') || '')
     const role = opt(i, 'role') || null
+    if (use === 'announcements' && role) {
+      const problem = await releaseRoleProblem(i.guild_id || st.guild, role, i.data?.resolved?.roles?.[role])
+      if (problem) return `❌ Not set: ${problem}`
+    }
     const settings = { ...((await kvGet('settings').catch(() => null)) || st.settings) }
     if (use === 'alerts') settings.alerts = i.channel_id
     else if (use === 'announcements') { settings.announcements = i.channel_id; settings.announcementsRole = role }
@@ -978,12 +1031,37 @@ export function startDiscordBridge({
     st.settings = settings
   }
 
+  /** Pourquoi `role` ne peut pas servir de rôle des sorties, que n'importe
+   *  quel membre se donne lui-même ; null s'il convient. Un rôle géré (bot,
+   *  Boost…), avec des permissions, ou qui ouvre un salon (droits accordés
+   *  au rôle dans les permissions d'un salon) en faisait cadeau à tout le
+   *  monde. `known` : le rôle décrit par l'interaction (/setup), sinon relu. */
+  async function releaseRoleProblem(guild, role, known = null) {
+    if (role === guild) return '@everyone can’t be used.'
+    const info = known || (await rest('GET', `/guilds/${guild}/roles`).catch(() => null))?.find?.((r) => r.id === role)
+    if (!info) return 'I can’t read this role.'
+    if (info.managed) return `<@&${role}> is managed by an integration (bot, Boost…).`
+    if (BigInt(info.permissions || 0) !== 0n) return `<@&${role}> has permissions — use a role without any, only for pings.`
+    const channels = await rest('GET', `/guilds/${guild}/channels`).catch(() => null)
+    if (!Array.isArray(channels)) return 'I can’t read the channels to check this role.'
+    const opens = channels.find((c) => (c.permission_overwrites || []).some((o) => o.id === role && BigInt(o.allow || 0) !== 0n))
+    return opens ? `<@&${role}> is given access in <#${opens.id}> — use a role only for pings.` : null
+  }
+
   /** /release-pings et le bouton du salon des sorties : le rôle mentionné à
-   *  chaque sortie, pris ou rendu. */
+   *  chaque sortie, pris ou rendu. Revérifié avant d'être donné : ses droits
+   *  ont pu changer depuis /setup. */
   async function toggleReleaseRole(i, user) {
     const role = st.settings.announcementsRole
     if (!role || !st.guild) return 'Release pings aren’t set up yet.'
     const has = (i.member?.roles || []).includes(role)
+    if (!has) {
+      const problem = await releaseRoleProblem(st.guild, role)
+      if (problem) {
+        log.warn(`Discord bridge: release role not given — ${problem}`)
+        return '❌ Release pings are unavailable for now (the role isn’t safe to hand out) — please tell the developer.'
+      }
+    }
     try {
       await rest(has ? 'DELETE' : 'PUT', `/guilds/${st.guild}/members/${user.id}/roles/${role}`)
     } catch (e) {
@@ -1099,7 +1177,7 @@ export function startDiscordBridge({
         await respond(i, 6)
         try {
           await call({ action: 'fix', thread, platform: a })
-          const where = { ios: 'the app', web: 'the website', both: 'the app and the website' }[a]
+          const where = { ios: 'the app', web: 'the website', both: 'the app and the website', tvos: 'the Apple TV app', android: 'the Android app' }[a]
           await editOriginal(i, { content: where ? `✅ I’ll tell the user when the fix is live in ${where}.` : 'OK, I won’t tell the user.', components: [] })
         } catch (e) {
           await editOriginal(i, { content: `❌ ${e.message}`, components: [] })
@@ -1216,11 +1294,19 @@ export function startDiscordBridge({
   }
 
   /** Résultats d'un sondage fini, une fois : dans le salon d'alertes, avec
-   *  « Publish » vers le salon des annonces, comme les notes de version. */
-  async function postPollResults(poll, results) {
+   *  « Publish » vers le salon des annonces, comme les notes de version. Un
+   *  à la fois : /poll-end et le passage des 10 min, au même moment, les
+   *  postaient deux fois. `poll_done` : les derniers sondages postés (le
+   *  dernier seul, avant ; une lecture ratée abandonne, sans doublon). */
+  function postPollResults(poll, results) {
+    return serial('poll-results', () => postPollResultsOnce(poll, results))
+  }
+  async function postPollResultsOnce(poll, results) {
     if (!poll) return
-    if ((await kvGet('poll_done').catch(() => null)) === poll.id) return
-    await kvSet('poll_done', poll.id, 30 * 86400)
+    const done = await kvGet('poll_done')
+    const ids = Array.isArray(done) ? done : done ? [done] : []
+    if (ids.includes(poll.id)) return
+    await kvSet('poll_done', [...ids, poll.id].slice(-20), 30 * 86400)
     const voters = results?.voters || 0
     const lines = poll.options.map((o, n) => {
       const c = results?.counts?.[n] || 0
@@ -1237,9 +1323,13 @@ export function startDiscordBridge({
     })
   }
 
-  /** Sondage arrivé au bout de sa durée : ses résultats (toutes les 10 min). */
+  /** Sondage arrivé au bout de sa durée : ses résultats (toutes les 10 min).
+   *  D'abord ceux du précédent, fini puis remplacé avant ce passage
+   *  (`previous`, Worker à jour) : un sondage lancé moins de 10 min après la
+   *  fin de l'autre, sans /poll-end, les faisait perdre. */
   async function checkPoll() {
     const r = await call({ action: 'poll-state' })
+    if (r?.previous?.poll) await postPollResults(r.previous.poll, r.previous.results)
     if (r?.poll?.ended) await postPollResults(r.poll, r.results)
   }
 
@@ -1292,9 +1382,12 @@ export function startDiscordBridge({
     if (JSON.stringify(next) !== JSON.stringify(prev)) await kvSet('alerts', next).catch(() => {})
   }
 
-  /** CI de l'app et du site : un échec, une alerte (une seule fois). */
+  /** CI de l'app et du site : un échec, une alerte (une seule fois). Mémoire
+   *  illisible (Worker injoignable) : passage abandonné — prise pour un
+   *  premier passage, elle refaisait l'alerte des échecs déjà signalés. */
   async function watchActions() {
-    const seen = (await kvGet('runs').catch(() => null)) || { since: Date.now() - 15 * 60_000, ids: [] }
+    const stored = await kvGet('runs')
+    const seen = stored || { since: Date.now() - 15 * 60_000, ids: [] }
     let changed = false
     for (const [name, repo] of [['iOS app', repos.ios], ['Website', repos.web]]) {
       const data = await gh(`/repos/${repo}/actions/runs?per_page=15&status=completed`)
@@ -1306,7 +1399,7 @@ export function startDiscordBridge({
       }
     }
     if (changed) { seen.ids = seen.ids.slice(-100); await kvSet('runs', seen) }
-    else if (!(await kvGet('runs').catch(() => null))) await kvSet('runs', seen)
+    else if (!stored) await kvSet('runs', seen)
   }
 
   async function siteVersion() {
@@ -1353,9 +1446,12 @@ export function startDiscordBridge({
 
   /** Sorties : app (GitHub, versions stables et de test) et site (version
    *  en ligne). Nouvelle version stable : brouillon des notes, et le Worker
-   *  prévient les retours qui l'attendaient. La première fois, on retient. */
+   *  prévient les retours qui l'attendaient. La première fois, on retient.
+   *  Mémoire illisible (Worker injoignable) : passage abandonné — prise
+   *  pour un premier passage, les sorties parues entre-temps étaient notées
+   *  sans brouillon ni annonce aux testeurs. */
   async function watchReleases() {
-    const seen = (await kvGet('seen').catch(() => null)) || {}
+    const seen = (await kvGet('seen')) || {}
     const next = { ...seen }
     const rels = await gh(`/repos/${repos.ios}/releases?per_page=50`)
     if (Array.isArray(rels)) {
@@ -1376,6 +1472,19 @@ export function startDiscordBridge({
       const num = (tag) => Number(String(tag || '').match(/(\d+)$/)?.[1]) || 0
       if (test && num(test.tag_name) > num(seen.iosTest)) { if (seen.iosTest) await postTestBuild(test); next.iosTest = test.tag_name }
       if (tv && num(tv.tag_name) > num(seen.tvTest)) { if (seen.tvTest) await postTestBuild(tv); next.tvTest = tv.tag_name }
+      // App Apple TV stable (« TwitchUnblock TV 0.1.N ») : retenue pour
+      // prévenir les retours qui attendaient son correctif, sans brouillon.
+      const tvStable = latest((r) => !r.prerelease && !r.draft && /^TwitchUnblock TV \d/.test(r.name || ''))
+      const tvos = tvStable?.name.replace(/^TwitchUnblock TV\s+/, '').trim()
+      if (tvos && (!seen.tvos || compareVersions(tvos, seen.tvos) > 0)) next.tvos = tvos
+    }
+    // App Android (son dépôt), version stable « TwitchUnblock X.Y.N » : pareil.
+    const apks = repos.android ? await gh(`/repos/${repos.android}/releases?per_page=20`) : null
+    if (Array.isArray(apks)) {
+      const stable = apks.filter((r) => !r.prerelease && !r.draft && /^TwitchUnblock \d/.test(r.name || ''))
+        .sort((a, b) => Date.parse(b.published_at || b.created_at || 0) - Date.parse(a.published_at || a.created_at || 0))[0]
+      const android = stable?.name.replace(/^TwitchUnblock\s+/, '').trim()
+      if (android && (!seen.android || compareVersions(android, seen.android) > 0)) next.android = android
     }
     const web = await siteVersion()
     if (web && (!seen.web || compareVersions(web, seen.web) > 0)) {
@@ -1383,8 +1492,8 @@ export function startDiscordBridge({
       next.web = web
     }
     if (JSON.stringify(next) !== JSON.stringify(seen)) await kvSet('seen', next)
-    if (next.ios || next.web) {
-      const r = await call({ action: 'released', ios: next.ios, web: next.web }).catch(() => null)
+    if (next.ios || next.web || next.tvos || next.android) {
+      const r = await call({ action: 'released', ios: next.ios, web: next.web, tvos: next.tvos, android: next.android }).catch(() => null)
       if (r?.notified) log.log(`Discord bridge: ${r.notified} user(s) told their fix is live`)
     }
   }
@@ -1427,10 +1536,14 @@ export function startDiscordBridge({
       const act = stats.activeDaily?.find((d) => d.date === y)
       const nw = stats.daily?.find((d) => d.date === y)
       const pu = stats.push?.daily?.find((d) => d.date === y)
-      if (act) lines.push(`**Users yesterday**: ${act.total} active (iOS ${act.ios} · web ${act.web})${nw ? ` · ${(nw.newIos || 0) + (nw.newWeb || 0)} new` : ''}`)
+      const fresh = nw ? (nw.newIos || 0) + (nw.newWeb || 0) + (nw.newTv || 0) + (nw.newAndroid || 0) : 0
+      if (act) lines.push(`**Users yesterday**: ${act.total} active (iOS ${act.ios} · web ${act.web} · Apple TV ${act.tvos || 0} · Android ${act.android || 0})${nw ? ` · ${fresh} new` : ''}`)
       if (pu) lines.push(`**Live notifications sent yesterday**: ${(pu.ok_web || 0) + (pu.ok_ntfy || 0)} (web ${pu.ok_web || 0} · ntfy ${pu.ok_ntfy || 0})`)
     }
-    if (seen) lines.push(`**Versions**: app ${seen.ios || '?'} · website ${seen.web || '?'}${seen.iosTest ? ` · latest test build ${seen.iosTest}` : ''}`)
+    if (seen) {
+      lines.push(`**Versions**: app ${seen.ios || '?'} · website ${seen.web || '?'}${seen.tvos ? ` · Apple TV ${seen.tvos}` : ''}`
+        + `${seen.android ? ` · Android ${seen.android}` : ''}${seen.iosTest ? ` · latest test build ${seen.iosTest}` : ''}`)
+    }
     if (lines.length === 1) return false
     await sendChunks(channel, lines.join('\n'))
     return true
@@ -1457,24 +1570,40 @@ export function startDiscordBridge({
    *  Worker, qui ne peut pas les supprimer lui-même) : supprimés ici, au mot
    *  du Worker et toutes les 10 min. Rend ceux qui sont partis. */
   async function emptyTrash() {
+    if (!st.forum) return []
     const list = await kvGet('trash').catch(() => null)
     if (!Array.isArray(list) || !list.length) return []
     const done = []
     for (const t of list.slice(0, 50)) {
-      if (!/^\d{5,25}$/.test(String(t))) { done.push(t); continue }
+      const id = String(t)
+      if (!/^\d{5,25}$/.test(id)) { done.push(t); continue }
       try {
-        await rest('DELETE', `/channels/${t}`)
+        // Seulement un post du forum des retours : tout autre salon ou fil
+        // que le bot peut gérer, mis dans la liste, était supprimé.
+        const parent = st.threads.has(id) ? st.forum : (await rest('GET', `/channels/${id}`))?.parent_id || null
+        if (parent !== st.forum) {
+          log.warn(`Discord bridge: ${id} isn’t a post of the reports forum — not deleted`)
+          done.push(t)
+          continue
+        }
+        await rest('DELETE', `/channels/${id}`)
       } catch (e) {
         // Déjà supprimé (10003) : rien à faire ; autre refus : retenté plus tard.
-        if (e.code !== 10003) { log.warn(`Discord bridge: post ${t} not deleted (${e.message})`); continue }
+        if (e.code !== 10003) { log.warn(`Discord bridge: post ${id} not deleted (${e.message})`); continue }
       }
-      forget(String(t))
+      forget(id)
       done.push(t)
     }
     if (done.length) {
-      // Relue : le Worker a pu en ajouter pendant ce temps.
-      const now = (await kvGet('trash').catch(() => null)) || []
-      await kvSet('trash', now.filter((t) => !done.includes(t)), 7 * 86400)
+      // Retirés sur place par le Worker : relue puis réécrite ici, la liste
+      // perdait un post qu'il y ajoutait entre les deux. Worker d'avant
+      // (action inconnue : 400), comme avant. Pas mise à jour : ces posts,
+      // déjà partis (10003), en sortiront au passage suivant.
+      await call({ action: 'trash-done', ids: done.map(String) }).catch(async (e) => {
+        if (e.status !== 400) throw e
+        const now = (await kvGet('trash').catch(() => null)) || []
+        await kvSet('trash', now.filter((t) => !done.includes(t)), 7 * 86400)
+      }).catch((e) => log.warn(`Discord bridge: trash list not updated (${e.message})`))
       log.log(`Discord bridge: ${done.length} post(s) of reports deleted in /stats removed`)
     }
     return done
@@ -1482,8 +1611,9 @@ export function startDiscordBridge({
 
   async function heartbeat() {
     emptyTrash().catch((e) => log.warn(`Discord bridge: trash — ${e.message}`))
-    // Worker plus ancien (sans sondages) : refus attendu, rien à signaler.
+    // Worker plus ancien (sans sondages ni modèles) : refus attendu, rien à signaler.
     checkPoll().catch(() => {})
+    refreshTemplates().catch(() => {})
     const c = await call({ action: 'config' })
     if (c.forum !== st.forum || c.guild !== st.guild) {
       log.log(`Discord bridge: the webhook moved to channel ${c.forum}`)
@@ -1591,9 +1721,27 @@ export function startDiscordBridge({
   // ── Passerelle (WebSocket) ──────────────────────────────────────────────
   const send = (op, d) => { if (ws?.readyState === 1) ws.send(JSON.stringify({ op, d })) }
 
+  // Connexions déjà relancées (par leur « close » ou par hangUp) : une
+  // relance chacune, jamais deux connexions en même temps.
+  const relaunched = new WeakSet()
+
+  /** Ferme `sock` et, si son « close » n'est pas arrivé 5 s plus tard, relance
+   *  la connexion sans l'attendre : sur une connexion à moitié ouverte, il
+   *  pouvait traîner des minutes, et le bot restait sourd. */
+  function hangUp(sock) {
+    clearInterval(beatTimer)
+    clearTimeout(firstBeat)
+    try { sock?.close(4000) } catch {}
+    setTimeout(() => {
+      if (!sock || ws !== sock || relaunched.has(sock) || stopped) return
+      relaunched.add(sock)
+      connect()
+    }, 5000)
+  }
+
   function beat() {
     // Pas d'accusé depuis le dernier battement : connexion morte, on reprend.
-    if (!acked) { ws?.close(4000); return }
+    if (!acked) { hangUp(ws); return }
     acked = false
     send(1, seq)
   }
@@ -1631,11 +1779,13 @@ export function startDiscordBridge({
     const sock = new WebSocket(url)
     ws = sock
     sock.addEventListener('message', (ev) => {
+      if (ws !== sock) return   // connexion remplacée (hangUp) : plus écoutée
       try { onPayload(JSON.parse(String(ev.data))) } catch (e) { log.warn(`Discord bridge: unreadable message (${e.message})`) }
     })
     sock.addEventListener('error', () => {})   // suivi de « close »
     sock.addEventListener('close', (ev) => {
-      if (ws !== sock) return
+      if (ws !== sock || relaunched.has(sock)) return
+      relaunched.add(sock)
       clearInterval(beatTimer)
       clearTimeout(firstBeat)
       if (stopped) return
@@ -1658,6 +1808,7 @@ export function startDiscordBridge({
         st.guild = c.guild
         st.labels = c.labels || {}
         st.settings = (await kvGet('settings')) || {}
+        refreshTemplates().catch(() => {})
         break
       } catch (e) {
         log.warn(`Discord bridge: the Worker doesn’t answer (${e.message}) — trying again in 1 min`

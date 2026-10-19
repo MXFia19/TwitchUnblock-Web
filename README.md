@@ -391,14 +391,16 @@ limited to server admins in Discord.
   `//` for a private note.
 - **Quick replies**: buttons under each new report ("Thanks, noted", "Send a
   screenshot", "More details", "Fixed next version" — which also marks it
-  Done —, "Already fixed", "Can't reproduce").
+  Done —, "Already fixed", "Can't reproduce"). The server owner is pinged
+  for a new report, once every 10 minutes at most. Links in reports show no
+  preview.
 - The post's **status tag** — New, Seen, Accepted, In progress, Done,
   Declined — sets the report's status (the bot creates missing tags and
   renames older ones). Replying to a "New" report marks it "Seen". What you do
   from `/stats` or the app is copied into the post.
 - **"It's live"**: when a report becomes Done, the bot asks where the fix
-  ships (app, website, both); when that version is out, the person is told
-  in **My reports** ("Good news: the fix is out…").
+  ships (app, website, both, Apple TV app, Android app); when that version is
+  out, the person is told in **My reports** ("Good news: the fix is out…").
 - `/delete` (report and post, after a confirmation), `/block` (the person can
   no longer write in it), `/merge into:<other post>` (a duplicate: the person
   is told and gets the other report's status updates).
@@ -425,8 +427,10 @@ limited to server admins in Discord.
 **Alerts and daily summary** (a private channel, picked with `/setup`): main
 or fallback Worker failing (daily request quota), ntfy notifications paused,
 Discord webhook refused, iOS or website CI failing — once when it breaks, once
-when it's back. Every morning (9:00 Europe/Paris): reports awaiting your reply,
-yesterday's users and notifications, current versions. `/summary` posts it now.
+when it's back; and, at start, a reports forum that looks visible to everyone.
+Every morning (9:00 Europe/Paris): reports awaiting your reply, yesterday's
+users (iOS, web, Apple TV, Android) and notifications, current versions.
+`/summary` posts it now.
 The relay itself can't report its own outage: set the Worker's `ALERT_WEBHOOK`
 secret to a webhook of that channel, and the Worker checks the relay and the
 bot every 5 minutes.
@@ -436,8 +440,10 @@ website (`/announce-clear` removes it). When a new app or website version is
 out, a draft of its release notes appears in the private channel — **Publish**
 posts it in the announcements channel, mentioning the release role if you
 picked one. Members take or drop that role with `/release-pings` or the
-**🔔 Release pings** button the bot posts there. New test builds are posted in
-the test builds channel, mentioning its role.
+**🔔 Release pings** button the bot posts there — so anyone can get it: the
+bot refuses a role managed by an integration, with permissions, or allowed
+into a channel. New test builds are posted in the test builds channel,
+mentioning its role.
 
 **To-do**: right-click a message (long-press on mobile) → *Apps* → **Add to
 to-do** sends a good suggestion to the to-do channel — author, text, a link to
