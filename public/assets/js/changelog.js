@@ -6,6 +6,27 @@
 
 export const CHANGELOG = [
   {
+    version: '2026.10.20b',
+    items: {
+      fr: [
+        'Partager : sous le lecteur, « Partager » copie le lien Twitch de ce que tu regardes (une VOD à l’instant où tu en es, un direct, un clip), ou celui du site, qui rouvre la VOD au même instant. Un message confirme la copie ; sur téléphone, c’est la feuille de partage du système qui s’ouvre.',
+        'Planning des chaînes : un onglet « Planning » sur la page d’une chaîne qui en a un (prochains lives au jour et à l’heure de ton appareil, durée, titre, catégorie, créneaux répétés chaque semaine ou annulés, vacances), et sur une chaîne hors ligne, la ligne « Prochain live : mardi · 20:00 ». Une chaîne sans planning n’affiche rien de plus.',
+      ],
+      en: [
+        'Share: under the player, “Share” copies the Twitch link of what you’re watching (a VOD at the moment you’re at, a live, a clip), or the site’s own link, which reopens the VOD at the same moment. A message confirms the copy; on phones, the system share sheet opens instead.',
+        'Channel schedules: a “Schedule” tab on the page of a channel that has one (upcoming streams in your device’s day and time, length, title, category, weekly or canceled slots, vacations), and on an offline channel, a “Next stream: Tuesday · 8:00 PM” line. A channel without a schedule shows nothing more.',
+      ],
+      es: [
+        'Compartir: bajo el reproductor, «Compartir» copia el enlace de Twitch de lo que ves (un VOD en el momento en que vas, un directo, un clip), o el del sitio, que vuelve a abrir el VOD en el mismo momento. Un mensaje confirma la copia; en el móvil se abre el menú para compartir del sistema.',
+        'Horario de los canales: una pestaña «Horario» en la página de un canal que tiene uno (próximos directos en el día y la hora de tu dispositivo, duración, título, categoría, franjas semanales o canceladas, vacaciones) y, en un canal desconectado, la línea «Próximo directo: martes · 20:00». Un canal sin horario no muestra nada más.',
+      ],
+      ru: [
+        'Поделиться: под плеером кнопка «Поделиться» копирует ссылку Twitch на то, что вы смотрите (VOD с текущего момента, эфир, клип), или ссылку на сайт, которая откроет VOD с того же момента. Сообщение подтверждает копирование; на телефоне открывается системное меню «Поделиться».',
+        'Расписание каналов: вкладка «Расписание» на странице канала, у которого оно есть (ближайшие эфиры по дню и времени вашего устройства, длительность, название, категория, еженедельные и отменённые эфиры, отпуск), а у канала не в сети — строка «Следующий эфир: вторник · 20:00». Канал без расписания ничего дополнительно не показывает.',
+      ],
+    },
+  },
+  {
     version: '2026.10.20a',
     items: {
       fr: [

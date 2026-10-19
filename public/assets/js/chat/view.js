@@ -163,8 +163,9 @@ const DEVICE_12H = (() => {
 })()
 
 /** Heure d'un message, dans la langue du site ; 12 h ou 24 h selon le
- *  réglage (`pref` : « auto », celui de l'appareil, « 12 » ou « 24 »). */
-function timeLabel(ts, pref = 'auto') {
+ *  réglage (`pref` : « auto », celui de l'appareil, « 12 » ou « 24 »).
+ *  Sert aussi au planning des chaînes (main.js). */
+export function timeLabel(ts, pref = 'auto') {
   const twelve = pref === '12' || (pref !== '24' && DEVICE_12H)
   return new Date(ts).toLocaleTimeString(lang(), { hour: twelve ? 'numeric' : '2-digit', minute: '2-digit', hour12: twelve })
 }

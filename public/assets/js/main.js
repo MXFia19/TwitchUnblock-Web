@@ -6,7 +6,7 @@ import * as api from './api.js'
 import { DEFAULT_PREFS, qualityPrefOf, store } from './store.js'
 import { LANGS, applyStatic, deviceLang, initLang, setLang, t, lang } from './i18n.js'
 import { Player, QUALITY_PREFS, loadHls, qualityText, validQualityPref, validSpeed } from './player.js'
-import { ChatView } from './chat/view.js'
+import { ChatView, timeLabel } from './chat/view.js'
 import { linkifyHtml } from './chat/message.js'
 import { Hermes } from './chat/hermes.js'
 import * as usage from './usage.js'
@@ -185,7 +185,7 @@ function watchPath() {
   return null
 }
 
-const CHANNEL_SECTIONS = { vods: '', highlights: '/videos?filter=highlights', playlists: '/videos?filter=collections', clips: '/clips', about: '/about' }
+const CHANNEL_SECTIONS = { vods: '', highlights: '/videos?filter=highlights', playlists: '/videos?filter=collections', clips: '/clips', schedule: '/schedule', about: '/about' }
 const channelPath = (login, tab = state.channelTab ?? 'vods') => `/${login}${CHANNEL_SECTIONS[tab] ?? ''}`
 const categoryPath = (c) => `/directory/category/${encodeURIComponent(c.slug || c.id)}`
 
@@ -233,6 +233,7 @@ function routeFrom(pathname, search = '') {
   const filter = q.get('filter')
   const tab = section === 'clips' ? 'clips'
     : section === 'about' ? 'about'
+    : section === 'schedule' ? 'schedule'
     : section === 'videos' ? (filter === 'highlights' ? 'highlights' : filter === 'collections' ? 'playlists' : 'vods')
     : null
   return { channel: login, tab, live: !section }
@@ -1230,6 +1231,7 @@ const actions = {
   'watch-close': () => closeWatch(),
   'watch-toggle-play': () => player.togglePlay(),
   'open-in': () => openInSheet(),
+  share: () => openShareSheet(),
   'see-vods': () => {
     const login = state.watch?.login ?? state.watch?.info?.owner?.login
     if (!login) return
@@ -2929,14 +2931,146 @@ async function searchChannel(raw, { tab } = {}) {
 }
 
 // Onglets de la page streamer, comme sur Twitch.
-const CHANNEL_TABS = [['vods', 'vods'], ['highlights', 'highlights'], ['playlists', 'playlists'], ['clips', 'clips'], ['about', 'about']]
+const CHANNEL_TABS = [['vods', 'vods'], ['highlights', 'highlights'], ['playlists', 'playlists'], ['clips', 'clips'], ['schedule', 'sched_tab'], ['about', 'about']]
 
 /** Charge le contenu de l'onglet à sa première ouverture. */
 function loadChannelTab(tab) {
   if (tab === 'highlights') loadChannelHighlights()
   if (tab === 'playlists') loadChannelPlaylists()
   if (tab === 'clips') loadChannelClips()
+  if (tab === 'schedule') renderChannelSchedule()
   if (tab === 'about') loadChannelAbout()
+}
+
+// ── Onglet « Planning » ──────────────────────────────────────────────────
+// Prochains lives de la chaîne au jour et à l'heure de l'appareil : durée,
+// titre, catégorie, créneaux répétés ou annulés, vacances. Comme dans l'app,
+// l'onglet n'apparaît que si la chaîne a un planning, et la page d'une
+// chaîne hors ligne en reprend le prochain live.
+const SCHEDULE_TTL = 10 * 60_000
+
+/** Créneaux pas encore finis (une heure comptée sans fin connue). */
+const upcomingSegments = (s, now = Date.now()) => (s?.segments ?? []).filter((g) => (g.end ?? g.start + 3_600_000) > now)
+/** Vacances en cours ou à venir. */
+const activeVacation = (s, now = Date.now()) => (s?.vacation?.end > now ? s.vacation : null)
+/** Quelque chose à montrer : un créneau à venir, ou des vacances. */
+const hasSchedule = (s) => Boolean(upcomingSegments(s).length || activeVacation(s))
+
+/** Planning de la chaîne affichée, demandé une fois (gardé 10 min). Tant
+ *  qu'il n'est pas là, `schedule` vaut undefined ; null si Twitch n'a pas
+ *  répondu. */
+async function loadChannelSchedule() {
+  const ch = state.channel
+  if (!ch || ch.schedule !== undefined || ch.scheduleLoading) return
+  state.scheduleCache ??= new Map()
+  const hit = state.scheduleCache.get(ch.login)
+  if (hit && Date.now() - hit.at < SCHEDULE_TTL) {
+    ch.schedule = hit.schedule
+    return showChannelSchedule()
+  }
+  ch.scheduleLoading = true
+  const schedule = await api.getChannelSchedule(ch.login, ch.info?.id).catch(() => null)
+  ch.scheduleLoading = false
+  if (schedule) state.scheduleCache.set(ch.login, { schedule, at: Date.now() })
+  if (state.channel !== ch) return
+  ch.schedule = schedule
+  showChannelSchedule()
+}
+
+/** Ce que le planning donne à voir : l'onglet (affiché aussi quand c'est
+ *  celui de l'adresse), la ligne « Prochain live » d'une chaîne hors ligne
+ *  et le contenu de l'onglet. */
+function showChannelSchedule() {
+  const s = state.channel?.schedule
+  const btn = $('#channel-tabs [data-ctab="schedule"]')
+  if (btn) btn.hidden = !hasSchedule(s) && state.channelTab !== 'schedule'
+  const next = $('#channel-next')
+  if (next) {
+    const line = scheduleHeadline(s)
+    next.hidden = !line
+    next.innerHTML = line ? `${icon(line.icon, 14)}<span>${esc(line.text)}</span>` : ''
+  }
+  renderChannelSchedule()
+}
+
+/** Contenu de l'onglet : les vacances en tête, puis vingt créneaux au plus
+ *  (quatre semaines d'un planning chargé). */
+function renderChannelSchedule() {
+  const box = $('#channel-schedule')
+  const s = state.channel?.schedule
+  if (!box) return
+  if (s === undefined) { box.innerHTML = `<p class="muted small">${esc(t('loading'))}</p>`; return }
+  if (!s) { box.innerHTML = emptyState(t('err_loading'), 'refresh'); return }
+  const now = Date.now()
+  const list = upcomingSegments(s, now).slice(0, 20)
+  const v = activeVacation(s, now)
+  box.innerHTML = `
+    ${v ? `<p class="sched-vacation">${icon('plane', 16)}<span>${esc(vacationText(v))}</span></p>` : ''}
+    ${list.length ? `<ol class="sched-list">${list.map(scheduleRow).join('')}</ol>
+      <p class="muted small sched-hint">${icon('clock', 14)}<span>${esc(t('sched_local_hint'))}</span></p>` : emptyState(t('sched_none'), 'calendar')}`
+}
+
+/** Un créneau : le jour façon calendrier, puis titre, heures et durée,
+ *  catégorie, répétition ou annulation. */
+function scheduleRow(g) {
+  const date = new Date(g.start)
+  const day = scheduleDay(g.start)
+  let when = `${day.charAt(0).toUpperCase()}${day.slice(1)} · ${scheduleTime(g.start)}`
+  if (g.end > g.start) when += ` – ${scheduleTime(g.end)} · ${segmentLength(g.end - g.start)}`
+  // Sans titre : sa catégorie (alors pas répétée dessous), sinon « Live prévu ».
+  const title = g.title || g.category || t('sched_untitled')
+  const meta = [
+    g.category && g.title ? `<span class="hero-game">${icon('gamepad', 13)} ${gameLink(g.categoryId, g.category)}</span>` : '',
+    g.recurring ? `<span class="pill sm sched-weekly">${esc(t('sched_weekly'))}</span>` : '',
+    g.canceled ? `<span class="pill sm sched-canceled">${esc(t('sched_canceled'))}</span>` : '',
+  ].join('')
+  return `<li class="sched-row${g.canceled ? ' canceled' : ''}">
+    <div class="sched-date"><span>${esc(date.toLocaleDateString(lang(), { weekday: 'short' }))}</span><b>${esc(date.getDate())}</b></div>
+    <div class="sched-body">
+      <p class="sched-title">${esc(title)}</p>
+      <p class="sched-when muted">${esc(when)}</p>
+      ${meta ? `<p class="sched-meta">${meta}</p>` : ''}
+    </div>
+  </li>`
+}
+
+/** Jour d'un créneau dans la langue du site : « aujourd'hui », « demain »,
+ *  « mardi » dans la semaine, « mardi 28 oct. » au-delà. */
+function scheduleDay(ms) {
+  const midnight = (x) => new Date(x).setHours(0, 0, 0, 0)
+  const days = Math.round((midnight(ms) - midnight(Date.now())) / 86_400_000)
+  if (days === 0) return t('sched_today')
+  if (days === 1) return t('sched_tomorrow')
+  return new Date(ms).toLocaleDateString(lang(), days > 1 && days < 7 ? { weekday: 'long' } : { weekday: 'long', day: 'numeric', month: 'short' })
+}
+
+/** Heure d'un créneau, en 12 h ou 24 h comme celle du chat. */
+const scheduleTime = (ms) => timeLabel(ms, store.prefs.timeFormat)
+
+/** Durée d'un créneau : « 3 h », « 3 h 30 » ou « 45 min ». */
+function segmentLength(ms) {
+  const min = Math.round(ms / 60_000)
+  const h = Math.floor(min / 60)
+  const m = min % 60
+  return h ? `${h} h${m ? ` ${String(m).padStart(2, '0')}` : ''}` : `${m} min`
+}
+
+/** Ligne d'une chaîne hors ligne : ses vacances en cours, sinon « Prochain
+ *  live : mardi · 20:00 ». null sans rien de prévu. */
+function scheduleHeadline(s) {
+  const now = Date.now()
+  const v = activeVacation(s, now)
+  if (v && v.start <= now) return { icon: 'plane', text: vacationText(v) }
+  const next = upcomingSegments(s, now).find((g) => !g.canceled)
+  return next ? { icon: 'calendar', text: t('sched_next', { d: `${scheduleDay(next.start)} · ${scheduleTime(next.start)}` }) } : null
+}
+
+/** « En vacances jusqu'au 28 oct. », ou « du 20 oct. au 28 oct. » à venir. */
+function vacationText(v) {
+  const day = (ms) => new Date(ms).toLocaleDateString(lang(), { day: 'numeric', month: 'short' })
+  return v.start <= Date.now()
+    ? t('sched_vacation_until', { d: day(v.end) })
+    : t('sched_vacation_range', { a: day(v.start), b: day(v.end) })
 }
 
 // ── Onglet « À propos » ──────────────────────────────────────────────────
@@ -3281,6 +3415,7 @@ function renderChannel(keyword = '') {
         <div class="hero-badges"><span class="pill off">${esc(t('offline'))}</span>
         ${since ? `<span class="muted">${esc(t('offline_since', { t: since }))} · ${esc(sinceDate)}</span>` : ''}</div>
         ${info?.broadcastSettings?.title ? `<p class="hero-title muted">${esc(info.broadcastSettings.title)}</p>` : ''}
+        <button type="button" class="hero-next" id="channel-next" data-ctab="schedule" hidden></button>
       </div>`
   }
 
@@ -3295,7 +3430,7 @@ function renderChannel(keyword = '') {
       ${status}
     </section>
     <div class="segmented channel-tabs" id="channel-tabs">
-      ${CHANNEL_TABS.map(([id, k]) => `<button type="button" data-ctab="${id}" class="${tab === id ? 'active' : ''}">${esc(t(k))}</button>`).join('')}
+      ${CHANNEL_TABS.map(([id, k]) => `<button type="button" data-ctab="${id}" class="${tab === id ? 'active' : ''}"${id === 'schedule' && tab !== id && !hasSchedule(state.channel.schedule) ? ' hidden' : ''}>${esc(t(k))}</button>`).join('')}
     </div>
     <section class="block" data-cpanel="vods" ${tab === 'vods' ? '' : 'hidden'}>
       <div class="block-head">
@@ -3321,10 +3456,16 @@ function renderChannel(keyword = '') {
       <div class="grid vods" id="channel-clips"></div>
       <div class="load-more" id="channel-clips-more"></div>
     </section>
+    <section class="block" data-cpanel="schedule" ${tab === 'schedule' ? '' : 'hidden'}>
+      <div id="channel-schedule"></div>
+    </section>
     <section class="block" data-cpanel="about" ${tab === 'about' ? '' : 'hidden'}>
       <div id="channel-about"></div>
     </section>`
   loadChannelTab(tab)
+  // Planning : l'onglet et la ligne « Prochain live », s'il y en a un.
+  showChannelSchedule()
+  loadChannelSchedule()
   renderVodGrid()
   loadUnlisted(login)
 
@@ -3889,6 +4030,7 @@ function renderLiveInfo(info, links) {
     <div class="wi-actions">
       <button class="btn ghost sm" type="button" data-action="multi-add-current" title="${esc(t('multi_add'))}">${icon('grid', 16)}<span>${esc(t('multi_title'))}</span></button>
       <button class="btn ghost sm" type="button" data-action="see-vods">${icon('film', 16)}<span>${esc(t('see_vods'))}</span></button>
+      ${shareButton()}
       <button class="btn ghost sm" type="button" data-action="open-in">${icon('external', 16)}<span>${esc(t('open_in'))}</span></button>
     </div>`
 }
@@ -3929,6 +4071,7 @@ async function openClip(slug) {
     <div class="wi-actions">
       ${token.login ? `<button class="btn ghost sm" type="button" data-action="see-vods">${icon('film', 16)}<span>${esc(t('see_vods'))}</span></button>` : ''}
       ${clip.video?.id ? `<button class="btn ghost sm" type="button" data-vod="${esc(clip.video.id)}">${icon('play', 16)}<span>${esc(t('full_vod'))}</span></button>` : ''}
+      ${shareButton()}
     </div>`
 }
 
@@ -4100,6 +4243,7 @@ async function openVod(id, preset, { keepPlaylist = false, at = null } = {}) {
       <button class="btn ghost sm" type="button" data-action="multi-add-current" title="${esc(t('multi_add'))}">${icon('grid', 16)}<span>${esc(t('multi_title'))}</span></button>
       ${token.login ? `<button class="btn ghost sm" type="button" data-action="see-vods">${icon('film', 16)}<span>${esc(t('see_vods'))}</span></button>` : ''}
       <button class="btn ghost sm" type="button" data-action="vod-download">${icon('download', 16)}<span>${esc(t('dl_download'))}</span></button>
+      ${shareButton()}
       <button class="btn ghost sm" type="button" data-action="open-in">${icon('external', 16)}<span>${esc(t('open_in'))}</span></button>
     </div>`
 }
@@ -4645,6 +4789,86 @@ function openInSheet() {
       a.click()
       setTimeout(() => URL.revokeObjectURL(a.href), 1000)
     }
+  }
+}
+
+// ── Partager ───────────────────────────────────────────────────────────────
+/** Bouton « Partager » sous le lecteur (direct, VOD, clip). */
+const shareButton = () => `<button class="btn ghost sm" type="button" data-action="share" title="${esc(t('share'))}">${icon('share', 16)}<span>${esc(t('share'))}</span></button>`
+
+/** « 1h2m3s » : un instant au format du « ?t= » de Twitch (que routeFrom
+ *  lit aussi). */
+function twitchStamp(seconds) {
+  const s = Math.max(0, Math.floor(seconds))
+  return `${Math.floor(s / 3600)}h${Math.floor((s % 3600) / 60)}m${s % 60}s`
+}
+
+/** Liens de ce que joue le lecteur : celui de Twitch, et celui du site (même
+ *  chemin, lu par routeFrom), à l'instant pour une VOD. null sans adresse
+ *  (VOD reconstruite). */
+function shareLinks() {
+  const w = state.watch
+  const path = watchPath()
+  if (!w || !path) return null
+  // Position de la vidéo, ou le départ demandé (lien ?t=) pas encore atteint.
+  const at = w.kind === 'vod' ? Math.floor(player?.resumeAt() || 0) : 0
+  const query = at > 0 ? `?t=${twitchStamp(at)}` : ''
+  return {
+    at,
+    // Clip dont la chaîne n'est pas encore connue : son adresse courte.
+    twitch: w.kind === 'clip' && !w.login ? `https://clips.twitch.tv/${encodeURIComponent(w.id)}` : `https://www.twitch.tv${path}${query}`,
+    site: `${location.origin}${path}${query}`,
+  }
+}
+
+/** Feuille « Partager » : le lien Twitch et celui du site. Un clic copie le
+ *  lien, et un message le confirme ; sur mobile, il ouvre la feuille de
+ *  partage du système quand elle existe. */
+function openShareSheet() {
+  const links = shareLinks()
+  if (!links) return
+  const native = isMobile && typeof navigator.share === 'function'
+  const row = (id, ic, label, url) => `
+    <button class="sheet-row share-row" type="button" data-sheet="${id}">${icon(ic, 18)}<span><b>${esc(label)}</b><small>${esc(url.replace(/^https?:\/\//, ''))}</small></span>${icon(native ? 'share' : 'copy', 16)}</button>`
+  openSheet(`
+    <div class="sheet-head"><h2>${esc(t('share'))}</h2><button class="icon-btn" type="button" data-sheet-close>${icon('x', 20)}</button></div>
+    ${links.at > 0 ? `<p class="muted sheet-sub">${esc(t('share_at', { t: formatClock(links.at) }))}</p>` : ''}
+    <div class="sheet-group">
+      ${row('twitch', 'twitch', t('share_twitch'), links.twitch)}
+      ${row('site', 'link', t('share_site'), links.site)}
+    </div>
+    <input class="link-box" readonly value="${esc(links.twitch)}">`)
+
+  const sheet = $('#sheet')
+  sheet.onclick = async (e) => {
+    if (e.target.closest('[data-sheet-close]')) return closeSheet()
+    const id = e.target.closest('[data-sheet]')?.dataset.sheet
+    const url = id === 'twitch' || id === 'site' ? links[id] : ''
+    if (!url) return
+    const box = $('.link-box', sheet)
+    box.value = url
+    if (native) {
+      try {
+        await navigator.share({ url })
+        return closeSheet()
+      } catch (err) {
+        // Annulée : la feuille reste ouverte. Refusée : le lien est copié.
+        if (err?.name === 'AbortError') return
+      }
+    }
+    let copied = false
+    try {
+      await navigator.clipboard.writeText(url)
+      copied = true
+    } catch {
+      // Sans presse-papiers (page non sécurisée, WebView) : copie à
+      // l'ancienne ; à défaut, le lien reste sélectionné dans la feuille.
+      box.select()
+      try { copied = document.execCommand('copy') } catch {}
+    }
+    if (!copied) return
+    toast(t('copied'), 'success')
+    closeSheet()
   }
 }
 

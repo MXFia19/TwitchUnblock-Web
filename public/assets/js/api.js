@@ -1070,6 +1070,240 @@ export async function getChannelAbout(login) {
   }
 }
 
+// ── Planning d'une chaîne ──────────────────────────────────────────────────
+// Fenêtre : douze heures en arrière (un créneau en cours), quatre semaines
+// devant, comme dans l'app.
+const SCHEDULE_BACK = 12 * 3_600_000
+const SCHEDULE_AHEAD = 28 * 86_400_000
+const noSchedule = () => ({ segments: [], vacation: null })
+
+/**
+ * Planning d'une chaîne : ses créneaux à venir et ses vacances. Connecté,
+ * Helix `schedule` (documenté : créneaux répétés, annulés, vacances) ; sans
+ * compte, ou s'il échoue, GQL public ; s'il refuse la requête, l'export
+ * iCalendar de Helix, public lui aussi. Les trois acceptent les appels du
+ * navigateur (CORS) : pas de détour par le Worker.
+ * { segments: [{ id, start, end, title, category, categoryId, recurring,
+ * canceled }], vacation: { start, end } | null }, dates en ms — vide pour
+ * une chaîne sans planning ; null si rien n'a répondu.
+ */
+export async function getChannelSchedule(login, channelId = null) {
+  const id = /^\d{1,20}$/.test(String(channelId ?? '')) ? String(channelId) : ''
+  if (store.token && id) {
+    const s = await helixSchedule(id).catch(() => null)
+    if (s) return s
+  }
+  const s = await gqlSchedule(login).catch(() => null)
+  if (s || !id) return s
+  return icalSchedule(id).catch(() => null)
+}
+
+/** Créneaux de la fenêtre, triés et sans doublon ; vacances pas encore
+ *  finies, sinon null. */
+function finishSchedule(list, vacation, now = Date.now()) {
+  const seen = new Set()
+  const segments = list
+    .filter((s) => Number.isFinite(s.start) && (s.end ?? s.start + 3_600_000) > now - SCHEDULE_BACK && s.start < now + SCHEDULE_AHEAD)
+    .filter((s) => {
+      const key = `${s.id}|${s.start}`
+      if (seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
+    .sort((a, b) => a.start - b.start)
+  const ok = vacation && Number.isFinite(vacation.start) && Number.isFinite(vacation.end) && vacation.end > now
+  return { segments, vacation: ok ? vacation : null }
+}
+
+/** Planning par Helix, avec le jeton du compte. 404 : pas de planning — la
+ *  plupart des chaînes, rien à noter au journal (d'où ce fetch à part).
+ *  null si Twitch refuse (jeton expiré…). */
+async function helixSchedule(id) {
+  const res = await fetch(`https://api.twitch.tv/helix/schedule?broadcaster_id=${id}&first=25`, {
+    headers: { Authorization: `Bearer ${store.token}`, 'Client-Id': HELIX_CLIENT_ID },
+  })
+  if (res.status === 404) return noSchedule()
+  if (!res.ok) return null
+  const d = (await res.json())?.data
+  if (!d) return null
+  const segments = (d.segments ?? []).map((s) => ({
+    id: s.id ?? '',
+    start: Date.parse(s.start_time),
+    end: Date.parse(s.end_time) || null,
+    title: s.title ?? '',
+    category: s.category?.name ?? '',
+    categoryId: s.category?.id ?? '',
+    recurring: Boolean(s.is_recurring),
+    // Annulé par le streamer, ou pendant ses vacances.
+    canceled: Boolean(s.canceled_until),
+  }))
+  const v = d.vacation
+  return finishSchedule(segments, v ? { start: Date.parse(v.start_time), end: Date.parse(v.end_time) } : null)
+}
+
+/** Planning par GQL public : `segments(relativeDate:)` rend la semaine qui
+ *  contient la date. Twitch n'en sert qu'une par requête HTTP et par chaîne
+ *  (plusieurs alias, ou un lot, en rendent une seule, au hasard) : une
+ *  requête par semaine : celle en cours, puis les trois suivantes en
+ *  parallèle. Pas de « répété » dans GQL, mais `repeatEndsAfterCount` vaut
+ *  1 pour un créneau unique (0 : répété sans fin). Les vacances sont son
+ *  « interruption ». null si Twitch refuse la requête ; chaîne sans
+ *  planning : vide. */
+async function gqlSchedule(login) {
+  const now = Date.now()
+  const fields = 'id startAt endAt title isCancelled repeatEndsAfterCount categories { id displayName }'
+  // Dates calculées ici, jamais saisies : écrites dans la requête, leur type
+  // GQL n'a pas à être nommé.
+  const week = (k, extra = '') => gqlRaw(`query($l: String!) { user(login: $l) { channel { schedule {
+    ${extra}
+    segments(relativeDate: "${new Date(now + k * 7 * 86_400_000).toISOString()}") { ${fields} }
+  } } } }`, { l: login })
+  const first = await week(0, 'nextSegment { id } interruption { startAt endAt }')
+  if (first?.errors?.length) return null
+  const sched = first?.data?.user?.channel?.schedule
+  if (!sched) return noSchedule()
+  // Ni prochain live ni vacances (la plupart des chaînes) : les semaines
+  // suivantes n'ont rien à dire.
+  const rest = sched.nextSegment || sched.interruption ? await Promise.all([1, 2, 3].map((k) => week(k))) : []
+  if (rest.some((r) => r?.errors?.length)) return null
+  const segments = [first, ...rest].flatMap((r) => r?.data?.user?.channel?.schedule?.segments ?? []).filter((s) => s?.startAt).map((s) => ({
+    id: s.id ?? '',
+    start: Date.parse(s.startAt),
+    end: Date.parse(s.endAt) || null,
+    title: s.title ?? '',
+    category: s.categories?.[0]?.displayName ?? '',
+    categoryId: s.categories?.[0]?.id ?? '',
+    recurring: s.repeatEndsAfterCount != null && s.repeatEndsAfterCount !== 1,
+    canceled: Boolean(s.isCancelled),
+  }))
+  const v = sched.interruption
+  return finishSchedule(segments, v ? { start: Date.parse(v.startAt), end: Date.parse(v.endAt) } : null, now)
+}
+
+/** Planning par l'export iCalendar de Helix, public (sans jeton) : créneaux
+ *  répétés compris (RRULE). Les vacances n'y sont qu'un texte : ignorées.
+ *  404 : pas de planning. */
+async function icalSchedule(id) {
+  const res = await fetch(`https://api.twitch.tv/helix/schedule/icalendar?broadcaster_id=${id}`)
+  if (res.status === 404) return noSchedule()
+  if (!res.ok) return null
+  return parseICal(await res.text())
+}
+
+/** Créneaux d'un calendrier iCalendar (RFC 5545) : chaque VEVENT, et ses
+ *  répétitions dans la fenêtre. */
+function parseICal(text, now = Date.now()) {
+  // Lignes repliées (RFC 5545, 3.1) : une ligne qui commence par une espace
+  // ou une tabulation prolonge la précédente.
+  const lines = String(text).replace(/\r\n?/g, '\n').replace(/\n[ \t]/g, '').split('\n')
+  const segments = []
+  let ev = null
+  for (const line of lines) {
+    const upper = line.trim().toUpperCase()
+    if (upper === 'BEGIN:VEVENT') { ev = { EXDATE: [] }; continue }
+    if (upper === 'END:VEVENT') {
+      if (ev) segments.push(...icalOccurrences(ev, now))
+      ev = null
+      continue
+    }
+    const colon = line.indexOf(':')
+    if (!ev || colon < 0) continue
+    const [name, ...params] = line.slice(0, colon).split(';')
+    const tzid = params.find((p) => /^TZID=/i.test(p))?.slice(5).replace(/"/g, '') ?? ''
+    const value = line.slice(colon + 1)
+    if (name.toUpperCase() === 'EXDATE') ev.EXDATE.push(...value.split(',').map((v) => icalDate(v, tzid)).filter(Number.isFinite))
+    else ev[name.toUpperCase()] = { tzid, value }
+  }
+  return finishSchedule(segments, null, now)
+}
+
+/** Occurrences d'un VEVENT dans la fenêtre : lui seul, ou ses répétitions
+ *  (RRULE quotidienne ou hebdomadaire ; dates exclues par EXDATE), à la
+ *  même heure de son fuseau d'une semaine à l'autre, heure d'été comprise. */
+function icalOccurrences(ev, now) {
+  const start = ev.DTSTART && icalParts(ev.DTSTART.value)
+  if (!start) return []
+  const tz = ev.DTSTART.value.trim().endsWith('Z') ? 'UTC' : icalZone(ev.DTSTART.tzid)
+  const first = zonedTime(start, tz)
+  const end = ev.DTEND ? icalDate(ev.DTEND.value, ev.DTEND.tzid) : NaN
+  const length = Number.isFinite(end) && end > first ? end - first : null
+  const uid = ev.UID?.value ?? ''
+  const base = { title: icalText(ev.SUMMARY?.value), category: icalText(ev.CATEGORIES?.value), categoryId: '', canceled: /^CANCELLED$/i.test(ev.STATUS?.value?.trim() ?? '') }
+  const at = (ms, recurring) => ({ ...base, id: `${uid}-${ms}`, start: ms, end: length != null ? ms + length : null, recurring })
+  // Règle de répétition : FREQ, INTERVAL, COUNT, UNTIL.
+  const rule = {}
+  for (const part of String(ev.RRULE?.value ?? '').split(';')) {
+    const [k, v] = part.split('=')
+    if (k && v) rule[k.toUpperCase()] = v
+  }
+  const step = { DAILY: 1, WEEKLY: 7 }[String(rule.FREQ ?? '').toUpperCase()]
+  if (!step) return [at(first, false)]
+  const days = step * Math.max(1, Number(rule.INTERVAL) || 1)
+  const count = Number(rule.COUNT) || Infinity
+  const until = rule.UNTIL ? icalDate(rule.UNTIL, ev.DTSTART.tzid) : NaN
+  const from = now - SCHEDULE_BACK
+  const out = []
+  // Droit vers la fenêtre, sans parcourir des années de répétitions.
+  for (let k = Math.max(0, Math.floor((from - first) / (days * 86_400_000)) - 1); k < count && out.length < 60; k++) {
+    const ms = zonedTime({ ...start, d: start.d + k * days }, tz)
+    if (ms >= now + SCHEDULE_AHEAD || ms > until) break
+    if ((length ?? 3_600_000) + ms > from && !ev.EXDATE.some((x) => Math.abs(x - ms) < 60_000)) out.push(at(ms, true))
+  }
+  return out
+}
+
+/** « 20261020T200000Z », « 20261020T200000 » ou « 20261020 » → ses parties. */
+function icalParts(raw) {
+  const m = /^(\d{4})(\d{2})(\d{2})(?:T(\d{2})(\d{2})(\d{2}))?Z?$/.exec(String(raw ?? '').trim())
+  return m ? { y: +m[1], mo: +m[2] - 1, d: +m[3], h: +(m[4] ?? 0), mi: +(m[5] ?? 0), s: +(m[6] ?? 0) } : null
+}
+
+/** Date iCalendar → ms : UTC pour « …Z », sinon l'heure du fuseau TZID. */
+function icalDate(raw, tzid) {
+  const p = icalParts(raw)
+  return p ? zonedTime(p, String(raw).trim().endsWith('Z') ? 'UTC' : icalZone(tzid)) : NaN
+}
+
+/** Texte iCalendar : « \, », « \; » et « \\ » rendus, retours à la ligne en espaces. */
+const icalText = (raw) => String(raw ?? '').replace(/\\([nN])|\\(.)/g, (_, n, c) => (n ? ' ' : c)).trim()
+
+/** Format d'heure par fuseau, pour zoneOffset (créé une fois chacun). */
+const zoneFormats = new Map()
+const zoneFormat = (tz) => {
+  if (!zoneFormats.has(tz)) {
+    zoneFormats.set(tz, new Intl.DateTimeFormat('en-US', {
+      timeZone: tz, hourCycle: 'h23', year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric', second: 'numeric',
+    }))
+  }
+  return zoneFormats.get(tz)
+}
+
+/** Fuseau d'un TZID (« /Europe/Paris » chez Twitch, barre de tête comprise),
+ *  UTC s'il est inconnu. */
+function icalZone(tzid) {
+  const known = (z) => { try { zoneFormat(z); return true } catch { return false } }
+  const id = String(tzid ?? '').replace(/^\//, '')
+  if (id && known(id)) return id
+  // Préfixe d'éditeur (« /mozilla.org/…/Europe/Paris ») : les deux derniers éléments.
+  const tail = id.split('/').slice(-2).join('/')
+  return tail && known(tail) ? tail : 'UTC'
+}
+
+/** Décalage du fuseau `tz` à l'instant `ms` (heure locale − UTC, en ms). */
+function zoneOffset(ms, tz) {
+  const p = {}
+  for (const x of zoneFormat(tz).formatToParts(ms)) p[x.type] = Number(x.value)
+  return Date.UTC(p.year, p.month - 1, p.day, p.hour % 24, p.minute, p.second) - Math.floor(ms / 1000) * 1000
+}
+
+/** Heure `p` du fuseau `tz` → ms. Deux passes : le décalage retenu est celui
+ *  de l'instant obtenu (passage à l'heure d'été). */
+function zonedTime(p, tz) {
+  const wall = Date.UTC(p.y, p.mo, p.d, p.h, p.mi, p.s)
+  if (tz === 'UTC') return wall
+  return wall - zoneOffset(wall - zoneOffset(wall, tz), tz)
+}
+
 /** Un clip prêt à lire : MP4 signé, et de quoi rejouer le chat de la VOD
  *  d'origine à cet instant quand elle existe encore. */
 export async function getClip(slug) {

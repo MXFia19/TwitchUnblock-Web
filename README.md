@@ -30,6 +30,7 @@ Watch Twitch lives and VODs in your browser, no subscription needed, with the re
 - **Unlisted & deleted broadcasts**: streams whose VOD is hidden or was deleted show up among the VODs as “Unlisted VOD”, rebuilt from Twitch's CDN as long as it still has them (stream IDs from `vodvod.top`, third party; when that source is down, the page says so instead of showing nothing). The cards open with Enter or Space too, and the player's Refresh button rebuilds the video again
 - **Clips**: the most viewed over 24 h, 7 days, 30 days or all time — played in the site, with the original chat replayed
 - **About** tab: description, followers, social links and the streamer's panels
+- **Schedule** tab, only on channels that have one: the next four weeks of planned streams in your device's day and time (12 or 24 h like the chat), with length, title, category, weekly or canceled slots and vacations; an offline channel also shows “Next stream: Tuesday · 8:00 PM” (or its vacation), which opens the tab. Read straight from the browser: Helix `schedule` when logged in, otherwise Twitch's public GQL (one request per week, as Twitch answers only one week per request and channel; the next three only when something is planned), then Helix's public iCalendar export as a last resort (all three allow browser calls, so no Worker route). Kept 10 minutes per channel
 - Recent streamers
 
 ### Player
@@ -50,6 +51,7 @@ Watch Twitch lives and VODs in your browser, no subscription needed, with the re
 - **Download a VOD** or just a part of it (from one time to another, from where you are, the next 10 minutes) in the quality you pick: one `.ts` (or `.mp4`) file that plays in VLC, mpv or the Windows player. Parts muted for copyrighted music keep their original sound while Twitch still has it (and always on fMP4 VODs' `-unmuted.mp4` parts). Chrome and Edge write the file straight to disk; other browsers build it in memory (up to about 1.5 GB on a computer, 800 MB on a phone — a download that outgrows its estimate stops with a message instead of crashing the tab). Deleted VODs rebuilt from the CDN can be downloaded too
 - Mini player: playback keeps going while you browse
 - “Open in…” VLC, Outplayer, Infuse, or copy the stream link
+- **Share** (under the player): copies the Twitch link of what's playing — a VOD at the current moment (`/videos/<id>?t=1h2m3s`), a live (`/<channel>`), a clip — or the site's own link to the same thing, which the site's router opens at that moment too; a message confirms the copy. On phones, the system share sheet opens instead (`navigator.share`). Not offered for rebuilt (deleted) VODs, which have no address
 
 ### Multi-live
 - Up to **four videos side by side, lives and VODs mixed**: the “+” on a live or VOD card (or “Multi-live” on a channel page and under the player) adds one, and a bar at the bottom shows your picks
@@ -143,8 +145,8 @@ The website is plain JavaScript (ES modules) — no framework, no build step.
 ```
 Browser ──► Cloudflare Worker ──► Twitch (playlists, video segments), proxy sources (Luminous, TTV.LOL)
     │
-    ├──► Twitch GQL     public data: streams, channels, VODs, VOD chat
-    ├──► Twitch Helix   logged-in account: followed channels
+    ├──► Twitch GQL     public data: streams, channels, VODs, VOD chat, schedules
+    ├──► Twitch Helix   logged-in account: followed channels, schedules (public iCalendar export as a fallback)
     ├──► Twitch IRC     live chat (WebSocket)
     ├──► Twitch Hermes  real time: raids, predictions, hype train, viewers, stream end
     └──► BTTV / FFZ / 7TV / recent-messages   emotes and chat history
