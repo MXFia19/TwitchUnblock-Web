@@ -27,8 +27,8 @@
 //  /poll-end (sondage, résultats postés à la fin) ; brouillon des
 //  notes de version à chaque sortie, publié d'un bouton (avec la mention du
 //  rôle des sorties choisi par /setup) ; versions de test annoncées aux
-//  testeurs ; /release-pings (ou le bouton posté par /setup) : chacun prend
-//  ou rend ce rôle.
+//  testeurs ; /release-pings (ou le bouton posté par /setup, gardé tout en
+//  bas du salon des annonces) : chacun prend ou rend ce rôle.
 //  À faire : « Add to to-do » (menu Apps d'un message : une bonne idée lue
 //  sur le serveur) et /todo (texte libre) postent une carte dans le salon
 //  choisi par /setup, avec un bouton Done / Reopen.
@@ -700,6 +700,7 @@ export function startDiscordBridge({
 
   async function onMessage(m) {
     if (!m.guild_id) return onDirectMessage(m)
+    if (m.guild_id === st.guild && m.channel_id && m.channel_id === st.settings.announcements) return noteAnnouncement(m)
     if (m.guild_id !== st.guild || !st.forum) return
     if (m.author?.id && m.author.id === st.me) return
     if (await parentOf(m.channel_id) !== st.forum) return
@@ -921,10 +922,7 @@ export function startDiscordBridge({
     await kvSet('settings', settings)
     st.settings = settings
     // Rôle des sorties : un bouton dans le salon, pour le prendre ou le rendre.
-    if (use === 'announcements' && role) {
-      await say(i.channel_id, '🔔 Want a ping when a new version of TwitchUnblock is out? Tap the button (tap it again to stop).',
-        { components: [row(button('🔔 Release pings', 'rp:toggle', 1))] })
-    }
+    if (use === 'announcements' && role) await postReleasePing(i.channel_id)
     return {
       alerts: 'This channel now gets the alerts, the daily summary and the release-notes drafts. Keep it private.',
       announcements: role
@@ -934,6 +932,50 @@ export function startDiscordBridge({
       testers: `New test builds will be posted here${role ? ` and mention <@&${role}> (the role must be mentionable)` : ''}.`,
       todo: 'To-do items will be listed here: right-click a message → Apps → “Add to to-do”, or /todo.',
     }[use]
+  }
+
+  // ── Bouton du rôle des sorties, toujours en bas du salon des annonces ──
+  // Discord n'épingle rien en bas : après chaque nouveau message du salon
+  // (notes de version publiées comprises), le bouton est reposté puis
+  // l'ancien supprimé — 8 s plus tard, pour qu'une rafale de messages ne le
+  // fasse reposter qu'une fois. Le message actuel est retenu dans les
+  // réglages (releasePingMsg), y compris d'un redémarrage à l'autre.
+  const RELEASE_PING_TEXT = '🔔 Want a ping when a new version of TwitchUnblock is out? Tap the button (tap it again to stop).'
+  let releasePingTimer = null
+  const isReleasePing = (m) => m.author?.id === st.me
+    && (m.components || []).some((r) => (r.components || []).some((c) => c.custom_id === 'rp:toggle'))
+
+  function noteAnnouncement(m) {
+    if (!st.settings.announcementsRole || isReleasePing(m)) return
+    clearTimeout(releasePingTimer)
+    releasePingTimer = setTimeout(() => {
+      postReleasePing(st.settings.announcements)
+        .catch((e) => log.warn(`Discord bridge: release pings button not moved down (${e.message})`))
+    }, 8000)
+  }
+
+  /** Le bouton posté en bas de `channel`, puis l'ancien supprimé (jamais un
+   *  moment sans bouton). */
+  async function postReleasePing(channel) {
+    if (!channel) return
+    const old = st.settings.releasePingMsg
+    const m = await rest('POST', `/channels/${channel}/messages`, {
+      content: RELEASE_PING_TEXT, allowed_mentions: { parse: [] },
+      components: [row(button('🔔 Release pings', 'rp:toggle', 1))],
+    })
+    if (old?.id && old.id !== m?.id) {
+      await rest('DELETE', `/channels/${old.channel || channel}/messages/${old.id}`).catch(() => {})
+    } else if (!old?.id && m?.id) {
+      // Boutons postés avant qu'il soit retenu : retirés des derniers messages.
+      const recent = await rest('GET', `/channels/${channel}/messages?limit=50`).catch(() => null)
+      for (const r of recent || []) {
+        if (r.id !== m.id && isReleasePing(r)) await rest('DELETE', `/channels/${channel}/messages/${r.id}`).catch(() => {})
+      }
+    }
+    if (!m?.id) return
+    const settings = { ...st.settings, releasePingMsg: { channel, id: m.id } }
+    await kvSet('settings', settings)
+    st.settings = settings
   }
 
   /** /release-pings et le bouton du salon des sorties : le rôle mentionné à
