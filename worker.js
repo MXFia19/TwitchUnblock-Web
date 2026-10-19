@@ -128,7 +128,7 @@ export default {
 // heures. Le résultat est gardé en mémoire 30 minutes (au mieux : chaque
 // instance du Worker a la sienne), pour ne pas appeler Twitch à chaque
 // requête.
-const tokenCache = new Map();   // empreinte du jeton → { userId, login, until }
+const tokenCache = new Map();   // empreinte du jeton → { userId, login, clientId, until }
 async function tokenUserId(request) {
     return (await tokenIdentity(request))?.userId ?? null;
 }
@@ -148,7 +148,9 @@ async function tokenIdentity(request) {
     const userId = v && v.user_id ? String(v.user_id) : null;
     if (!userId) return null;
     if (tokenCache.size > 500) tokenCache.clear();
-    const entry = { userId, login: String(v.login || '').toLowerCase(), until: Date.now() + 30 * 60 * 1000 };
+    // clientId : application Twitch pour laquelle le jeton a été émis (voir
+    // adminToken).
+    const entry = { userId, login: String(v.login || '').toLowerCase(), clientId: String(v.client_id || ''), until: Date.now() + 30 * 60 * 1000 };
     tokenCache.set(key, entry);
     return entry;
 }
@@ -476,6 +478,13 @@ const cloudfrontNo = new Map();      // « hôte|v:<vidéo> » ou « hôte|c:<ch
 const cloudfrontAsks = new Map();    // « v:<vidéo> » ou « c:<chaîne> » → question GQL en cours
 const cloudfrontBudget = { n: 0, until: 0 };   // questions GQL de la minute
 const CLOUDFRONT_GQL_PER_MINUTE = 30;
+// Part de chaque adresse (/48 en IPv6), prise avant le budget commun : des
+// numéros de vidéo inventés depuis une seule adresse le vidaient, et les
+// vraies vidéos d'une distribution nouvelle étaient refusées à tous jusqu'à
+// la minute suivante. Une vraie vidéo en coûte une, puis l'hôte est retenu
+// 24 h : 6 par minute laissent de la marge à une adresse partagée.
+const cloudfrontPerPerson = new Map();   // adresse → { n, until } (voir overLimit)
+const CLOUDFRONT_GQL_PER_PERSON = 6;
 // Redirections de l'amont suivies au plus (la suivante est refusée).
 const PROXY_MAX_REDIRECTS = 4;
 
@@ -537,19 +546,20 @@ async function usherLiveMaster(login) {
     return r.ok ? { text: await r.text(), url: r.url } : null;
 }
 /** Adresse que le proxy peut demander : https, port par défaut, hôte de
- *  PROXY_HOSTS ou distribution CloudFront de Twitch. */
-async function proxyAllowed(target) {
+ *  PROXY_HOSTS ou distribution CloudFront de Twitch. `who` : adresse du
+ *  spectateur (clientKey48), vide sur le relais du VPS. */
+async function proxyAllowed(target, who = '') {
     let u;
     try { u = new URL(target); } catch (e) { return false; }
     if (u.protocol !== 'https:' || u.port || u.username || u.password) return false;
-    if (u.hostname.endsWith('.cloudfront.net')) return twitchCloudfront(u);
+    if (u.hostname.endsWith('.cloudfront.net')) return twitchCloudfront(u, who);
     return PROXY_HOSTS.some((h) => u.hostname === h || u.hostname.endsWith('.' + h));
 }
 
 /** Distribution CloudFront de Twitch ? Connue, ou désignée par Twitch pour
  *  la vidéo ou la chaîne du chemin (verdict gardé : 24 h oui ; non, 10 min
  *  pour cette vidéo ou cette chaîne seulement). */
-async function twitchCloudfront(u) {
+async function twitchCloudfront(u, who = '') {
     const host = u.hostname;
     if (TWITCH_CLOUDFRONT.has(host)) return true;
     const now = Date.now();
@@ -562,7 +572,7 @@ async function twitchCloudfront(u) {
     let hosts;
     // GQL injoignable, ou trop de questions cette minute : refusé cette fois,
     // sans rien retenir.
-    try { hosts = await twitchVouches(subject); } catch (e) { return false; }
+    try { hosts = await twitchVouches(subject, who); } catch (e) { return false; }
     if (!hosts) return false;
     for (const h of hosts) rememberCloudfront(cloudfrontOk, h, 24 * 3600 * 1000, 100);
     if (hosts.has(host)) return true;
@@ -604,11 +614,14 @@ function cloudfrontSubject(u) {
 /** Distributions CloudFront où Twitch range la vidéo, ou les 50 dernières
  *  vidéos de la chaîne, d'après leurs aperçus (seekPreviewsURL). Une question
  *  déjà en cours n'est pas reposée (dix requêtes simultanées faisaient dix
- *  GQL) ; au-delà de CLOUDFRONT_GQL_PER_MINUTE questions dans la minute,
- *  null sans GQL : une distribution nouvelle n'en coûte qu'une, gardée 24 h. */
-function twitchVouches(subject) {
+ *  GQL) ; au-delà de CLOUDFRONT_GQL_PER_PERSON questions de cette adresse
+ *  ou de CLOUDFRONT_GQL_PER_MINUTE en tout dans la minute, null sans GQL :
+ *  une distribution nouvelle n'en coûte qu'une, gardée 24 h. Sans adresse
+ *  (relais du VPS), seul le budget commun compte. */
+function twitchVouches(subject, who = '') {
     const pending = cloudfrontAsks.get(subject);
     if (pending) return pending;
+    if (who && overLimit(cloudfrontPerPerson, who, CLOUDFRONT_GQL_PER_PERSON, 60 * 1000)) return Promise.resolve(null);
     const now = Date.now();
     if (cloudfrontBudget.until <= now) Object.assign(cloudfrontBudget, { n: 0, until: now + 60 * 1000 });
     if (++cloudfrontBudget.n > CLOUDFRONT_GQL_PER_MINUTE) return Promise.resolve(null);
@@ -635,7 +648,7 @@ function twitchVouches(subject) {
  *  service de métadonnées du serveur (SSRF). Rend { res, url } (url : la
  *  dernière adresse demandée, base des adresses relatives d'une playlist),
  *  ou {} quand une redirection est refusée. */
-async function proxyUpstream(target, headers, doFetch) {
+async function proxyUpstream(target, headers, doFetch, who = '') {
     let url = target;
     for (let hops = 0; ; hops++) {
         const res = await doFetch(url, { headers, redirect: 'manual' });
@@ -644,7 +657,7 @@ async function proxyUpstream(target, headers, doFetch) {
         await res.body?.cancel().catch(() => {});
         let next;
         try { next = new URL(location, url).href; } catch (e) { return {}; }
-        if (hops >= PROXY_MAX_REDIRECTS || !(await proxyAllowed(next))) return {};
+        if (hops >= PROXY_MAX_REDIRECTS || !(await proxyAllowed(next, who))) return {};
         url = next;
     }
 }
@@ -687,7 +700,10 @@ function proxyResponseHeaders(res, type, sameBody) {
 
 async function handleProxy(url, request, env) {
     const target = url.searchParams.get('url'); if (!target) return new Response("URL manquante", { status: 400, headers: RESPONSE_HEADERS });
-    if (!(await proxyAllowed(target))) return new Response("Hôte non autorisé", { status: 403, headers: RESPONSE_HEADERS });
+    // Adresse du spectateur pour la part de questions GQL (twitchVouches) ;
+    // vide sur le relais du VPS, qui n'en transmet pas.
+    const who = clientKey48(request);
+    if (!(await proxyAllowed(target, who))) return new Response("Hôte non autorisé", { status: 403, headers: RESPONSE_HEADERS });
     const isVod = url.searchParams.get('isVod') === 'true', workerOrigin = url.origin;
 
     let fetchHeaders = { ...REQUEST_HEADERS };
@@ -696,7 +712,7 @@ async function handleProxy(url, request, env) {
     // Le relais du VPS fournit son propre fetch, qui refuse en plus toute
     // adresse interne (docker/relay.mjs).
     const doFetch = typeof env?.PROXY_FETCH === 'function' ? env.PROXY_FETCH : (u, init) => fetch(u, init);
-    const up = await proxyUpstream(target, fetchHeaders, doFetch);
+    const up = await proxyUpstream(target, fetchHeaders, doFetch, who);
     if (!up.res) return new Response("Redirection non autorisée", { status: 403, headers: RESPONSE_HEADERS });
     const res = up.res;
 
@@ -715,9 +731,14 @@ async function handleProxy(url, request, env) {
         // l'adresse IP. Les segments d'un direct, eux, partent en direct :
         // leur CDN accepte tout le monde.
         const isPlaylistUrl = (full) => full.includes('.m3u8') || /(^|\.)playlist\.ttvnw\.net\//.test(new URL(full).hostname + '/') || /luminous\.dev$/.test(new URL(full).hostname);
+        // Adresse illisible (ligne malformée) : laissée telle quelle. new URL()
+        // levait, et toute la playlist finissait en erreur 500, notée en base à
+        // chaque relecture (toutes les 2 s par spectateur).
         const proxify = (u, playlist) => {
-            const full = u.startsWith('http') ? u : new URL(u, base).href;
-            return (isVod || playlist || isPlaylistUrl(full)) ? proxyUrl(full) : full;
+            try {
+                const full = u.startsWith('http') ? u : new URL(u, base).href;
+                return (isVod || playlist || isPlaylistUrl(full)) ? proxyUrl(full) : full;
+            } catch (e) { return u; }
         };
         let nextIsPlaylist = false;
         const newText = (await res.text()).split('\n').map(l => {
@@ -886,8 +907,13 @@ const USAGE_ACCOUNT_PREFIX = 'usage_a_';
 let ADMIN_IDS = [];
 const USAGE_RETENTION_DAYS = 35;
 // Nouvelles installations anonymes comptées par jour et par adresse (/64 en
-// IPv6) : au-delà, des UUID tirés au hasard gonfleraient /stats.
+// IPv6) : au-delà, des UUID tirés au hasard gonfleraient /stats. Aussi par
+// réseau (/48 en IPv6, l'adresse en IPv4 : un /48 compte 65 536 « adresses »)
+// et en tout : chacune coûte des écritures D1, dont un flot vidait le quota
+// du jour. Au-delà, le ping est ignoré sans erreur.
 const USAGE_NEW_PER_PERSON = 20;
+const USAGE_NEW_PER_NETWORK = 100;
+const USAGE_NEW_PER_DAY = 1000;
 // tvos : l'app Apple TV (comptée à part depuis la 0.1.15) ; android : l'app
 // Android (téléphone et Android TV, dépôt TwitchUnblock-Android).
 const PLATFORMS = ['ios', 'web', 'tvos', 'android'];
@@ -988,9 +1014,12 @@ async function handlePing(request, env) {
     // compte Twitch, lui, ne se fabrique pas en série). Refusée sans erreur.
     if (!who && !prev.first) {
         const mine = `pnew_${(await sha256hex(`ping|${day}|${clientKey(request)}`)).slice(0, 4)}`;
+        const net = `pnwn_${(await sha256hex(`ping|${day}|net|${clientKey48(request)}`)).slice(0, 4)}`;
         let fresh = true;
-        try { await ensureSchema(env); fresh = await takeNtfyLimits(env, [[mine, USAGE_NEW_PER_PERSON]]); }
-        catch (e) { logCaught('ping/limit', e); }
+        try {
+            await ensureSchema(env);
+            fresh = await takeNtfyLimits(env, [[mine, USAGE_NEW_PER_PERSON], [net, USAGE_NEW_PER_NETWORK], ['pnew', USAGE_NEW_PER_DAY]]);
+        } catch (e) { logCaught('ping/limit', e); }
         if (!fresh) return jsonResponse({ ok: true, ignored: true });
     }
 
@@ -1273,14 +1302,35 @@ function logCaught(where, e) {
 /** Erreurs du serveur gardées pour /stats (50 dernières, 14 jours) : visibles
  *  sans passer par le tableau de bord de Cloudflare. */
 const SERVER_ERRORS_KEY = 'fbmeta_errors';
+// Une erreur qui se répète (amont injoignable sur /api/proxy, relu toutes les
+// 2 s par chaque spectateur) relisait et réécrivait la liste à chaque fois :
+// des dizaines d'écritures D1 par seconde. Par instance, au plus une écriture
+// par minute et par endroit (`where`), et SERVER_ERRORS_PER_MINUTE en tout ;
+// les répétitions tues sont comptées et ajoutées à l'entrée (« (×N) »), qui
+// remonte en tête au lieu de pousser les autres hors de la liste.
+const SERVER_ERRORS_PER_MINUTE = 10;
+const serverErrorSeen = new Map();   // where → { at, n } (mémoire de l'instance)
+const serverErrorBudget = { n: 0, until: 0 };
 async function recordServerError(env, where, e) {
     console.error(`[${where}]`, e?.stack || e?.message || String(e));
     if (!env.DB) return;
+    const place = String(where).slice(0, 80);
+    const now = Date.now();
+    const seen = serverErrorSeen.get(place);
+    if (seen && now - seen.at < 60 * 1000) { seen.n++; return; }
+    if (serverErrorBudget.until <= now) Object.assign(serverErrorBudget, { n: 0, until: now + 60 * 1000 });
+    if (++serverErrorBudget.n > SERVER_ERRORS_PER_MINUTE) return;
+    if (serverErrorSeen.size >= 200) serverErrorSeen.clear();
+    serverErrorSeen.set(place, { at: now, n: 0 });
     try {
         let list = [];
         try { list = JSON.parse(await store(env).get(SERVER_ERRORS_KEY) || '[]'); } catch (err) { list = []; }
         if (!Array.isArray(list)) list = [];
-        list.unshift({ at: Date.now(), where: String(where).slice(0, 80), msg: String(e?.message || e).slice(0, 300) });
+        const msg = String(e?.message || e).slice(0, 280);
+        const same = list.findIndex((x) => x?.where === place && String(x.msg || '').replace(/ \(×\d+\)$/, '') === msg);
+        const n = (same >= 0 ? Number(/ \(×(\d+)\)$/.exec(list[same].msg)?.[1]) || 1 : 0) + (seen?.n || 0) + 1;
+        if (same >= 0) list.splice(same, 1);
+        list.unshift({ at: now, where: place, msg: n > 1 ? `${msg} (×${n})` : msg });
         await store(env).put(SERVER_ERRORS_KEY, JSON.stringify(list.slice(0, 50)), { expirationTtl: 14 * 86400 });
     } catch (err) { console.error('[errors] not saved', err?.message || err); }
 }
@@ -1311,10 +1361,18 @@ async function readJsonObject(request) {
 // ═══════════════════════════════════════════════════════════════════════════
 //  Administration : réservé aux comptes de ADMIN_IDS (jeton Twitch vérifié).
 // ═══════════════════════════════════════════════════════════════════════════
+// Applications Twitch dont un jeton ouvre ces outils : le site officiel et les
+// apps (iPhone, Apple TV, Android), plus celle du site d'une instance
+// auto-hébergée (TWITCH_CLIENT_ID, applyEnvConfig). Avant, un jeton du compte
+// propriétaire émis pour n'importe quelle autre application (un site tiers où
+// il s'est connecté avec Twitch) les ouvrait aussi.
+let ADMIN_CLIENT_IDS = ['uyvqdqrz614y5wx5l4kev6c4ln7u9a', '1e68ku2ehgzy5cy0di3xvfy82sxpf6'];
+const adminToken = (who) => Boolean(who && ADMIN_IDS.includes(who.userId) && ADMIN_CLIENT_IDS.includes(who.clientId));
+
 async function requireAdmin(request) {
     const who = await tokenIdentity(request);
     if (!who) return { denied: jsonError('Jeton Twitch manquant ou expiré', 401) };
-    if (!ADMIN_IDS.includes(who.userId)) return { denied: jsonError('Réservé au propriétaire', 403) };
+    if (!adminToken(who)) return { denied: jsonError('Réservé au propriétaire', 403) };
     return { who };
 }
 
@@ -1322,7 +1380,7 @@ async function requireAdmin(request) {
 // une instance sans ADMIN_TWITCH_IDS, /stats le signale.)
 async function handleAdminMe(request) {
     const who = await tokenIdentity(request);
-    return jsonResponse({ login: who?.login ?? null, admin: Boolean(who && ADMIN_IDS.includes(who.userId)), adminConfigured: ADMIN_IDS.length > 0 });
+    return jsonResponse({ login: who?.login ?? null, admin: adminToken(who), adminConfigured: ADMIN_IDS.length > 0 });
 }
 
 async function listUsage(env) {
@@ -1550,6 +1608,20 @@ const FEEDBACK_MAX_PHOTO_B64 = 700000;   // ~500 Ko d'image
 const FEEDBACK_MAX_MESSAGES = 100;
 const FEEDBACK_KEY_RE = /^fb_[a-z0-9]{6,12}_[0-9a-f]{8}$/;
 const FEEDBACK_TOKEN_RE = /^[0-9a-f]{48}$/;
+// Plafonds du jour gardés en D1 (compteurs du jour de la table kv, comme ceux
+// de ntfy) : les limites par adresse ne tiennent qu'en mémoire d'une
+// instance, et un /48 IPv6 compte 65 536 « personnes ». Sans plafond global,
+// un flot de retours vidait le quota d'écritures D1 du jour (100 000 lignes)
+// ou remplissait la base, chacun ouvrant un post sur Discord. Un usage normal
+// (quelques centaines d'utilisateurs) en reste loin.
+const FEEDBACK_PER_PERSON = 10;          // nouveaux retours par jour et par adresse (/64 en IPv6)
+const FEEDBACK_PER_NETWORK = 30;         // … par réseau (/48 en IPv6, l'adresse en IPv4)
+const FEEDBACK_PER_DAY = 300;            // … en tout (site, apps et /bug sur Discord)
+const FEEDBACK_REPLIES_PER_DAY = 1000;   // réponses des personnes par jour, en tout
+// Base plus grosse que ça (500 Mo en gratuit : pleine, plus rien ne s'y écrit
+// — sauvegardes, comptage, notifications) : plus de photos, et plus de
+// retours ni de réponses non plus (seules les photos s'arrêtaient).
+const FEEDBACK_DB_MAX = 400 * 1024 * 1024;   // octets de base
 // Compteurs par adresse (mémoire de l'instance, jamais stockés).
 const feedbackHits = new Map();
 const replyHits = new Map();
@@ -1660,9 +1732,10 @@ async function backfillOne(env, hook, key, ttl) {
     await linkDiscordThread(env, key, r.thread, true, ttl);
     const rest = thread.slice(1);
     if (rest.length) {
-        // Copiable sur mobile (texte du message) quand il y tient, sinon encadré.
+        // Copiable sur mobile (texte du message) quand il y tient, sinon
+        // encadré ; liens sans aperçu (quietLinks).
         const h = historyEmbed(rest);
-        const plain = `**${h.title}**\n${h.description}`;
+        const plain = quietLinks(`**${h.title}**\n${h.description}`);
         await discordHook(hook, { username: 'TwitchUnblock', allowed_mentions: { parse: [] },
             ...(plain.length <= 2000 ? { content: plain } : { embeds: [h] }) }, [], { threadId: r.thread });
     }
@@ -1685,12 +1758,12 @@ function historyEmbed(messages) {
     return { title: '🗂️ Earlier conversation (before the Discord bridge)', description: text, color: 0x6b7280 };
 }
 
-/** Plus de `max` requêtes dans l'heure pour cette clé (adresse, préfixe
- *  IPv6, compte Discord) ? Au-delà de 5 000 clés suivies, on oublie celles
- *  dont l'heure est passée, puis les moins actives (une rafale d'adresses
- *  neuves) : `clear()` remettait tout le monde à zéro — 5 000 adresses
- *  suffisaient à effacer sa propre trace. */
-function overLimit(map, key, max) {
+/** Plus de `max` requêtes dans l'heure (ou `period` ms) pour cette clé
+ *  (adresse, préfixe IPv6, compte Discord) ? Au-delà de 5 000 clés suivies,
+ *  on oublie celles dont la période est passée, puis les moins actives (une
+ *  rafale d'adresses neuves) : `clear()` remettait tout le monde à zéro —
+ *  5 000 adresses suffisaient à effacer sa propre trace. */
+function overLimit(map, key, max, period = 60 * 60 * 1000) {
     const now = Date.now();
     const hit = map.get(key);
     if (hit && hit.until >= now) return ++hit.n > max;
@@ -1701,7 +1774,7 @@ function overLimit(map, key, max) {
             [...map].sort((a, b) => a[1].n - b[1].n).slice(0, map.size - 4000).forEach(([k]) => map.delete(k));
         }
     }
-    map.set(key, { n: 1, until: now + 60 * 60 * 1000 });
+    map.set(key, { n: 1, until: now + period });
     return false;
 }
 
@@ -1721,6 +1794,15 @@ function clientKey(request) {
     return groups.slice(0, 4).map((g) => g.padStart(4, '0')).join(':') + '::/64';
 }
 
+/** Réseau d'une personne : le préfixe /48 de son adresse IPv6 (l'adresse
+ *  elle-même en IPv4). Un /48 s'obtient gratuitement (tunnel IPv6) et ses
+ *  65 536 /64 comptaient pour autant de personnes : les plafonds globaux du
+ *  jour ont une part par réseau, pour qu'un seul ne les vide pas. */
+function clientKey48(request) {
+    const key = clientKey(request);
+    return key.endsWith('::/64') ? `${key.split(':').slice(0, 3).join(':')}::/48` : key;
+}
+
 // Photos des retours : chaque jour, une part par personne et un plafond pour
 // tout le Worker, gardés en D1 (les limites par adresse ne tiennent qu'en
 // mémoire d'une instance), et plus aucune quand la base approche de sa
@@ -1730,45 +1812,76 @@ function clientKey(request) {
 // des autres étaient ensuite jetées sans un mot. Le message passe toujours,
 // sans ses photos, et la réponse le dit (photosDropped). Le plafond reste
 // modeste : un /48 IPv6 compte 65 536 « personnes », et c'est lui qui
-// protège la base. Les réponses de l'équipe n'y sont pas soumises.
-const FEEDBACK_PHOTOS_PER_DAY = 60 * 1024 * 1024;     // caractères base64 (~45 Mo d'images)
-const FEEDBACK_PHOTOS_PER_PERSON = 6 * 1024 * 1024;   // une adresse (/64 en IPv6) ou un compte Discord
-const FEEDBACK_PHOTOS_DB_MAX = 400 * 1024 * 1024;     // octets de base
+// protège la base ; une part par réseau (/48) l'empêche d'en vider seul le
+// plafond. Les réponses de l'équipe n'y sont pas soumises.
+const FEEDBACK_PHOTOS_PER_DAY = 60 * 1024 * 1024;       // caractères base64 (~45 Mo d'images)
+const FEEDBACK_PHOTOS_PER_PERSON = 6 * 1024 * 1024;     // une adresse (/64 en IPv6) ou un compte Discord
+const FEEDBACK_PHOTOS_PER_NETWORK = 15 * 1024 * 1024;   // un réseau (/48 en IPv6, l'adresse en IPv4)
 
-/** Photos de la personne `who` (clientKey, ou « du:<compte Discord> »), ou []
- *  quand sa part du jour, le plafond du jour ou la taille de la base
- *  l'interdisent ; celles qui passent sont comptées. Sa part est comptée
- *  dans l'une des 65 536 cases tirées de l'empreinte du jour et de `who` :
- *  la base ne garde aucune adresse, ni de quoi suivre quelqu'un d'un jour
- *  à l'autre. */
-async function photoAllowance(env, photos, who) {
+/** Compteurs du jour des photos : [mesure, plafond] pour tout le Worker, la
+ *  personne `who` et son réseau `group` (s'il est connu). */
+async function photoMetrics(day, who, group) {
+    const bucket = async (prefix, id) => `${prefix}_${(await sha256hex(`photos|${day}|${id}`)).slice(0, 4)}`;
+    return [['fb_photo_b64', FEEDBACK_PHOTOS_PER_DAY], [await bucket('fbp', who), FEEDBACK_PHOTOS_PER_PERSON],
+        ...(group ? [[await bucket('fbq', `net|${group}`), FEEDBACK_PHOTOS_PER_NETWORK]] : [])];
+}
+// Ajouté et relu d'un coup (RETURNING) : lu avant d'écrire, le compteur
+// laissait passer ensemble des envois simultanés.
+const photoCount = (env, day, metric, n) => env.DB.prepare(`INSERT INTO stats_day (day, metric, n) VALUES (?1, ?2, ?3)
+    ON CONFLICT(day, metric) DO UPDATE SET n = n + excluded.n RETURNING n`).bind(day, metric, n);
+
+/** Photos de la personne `who` (clientKey, ou « du:<compte Discord> ») et de
+ *  son réseau `group` (clientKey48, rien pour Discord), ou [] quand sa part
+ *  du jour, celle du réseau, le plafond du jour ou la taille de la base
+ *  l'interdisent ; celles qui passent sont comptées. Chaque part est comptée
+ *  dans l'une des 65 536 cases tirées de l'empreinte du jour et de `who` (ou
+ *  `group`) : la base ne garde aucune adresse, ni de quoi suivre quelqu'un
+ *  d'un jour à l'autre. */
+async function photoAllowance(env, photos, who, group = '') {
     if (!photos.length) return photos;
     const size = photos.reduce((n, p) => n + p.b64.length, 0);
     const day = new Date().toISOString().slice(0, 10);
-    const mine = `fbp_${(await sha256hex(`photos|${day}|${who}`)).slice(0, 4)}`;
-    // Ajouté et relu d'un coup (RETURNING) : lu avant d'écrire, le compteur
-    // laissait passer ensemble des envois simultanés.
-    const add = (metric, n) => env.DB.prepare(`INSERT INTO stats_day (day, metric, n) VALUES (?1, ?2, ?3)
-        ON CONFLICT(day, metric) DO UPDATE SET n = n + excluded.n RETURNING n`).bind(day, metric, n);
-    let total, person, dbSize;
+    const metrics = await photoMetrics(day, who, group);
+    let counts, dbSize;
     try {
         await ensureSchema(env);
-        const [all, own] = await env.DB.batch([add('fb_photo_b64', size), add(mine, size)]);
-        total = Number(all?.results?.[0]?.n) || 0;
-        person = Number(own?.results?.[0]?.n) || 0;
-        dbSize = Number(own?.meta?.size_after) || 0;   // taille de la base (D1)
+        const res = await env.DB.batch(metrics.map(([metric]) => photoCount(env, day, metric, size)));
+        counts = res.map((r) => Number(r?.results?.[0]?.n) || 0);
+        dbSize = Number(res[res.length - 1]?.meta?.size_after) || 0;   // taille de la base (D1)
     } catch (e) {
         console.warn('retours : plafond des photos illisible,', e.message);
         return photos;
     }
-    const why = person > FEEDBACK_PHOTOS_PER_PERSON ? 'part de la personne'
-        : total > FEEDBACK_PHOTOS_PER_DAY ? 'plafond du jour'
-        : dbSize > FEEDBACK_PHOTOS_DB_MAX ? 'base pleine' : null;
+    const why = counts[1] > FEEDBACK_PHOTOS_PER_PERSON ? 'part de la personne'
+        : counts.length > 2 && counts[2] > FEEDBACK_PHOTOS_PER_NETWORK ? 'part du réseau'
+        : counts[0] > FEEDBACK_PHOTOS_PER_DAY ? 'plafond du jour'
+        : dbSize > FEEDBACK_DB_MAX ? 'base pleine' : null;
     if (!why) return photos;
     // Rien n'est rangé : rien n'est compté.
-    await env.DB.batch([add('fb_photo_b64', -size), add(mine, -size)]).catch(() => {});
-    console.warn(`retours : photos refusées (${why} ; ${Math.round((total - size) / 1e6)} Mo aujourd'hui, base de ${Math.round(dbSize / 1e6)} Mo)`);
+    await env.DB.batch(metrics.map(([metric]) => photoCount(env, day, metric, -size))).catch(() => {});
+    console.warn(`retours : photos refusées (${why} ; ${Math.round((counts[0] - size) / 1e6)} Mo aujourd'hui, base de ${Math.round(dbSize / 1e6)} Mo)`);
     return [];
+}
+
+/** Photos acceptées pour un message finalement pas écrit (discussion fermée,
+ *  pleine, occupée ou effacée entre-temps) : effacées si elles sont déjà
+ *  rangées (numéros `ph`), et rendues à la part du jour de `who` et `group`
+ *  (ceux de photoAllowance ; null : réponse de l'équipe, jamais comptée).
+ *  Elles restaient orphelines, et comptées. */
+async function dropFeedbackPhotos(env, key, ph, photos, who = null, group = '') {
+    for (const n of ph) await store(env).delete(`${FEEDBACK_PHOTO_PREFIX}${key}_${n}`).catch((e) => logCaught('feedback/photos', e));
+    if (who === null || !photos.length) return;
+    const size = photos.reduce((n, p) => n + p.b64.length, 0);
+    const day = new Date().toISOString().slice(0, 10);
+    const metrics = await photoMetrics(day, who, group);
+    await env.DB.batch(metrics.map(([metric]) => photoCount(env, day, metric, -size))).catch((e) => logCaught('feedback/photos', e));
+}
+
+/** Taille de la base en octets (D1 la donne avec chaque requête) ; 0 si
+ *  inconnue. */
+async function dbBytes(env) {
+    try { return Number((await env.DB.prepare('SELECT 1').run())?.meta?.size_after) || 0; }
+    catch (e) { logCaught('db/size', e); return 0; }
 }
 
 /** Texte libre : sans caractères de contrôle (sauf retours à la ligne), borné. */
@@ -1882,22 +1995,26 @@ async function handleFeedback(request, env, ctx) {
     if (overLimit(feedbackHits, clientKey(request), 5)) {
         return jsonError('Trop de messages, réessaie dans une heure', 429);
     }
-    // Compté aussi en base : le compteur en mémoire ne vaut que pour une
-    // instance du Worker. 10 retours par jour et par personne (adresse hachée).
-    const fbDay = new Date().toISOString().slice(0, 10);
-    const fbWho = `fbn_${(await sha256hex(`fb|${fbDay}|${clientKey(request)}`)).slice(0, 8)}`;
-    if (!(await takeNtfyLimits(env, [[fbWho, 10]]).catch(() => true))) {
-        return jsonError('Trop de messages aujourd\x27hui, réessaie demain', 429);
-    }
 
     let body;
     if (!(body = await readJsonObject(request))) return jsonError('JSON invalide', 400);
     const message = cleanText(body.message, 2000);
     if (message.length < 5) return jsonError('Message trop court', 400);
+    if (await dbBytes(env) > FEEDBACK_DB_MAX) return jsonError('Retours en pause (base presque pleine), réessaie plus tard', 429);
+    // Compté aussi en base, une fois le message validé (avant, dix requêtes
+    // invalides bloquaient pour la journée une adresse partagée) : le
+    // compteur en mémoire ne vaut que pour une instance du Worker. Par
+    // personne (adresse hachée), par réseau et en tout.
+    const fbDay = new Date().toISOString().slice(0, 10);
+    const fbWho = `fbn_${(await sha256hex(`fb|${fbDay}|${clientKey(request)}`)).slice(0, 8)}`;
+    const fbNet = `fbw_${(await sha256hex(`fb|${fbDay}|net|${clientKey48(request)}`)).slice(0, 8)}`;
+    if (!(await takeNtfyLimits(env, [[fbWho, FEEDBACK_PER_PERSON], [fbNet, FEEDBACK_PER_NETWORK], ['fbd', FEEDBACK_PER_DAY]]).catch(() => true))) {
+        return jsonError('Trop de messages aujourd\x27hui, réessaie demain', 429);
+    }
     let info = body.info;
     if (info && typeof info === 'object') { try { info = JSON.stringify(info); } catch (e) { info = ''; } }
     const asked = cleanPhotos(body.photos);
-    const photos = await photoAllowance(env, asked, clientKey(request));
+    const photos = await photoAllowance(env, asked, clientKey(request), clientKey48(request));
 
     const now = Date.now();
     const key = `${FEEDBACK_PREFIX}${now.toString(36)}_${crypto.randomUUID().slice(0, 8)}`;
@@ -1964,13 +2081,23 @@ async function handleFeedbackReply(request, env, ctx) {
     // `closed` / `full` : le site et l'app retirent le champ de réponse.
     if (meta.bl) return jsonError('This conversation was closed by the developer', 403, { closed: true });
     if (thread.length >= FEEDBACK_MAX_MESSAGES) return jsonError('Discussion trop longue', 409, { full: true });
-    const photos = await photoAllowance(env, asked, clientKey(request));
+    // Plafonds du jour en base (voir FEEDBACK_REPLIES_PER_DAY) : la limite
+    // ci-dessus ne tient qu'en mémoire d'une instance, par /64.
+    if (await dbBytes(env) > FEEDBACK_DB_MAX) return jsonError('Retours en pause (base presque pleine), réessaie plus tard', 429);
+    if (!(await takeNtfyLimits(env, [['fbr', FEEDBACK_REPLIES_PER_DAY]]).catch(() => true))) {
+        return jsonError('Trop de messages aujourd\x27hui, réessaie demain', 429);
+    }
+    const who = clientKey(request), net = clientKey48(request);
+    const photos = await photoAllowance(env, asked, who, net);
     const dropped = asked.length - photos.length;
     if (!message && !photos.length) return jsonError('Photos en pause pour aujourd’hui, réessaie demain', 429, { photosDropped: dropped });
 
     const now = Date.now();
     const first = await reserveFeedbackPhotos(env, id, photos.length);
-    if (first === null) return jsonError('Retour introuvable', 404);
+    if (first === null) {
+        await dropFeedbackPhotos(env, id, [], photos, who, net);
+        return jsonError('Retour introuvable', 404);
+    }
     const ph = await saveFeedbackPhotos(env, id, photos, first);
     const out = await updateFeedbackThread(env, id, (th, m) => {
         if (m.bl) return { closed: true };
@@ -1978,6 +2105,8 @@ async function handleFeedbackReply(request, env, ctx) {
         th.push({ f: 'u', m: message, at: now, ...(ph.length ? { ph } : {}) });
         return { thread: th, metadata: { ...m, u: now, r: 'u', n: (m.n || 1) + 1 } };
     });
+    // Message pas écrit : ses photos, déjà rangées et comptées, ne restent pas.
+    if (!out.thread) await dropFeedbackPhotos(env, id, ph, photos, who, net);
     if (out.gone) return jsonError('Retour introuvable', 404);
     if (out.closed) return jsonError('This conversation was closed by the developer', 403, { closed: true });
     if (out.full) return jsonError('Discussion trop longue', 409, { full: true });
@@ -2035,7 +2164,7 @@ async function postFeedbackToDiscord(webhook, e, photos = [], { inReplyTo = null
     const KINDS = { bug: '🐞 Bug', idea: '💡 Idea', other: '💬 Other' };
     const COLORS = { bug: 0xeb0400, idea: 0x9147ff, other: 0x6b7280 };
     const kind = KINDS[e.k] || KINDS.other;
-    const PLACES = { ios: 'iOS app', android: 'Android app', discord: 'Discord', web: 'Website' };
+    const PLACES = { ios: 'iOS app', tvos: 'Apple TV app', android: 'Android app', discord: 'Discord', web: 'Website' };
     const fields = [{ name: 'Platform', value: `${PLACES[e.p] || PLACES.web} · ${e.v}`, inline: true }];
     if (e.c) fields.push({ name: 'Contact', value: e.c, inline: true });
     if (inReplyTo) fields.push({ name: 'In reply to', value: inReplyTo.slice(0, 300) });
@@ -2047,8 +2176,9 @@ async function postFeedbackToDiscord(webhook, e, photos = [], { inReplyTo = null
         allowed_mentions: { parse: [] },
         // Le texte dans le message même : sur mobile, « Copier le texte » de
         // Discord ne prend que lui, jamais celui d'un encadré. Plus long que
-        // ce qu'un message tient : en entier dans l'encadré aussi.
-        ...(text ? { content: discordText(text) } : {}),
+        // ce qu'un message tient : en entier dans l'encadré aussi. Ses liens
+        // sans aperçu (quietLinks).
+        ...(text ? { content: discordText(quietLinks(text)) } : {}),
         embeds: [{
             title: inReplyTo ? `↩️ Reply · ${kind}` : kind,
             ...(!text ? { description: '📷' } : text.length > 2000 ? { description: text.slice(0, 4000) } : {}),
@@ -2066,12 +2196,23 @@ async function postFeedbackToDiscord(webhook, e, photos = [], { inReplyTo = null
 }
 
 /** Début d'un texte tenant dans un message Discord (2 000 caractères), sans
- *  couper un emoji en deux ; « … » quand la suite manque. */
+ *  couper un emoji en deux ni laisser un lien sans son « > » (quietLinks) ;
+ *  « … » quand la suite manque. */
 function discordText(text, max = 2000) {
     if (text.length <= max) return text;
-    let cut = text.slice(0, max - 1);
+    let cut = text.slice(0, max - 1).replace(/<https?:\/\/[^\s>]*$/i, '');
     if (/[\ud800-\udbff]$/.test(cut)) cut = cut.slice(0, -1);
     return `${cut}…`;
+}
+
+/** Liens d'un texte libre sans aperçu sur Discord (entre < >, invitations
+ *  sans « https:// » comprises) : écrit par n'importe qui, un retour
+ *  déroulait dans le forum l'image, la vidéo ou l'invitation de son choix.
+ *  (flags: 4, SUPPRESS_EMBEDS, masquerait aussi l'encadré du retour.) */
+function quietLinks(text) {
+    return String(text)
+        .replace(/(^|[^\w/.@-])((?:www\.)?discord(?:app)?\.(?:gg|com\/invite)\/)/gi, '$1https://$2')
+        .replace(/<?(https?:\/\/[^\s<>]+)>?/gi, '<$1>');
 }
 
 /** Photos d'un message en fichiers joints pour Discord. */
@@ -2147,15 +2288,22 @@ async function discordHook(webhook, payload, files = [], { threadId = null, thre
 /** Posts Discord de retours supprimés dans /stats : un webhook ne peut pas
  *  supprimer un post, alors ils vont dans la liste `trash` de la mémoire du
  *  bot du relais, qui les supprime. Un mot dans le premier le prévient tout
- *  de suite ; sinon, il vide la liste toutes les 10 min. */
+ *  de suite ; sinon, il vide la liste toutes les 10 min.
+ *  Ajoutés sur place, en une requête (le bot retire les siens de même,
+ *  action `trash-done`) : relue puis réécrite par l'un et par l'autre, la
+ *  liste perdait un post ajouté entre les deux, qui restait en ligne. Plus
+ *  de limite à 500, et gardée 90 jours (bot arrêté plus d'une semaine). */
+const BOT_TRASH_TTL = 90 * 86400;
 async function trashDiscordPosts(env, ctx, threads) {
     const ids = threads.filter((t) => /^\d{5,25}$/.test(t));
     if (!ids.length || !env.FEEDBACK_BOT_SECRET) return;
-    const k = `${BOT_STORE_PREFIX}trash`;
-    let list = [];
-    try { list = JSON.parse(await store(env).get(k) || '[]'); } catch (e) { /* illisible : repart vide */ }
-    list = [...new Set([...(Array.isArray(list) ? list : []), ...ids])].slice(-500);
-    await store(env).put(k, JSON.stringify(list), { expirationTtl: 7 * 86400 });
+    await ensureSchema(env);
+    await env.DB.prepare(`INSERT INTO kv (key, value, expires) VALUES (?1, ?2, ?3)
+        ON CONFLICT(key) DO UPDATE SET expires = excluded.expires, value = (
+            SELECT json_group_array(id) FROM (
+                SELECT o.value AS id FROM json_each(CASE WHEN json_valid(kv.value) AND json_type(kv.value) = 'array' THEN kv.value ELSE '[]' END) AS o
+                UNION SELECT n.value FROM json_each(excluded.value) AS n))`)
+        .bind(`${BOT_STORE_PREFIX}trash`, JSON.stringify([...new Set(ids)]), Date.now() + BOT_TRASH_TTL * 1000).run();
     echoTeamToDiscord(env, ctx, { dt: ids[0] }, { note: '🗑️ Report deleted from /stats: this post is being deleted.' });
 }
 
@@ -2200,6 +2348,9 @@ async function feedbackTeamUpdate(env, key, { message = '', photos = [], status 
         }
         return { thread, metadata: next };
     });
+    // Réponse pas écrite (discussion pleine, occupée, retour effacé) : ses
+    // photos déjà rangées ne restent pas orphelines.
+    if (ph.length && !out.thread) await dropFeedbackPhotos(env, key, ph, photos);
     if (out.gone) return { error: 'Retour introuvable', en: 'Report not found', code: 404 };
     if (out.busy) return { error: 'Réessaie dans un instant', en: 'Busy, try again', code: 503 };
     if (out.error || out.unchanged) return out;
@@ -2235,7 +2386,8 @@ async function feedbackTeamUpdate(env, key, { message = '', photos = [], status 
 //                                                     les réponses « photo seule »,
 //                                                     et leurs numéros)
 //     { action: 'photo', thread, n }                → { type, b64 } (une photo)
-//   Outils du bot (voir plus bas) : get / set (sa mémoire), create /
+//   Outils du bot (voir plus bas) : get / set (sa mémoire), trash-done
+//   (posts supprimés, retirés de sa corbeille), create /
 //   userReply (/bug sur Discord, réponses en message privé, photos
 //   comprises), delete, block, merge, fix / released (« c'est en ligne »),
 //   summary, health, announce, poll / poll-end / poll-state (sondage).
@@ -2367,10 +2519,11 @@ async function handleFeedbackBot(request, env) {
         await store(env).patchMeta(target, 'dups', dups);
         return jsonResponse({ ok: true, key, into: target, intoThread: other.metadata.dt || null });
     }
-    // Où partira le correctif : la personne sera prévenue à sa sortie.
+    // Où partira le correctif : la personne sera prévenue à sa sortie
+    // (« both » : l'app iPhone et le site).
     if (body.action === 'fix') {
         const p = String(body.platform || '');
-        if (!['ios', 'web', 'both', 'none'].includes(p)) return jsonError('Bad platform', 400);
+        if (![...FEEDBACK_RELEASE_PLATFORMS, 'both', 'none'].includes(p)) return jsonError('Bad platform', 400);
         const meta = { ...metadata };
         meta.fx = p === 'none' ? { p, at: Date.now() } : { p, at: Date.now(), done: {} };
         await store(env).patchMeta(key, 'fx', meta.fx);
@@ -2386,7 +2539,14 @@ const FEEDBACK_MERGED_MESSAGE = "Thanks! Someone reported the same thing, so I'm
 const FEEDBACK_LIVE_MESSAGES = {
     ios: (v) => `Good news: the fix is out in the app (version ${v}). Update TwitchUnblock from your source, then let me know if anything's still wrong.`,
     web: (v) => `Good news: the fix is live on the website (version ${v}). Reload the page, then let me know if anything's still wrong.`,
+    tvos: (v) => `Good news: the fix is out in the Apple TV app (version ${v}). Update it, then let me know if anything's still wrong.`,
+    android: (v) => `Good news: the fix is out in the Android app (version ${v}). Update TwitchUnblock, then let me know if anything's still wrong.`,
 };
+// Sorties suivies par le bot (fix, released) : l'app iPhone, le site, l'app
+// Apple TV et l'app Android. Un correctif de ces deux dernières ne pouvait
+// pas être annoncé.
+const FEEDBACK_RELEASE_PLATFORMS = ['ios', 'web', 'tvos', 'android'];
+const FEEDBACK_RELEASE_WHERE = { ios: 'the app', web: 'the website', tvos: 'the Apple TV app', android: 'the Android app' };
 const BOT_STORE_PREFIX = 'dcbot_';
 const discordReportHits = new Map();
 const discordReplyHits = new Map();
@@ -2411,6 +2571,18 @@ async function feedbackBotTool(env, body) {
             await store(env).put(BOT_STORE_PREFIX + k, text, ttl > 0 ? { expirationTtl: Math.max(60, ttl) } : {});
             return jsonResponse({ ok: true });
         }
+        // Posts de la corbeille (trashDiscordPosts) que le bot a supprimés :
+        // retirés de la liste sur place, ceux ajoutés entre-temps restent.
+        case 'trash-done': {
+            const ids = (Array.isArray(body.ids) ? body.ids : []).map(String).filter((t) => t.length <= 40).slice(0, 500);
+            if (!ids.length) return jsonResponse({ ok: true });
+            await ensureSchema(env);
+            await env.DB.prepare(`UPDATE kv SET value = (SELECT json_group_array(o.value) FROM json_each(kv.value) AS o
+                WHERE o.value NOT IN (SELECT d.value FROM json_each(?2) AS d))
+                WHERE key = ?1 AND json_valid(value) AND json_type(value) = 'array'`)
+                .bind(`${BOT_STORE_PREFIX}trash`, JSON.stringify(ids)).run();
+            return jsonResponse({ ok: true });
+        }
         // /bug et /idea sur Discord : le même retour que depuis l'app ; les
         // réponses partent en message privé (deliver), pas de jeton à garder.
         case 'create': {
@@ -2419,6 +2591,11 @@ async function feedbackBotTool(env, body) {
             if (overLimit(discordReportHits, du, 5)) return jsonError('Too many reports — try again in an hour', 429);
             const message = cleanText(body.message, 2000);
             if (message.length < 5) return jsonError('Message too short', 400);
+            // Plafonds communs avec le site et les apps (FEEDBACK_PER_DAY).
+            if (await dbBytes(env) > FEEDBACK_DB_MAX) return jsonError('Reports are paused (database almost full) — try again later', 429);
+            if (!(await takeNtfyLimits(env, [['fbd', FEEDBACK_PER_DAY]]).catch(() => true))) {
+                return jsonError('Too many reports today — try again tomorrow', 429);
+            }
             // Le bot compare `photos` (gardées) à ce qu'il a envoyé et le dit.
             const photos = await photoAllowance(env, cleanPhotos(body.photos), `du:${du}`);
             const now = Date.now();
@@ -2453,11 +2630,18 @@ async function feedbackBotTool(env, body) {
             const thread = feedbackThread(value, m);
             if (thread.length >= FEEDBACK_MAX_MESSAGES) return jsonError('Conversation too long', 409);
             if (overLimit(discordReplyHits, m.du, 20)) return jsonError('Too many replies — try again in an hour', 429);
+            if (await dbBytes(env) > FEEDBACK_DB_MAX) return jsonError('Replies are paused (database almost full) — try again later', 429);
+            if (!(await takeNtfyLimits(env, [['fbr', FEEDBACK_REPLIES_PER_DAY]]).catch(() => true))) {
+                return jsonError('Too many replies today — try again tomorrow', 429);
+            }
             const photos = await photoAllowance(env, asked, `du:${m.du}`);
             if (!message && !photos.length) return jsonError('Screenshots are paused for today — try again tomorrow', 429);
             const now = Date.now();
             const first = await reserveFeedbackPhotos(env, key, photos.length);
-            if (first === null) return jsonError('Report not found', 404);
+            if (first === null) {
+                await dropFeedbackPhotos(env, key, [], photos, `du:${m.du}`);
+                return jsonError('Report not found', 404);
+            }
             const ph = await saveFeedbackPhotos(env, key, photos, first);
             const out = await updateFeedbackThread(env, key, (th, cur) => {
                 if (cur.bl) return { closed: true };
@@ -2465,6 +2649,8 @@ async function feedbackBotTool(env, body) {
                 th.push({ f: 'u', m: message, at: now, ...(ph.length ? { ph } : {}) });
                 return { thread: th, metadata: { ...cur, u: now, r: 'u', n: (cur.n || 1) + 1 } };
             });
+            // Message pas écrit : ses photos, déjà rangées et comptées, ne restent pas.
+            if (!out.thread) await dropFeedbackPhotos(env, key, ph, photos, `du:${m.du}`);
             if (out.gone) return jsonError('Report not found', 404);
             if (out.closed) return jsonError('This conversation was closed by the developer', 403);
             if (out.full) return jsonError('Conversation too long', 409);
@@ -2474,7 +2660,7 @@ async function feedbackBotTool(env, body) {
             return jsonResponse({ ok: true, photos: ph.length });
         }
         case 'released':
-            return jsonResponse(await feedbackReleased(env, { ios: body.ios, web: body.web }));
+            return jsonResponse(await feedbackReleased(env, { ios: body.ios, web: body.web, tvos: body.tvos, android: body.android }));
         // Résumé du matin : retours en attente de réponse, nouveaux, ouverts.
         case 'summary': {
             const now = Date.now();
@@ -2521,7 +2707,8 @@ async function feedbackBotTool(env, body) {
             return jsonResponse({ ok: true, announcement });
         }
         // Sondage (/poll, /poll-end) ; `poll-state` : le bot en poste les
-        // résultats une fois fini.
+        // résultats une fois fini — et ceux du précédent (`previous`), fini
+        // puis remplacé avant son passage (POLL_PREV_KEY).
         case 'poll': {
             const r = await createPoll(env, body);
             if (r.error) return jsonError(r.error, 400);
@@ -2532,7 +2719,7 @@ async function feedbackBotTool(env, body) {
             return jsonResponse({ ok: true, ...(await pollAdminView(env)) });
         }
         case 'poll-state':
-            return jsonResponse(await pollAdminView(env));
+            return jsonResponse({ ...(await pollAdminView(env)), previous: await previousPoll(env) });
         // Modèles d'annonce (/announce template:), modifiés dans /stats.
         case 'announce-templates':
             return jsonResponse({ templates: await readAnnounceTemplates(env) });
@@ -2541,8 +2728,9 @@ async function feedbackBotTool(env, body) {
 }
 
 /**
- * Nouvelle version en ligne (le bot lit l'app sur GitHub et le site sur
- * Vercel) : chaque retour dont le correctif l'attendait (`fx`, choisi sur
+ * Nouvelle version en ligne (le bot lit les apps — iPhone, Apple TV,
+ * Android — sur GitHub et le site sur Vercel ; FEEDBACK_RELEASE_PLATFORMS) :
+ * chaque retour dont le correctif l'attendait (`fx`, choisi sur
  * Discord en passant à « Done ») reçoit « c'est en ligne », ses doublons
  * aussi, et son post Discord le note. La première fois, on retient
  * seulement les versions.
@@ -2566,7 +2754,7 @@ async function feedbackReleased(env, versions) {
     const prev = known || {};
     const next = { ...prev };
     const shipped = [];
-    for (const p of ['ios', 'web']) {
+    for (const p of FEEDBACK_RELEASE_PLATFORMS) {
         const v = cleanText(versions?.[p], 40);
         if (!v || v === prev[p]) continue;
         if (prev[p] && compareVersions(v, prev[p]) < 0) continue;
@@ -2578,20 +2766,22 @@ async function feedbackReleased(env, versions) {
         // Seulement ceux qui attendent encore cette sortie : tous les retours
         // « correctif » restaient dans la liste, et passé 30 (les plus anciens,
         // déjà prévenus), les nouveaux ne l'étaient plus jamais.
+        // « both » : l'app iPhone et le site.
+        const awaits = (fx, p) => (fx.p === p || (fx.p === 'both' && (p === 'ios' || p === 'web'))) && !fx.done?.[p];
         const pending = (await listStoreKeys(env, FEEDBACK_PREFIX)).filter(({ metadata: m }) => m?.fx
-            && shipped.some(({ p }) => (m.fx.p === p || m.fx.p === 'both') && !m.fx.done?.[p]));
+            && shipped.some(({ p }) => awaits(m.fx, p)));
         // Par lots de 30 (requêtes par appel) : le reste au passage suivant du bot.
         if (pending.length > 30) complete = false;
         for (const { name } of pending.slice(0, 30)) {
             for (const { p, v } of shipped) {
                 const { metadata: m } = await store(env).getWithMetadata(name);
-                if (!m?.fx || !(m.fx.p === p || m.fx.p === 'both') || m.fx.done?.[p]) continue;
+                if (!m?.fx || !awaits(m.fx, p)) continue;
                 const message = FEEDBACK_LIVE_MESSAGES[p](v);
                 const fx = { ...m.fx, done: { ...(m.fx.done || {}), [p]: v } };
                 const r = await feedbackTeamUpdate(env, name, { message, extra: { fx } });
                 if (r.error) continue;
                 notified++;
-                const where = p === 'ios' ? `the app ${v}` : `the website ${v}`;
+                const where = `${FEEDBACK_RELEASE_WHERE[p]} ${v}`;
                 await echoTeamToDiscord(env, null, r.metadata, { note: `🚀 **Live in ${where}** — the user was told:\n${message}` });
                 for (const dup of (m.dups || []).slice(0, 20)) {
                     const d = await feedbackTeamUpdate(env, dup, { message, follow: false });
@@ -2767,13 +2957,26 @@ const reactHits = new Map();   // adresse → { n, until } (mémoire de l'instan
 /** Appareils nouveaux par adresse (/64 en IPv6) et par jour, pour une même
  *  annonce ou un même sondage (`scope`) : l'identifiant d'appareil est libre
  *  côté client, et un UUID inventé à chaque requête comptait comme une
- *  personne de plus. Une réaction ou un vote déjà là se change sans compter. */
+ *  personne de plus. Une réaction ou un vote déjà là se change sans compter
+ *  ici. Plafonds du jour aussi par réseau (/48 en IPv6 : ses 65 536 /64
+ *  comptaient pour autant de personnes) et en tout, toutes écritures
+ *  comprises : les limites par adresse ne tiennent qu'en mémoire d'une
+ *  instance, et un flot de votes vidait le quota d'écritures D1 du jour (et
+ *  faussait les résultats). Un usage normal en reste loin. */
 const NEW_DEVICES_PER_PERSON = 8;
-async function takeNewDevice(env, request, scope, key) {
-    const known = await store(env).getWithMetadata(key).then((r) => r.metadata != null).catch(() => true);
-    if (known) return true;
-    const who = `nd_${scope}_${(await sha256hex(`${scope}|${clientKey(request)}`)).slice(0, 6)}`;
-    return takeNtfyLimits(env, [[who, NEW_DEVICES_PER_PERSON]]).catch((e) => { logCaught('newDevice', e); return true; });
+const NEW_DEVICES_PER_NETWORK = 40;     // appareils nouveaux par jour et par réseau
+const DEVICE_WRITES_PER_DAY = 2000;     // votes ou réactions écrits par jour, en tout
+/** Une écriture de vote ou de réaction (clé `key`) pour `scope`, ou false.
+ *  `known` : l'appareil a déjà voté ou réagi (relu sinon). D1 en panne :
+ *  accepté. */
+async function takeDeviceWrite(env, request, scope, key, known) {
+    known ??= await store(env).getWithMetadata(key).then((r) => r.metadata != null).catch(() => true);
+    const limits = [[`ndw_${scope}`, DEVICE_WRITES_PER_DAY]];
+    if (!known) {
+        limits.push([`nd_${scope}_${(await sha256hex(`${scope}|${clientKey(request)}`)).slice(0, 6)}`, NEW_DEVICES_PER_PERSON],
+            [`ndn_${scope}_${(await sha256hex(`${scope}|net|${clientKey48(request)}`)).slice(0, 6)}`, NEW_DEVICES_PER_NETWORK]);
+    }
+    return takeNtfyLimits(env, limits).catch((e) => { logCaught('newDevice', e); return true; });
 }
 
 async function handleAnnouncementReact(request, env) {
@@ -2796,7 +2999,7 @@ async function handleAnnouncementReact(request, env) {
 
     const key = `${REACTION_PREFIX}${current.id}_${device.toLowerCase()}`;
     if (emoji === null) await store(env).delete(key);
-    else if (!(await takeNewDevice(env, request, `a${current.id}`, key))) {
+    else if (!(await takeDeviceWrite(env, request, `a${current.id}`, key))) {
         return jsonError('Trop de réactions depuis cette adresse', 429);
     } else {
         const ttl = Math.max(60, Math.round((current.until - now) / 1000) + 7 * 86400);
@@ -2827,6 +3030,9 @@ async function countReactions(env, announcementId) {
 // ═══════════════════════════════════════════════════════════════════════════
 const POLL_KEY = 'poll';
 const POLL_VOTE_PREFIX = 'pollv_';
+// Sondage fini puis remplacé par un nouveau avant que le bot n'en ait posté
+// les résultats (il passe toutes les 10 min) : gardé deux jours pour lui.
+const POLL_PREV_KEY = 'poll_prev';
 const POLL_SHOW_AFTER = 24 * 3600 * 1000;   // résultats finaux affichés 24 h
 const POLL_DEVICE_RE = /^[0-9a-fA-F-]{36}$/;
 const pollHits = new Map();   // adresse → { n, until } (mémoire de l'instance)
@@ -2842,21 +3048,59 @@ async function readPoll(env) {
     return value;
 }
 
-/** Votes d'un sondage : par choix, et nombre de votants. Une liste par
- *  lecture : gardés 30 s, sauf `fresh` (après un vote, pour l'admin). */
+/** Votes d'un sondage : par choix, et nombre de votants. Gardés 30 s
+ *  (corrigés à chaque vote reçu ici, adjustPollCount), sauf `fresh` (admin,
+ *  bot). Recomptés après chaque vote, ils coûtaient N²/2 lignes lues par
+ *  sondage. */
 async function countPoll(env, poll, fresh = false) {
     const hit = pollCountCache;
     if (!fresh && hit && hit.id === poll.id && Date.now() - hit.at < 30 * 1000) return hit.value;
-    const counts = poll.options.map(() => 0);
-    let voters = 0;
-    for (const k of await listStoreKeys(env, `${POLL_VOTE_PREFIX}${poll.id}_`)) {
-        const picks = Array.isArray(k.metadata?.o) ? k.metadata.o.filter((i) => Number.isInteger(i) && i >= 0 && i < counts.length) : [];
-        for (const i of picks) counts[i]++;
-        if (picks.length) voters++;
-    }
-    const value = { counts, voters };
+    const value = await tallyPoll(env, poll);
     pollCountCache = { id: poll.id, at: Date.now(), value };
     return value;
+}
+
+/** Votes d'un sondage comptés par la base, sur la plage de ses clés : de
+ *  « pollv_<id>_ » (compris) à « pollv_<id>` » (exclu, « ` » suit « _ »),
+ *  lue par l'index. La liste des clés s'arrêtait à 5 000 : au-delà, les
+ *  résultats étaient faux. */
+async function tallyPoll(env, poll) {
+    await ensureSchema(env);
+    const from = `${POLL_VOTE_PREFIX}${poll.id}_`, to = `${POLL_VOTE_PREFIX}${poll.id}\``;
+    const live = alive(Date.now());
+    const [byChoice, total] = await env.DB.batch([
+        env.DB.prepare(`SELECT c.value AS i, COUNT(*) AS n FROM kv, json_each(kv.meta, '$.o') AS c
+            WHERE kv.key >= ?1 AND kv.key < ?2 AND ${live} GROUP BY c.value`).bind(from, to),
+        env.DB.prepare(`SELECT COUNT(*) AS n FROM kv WHERE key >= ?1 AND key < ?2 AND ${live}
+            AND json_array_length(meta, '$.o') > 0`).bind(from, to),
+    ]);
+    const counts = poll.options.map(() => 0);
+    for (const r of byChoice?.results || []) {
+        const i = Number(r.i);
+        if (Number.isInteger(i) && i >= 0 && i < counts.length) counts[i] = Number(r.n) || 0;
+    }
+    return { counts, voters: Number(total?.results?.[0]?.n) || 0 };
+}
+
+/** Décompte gardé (countPoll) corrigé du vote d'un appareil : ses choix
+ *  avant et après. Le votant voit son vote compté sans tout relire. */
+function adjustPollCount(poll, before, after) {
+    const hit = pollCountCache;
+    if (!hit || hit.id !== poll.id) return;
+    const counts = [...hit.value.counts];
+    const valid = (list) => list.filter((i) => Number.isInteger(i) && i >= 0 && i < counts.length);
+    for (const i of valid(before)) counts[i] = Math.max(0, counts[i] - 1);
+    for (const i of valid(after)) counts[i]++;
+    const voters = Math.max(0, hit.value.voters + (valid(after).length ? 1 : 0) - (valid(before).length ? 1 : 0));
+    pollCountCache = { ...hit, value: { counts, voters } };
+}
+
+/** Le sondage précédent (POLL_PREV_KEY), fini, et ses résultats ; null sans lui. */
+async function previousPoll(env) {
+    let poll = null;
+    try { poll = await store(env).get(POLL_PREV_KEY, 'json'); } catch (e) { logCaught('poll/prev', e); }
+    if (!poll?.id || !Array.isArray(poll.options)) return null;
+    return { poll: { ...poll, ended: true }, results: await tallyPoll(env, poll) };
 }
 
 /** Ce qu'un appareil voit : le sondage, son vote, et les résultats s'il a
@@ -2907,14 +3151,19 @@ async function handlePollVote(request, env) {
         .filter((i) => Number.isInteger(i) && i >= 0 && i < poll.options.length).sort((a, b) => a - b);
     if (!poll.multi && picks.length > 1) return jsonError('Un seul choix', 400);
     const key = `${POLL_VOTE_PREFIX}${poll.id}_${device}`;
+    // Vote d'avant : null pour un appareil nouveau, undefined si illisible.
+    const before = await store(env).getWithMetadata(key).then((r) => r.metadata, (e) => { logCaught('poll/vote', e); return undefined; });
     if (!picks.length) await store(env).delete(key);
-    else if (!(await takeNewDevice(env, request, `p${poll.id}`, key))) {
+    else if (!(await takeDeviceWrite(env, request, `p${poll.id}`, key, before !== null))) {
         return jsonError('Trop de votes depuis cette adresse', 429);
     } else {
         const ttl = Math.max(60, Math.round((poll.until + POLL_SHOW_AFTER - Date.now()) / 1000) + 86400);
         await store(env).put(key, '', { expirationTtl: ttl, metadata: { o: picks } });
     }
-    return jsonResponse({ ok: true, ...(await pollState(env, poll, device, true)) });
+    // Résultats : le décompte gardé, corrigé de ce vote (recompté s'il manque).
+    if (before === undefined) pollCountCache = null;
+    else adjustPollCount(poll, Array.isArray(before?.o) ? before.o : [], picks);
+    return jsonResponse({ ok: true, ...(await pollState(env, poll, device)) });
 }
 
 /** Nouveau sondage (/stats ou bot) : question, 2 à 6 choix, un ou plusieurs
@@ -2927,6 +3176,12 @@ async function createPoll(env, body) {
     if (options.length < 2 || options.length > 6) return { error: 'Between 2 and 6 different choices' };
     const hours = Math.min(24 * 30, Math.max(1 / 60, Number(body.hours) || 24));
     const now = Date.now();
+    // Le sondage remplacé, s'il était fini : ses résultats restent à poster
+    // par le bot (previousPoll). Lancé dans les 10 min après la fin de
+    // l'autre, le nouveau les faisait perdre.
+    let prev = null;
+    try { prev = await store(env).get(POLL_KEY, 'json'); } catch (e) { logCaught('poll/prev', e); }
+    if (prev?.id && now >= prev.until) await store(env).put(POLL_PREV_KEY, JSON.stringify(prev), { expirationTtl: 2 * 86400 });
     const poll = { id: now.toString(36), question, options, multi: body.multi === true, until: now + Math.round(hours * 3600) * 1000, createdAt: now };
     await store(env).put(POLL_KEY, JSON.stringify(poll), { expirationTtl: Math.max(60, Math.round((poll.until + POLL_SHOW_AFTER - now) / 1000)) });
     pollCache = null;
@@ -3200,6 +3455,9 @@ function store(env) {
 //                    ADMIN_TWITCH_IDS, aucun admin.
 // SITE_ORIGINS     : origines du site dont les comptages sont acceptés
 //                    (absente : celles du site officiel).
+// TWITCH_CLIENT_ID : application Twitch de connexion d'un site auto-hébergé
+//                    (twitchClientId de son config.js) : ses jetons ouvrent
+//                    aussi les outils d'administration (ADMIN_CLIENT_IDS).
 let envApplied = false;
 function applyEnvConfig(env) {
     if (envApplied) return;
@@ -3208,6 +3466,7 @@ function applyEnvConfig(env) {
     const admins = list(env?.ADMIN_TWITCH_IDS).length ? list(env.ADMIN_TWITCH_IDS) : list(env?.OFFICIAL_ADMIN_TWITCH_IDS);
     if (admins.length) ADMIN_IDS = admins.filter((x) => /^\d{1,20}$/.test(x));
     if (list(env?.SITE_ORIGINS).length) USAGE_ORIGINS = list(env.SITE_ORIGINS);
+    if (list(env?.TWITCH_CLIENT_ID).length) ADMIN_CLIENT_IDS = [...new Set([...ADMIN_CLIENT_IDS, ...list(env.TWITCH_CLIENT_ID)])];
 }
 
 // ── Tâche planifiée en Docker ──────────────────────────────────────────────
@@ -3297,10 +3556,33 @@ const PUSH_QUEUE_TTL = 30 * 60 * 1000;
 // cases tirées de l'empreinte du jour et de son adresse, comme pour les
 // photos des retours : la base ne garde aucune adresse.
 const NTFY_NEW_PER_PERSON = 5;     // nouveaux sujets par jour et par adresse (/64 en IPv6)
+const NTFY_NEW_PER_NETWORK = 10;   // … par réseau (/48 en IPv6, l'adresse en IPv4)
 const NTFY_NEW_PER_DAY = 40;       // nouveaux sujets par jour, en tout
 const NTFY_TESTS_PER_TOPIC = 5;    // tests par jour et par sujet
 const NTFY_TESTS_PER_DAY = 40;     // tests par jour, en tout
 const NTFY_LIVES_PER_TOPIC = 30;   // notifications de live par jour et par sujet
+// Budget du jour de toutes les notifications de live, sous le quota de
+// ntfy.sh (tests compris) : sans lui, des sujets factices abonnés à des
+// chaînes populaires l'épuisaient, et la pause qui suit (ntfyPause) coupait
+// les notifications de toute l'app jusqu'à minuit UTC. Les sujets de moins de
+// NTFY_YOUNG_AGE n'en prennent pas plus de NTFY_YOUNG_PER_DAY : le reste va
+// aux anciens. Au-delà, le message est retiré de la file sans envoi. Sans
+// objet avec NTFY_TOKEN (compte payant, compté à part).
+const NTFY_LIVES_PER_DAY = NTFY_FREE_DAILY - NTFY_TESTS_PER_DAY - 10;   // 200
+const NTFY_YOUNG_PER_DAY = 100;
+const NTFY_YOUNG_AGE = 3 * 86400000;
+// Chaînes suivies (push_follow) : seule la différence est écrite, et les
+// changements sont plafonnés chaque jour, par abonnement, par réseau et en
+// tout, comme les chaînes nouvelles pour le serveur (push_live, relues à
+// chaque vérification). Avant, chaque changement de liste réécrivait tout
+// (jusqu'à 500 lignes, plus les index) : en alternant deux listes de 500
+// pseudos inventés, une seule adresse vidait en une heure le quota
+// d'écritures D1 du jour, et noyait les vraies chaînes à vérifier. Une
+// synchro de l'app ou du site ne change que quelques chaînes.
+const PUSH_CHANGES_PER_SUB = 2000;        // chaînes ajoutées ou retirées par jour et par abonnement
+const PUSH_CHANGES_PER_NETWORK = 3000;    // … par réseau (/48 en IPv6, l'adresse en IPv4)
+const PUSH_CHANGES_PER_DAY = 10000;       // … en tout
+const PUSH_NEW_LOGINS_PER_DAY = 1000;     // chaînes nouvelles pour le serveur, par jour
 const PUSH_TEXT = {
     fr: { live: (n) => `${n} est en live`, test: 'Les notifications de live fonctionnent.' },
     en: { live: (n) => `${n} is live`, test: 'Live notifications are working.' },
@@ -3578,13 +3860,32 @@ async function bumpNtfyLimits(env, entries) {
     return res.map((r) => Number(r?.results?.[0]?.value) || 0);
 }
 
-/** Une unité de chaque compteur [nom, plafond] si tous restent sous leur
- *  plafond ; sinon rien n'est compté, et false. */
+/** Une unité (ou `n`) de chaque compteur [nom, plafond, n] si tous restent
+ *  sous leur plafond ; sinon rien n'est compté, et false. Relus d'abord : un
+ *  compteur déjà plein refuse sans écrire (sous un flot de requêtes, chaque
+ *  refus coûtait deux écritures D1 par compteur). */
 async function takeNtfyLimits(env, limits) {
-    const after = await bumpNtfyLimits(env, limits.map(([name]) => [name, 1]));
+    const amount = (l) => l[2] ?? 1;
+    await ensureSchema(env);
+    const now = await readNtfyLimits(env, limits.map(([name]) => name));
+    if (limits.some((l) => (now.get(l[0]) || 0) + amount(l) > l[1])) return false;
+    const after = await bumpNtfyLimits(env, limits.map((l) => [l[0], amount(l)]));
     if (after.every((v, i) => v <= limits[i][1])) return true;
-    await bumpNtfyLimits(env, limits.map(([name]) => [name, -1])).catch(() => {});
+    await bumpNtfyLimits(env, limits.map((l) => [l[0], -amount(l)])).catch(() => {});
     return false;
+}
+
+/** Notifications de live ntfy envoyées aujourd'hui (UTC), en tout et par
+ *  les sujets récents (NTFY_YOUNG_AGE) : la somme des parts des sujets
+ *  (`lim:ntl_<sujet>:<jour>`), en une lecture, sans compteur de plus à
+ *  écrire à chaque envoi. */
+async function ntfyDayTotals(env, now = Date.now()) {
+    const row = await env.DB.prepare(`SELECT COALESCE(SUM(CAST(k.value AS INTEGER)), 0) AS total,
+            COALESCE(SUM(CASE WHEN s.created > ?2 THEN CAST(k.value AS INTEGER) ELSE 0 END), 0) AS young
+        FROM kv k LEFT JOIN push_subs s ON s.id = substr(k.key, 9, length(k.key) - 19)
+        WHERE k.key >= 'lim:ntl_' AND k.key < 'lim:ntl\`' AND substr(k.key, -10) = ?1`)
+        .bind(new Date(now).toISOString().slice(0, 10), now - NTFY_YOUNG_AGE).first();
+    return { total: Number(row?.total) || 0, young: Number(row?.young) || 0 };
 }
 
 /** Valeurs du jour de ces compteurs (nom → nombre). */
@@ -3636,13 +3937,16 @@ async function handlePushSubscribe(request, env) {
     const hash = await pushIdOf(channels.slice().sort().join(','));
     const known = await env.DB.prepare('SELECT hash FROM push_subs WHERE id = ?1').bind(id).first();
     const old = known?.hash ?? null;
-    // Nouveau sujet ntfy : plafonné par personne et en tout, chaque jour (voir
-    // NTFY_NEW_PER_PERSON). Un sujet déjà connu (synchro quotidienne de
-    // l'app, chaînes changées) ne compte pas.
+    const day = new Date().toISOString().slice(0, 10);
+    // Nouveau sujet ntfy : plafonné par personne, par réseau et en tout,
+    // chaque jour (voir NTFY_NEW_PER_PERSON). Un sujet déjà connu (synchro
+    // quotidienne de l'app, chaînes changées) ne compte pas.
+    let topicLimits = null;
     if (sub.kind === 'ntfy' && !known) {
-        const day = new Date().toISOString().slice(0, 10);
         const mine = `ntn_${(await sha256hex(`ntfy|${day}|${clientKey(request)}`)).slice(0, 4)}`;
-        if (!(await takeNtfyLimits(env, [[mine, NTFY_NEW_PER_PERSON], ['ntn', NTFY_NEW_PER_DAY]]))) {
+        const net = `ntnn_${(await sha256hex(`ntfy|${day}|net|${clientKey48(request)}`)).slice(0, 4)}`;
+        topicLimits = [[mine, NTFY_NEW_PER_PERSON], [net, NTFY_NEW_PER_NETWORK], ['ntn', NTFY_NEW_PER_DAY]];
+        if (!(await takeNtfyLimits(env, topicLimits))) {
             return jsonError('Trop de nouveaux sujets ntfy aujourd\'hui', 429);
         }
     }
@@ -3654,14 +3958,44 @@ async function handlePushSubscribe(request, env) {
            auth = excluded.auth, lang = excluded.lang, hash = excluded.hash, updated = excluded.updated`)
         .bind(id, sub.endpoint, sub.p256dh, sub.auth, lang, hash, now, sub.kind || 'web')];
     if (old !== hash) {
-        const list = JSON.stringify(channels);
-        ops.push(env.DB.prepare('DELETE FROM push_follow WHERE sub = ?1').bind(id));
-        ops.push(env.DB.prepare('INSERT OR IGNORE INTO push_follow (login, sub) SELECT value, ?1 FROM json_each(?2)').bind(id, list));
-        ops.push(env.DB.prepare(`INSERT OR IGNORE INTO push_live (login, stream) SELECT value, '?' FROM json_each(?1)`).bind(list));
+        // Seule la différence est écrite, dans les plafonds du jour (voir
+        // PUSH_CHANGES_PER_SUB).
+        const current = known ? ((await env.DB.prepare('SELECT login FROM push_follow WHERE sub = ?1').bind(id).all()).results || []).map((r) => r.login) : [];
+        const wanted = new Set(channels), had = new Set(current);
+        const added = channels.filter((c) => !had.has(c));
+        const removed = current.filter((c) => !wanted.has(c));
+        const changes = added.length + removed.length;
+        if (changes) {
+            const fresh = added.length ? Number(await env.DB.prepare(`SELECT COUNT(*) AS n FROM json_each(?1) AS j
+                WHERE NOT EXISTS (SELECT 1 FROM push_live l WHERE l.login = j.value)`).bind(JSON.stringify(added)).first('n')) || 0 : 0;
+            const net = `pfn_${(await sha256hex(`follow|${day}|${clientKey48(request)}`)).slice(0, 4)}`;
+            const limits = [[`pfs_${id}`, PUSH_CHANGES_PER_SUB, changes], [net, PUSH_CHANGES_PER_NETWORK, changes], ['pfc', PUSH_CHANGES_PER_DAY, changes]];
+            if (fresh) limits.push(['pfl', PUSH_NEW_LOGINS_PER_DAY, fresh]);
+            if (!(await takeNtfyLimits(env, limits))) {
+                // Rien n'est écrit : le nouveau sujet n'est pas compté non plus.
+                if (topicLimits) await bumpNtfyLimits(env, topicLimits.map(([name]) => [name, -1])).catch(() => {});
+                return jsonError('Trop de changements de chaînes aujourd\'hui, réessaie demain', 429);
+            }
+        }
+        if (removed.length) {
+            const list = JSON.stringify(removed);
+            ops.push(env.DB.prepare('DELETE FROM push_follow WHERE sub = ?1 AND login IN (SELECT value FROM json_each(?2))').bind(id, list));
+            // Chaînes que plus personne ne suit : plus vérifiées dès maintenant.
+            ops.push(env.DB.prepare(`DELETE FROM push_live WHERE login IN (SELECT value FROM json_each(?1))
+                AND NOT EXISTS (SELECT 1 FROM push_follow f WHERE f.login = push_live.login)`).bind(list));
+        }
+        if (added.length) {
+            const list = JSON.stringify(added);
+            ops.push(env.DB.prepare('INSERT OR IGNORE INTO push_follow (login, sub) SELECT value, ?1 FROM json_each(?2)').bind(id, list));
+            ops.push(env.DB.prepare(`INSERT OR IGNORE INTO push_live (login, stream) SELECT value, '?' FROM json_each(?1)`).bind(list));
+        }
     }
     if (oldId && oldId !== id) {
-        // Notifications en attente reprises par le nouvel abonnement.
+        // Notifications en attente reprises par le nouvel abonnement ; ses
+        // chaînes que plus personne ne suit, plus vérifiées.
         ops.push(env.DB.prepare('UPDATE push_queue SET sub = ?1 WHERE sub = ?2').bind(id, oldId));
+        ops.push(env.DB.prepare(`DELETE FROM push_live WHERE login IN (SELECT login FROM push_follow WHERE sub = ?1)
+            AND NOT EXISTS (SELECT 1 FROM push_follow f WHERE f.login = push_live.login AND f.sub != ?1)`).bind(oldId));
         ops.push(env.DB.prepare('DELETE FROM push_follow WHERE sub = ?1').bind(oldId));
         ops.push(env.DB.prepare('DELETE FROM push_subs WHERE id = ?1').bind(oldId));
     }
@@ -3677,6 +4011,9 @@ async function handlePushUnsubscribe(request, env) {
     await ensureSchema(env);
     const id = await pushIdOf(endpoint);
     await env.DB.batch([
+        // Ses chaînes que plus personne ne suivra : plus vérifiées.
+        env.DB.prepare(`DELETE FROM push_live WHERE login IN (SELECT login FROM push_follow WHERE sub = ?1)
+            AND NOT EXISTS (SELECT 1 FROM push_follow f WHERE f.login = push_live.login AND f.sub != ?1)`).bind(id),
         env.DB.prepare('DELETE FROM push_subs WHERE id = ?1').bind(id),
         env.DB.prepare('DELETE FROM push_follow WHERE sub = ?1').bind(id),
         env.DB.prepare('DELETE FROM push_queue WHERE sub = ?1').bind(id),
@@ -3811,7 +4148,7 @@ async function pushSend(env, room, counts = {}) {
     // lecture par voie : avec une seule fenêtre commune, une file web
     // chargée ne laissait passer aucun ntfy, et des ntfy en attente (relais
     // en panne) bloquaient tout le web.
-    const pick = (kind, n) => db.prepare(`SELECT q.id, q.body, s.id AS sid, s.kind, s.endpoint, s.p256dh, s.auth, s.lang
+    const pick = (kind, n) => db.prepare(`SELECT q.id, q.body, s.id AS sid, s.kind, s.endpoint, s.p256dh, s.auth, s.lang, s.created
         FROM push_queue q JOIN push_subs s ON s.id = q.sub WHERE s.kind ${kind === 'ntfy' ? `= 'ntfy'` : `IS NOT 'ntfy'`}
         ORDER BY q.id LIMIT ?1`).bind(n);
     const lanes = await db.batch([pick('web', room), ...(ntfyOn ? [pick('ntfy', PUSH_NTFY_PER_RUN)] : [])]);
@@ -3846,13 +4183,23 @@ async function pushSend(env, room, counts = {}) {
         // Part de chaque sujet : au plus NTFY_LIVES_PER_TOPIC messages par
         // jour ; au-delà, retirés sans envoi. Sans elle, quelques sujets
         // factices abonnés à des chaînes populaires vidaient le quota commun.
+        // Et le budget du jour de tous (NTFY_LIVES_PER_DAY), dont les sujets
+        // récents ne prennent que NTFY_YOUNG_PER_DAY.
         const sids = [...new Set(ntfyRows.map((q) => q.sid))];
         const used = await readNtfyLimits(env, sids.map((sid) => `ntl_${sid}`)).catch(() => new Map());
+        const day = await ntfyDayTotals(env).catch(() => ({ total: 0, young: 0 }));
+        const [budget, youngBudget] = env.NTFY_TOKEN ? [Infinity, Infinity] : [NTFY_LIVES_PER_DAY, NTFY_YOUNG_PER_DAY];
+        const young = (q) => Date.now() - (Number(q.created) || 0) < NTFY_YOUNG_AGE;
+        let all = day.total, recent = day.young;
         const taken = new Map();
         ntfyRows = ntfyRows.filter((q) => {
             const n = (taken.get(q.sid) ?? used.get(`ntl_${q.sid}`) ?? 0) + 1;
             taken.set(q.sid, n);
-            if (n <= NTFY_LIVES_PER_TOPIC) return true;
+            if (n <= NTFY_LIVES_PER_TOPIC && all < budget && !(young(q) && recent >= youngBudget)) {
+                all++;
+                if (young(q)) recent++;
+                return true;
+            }
             done.push(q.id);
             return false;
         });
@@ -3871,7 +4218,8 @@ async function pushSend(env, room, counts = {}) {
             if (r.status !== 429 && r.status !== 503) done.push(ntfyRows[i].id);
             if (r.status >= 200 && r.status < 300) sent.set(ntfyRows[i].sid, (sent.get(ntfyRows[i].sid) || 0) + 1);
         });
-        // Comptés une fois envoyés : un message retenté n'use pas deux fois sa part.
+        // Comptés une fois envoyés : un message retenté n'use pas deux fois sa
+        // part. Le budget du jour en est la somme (ntfyDayTotals).
         if (sent.size) {
             await bumpNtfyLimits(env, [...sent].map(([sid, n]) => [`ntl_${sid}`, n]))
                 .catch((e) => console.warn('ntfy : part des sujets non comptée,', e.message));

@@ -26,6 +26,9 @@ export PORT INNER_PORT
 set -- --config /app/wrangler.docker.toml --ip 127.0.0.1 --port "$INNER_PORT" \
   --persist-to /data --show-interactive-dev-session=false --log-level "${LOG_LEVEL:-warn}"
 [ -n "$ADMIN_TWITCH_IDS" ] && set -- "$@" --var "ADMIN_TWITCH_IDS:$ADMIN_TWITCH_IDS"
+# Les outils d'administration n'acceptent que les jetons des applications
+# Twitch connues : celle de ce site en fait partie.
+[ -n "$TWITCH_CLIENT_ID" ] && set -- "$@" --var "TWITCH_CLIENT_ID:$TWITCH_CLIENT_ID"
 [ -n "$PUBLIC_URL" ] && set -- "$@" --var "SITE_ORIGINS:$(echo "$PUBLIC_URL" | sed 's#/*$##')"
 
 # Notifications de live : la tâche planifiée de Cloudflare n'existe pas en
