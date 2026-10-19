@@ -431,8 +431,15 @@ bot every 5 minutes.
 **Community**: `/announce` shows the developer banner in the app and on the
 website (`/announce-clear` removes it). When a new app or website version is
 out, a draft of its release notes appears in the private channel — **Publish**
-posts it in the announcements channel. New test builds are posted in the test
-builds channel, mentioning its role.
+posts it in the announcements channel, mentioning the release role if you
+picked one. Members take or drop that role with `/release-pings` or the
+**🔔 Release pings** button the bot posts there. New test builds are posted in
+the test builds channel, mentioning its role.
+
+**To-do**: right-click a message (long-press on mobile) → *Apps* → **Add to
+to-do** sends a good suggestion to the to-do channel — author, text, a link to
+the message, with a **Done** / **Reopen** button — and adds 📝 to the original
+message. `/todo text:` adds an item by hand. Developer only.
 
 Setting it up:
 
@@ -443,10 +450,11 @@ Setting it up:
 2. **Bot**: in the [Discord developer portal](https://discord.com/developers/applications),
    *New Application → Bot*: *Reset Token* (keep it secret) and turn on
    **Message Content Intent**. Invite it with
-   `https://discord.com/oauth2/authorize?client_id=<application ID>&scope=bot%20applications.commands&permissions=292057844816`
+   `https://discord.com/oauth2/authorize?client_id=<application ID>&scope=bot%20applications.commands&permissions=292326280272`
    (view channels, send messages, send messages in threads, read message
-   history, add reactions, manage threads — to set the tags — and manage
-   channels — to create them), then allow it in your private channels
+   history, add reactions, manage threads — to set the tags — manage
+   channels — to create them — and manage roles — to give the release role;
+   the bot's role must sit above it), then allow it in your private channels
    (*Edit channel → Permissions*). Already invited without
    `applications.commands`? Open the link again: the slash commands need it.
 3. **Shared secret**: a random string (`openssl rand -hex 32`), in the
@@ -460,9 +468,10 @@ Setting it up:
    “…”`, and `/stats` shows the bot as running.
 5. **Channels**: run `/setup` in the private channel (*Alerts, daily summary
    and release drafts*), in the announcements channel (*Release
-   announcements*) and in the test builds channel (*Test builds*, with the
-   role to mention — make that role mentionable). Optionally, a webhook of
-   the private channel in the Worker's `ALERT_WEBHOOK` secret.
+   announcements*, optionally with the role to mention at each release), in
+   the test builds channel (*Test builds*, with the role to mention) and in
+   the to-do channel (*To-do list*). Make the roles mentionable. Optionally, a
+   webhook of the private channel in the Worker's `ALERT_WEBHOOK` secret.
 
 Without *manage channels*, create the status tags by hand with those names
 (Discord allows 20 tags per forum and 5 per post). The bot keeps its settings
