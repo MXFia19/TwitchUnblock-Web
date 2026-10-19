@@ -1694,9 +1694,15 @@ export function startDiscordBridge({
     return h < 48 ? `${h} h ${m % 60} min` : `${Math.floor(h / 24)} d ${h % 24} h`
   }
   let opsMemo = null
+  let opsLoad = null   // lecture de la mémoire, une seule, attendue par tous
   async function opsAlerts() {
     const day = new Date().toISOString().slice(0, 10)
-    opsMemo ??= (await kvGet('ops_alerts').catch(() => null)) || {}
+    // watchOps et watchQuotas partent ensemble au démarrage : chacun lisait
+    // la mémoire et posait sa propre copie, l'alerte notée par l'un était
+    // perdue, et refaite au passage suivant.
+    opsLoad ??= kvGet('ops_alerts').catch(() => null)
+    const stored = await opsLoad
+    opsMemo ??= stored || {}
     if (opsMemo.day !== day) opsMemo = { ...opsMemo, day, sent: [] }
     return opsMemo
   }

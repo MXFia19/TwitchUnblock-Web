@@ -75,10 +75,14 @@ jobs:
           BACKUP_PASSPHRASE: ${{ secrets.BACKUP_PASSPHRASE }}
           WRANGLER_SEND_METRICS: 'false'
         run: |
-          set -eu
+          set -eu -o pipefail
           umask 077
           name="d1-$DATABASE-$(date -u +%Y-%m-%d)"
-          npx --yes "$WRANGLER" d1 export "$DATABASE" --remote --output "$RUNNER_TEMP/$name.sql"
+          # wrangler écrit dans son journal l'adresse signée de l'export (le
+          # dump en clair, valable une heure), et les journaux d'un dépôt
+          # public se lisent par tous : adresses masquées, le reste gardé.
+          npx --yes "$WRANGLER" d1 export "$DATABASE" --remote --output "$RUNNER_TEMP/$name.sql" 2>&1 \
+            | sed -E 's#[A-Za-z][A-Za-z0-9+.-]*://[^[:space:]]+#[link hidden]#g'
           test -s "$RUNNER_TEMP/$name.sql"
           echo "Export: $(wc -c < "$RUNNER_TEMP/$name.sql") bytes"
           # Phrase secrète par l'entrée standard : jamais dans la ligne de commande.
