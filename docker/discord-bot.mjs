@@ -25,8 +25,13 @@
 //  matin. Le relais lui-même : le Worker prévient (ALERT_WEBHOOK).
 //  Communauté : /announce (bandeau de l'app et du site), /poll et
 //  /poll-end (sondage, résultats postés à la fin) ; brouillon des
-//  notes de version à chaque sortie, publié d'un bouton ; versions de test
-//  annoncées aux testeurs.
+//  notes de version à chaque sortie, publié d'un bouton (avec la mention du
+//  rôle des sorties choisi par /setup) ; versions de test annoncées aux
+//  testeurs ; /release-pings (ou le bouton posté par /setup) : chacun prend
+//  ou rend ce rôle.
+//  À faire : « Add to to-do » (menu Apps d'un message : une bonne idée lue
+//  sur le serveur) et /todo (texte libre) postent une carte dans le salon
+//  choisi par /setup, avec un bouton Done / Reopen.
 //  Seuls le propriétaire du serveur et DISCORD_ADMIN_IDS agissent au nom du
 //  développeur.
 //
@@ -110,12 +115,20 @@ const COMMANDS = [
           { name: 'Alerts, daily summary and release drafts (private)', value: 'alerts' },
           { name: 'Release announcements', value: 'announcements' },
           { name: 'Test builds', value: 'testers' },
+          { name: 'To-do list (suggestions to keep)', value: 'todo' },
         ],
       },
-      { type: 8, name: 'role', description: 'Role to mention (test builds)', required: false },
+      { type: 8, name: 'role', description: 'Role to mention (release announcements or test builds)', required: false },
     ],
   },
   { name: 'summary', description: 'Post the daily summary now', default_member_permissions: ADMIN },
+  // Menu « Apps » d'un message (clic droit, ou appui long sur mobile).
+  { type: 3, name: 'Add to to-do', default_member_permissions: ADMIN },
+  {
+    name: 'todo', description: 'Add an item to the to-do channel', default_member_permissions: ADMIN,
+    options: [{ type: 3, name: 'text', description: 'What to do', required: true, max_length: 1500 }],
+  },
+  { name: 'release-pings', description: 'Get pinged when a new version is out (run it again to stop)' },
 ]
 const MAX_PHOTO_B64 = 700_000     // comme le Worker (~500 Ko d'image)
 const MAX_PHOTOS = 3              // par message, comme le Worker
@@ -831,8 +844,12 @@ export function startDiscordBridge({
   async function onCommand(i, user) {
     const name = i.data?.name
     if (name === 'bug' || name === 'idea') return respond(i, 9, reportModal(name, keepShot(i, user)))
+    if (name === 'release-pings') return deferred(i, () => toggleReleaseRole(i, user))
     if (!isAdmin(user.id)) return adminOnly(i)
     switch (name) {
+      case 'Add to to-do':
+      case 'todo':
+        return deferred(i, () => addTodo(i, user))
       case 'announce': {
         // Modèle choisi : formulaire pré-rempli (à relire avant d'envoyer).
         const id = opt(i, 'template')
@@ -897,16 +914,95 @@ export function startDiscordBridge({
     const role = opt(i, 'role') || null
     const settings = { ...((await kvGet('settings').catch(() => null)) || st.settings) }
     if (use === 'alerts') settings.alerts = i.channel_id
-    else if (use === 'announcements') settings.announcements = i.channel_id
+    else if (use === 'announcements') { settings.announcements = i.channel_id; settings.announcementsRole = role }
     else if (use === 'testers') { settings.testers = i.channel_id; settings.testersRole = role }
+    else if (use === 'todo') settings.todo = i.channel_id
     else return 'Unknown choice.'
     await kvSet('settings', settings)
     st.settings = settings
+    // Rôle des sorties : un bouton dans le salon, pour le prendre ou le rendre.
+    if (use === 'announcements' && role) {
+      await say(i.channel_id, '🔔 Want a ping when a new version of TwitchUnblock is out? Tap the button (tap it again to stop).',
+        { components: [row(button('🔔 Release pings', 'rp:toggle', 1))] })
+    }
     return {
       alerts: 'This channel now gets the alerts, the daily summary and the release-notes drafts. Keep it private.',
-      announcements: 'Published release notes will go to this channel.',
+      announcements: role
+        ? `Published release notes will go to this channel and mention <@&${role}> (the role must be mentionable). `
+          + 'Members take or drop it with /release-pings or the button I just posted — I need “Manage Roles”, above that role.'
+        : 'Published release notes will go to this channel (add a role to mention it at each release).',
       testers: `New test builds will be posted here${role ? ` and mention <@&${role}> (the role must be mentionable)` : ''}.`,
+      todo: 'To-do items will be listed here: right-click a message → Apps → “Add to to-do”, or /todo.',
     }[use]
+  }
+
+  /** /release-pings et le bouton du salon des sorties : le rôle mentionné à
+   *  chaque sortie, pris ou rendu. */
+  async function toggleReleaseRole(i, user) {
+    const role = st.settings.announcementsRole
+    if (!role || !st.guild) return 'Release pings aren’t set up yet.'
+    const has = (i.member?.roles || []).includes(role)
+    try {
+      await rest(has ? 'DELETE' : 'PUT', `/guilds/${st.guild}/members/${user.id}/roles/${role}`)
+    } catch (e) {
+      log.warn(`Discord bridge: release role not changed (${e.message})`)
+      return `❌ I couldn’t change your roles (${e.message}). The bot needs “Manage Roles”, and its role must be above <@&${role}>.`
+    }
+    return has ? '🔕 You won’t be pinged for new versions anymore.' : '🔔 You’ll be pinged when a new version is out.'
+  }
+
+  /** « Add to to-do » (menu d'un message) et /todo : une carte dans le salon
+   *  des choses à faire, avec un bouton Done. Le message d'origine reçoit 📝 :
+   *  la personne voit que son idée est notée. */
+  async function addTodo(i, user) {
+    const channel = st.settings.todo
+    if (!channel) return 'Pick the to-do channel first: run /setup there with “To-do list”.'
+    const by = `Added by ${user.global_name || user.username}`
+    let embed
+    if (i.data?.type === 3) {
+      const m = i.data?.resolved?.messages?.[i.data?.target_id]
+      if (!m) return '❌ Message not found.'
+      const author = m.author || {}
+      const link = `https://discord.com/channels/${i.guild_id}/${m.channel_id}/${m.id}`
+      const text = String(m.content || '').trim() || String(m.embeds?.[0]?.description || '').trim()
+      const files = (m.attachments || []).length
+      embed = {
+        title: 'Suggestion',
+        description: `${(text || '(no text)').slice(0, 3500)}
+
+[Original message](${link})`
+          + (files ? ` · 📎 ${files} attachment${files > 1 ? 's' : ''}` : ''),
+        color: 0x9146ff,
+        author: {
+          name: String(author.global_name || author.username || 'Unknown').slice(0, 100),
+          ...(author.id && author.avatar ? { icon_url: `https://cdn.discordapp.com/avatars/${author.id}/${author.avatar}.png?size=64` } : {}),
+        },
+        footer: { text: by },
+        timestamp: m.timestamp || new Date().toISOString(),
+      }
+      react(m.channel_id, m.id, '📝')
+    } else {
+      const text = String(opt(i, 'text') || '').trim()
+      if (!text) return 'Nothing to add.'
+      embed = { title: 'To-do', description: text.slice(0, 3500), color: 0x9146ff, footer: { text: by }, timestamp: new Date().toISOString() }
+    }
+    await rest('POST', `/channels/${channel}/messages`, {
+      embeds: [embed], components: [row(button('Done', 'todo:done', 3))], allowed_mentions: { parse: [] },
+    })
+    return `📝 Added to <#${channel}>.`
+  }
+
+  /** Carte du salon à faire, rebâtie (Done : ✅ et vert ; Reopen : comme avant). */
+  function todoCard(embed, done) {
+    const title = String(embed?.title || 'To-do').replace(/^✅ /, '')
+    return {
+      title: done ? `✅ ${title}` : title,
+      description: embed?.description || '',
+      color: done ? 0x2ecc71 : 0x9146ff,
+      ...(embed?.author?.name ? { author: { name: embed.author.name, ...(embed.author.icon_url ? { icon_url: embed.author.icon_url } : {}) } } : {}),
+      ...(embed?.footer?.text ? { footer: { text: embed.footer.text } } : {}),
+      ...(embed?.timestamp ? { timestamp: embed.timestamp } : {}),
+    }
   }
 
   const publishing = new Set()   // brouillons de notes en cours de publication
@@ -931,9 +1027,17 @@ export function startDiscordBridge({
         ],
       })
     }
+    if (kind === 'rp') return deferred(i, () => toggleReleaseRole(i, user))
     if (!isAdmin(user.id)) return adminOnly(i)
     const thread = i.channel_id
     switch (kind) {
+      case 'todo': {
+        const done = a === 'done'
+        return respond(i, 7, {
+          embeds: [todoCard(i.message?.embeds?.[0], done)],
+          components: [row(done ? button('Reopen', 'todo:open') : button('Done', 'todo:done', 3))],
+        })
+      }
       case 'qr': {
         const q = QUICK[Number(a)]
         if (!q) return
@@ -993,7 +1097,9 @@ export function startDiscordBridge({
         try {
           const draft = await kvGet(`draft_${b}`).catch(() => null)
           if (!draft?.text) return editOriginal(i, { content: `${head}\n❌ This draft expired.`, components: [] })
-          await sendChunks(channel, draft.text)
+          const role = st.settings.announcementsRole
+          await sendChunks(channel, (role ? `<@&${role}> ` : '') + draft.text,
+            { allowed_mentions: role ? { parse: [], roles: [role] } : { parse: [] } })
           await kvSet(`draft_${b}`, null, 60).catch(() => {})
           await editOriginal(i, { content: `${head}\n✅ Published in <#${channel}>.`, components: [] })
         } catch (e) {
