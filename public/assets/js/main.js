@@ -147,13 +147,17 @@ let routing = false
  *  précédente (son direct, sa catégorie) n'a plus lieu. */
 let navSeq = 0
 
-/** Un clic sur un lien ou un bouton, ou un formulaire envoyé, pendant
- *  qu'une adresse s'applique : l'utilisateur a pris la main. Ce qu'il ouvre
- *  s'ajoute à l'historique (il remplaçait l'entrée), et le direct de
- *  l'adresse ne s'ouvre plus par-dessus son choix. */
+/** Un clic sur ce qui ouvre une autre page (lien, carte, onglet, lecteur,
+ *  mosaïque), ou un formulaire envoyé, pendant qu'une adresse s'applique :
+ *  l'utilisateur a pris la main. Ce qu'il ouvre s'ajoute à l'historique (il
+ *  remplaçait l'entrée), et le direct de l'adresse ne s'ouvre plus par-dessus
+ *  son choix. Les autres boutons (fermer l'annonce, ouvrir les réglages)
+ *  comptaient aussi : le direct d'un lien partagé ne s'ouvrait plus. */
+const NAVIGATES = 'a[href], [data-live], [data-vod], [data-clip], [data-channel], [data-category], [data-cat], [data-tab], [data-ctab], [data-play-all], [data-recover], [data-pick], '
+  + '[data-action="multi-open"], [data-action="multi-close"], [data-action="watch-minimize"], [data-action="watch-expand"], [data-action="watch-close"], [data-action="watch-retry"], [data-action="see-vods"], [data-action="cat-back"], [data-action="retry-channel"]'
 function userNavigates(e) {
   if (!routing || !e.isTrusted) return
-  if (e.type === 'click' && !e.target.closest?.('a[href], button, [role="button"], [data-live], [data-vod], [data-clip], [data-channel], [data-category], [data-cat], [data-tab]')) return
+  if (e.type === 'click' && !e.target.closest?.(NAVIGATES)) return
   routing = false
   navSeq++
 }
@@ -351,9 +355,12 @@ async function adoptToken(token, { silent = false } = {}) {
   if (session.userId) await pullSync()
   if (!silent) usage.pingNow(() => store.prefs.shareUsage)
   state.loaded.followed = 0
-  if (state.tab === 'discover') loadFollowed()
-  // Revalidation du même compte : le chat ne se reconnecte pas pour rien.
-  if (`${session.token}|${session.login}|${session.canChat}` !== before) chat?.sessionChanged()
+  // Revalidation du même compte : les suivis sont relus sans repasser par le
+  // squelette (ni par l'erreur, Twitch toujours injoignable) à chaque retour
+  // sur l'onglet, et le chat ne se reconnecte pas pour rien.
+  const changed = `${session.token}|${session.login}|${session.canChat}` !== before
+  if (state.tab === 'discover') loadFollowed({ silent: !changed })
+  if (changed) chat?.sessionChanged()
 }
 
 /** Jeton refusé par Twitch (expiré, révoqué) : la session s'arrête là. */
@@ -374,14 +381,19 @@ function dropToken({ silent = false } = {}) {
 }
 
 /** Compte gardé sans validation (Twitch injoignable) : revalidé au retour
- *  du réseau ou de l'onglet, ou depuis l'accueil. */
+ *  du réseau ou de l'onglet, ou depuis l'accueil. Au retour sur l'onglet
+ *  (`spaced`), au plus une fois par minute : chaque essai attend Twitch
+ *  jusqu'à 8 s, puis relit la sauvegarde et les suivis. */
 let revalidating = false
-function revalidateSession() {
+let revalidatedAt = 0
+function revalidateSession({ spaced = false } = {}) {
   if (!session.token || !session.unverified || revalidating) return
+  if (spaced && Date.now() - revalidatedAt < 60_000) return
   revalidating = true
+  revalidatedAt = Date.now()
   adoptToken(session.token, { silent: true }).finally(() => { revalidating = false })
 }
-window.addEventListener('online', revalidateSession)
+window.addEventListener('online', () => revalidateSession())
 
 function login(opts) {
   const url = api.loginUrl(opts)
@@ -400,17 +412,22 @@ function login(opts) {
 }
 
 function logout() {
-  // Jeton révoqué chez Twitch, pas seulement oublié ici.
-  if (session.token) {
-    fetch('https://id.twitch.tv/oauth2/revoke', {
+  // Dernier envoi de la sauvegarde d'abord, avec le jeton : le Worker le
+  // fait confirmer par Twitch, et l'envoi partait sans lui (refusé, 401).
+  // Le jeton n'est révoqué chez Twitch (pas seulement oublié ici) qu'une
+  // fois l'envoi fini, ou au bout de 5 s : révoqué avant, il ne passait plus.
+  const token = session.token
+  const sent = stashAccountHistory()
+  if (token) {
+    const revoke = () => fetch('https://id.twitch.tv/oauth2/revoke', {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({ client_id: api.HELIX_CLIENT_ID, token: session.token }),
+      body: new URLSearchParams({ client_id: api.HELIX_CLIENT_ID, token }),
     }).catch(() => {})
+    Promise.race([sent, new Promise((r) => setTimeout(r, 5000))]).finally(revoke)
   }
   store.token = null
   forgetAccount()
-  stashAccountHistory()
   Object.assign(session, { token: null, userId: null, login: null, avatar: null, scopes: [], unverified: false })
   // La prochaine connexion passera par la page d'autorisation de Twitch :
   // sans elle, il reconnectait aussitôt le compte dont il se souvient.
@@ -468,10 +485,11 @@ function renderAccount() {
 const HISTORY_OWNER_KEY = 'tu_history_owner'
 const historyStashKey = (id) => `tu_history_acct_${id}`
 
+/** Renvoie le dernier envoi en cours, s'il y en a un (voir logout). */
 function stashAccountHistory() {
   const id = session.userId
   if (!id) return
-  flushSync({ force: true })   // dernier envoi, encore au nom de ce compte
+  const sent = flushSync({ force: true })   // dernier envoi, encore au nom de ce compte
   try {
     localStorage.setItem(historyStashKey(id), JSON.stringify(store.history))
     localStorage.removeItem(HISTORY_OWNER_KEY)
@@ -483,6 +501,7 @@ function stashAccountHistory() {
   pulledFor = null
   renderContinue()
   renderRecentChannels()
+  return sent
 }
 
 /** Fusion élément par élément : le plus récent d'abord (`addedAt`), sans
@@ -515,6 +534,12 @@ async function pullSync() {
     store.history = mergeHistory(store.history, stashed)
     try { localStorage.removeItem(historyStashKey(userId)) } catch {}
   }
+  // L'historique d'ici est désormais celui de ce compte, avant la relecture :
+  // noté seulement après une relecture réussie, il repassait pour celui de
+  // l'ancien compte après un échec (ou deux relectures qui se chevauchent),
+  // et le passage suivant le rangeait à sa place, par-dessus le sien.
+  store.saveHistory()
+  try { localStorage.setItem(HISTORY_OWNER_KEY, String(userId)) } catch {}
   const data = await api.syncPull(userId)
   if (session.userId !== userId) return
   if (data && Array.isArray(data.history) && data.history.length) {
@@ -524,7 +549,6 @@ async function pullSync() {
   if (data) {
     // Relecture réussie : les envois peuvent partir (voir flushSync).
     pulledFor = userId
-    try { localStorage.setItem(HISTORY_OWNER_KEY, String(userId)) } catch {}
     for (const [id, time] of Object.entries(data.progress ?? {})) {
       if (time > store.getProgress(id)) store.setProgress(id, time)
     }
@@ -572,7 +596,7 @@ function flushSync({ force = false } = {}) {
   lastSyncAt = Date.now()
   // Raté (401, 413, 429, 500, coupure) : refait au passage suivant — il était
   // compté comme parti et jamais renvoyé.
-  api.syncPush(session.userId, data).then((ok) => {
+  return api.syncPush(session.userId, data).then((ok) => {
     if (ok || lastSyncBody !== body) return
     lastSyncBody = ''
     syncDirty = true
@@ -583,7 +607,7 @@ setInterval(() => flushSync(), 60_000)
 // Fermeture d'onglet, changement d'appli sur mobile : dernier envoi.
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) flushSync({ force: true })
-  else { loadAnnouncement(); loadPoll(); refreshFeedbackInbox(); revalidateSession() }
+  else { loadAnnouncement(); loadPoll(); refreshFeedbackInbox(); revalidateSession({ spaced: true }) }
 })
 // Réponses aux retours envoyés d'ici : pastille sur les boutons de retour.
 // Après l'évaluation du module : ces fonctions lisent des constantes
@@ -1128,6 +1152,11 @@ let pushSyncing = Promise.resolve()
 // l'accueil compris, chacun avec une requête au Worker).
 let pushLost = false
 let pushResubFailed = 0
+/** Jeton dont les suivis du compte ont été lus (loadFollowed). Avant, ou
+ *  après une lecture ratée, la liste ne part pas : le Worker l'aurait
+ *  remplacée par les seuls suivis de l'appareil (« Chaînes notifiées »). */
+let followsReadFor = null
+const pushListReady = () => !store.token || followsReadFor === store.token
 
 async function disablePush() {
   savePushState({ on: false })
@@ -1158,7 +1187,7 @@ function syncPush() {
 }
 
 async function syncPushNow() {
-  if (!pushOn()) return
+  if (!pushOn() || !pushListReady()) return
   const channels = pushChannels()
   const s = pushState()
   let sub = await pushSubscription().catch(() => null)
@@ -1468,6 +1497,8 @@ async function loadFollowed({ silent = false } = {}) {
     if (session.token !== token) return   // déconnecté entre-temps : logout() a vidé la liste
     const before = (state.accountFollows ?? []).join(',')
     state.accountFollows = logins ?? []
+    // Notifications : la liste attend des suivis lus (voir pushListReady).
+    followsReadFor = logins ? token : null
     // Une chaîne suivie sur Twitch n'est jamais masquée du top, ni masquable
     // (pas d'œil barré) : le top, souvent peint avant cette liste, est repeint
     // dès qu'elle change, qu'il y ait des masqués ou non.
@@ -4808,6 +4839,7 @@ let pollData = null       // { poll, mine, results } (Worker)
 let pollPicks = null      // plusieurs choix : cochés, pas encore envoyés
 let pollEditing = false   // « Changer mon vote » : choix rouverts
 let pollSending = false
+let pollEndTimer = 0
 async function loadPoll(force = false) {
   if (!force && Date.now() - pollFetchedAt < 5 * 60_000) return renderPoll()
   try {
@@ -4855,6 +4887,7 @@ function pollTimeLeft(until) {
 function renderPoll() {
   const box = $('#poll')
   if (!box) return
+  clearTimeout(pollEndTimer)
   let dismissed = []
   try { dismissed = JSON.parse(localStorage.getItem(POLL_DISMISSED) || '[]') } catch {}
   const p = pollData?.poll
@@ -4862,6 +4895,14 @@ function renderPoll() {
   const ended = p.ended || !(p.until > Date.now())
   const mine = Array.isArray(pollData.mine) ? pollData.mine : []
   const results = pollData.results
+  // Fini depuis la dernière lecture, page restée ouverte : relu une fois pour
+  // les résultats (sans vote d'ici, le Worker ne les avait pas envoyés, et
+  // les choix restaient là, « encore 1 min »). Lu avant l'échéance et pas
+  // encore fini pour le Worker : une horloge décalée ne relit pas en boucle.
+  // Sinon redessiné à l'échéance, attente bornée à un jour (au-delà de
+  // 24,8 jours, setTimeout part aussitôt).
+  if (ended && !p.ended && pollFetchedAt < p.until) loadPoll(true)
+  else if (!ended) pollEndTimer = setTimeout(renderPoll, Math.min(p.until - Date.now() + 1000, 86_400_000))
   let body
   if (results && (ended || (mine.length && !pollEditing))) {
     const voters = results.voters || 0
@@ -4873,7 +4914,7 @@ function renderPoll() {
   } else {
     const picks = pollPicks ?? mine
     body = `<div class="poll-options">${p.options.map((o, i) => `<button type="button" data-poll-opt="${i}" class="${picks.includes(i) ? 'on' : ''}" aria-pressed="${picks.includes(i)}"${pollSending ? ' disabled' : ''}>${p.multi ? `<span class="poll-box">${picks.includes(i) ? icon('check', 12) : ''}</span>` : ''}${esc(o)}</button>`).join('')}</div>
-    <p class="poll-meta">${esc(t(p.multi ? 'poll_multi_hint' : 'poll_single_hint'))} · ${esc(t('poll_until', { time: pollTimeLeft(p.until) }))}</p>
+    <p class="poll-meta">${esc(t(p.multi ? 'poll_multi_hint' : 'poll_single_hint'))} · ${esc(ended ? t('poll_ended') : t('poll_until', { time: pollTimeLeft(p.until) }))}</p>
     ${p.multi ? `<button type="button" class="btn primary sm" data-poll-send${picks.length && !pollSending ? '' : ' disabled'}>${esc(t('poll_vote'))}</button>` : ''}`
   }
   box.innerHTML = `<div class="announce poll" role="group" aria-label="${esc(t('poll_title'))}">

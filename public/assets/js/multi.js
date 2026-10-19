@@ -438,11 +438,14 @@ async function startLive(tile, { avoid = null } = {}) {
   const token = ++tile.token
   stopMedia(tile)
   setState(tile, 'loading')
-  const res = await api.getLive(tile.entry.login, { avoid }).catch((e) => ({ error: e?.status ? 'missing' : 'network' }))
+  // Comme openLive : « missing », aucune source n'a de direct (404) ou nom
+  // refusé (400) ; « failed », une autre erreur du Worker (5xx), qui passait
+  // pour « Hors ligne » alors que la chaîne était en live.
+  const res = await api.getLive(tile.entry.login, { avoid }).catch((e) => ({ error: e?.status === 404 || e?.status === 400 ? 'missing' : e?.status ? 'failed' : 'network' }))
   if (tile.token !== token) return
   const links = res?.links
   if (!links || res.error || !Object.keys(links).length) {
-    return setState(tile, res?.error === 'network' ? t('err_network') : t('multi_offline'), true)
+    return setState(tile, res?.error === 'network' ? t('err_network') : res?.error === 'failed' ? t('err_live') : t('multi_offline'), true)
   }
   const url = pickLink(links, res.variants)
   const v = tile.video

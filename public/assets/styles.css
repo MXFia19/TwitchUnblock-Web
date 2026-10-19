@@ -847,6 +847,10 @@ a.card, a.cat-card { display: block; }
 .emote-cells button { height: 42px; border-radius: 8px; display: grid; place-items: center; }
 .emote-cells button:hover { background: rgba(255, 255, 255, 0.08); }
 .emote-cells img { max-height: 28px; max-width: 38px; object-fit: contain; }
+/* Appui long (iPhone, iPad) : la fiche de l'emote, sans le menu d'image, la
+   sélection ni le glisser de Safari, qui l'interrompaient (view.js). */
+.emote-cells { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
+.emote-cells img { -webkit-user-drag: none; }
 
 .bot-cmds {
   position: absolute; left: 8px; right: 8px; top: 46px; bottom: 8px; z-index: 7;
@@ -1309,6 +1313,7 @@ html.multi-open { overflow: hidden; }
 .pred-bar i { display: block; height: 100%; border-radius: 3px; transition: width 0.4s ease; }
 /* Hype train : approche (pastilles), départ, niveau en cours (barre), fin */
 .chat-hype { padding: 7px 10px 8px; background: var(--card-hi); border-bottom: 1px solid var(--line); cursor: pointer; }
+.chat-hype:focus-visible { outline-offset: -2px; }
 .hype-head { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--live); }
 .hype-head b { flex: 1; min-width: 0; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .hype-tag { flex: none; padding: 1px 6px; border-radius: 999px; background: var(--live); color: #fff; font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.03em; }

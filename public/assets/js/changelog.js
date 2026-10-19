@@ -6,6 +6,35 @@
 
 export const CHANGELOG = [
   {
+    version: '2026.10.19a',
+    items: {
+      fr: [
+        'Compte : la déconnexion envoie bien la dernière sauvegarde (historique, progression) avant de révoquer le jeton, et sur un appareil partagé, l’historique d’un compte ne passe plus dans celui d’un autre quand la sauvegarde ne répond pas.',
+        'Twitch injoignable : tes chaînes suivies ne repassent plus par le chargement puis l’erreur à chaque retour sur l’onglet, et « Chaînes notifiées » n’envoie plus une liste sans les suivis du compte quand ils n’ont pas pu être lus.',
+        'Lien vers une chaîne en live : fermer l’annonce ou ouvrir les réglages pendant le chargement n’empêche plus le direct de s’ouvrir. Un sondage qui se termine pendant que la page est ouverte affiche ses résultats au lieu de « fin dans 1 min ».',
+        'Multi-live : une panne du serveur n’affiche plus « Hors ligne ou introuvable » sur la tuile d’une chaîne en live. Chat : sur iPhone et iPad, un appui long sur une emote du sélecteur ouvre sa fiche, et la carte du Train de la Hype se replie aussi au clavier.',
+      ],
+      en: [
+        'Account: logging out now sends the last backup (history, progress) before revoking the token, and on a shared device one account’s history no longer ends up in another’s when the backup doesn’t answer.',
+        'Twitch unreachable: your followed channels no longer go through loading and then an error every time you come back to the tab, and “Notified channels” no longer sends a list without your account’s follows when they couldn’t be read.',
+        'Link to a live channel: closing the announcement or opening settings while it loads no longer stops the stream from opening. A poll that ends while the page is open shows its results instead of “ends in 1 min”.',
+        'Multi-live: a server outage no longer shows “Offline or not found” on the tile of a channel that is live. Chat: on iPhone and iPad, a long press on an emote in the picker opens its card, and the Hype Train card can also be folded with the keyboard.',
+      ],
+      es: [
+        'Cuenta: al cerrar sesión se envía la última copia de seguridad (historial, progreso) antes de revocar el token, y en un dispositivo compartido el historial de una cuenta ya no pasa al de otra cuando la copia de seguridad no responde.',
+        'Twitch inaccesible: tus canales seguidos ya no pasan por la carga y luego el error cada vez que vuelves a la pestaña, y «Canales notificados» ya no envía una lista sin los seguidos de la cuenta cuando no se pudieron leer.',
+        'Enlace a un canal en directo: cerrar el anuncio o abrir los ajustes durante la carga ya no impide que se abra el directo. Una encuesta que termina con la página abierta muestra sus resultados en lugar de «termina en 1 min».',
+        'Multi-live: una caída del servidor ya no muestra «Desconectado o no encontrado» en el recuadro de un canal en directo. Chat: en iPhone y iPad, una pulsación larga sobre un emote del selector abre su ficha, y la tarjeta del Tren del Hype también se pliega con el teclado.',
+      ],
+      ru: [
+        'Аккаунт: при выходе последняя резервная копия (история, прогресс) теперь отправляется до отзыва токена, а на общем устройстве история одного аккаунта больше не попадает в историю другого, когда резервная копия не отвечает.',
+        'Twitch недоступен: отслеживаемые каналы больше не проходят через загрузку и ошибку при каждом возвращении на вкладку, а «Каналы с уведомлениями» больше не отправляют список без отслеживаемых каналов аккаунта, если их не удалось прочитать.',
+        'Ссылка на канал в эфире: если закрыть объявление или открыть настройки во время загрузки, трансляция всё равно откроется. Опрос, завершившийся при открытой странице, показывает результаты вместо «до конца: 1 мин».',
+        'Мульти-просмотр: сбой сервера больше не показывает «Не в сети или не найдено» на плитке канала, который в эфире. Чат: на iPhone и iPad долгое нажатие на эмоут в списке открывает его карточку, а карточку Хайповоза теперь можно свернуть и с клавиатуры.',
+      ],
+    },
+  },
+  {
     version: '2026.10.18d',
     items: {
       fr: [

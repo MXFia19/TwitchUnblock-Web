@@ -389,17 +389,33 @@ export class ChatView {
     this.el.send.addEventListener('click', () => this.submit())
     this.el.emoteBtn.addEventListener('click', () => this.togglePicker())
     this.el.emoteSearch.addEventListener('input', debounce(() => this.renderPicker(), 120))
+    // Clic droit ou appui long : la fiche de l'emote ; le clic simple insère
+    // toujours. Safari sur iPhone et iPad n'émet pas `contextmenu` à l'appui
+    // long (il montre son menu d'image) : l'appui est minuté ici, et le
+    // relâcher qui suit n'insère pas l'emote.
+    let pressTimer = 0
+    let pressed = null
+    this.el.grid.addEventListener('pointerdown', (e) => {
+      pressed = null
+      clearTimeout(pressTimer)
+      const b = e.pointerType !== 'mouse' && e.target.closest('[data-emote]')
+      if (b) pressTimer = setTimeout(() => { pressed = b; this.showInfo(b) }, 500)
+    })
+    // Doigt levé, ou parti faire défiler la grille : pas d'appui long.
+    for (const type of ['pointerup', 'pointercancel']) this.el.grid.addEventListener(type, () => clearTimeout(pressTimer))
     this.el.grid.addEventListener('click', (e) => {
       const b = e.target.closest('[data-emote]')
+      if (b && b === pressed) { pressed = null; return }
       if (b) this.insertText(b.dataset.emote)
     })
-    // Clic droit (appui long sur Android) : la fiche de l'emote ; le clic
-    // simple insère toujours.
     this.el.grid.addEventListener('contextmenu', (e) => {
       const b = e.target.closest('[data-emote]')
       if (!b) return
       e.preventDefault()
-      this.showInfo(b)
+      // Android l'émet aussi à l'appui long : une seule fiche.
+      clearTimeout(pressTimer)
+      if (b !== pressed) this.showInfo(b)
+      pressed = b
     })
     this.el.suggest.addEventListener('mousedown', (e) => {
       const b = e.target.closest('[data-i]')
@@ -878,10 +894,22 @@ export class ChatView {
     if (!box) {
       box = document.createElement('div')
       box.className = 'chat-hype'
-      box.setAttribute('role', 'group')
+      // Un bouton (clic, Entrée, Espace) qui dit s'il est replié : un simple
+      // groupe ne se repliait qu'à la souris, ni au clavier ni au lecteur d'écran.
+      box.setAttribute('role', 'button')
+      box.tabIndex = 0
+      box.setAttribute('aria-expanded', 'true')
       // Sous le raid, au-dessus de la prédiction.
       this.el.events.insertBefore(box, $('.chat-pred', this.el.events))
-      box.addEventListener('click', () => box.classList.toggle('folded'))
+      const fold = () => box.setAttribute('aria-expanded', String(!box.classList.toggle('folded')))
+      box.addEventListener('click', fold)
+      box.addEventListener('keydown', (e) => {
+        if (e.key !== 'Enter' && e.key !== ' ') return
+        // Ni défilement, ni lecture / pause du lecteur ou de la mosaïque.
+        e.preventDefault()
+        e.stopPropagation()
+        fold()
+      })
     }
     const title = t(s.variant === 'golden' ? 'hype_golden' : s.variant === 'treasure' ? 'hype_treasure' : 'hype_train')
     const pct = Math.round((s.percent ?? 0) * 100)
