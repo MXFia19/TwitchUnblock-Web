@@ -530,6 +530,7 @@ Settings (in `docker-compose.yml`):
 | `PUBLIC_URL` | Public address of your instance, without a trailing `/` (default `http://localhost:8787`). |
 | `TWITCH_CLIENT_ID` | Optional. To log in with Twitch, create an app on [dev.twitch.tv/console](https://dev.twitch.tv/console) with `PUBLIC_URL/` as the redirect URL, and paste its Client ID. Its tokens are also the ones the developer tools accept. |
 | `ADMIN_TWITCH_IDS` | Optional. Your Twitch user ID(s), comma-separated, for the developer tools on `/stats`. Empty: nobody gets them (`/stats` says so once you're logged in). |
+| `TRUST_PROXY` | Optional. Set it to `1` only if the container sits behind your own reverse proxy (Caddy, nginx…) that appends the visitor's address to `X-Forwarded-For`: rate limits then count the last address of that header. Default (empty): the address of the connection itself, and any address a client claims (`X-Forwarded-For`, `CF-Connecting-IP`) is ignored — behind a proxy without this setting, all visitors share the proxy's limits. |
 
 Live notifications work too: the container runs the scheduled check itself,
 every minute, through an internal route guarded by a random secret drawn at

@@ -15,15 +15,21 @@
 //  Il lance la commande reçue, lui transmet l'arrêt (docker stop) et s'arrête
 //  avec elle : le conteneur redémarre si wrangler tombe.
 //
-//  Variables : PORT (8787, publié), INNER_PORT (8786, celui de wrangler).
+//  Variables : PORT (8787, publié), INNER_PORT (8786, celui de wrangler),
+//  TRUST_PROXY (voir clientIp).
 // ═══════════════════════════════════════════════════════════════════════════
 
 import http from 'node:http'
+import net from 'node:net'
 import { spawn } from 'node:child_process'
 import { pipeline } from 'node:stream'
 
 const PORT = Number(process.env.PORT) || 8787
 const INNER_PORT = Number(process.env.INNER_PORT) || 8786
+// Derrière un mandataire (Caddy, nginx…) qui ajoute l'adresse du visiteur à
+// X-Forwarded-For : TRUST_PROXY=1. Sans lui (par défaut), seule l'adresse de
+// la connexion compte.
+const TRUST_PROXY = /^(1|true|yes|on)$/i.test(String(process.env.TRUST_PROXY || '').trim())
 
 // En-têtes propres à une connexion (pas à relayer), et Expect : le corps est
 // déjà accepté ici.
@@ -46,21 +52,37 @@ function internalPath(pathname) {
   return p.startsWith('/cdn-cgi') || p.startsWith('/__')
 }
 
+/** Adresse du visiteur pour les limites du Worker (clientKey) : celle de la
+ *  connexion, ou avec TRUST_PROXY la dernière de X-Forwarded-For (celle
+ *  qu'a vue le mandataire). Le CF-Connecting-IP envoyé par le client était
+ *  relayé tel quel : une adresse inventée par requête, une « personne »
+ *  neuve à chaque fois, et toutes les limites contournées. Derrière un
+ *  mandataire sans TRUST_PROXY, tous les visiteurs partagent son adresse. */
+function clientIp(req) {
+  let ip = req.socket.remoteAddress || ''
+  if (TRUST_PROXY) {
+    const hops = String(req.headers['x-forwarded-for'] || '').split(',').map((s) => s.trim()).filter(Boolean)
+    const last = (hops.at(-1) || '').replace(/^\[(.*)\]$/, '$1')
+    if (net.isIP(last)) ip = last
+  }
+  return ip.replace(/^::ffff:(?=\d+\.\d+\.\d+\.\d+$)/, '')
+}
+
 /** En-têtes relayés : sans ceux de la connexion, ni ceux de Miniflare
  *  (MF-Original-URL réécrit l'adresse que voit wrangler — /cdn-cgi/…
- *  comprise —, MF-CF-Blob, MF-Route-Override…). */
+ *  comprise —, MF-CF-Blob, MF-Route-Override…), ni l'adresse annoncée par
+ *  le client (CF-Connecting-IP, clientIp). */
 function forwardHeaders(req) {
   const named = String(req.headers.connection || '').toLowerCase().split(',').map((s) => s.trim())
   const out = {}
   for (const [k, v] of Object.entries(req.headers)) {
-    if (HOP.has(k) || named.includes(k) || k.startsWith('mf-')) continue
+    if (HOP.has(k) || named.includes(k) || k.startsWith('mf-') || k === 'cf-connecting-ip') continue
     out[k] = v
   }
   // Adresse du client pour les limites du Worker (clientKey), comme la posait
   // wrangler quand il recevait la connexion lui-même.
-  if (!out['cf-connecting-ip'] && req.socket.remoteAddress) {
-    out['cf-connecting-ip'] = req.socket.remoteAddress.replace(/^::ffff:(?=\d+\.\d+\.\d+\.\d+$)/, '')
-  }
+  const ip = clientIp(req)
+  if (ip) out['cf-connecting-ip'] = ip
   return out
 }
 

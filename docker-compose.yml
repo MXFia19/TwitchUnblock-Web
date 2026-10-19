@@ -23,6 +23,10 @@ services:
       # Ton identifiant Twitch, pour les outils développeur de /stats.
       # Vide : personne n'y a accès.
       ADMIN_TWITCH_IDS: ""
+      # "1" seulement derrière ton propre mandataire (Caddy, nginx…) qui ajoute
+      # l'adresse du visiteur à X-Forwarded-For : les limites la comptent.
+      # Vide : l'adresse de la connexion (README, Docker).
+      TRUST_PROXY: ""
 
 volumes:
   twitchunblock-data:
