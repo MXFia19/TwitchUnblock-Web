@@ -34,13 +34,20 @@
 //  À faire : « Add to to-do » (menu Apps d'un message : une bonne idée lue
 //  sur le serveur) et /todo (texte libre) postent une carte dans le salon
 //  choisi par /setup, avec un bouton Done / Reopen.
+//  Exploitation (salon privé) : plafonds du jour à 80 %, base à 70 % de sa
+//  taille, tâche planifiée muette depuis 5 min, quotas gratuits de
+//  Cloudflare à 70 % (avec CLOUDFLARE_API_TOKEN), VPS ou Worker en retard
+//  sur GitHub ; /status (état en un message), /forget-user (effacer les
+//  données d'une personne, après confirmation). Chaque action du
+//  développeur part avec son auteur (`by`) : le Worker la note au journal
+//  d'audit.
 //  Seuls le propriétaire du serveur et DISCORD_ADMIN_IDS agissent au nom du
 //  développeur.
 //
 //  Variables (relay/docker-compose.yml, fichier .env) : DISCORD_BOT_TOKEN,
 //  FEEDBACK_BOT_SECRET (même valeur que sur le Worker), FEEDBACK_WORKER,
 //  DISCORD_ADMIN_IDS ; facultatives : FALLBACK_WORKERS, SUMMARY_TZ,
-//  SUMMARY_HOUR.
+//  SUMMARY_HOUR, CLOUDFLARE_API_TOKEN et CLOUDFLARE_ACCOUNT_ID (quotas).
 //
 //  Sans dépendance : passerelle de Discord par le WebSocket de Node 22, API
 //  REST par fetch. Sa mémoire (réglages, versions vues, brouillons) est
@@ -131,6 +138,11 @@ const COMMANDS = [
     options: [{ type: 3, name: 'text', description: 'What to do', required: true, max_length: 1500 }],
   },
   { name: 'release-pings', description: 'Get pinged when a new version is out (run it again to stop)' },
+  { name: 'status', description: 'Server status: Workers, database, notifications, versions, quotas', default_member_permissions: ADMIN },
+  {
+    name: 'forget-user', description: 'Erase a person’s data (shows what will go, then asks to confirm)', default_member_permissions: ADMIN,
+    options: [{ type: 3, name: 'who', description: 'Twitch name/ID, install ID, report link/ID, @user, ntfy topic (several allowed)', required: true, max_length: 1000 }],
+  },
 ]
 const MAX_PHOTO_B64 = 700_000     // comme le Worker (~500 Ko d'image)
 // Octets d'une image qui tient dans MAX_PHOTO_B64 : au-delà, pas la peine de
@@ -210,6 +222,12 @@ export function startDiscordBridge({
   testSource = 'https://raw.githubusercontent.com/MXFia19/TwitchUnblock/test-17d298/apps-test.json',
   summaryTz = 'Europe/Paris',
   summaryHour = 9,
+  // Commit et branche de l'image du relais (GIT_SHA, GIT_BRANCH) ; quotas de
+  // Cloudflare : { token, account } (CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID).
+  version = '',
+  branch = '',
+  cloudflare = {},
+  cloudflareApi = 'https://api.cloudflare.com/client/v4/graphql',
   timers = true,
   log = console,
 }) {
@@ -256,6 +274,10 @@ export function startDiscordBridge({
   let stopped = false
   let backfilling = false
   const intervals = []
+  // Passerelle : état pour /health du relais (sa HEALTHCHECK) et /status.
+  // waiting (réglages du Worker), connecting, ready, stopped (refus définitif).
+  const gw = { state: 'waiting', since: Date.now(), readyAt: 0, lastAck: 0, interval: 0 }
+  const gwState = (s) => { if (gw.state !== s) Object.assign(gw, { state: s, since: Date.now() }) }
 
   // ── API de Discord, du Worker, de GitHub ────────────────────────────────
   /** `files` ({ bytes, type, name }) : envoyés en multipart (payload_json +
@@ -332,6 +354,9 @@ export function startDiscordBridge({
     { content: content.slice(0, 1900), allowed_mentions: { parse: [] }, ...extra }).catch(() => null)
   const isAdmin = (id) => Boolean(id) && (id === st.owner || extraAdmins.has(id))
   const label = (s) => st.labels[s] || LABELS[s] || s
+  /** Auteur d'une action du développeur, pour le journal d'audit du Worker
+   *  (un Worker d'avant l'ignore). */
+  const byOf = (u) => (u?.id ? { id: u.id, name: u.global_name || u.username || '' } : null)
 
   /** Texte en messages de 1900 caractères au plus, coupés aux lignes ;
    *  `components` sur le dernier. */
@@ -712,7 +737,8 @@ export function startDiscordBridge({
     if (!known) return
     if (known.status === status) return syncTags(d.id, status)
     try {
-      const r = await call({ action: 'status', thread: d.id, status })
+      // Étiquette changée à la main : Discord ne dit pas par qui.
+      const r = await call({ action: 'status', thread: d.id, status, by: { name: 'post tag' } })
       remember(d.id, r)
       log.log(`Discord bridge: ${r.key} → ${r.status}`)
       await afterTeamUpdate(d.id, r, known.status)
@@ -773,7 +799,7 @@ export function startDiscordBridge({
     const s = await stateOf(thread)
     if (!s) { react(thread, m.id, '❔'); return }
     try {
-      const r = await call({ action: 'reply', thread, message: text, photos: photos.ok })
+      const r = await call({ action: 'reply', thread, message: text, photos: photos.ok, by: byOf(m.author) })
       remember(thread, r)
       await react(thread, m.id, '✅')
       await afterTeamUpdate(thread, r, s.status)
@@ -907,17 +933,19 @@ export function startDiscordBridge({
         return respond(i, 9, announceModal(tpl))
       }
       case 'announce-clear':
-        return deferred(i, async () => { await call({ action: 'announce', clear: true }); return 'Announcement removed from the app and the website.' })
+        return deferred(i, async () => { await call({ action: 'announce', clear: true, by: byOf(user) }); return 'Announcement removed from the app and the website.' })
       case 'poll': return respond(i, 9, pollModal())
       case 'poll-end':
         return deferred(i, async () => {
-          const r = await call({ action: 'poll-end' })
+          const r = await call({ action: 'poll-end', by: byOf(user) })
           await postPollResults(r.poll, r.results)
           return st.settings.alerts ? `Poll ended: its results are in <#${st.settings.alerts}>.` : 'Poll ended (pick an alerts channel with /setup to get its results).'
         })
       case 'setup': return deferred(i, () => setup(i))
       case 'summary':
         return deferred(i, async () => ((await postSummary(st.settings.alerts || i.channel_id)) ? 'Summary posted.' : 'Nothing to post.'))
+      case 'status': return deferred(i, statusText)
+      case 'forget-user': return forgetCommand(i, user)
       case 'delete':
       case 'block':
       case 'merge': {
@@ -934,19 +962,19 @@ export function startDiscordBridge({
         }
         if (name === 'block') {
           return deferred(i, async () => {
-            await call({ action: 'block', thread })
+            await call({ action: 'block', thread, by: byOf(user) })
             await say(thread, '🔒 Conversation closed: the user can no longer write in this report.')
             return 'Done: the user can no longer write in this report.'
           })
         }
-        return deferred(i, () => merge(thread, String(opt(i, 'into') || '')))
+        return deferred(i, () => merge(thread, String(opt(i, 'into') || ''), user))
       }
     }
     return respond(i, 4, { flags: 64, content: 'Unknown command.' })
   }
 
-  async function merge(thread, into) {
-    const r = await call({ action: 'merge', thread, into })
+  async function merge(thread, into, user = null) {
+    const r = await call({ action: 'merge', thread, into, by: byOf(user) })
     if (r.intoThread) {
       await say(thread, `🔀 Merged into <#${r.intoThread}>: the user was told, and this report will follow its status.`)
       await say(r.intoThread, `🔀 Duplicate merged here: <#${thread}>.`)
@@ -974,6 +1002,8 @@ export function startDiscordBridge({
     else return 'Unknown choice.'
     await kvSet('settings', settings)
     st.settings = settings
+    // Journal d'audit du Worker (un Worker d'avant refuse : sans importance).
+    call({ action: 'audit', what: 'bot.setup', detail: `${use} → #${i.channel_id}${role ? ` (role ${role})` : ''}`, by: byOf(i.member?.user || i.user) }).catch(() => {})
     // Rôle des sorties : un bouton dans le salon, pour le prendre ou le rendre.
     if (use === 'announcements' && role) await postReleasePing(i.channel_id)
     return {
@@ -1164,7 +1194,7 @@ export function startDiscordBridge({
         await respond(i, 6)
         try {
           const prev = (await stateOf(thread))?.status
-          const r = await call({ action: 'reply', thread, message: q.text, ...(q.status ? { status: q.status } : {}) })
+          const r = await call({ action: 'reply', thread, message: q.text, ...(q.status ? { status: q.status } : {}), by: byOf(user) })
           remember(thread, r)
           await editOriginal(i, { content: `${i.message?.content || ''}\n✅ Sent: “${q.label}”`.slice(0, 1900), components: i.message?.components })
           await afterTeamUpdate(thread, r, prev)
@@ -1176,7 +1206,7 @@ export function startDiscordBridge({
       case 'fx': {
         await respond(i, 6)
         try {
-          await call({ action: 'fix', thread, platform: a })
+          await call({ action: 'fix', thread, platform: a, by: byOf(user) })
           const where = { ios: 'the app', web: 'the website', both: 'the app and the website', tvos: 'the Apple TV app', android: 'the Android app' }[a]
           await editOriginal(i, { content: where ? `✅ I’ll tell the user when the fix is live in ${where}.` : 'OK, I won’t tell the user.', components: [] })
         } catch (e) {
@@ -1188,7 +1218,7 @@ export function startDiscordBridge({
         if (a !== 'yes') return respond(i, 7, { content: 'Cancelled.', components: [] })
         await respond(i, 6)
         try {
-          await call({ action: 'delete', thread })
+          await call({ action: 'delete', thread, by: byOf(user) })
         } catch (e) {
           await editOriginal(i, { content: `❌ ${e.message}`, components: [] })
           return
@@ -1207,6 +1237,7 @@ export function startDiscordBridge({
         const head = String(i.message?.content || '').split('\n')[0]
         if (a === 'del') {
           await kvSet(`draft_${b}`, null, 60).catch(() => {})
+          call({ action: 'audit', what: 'release.discard', detail: b, by: byOf(user) }).catch(() => {})
           return respond(i, 7, { content: `${head}\n🗑️ Discarded.`, components: [] })
         }
         const channel = st.settings.announcements
@@ -1221,6 +1252,7 @@ export function startDiscordBridge({
           await sendChunks(channel, (role ? `<@&${role}> ` : '') + draft.text,
             { allowed_mentions: role ? { parse: [], roles: [role] } : { parse: [] } })
           await kvSet(`draft_${b}`, null, 60).catch(() => {})
+          call({ action: 'audit', what: 'release.publish', detail: b, by: byOf(user) }).catch(() => {})
           await editOriginal(i, { content: `${head}\n✅ Published in <#${channel}>.`, components: [] })
         } catch (e) {
           await editOriginal(i, { content: `${head}\n❌ Not published: ${e.message}`, components: i.message?.components })
@@ -1229,6 +1261,7 @@ export function startDiscordBridge({
         }
         return
       }
+      case 'fg': return forgetConfirm(i, user, a, b)
     }
   }
 
@@ -1275,7 +1308,7 @@ export function startDiscordBridge({
       return deferred(i, async () => {
         const r = await call({
           action: 'announce', title: field(i, 'title'), message: field(i, 'message'),
-          link: field(i, 'link'), hours: Number(field(i, 'hours')) || 24,
+          link: field(i, 'link'), hours: Number(field(i, 'hours')) || 24, by: byOf(user),
         })
         return `Announcement live in the app and on the website until <t:${Math.floor(r.announcement.until / 1000)}:f>.`
       })
@@ -1286,7 +1319,7 @@ export function startDiscordBridge({
         const r = await call({
           action: 'poll', question: field(i, 'question'), options: field(i, 'options'),
           multi: /^(y|yes|o|oui|1|true)$/i.test(String(field(i, 'multi') || '').trim()),
-          hours: Number(field(i, 'hours')) || 24,
+          hours: Number(field(i, 'hours')) || 24, by: byOf(user),
         })
         return `Poll live in the app and on the website until <t:${Math.floor(r.poll.until / 1000)}:f>: “${r.poll.question}” (${r.poll.options.length} choices${r.poll.multi ? ', several per person' : ', one per person'}). Its results will be posted in the alerts channel when it ends, or with /poll-end.`
       })
@@ -1645,6 +1678,304 @@ export function startDiscordBridge({
     }
   }
 
+  // ── Exploitation : pics, base, tâche planifiée, quotas, versions ───────
+  // Une alerte par mesure et par jour (UTC) au plus : mémoire `ops_alerts`
+  // gardée par le Worker (un redémarrage ne les refait pas), avec l'état de
+  // la tâche planifiée (muette depuis…).
+  const num = (n) => Number(n || 0).toLocaleString('en-US')
+  const pct = (n, max) => (max > 0 ? Math.round((Number(n || 0) / max) * 100) : 0)
+  const mb = (bytes) => `${(Number(bytes || 0) / 1048576).toFixed(1)} MB`
+  const ago = (ms) => `<t:${Math.floor(ms / 1000)}:R>`
+  function dur(ms) {
+    const m = Math.floor(Math.max(0, ms) / 60_000)
+    if (m < 1) return `${Math.round(Math.max(0, ms) / 1000)} s`
+    if (m < 60) return `${m} min`
+    const h = Math.floor(m / 60)
+    return h < 48 ? `${h} h ${m % 60} min` : `${Math.floor(h / 24)} d ${h % 24} h`
+  }
+  let opsMemo = null
+  async function opsAlerts() {
+    const day = new Date().toISOString().slice(0, 10)
+    opsMemo ??= (await kvGet('ops_alerts').catch(() => null)) || {}
+    if (opsMemo.day !== day) opsMemo = { ...opsMemo, day, sent: [] }
+    return opsMemo
+  }
+  const saveOpsAlerts = () => kvSet('ops_alerts', opsMemo, 3 * 86400)
+    .catch((e) => log.warn(`Discord bridge: alerts memory not saved (${e.message})`))
+  /** Alerte `id` une fois par jour (UTC) au plus. */
+  async function alertOncePerDay(id, text) {
+    const memo = await opsAlerts()
+    if (memo.sent.includes(id)) return
+    memo.sent = [...memo.sent, id].slice(-100)
+    await alert(text)
+    await saveOpsAlerts()
+  }
+
+  /** État du Worker, toutes les 5 min : plafonds du jour à 80 %, base à 70 %
+   *  de sa taille maximale, tâche planifiée muette depuis 5 min (puis
+   *  revenue). Worker d'avant (action inconnue : 400) : rien. */
+  async function watchOps() {
+    const o = await call({ action: 'ops' }).catch((e) => { if (e.status === 400) return null; throw e })
+    if (!Array.isArray(o?.caps)) return
+    for (const c of o.caps) {
+      if (!(c.max > 0) || c.n < 0.8 * c.max) continue
+      await alertOncePerDay(`cap:${c.id}`, `📈 **${c.label}: ${pct(c.n, c.max)}% of today’s cap** (${num(c.n)} / ${num(c.max)}, UTC day). Past it, more are refused until midnight UTC.`)
+    }
+    if (o.db?.max > 0 && o.db.bytes >= 0.7 * o.db.max) {
+      await alertOncePerDay('db', `🗄️ **Database at ${pct(o.db.bytes, o.db.max)}%** of D1’s ${mb(o.db.max)} (free plan): ${mb(o.db.bytes)}. New reports stop at ${mb(o.db.pauseAt)}; once full, nothing can be written any more (backups, counts, notifications).`)
+    }
+    // Tâche planifiée : muette depuis 5 min, puis revenue (une alerte chacune).
+    const last = Number(o.cron?.at) || 0
+    if (!last) return   // jamais notée (Worker tout juste à jour)
+    const memo = await opsAlerts()
+    const silent = Date.now() - last > 5 * 60_000
+    if (silent && !memo.cron) {
+      memo.cron = last
+      await alert(`⏱️ **Scheduled task silent**: no run since ${ago(last)} — live notifications and the relay watch are stopped. Check the Worker’s Cron Trigger (Cloudflare → Workers & Pages → the Worker → Settings → Triggers).`)
+      await saveOpsAlerts()
+    } else if (!silent && memo.cron) {
+      const gap = Date.now() - memo.cron
+      memo.cron = 0
+      await alert(`✅ **Scheduled task running again** (silent for about ${dur(gap)}).`)
+      await saveOpsAlerts()
+    }
+  }
+
+  // Quotas gratuits de Cloudflare, par jour UTC, pour tout le compte du Worker
+  // principal (le secours est sur un autre compte). Sans jeton : coupé.
+  const cfOn = /^[0-9a-f]{32}$/i.test(String(cloudflare.account || '')) && Boolean(cloudflare.token)
+  const CF_QUOTAS = [
+    ['requests', 'Worker requests', 100_000, 'past it, the main Worker answers 1027 until midnight UTC and the apps switch to the fallback'],
+    ['rowsRead', 'D1 rows read', 5_000_000, 'past it, D1 refuses reads until midnight UTC'],
+    ['rowsWritten', 'D1 rows written', 100_000, 'past it, D1 refuses writes until midnight UTC (backups, reports, counts, notifications)'],
+  ]
+  /** Requêtes des Workers et lignes D1 lues et écrites du jour, par l'API
+   *  GraphQL Analytics (jeton en lecture seule). Valeurs écrites dans la
+   *  requête : dates calculées ici, compte vérifié (32 caractères hexa). */
+  async function cfQuotas() {
+    const now = new Date()
+    const day = now.toISOString().slice(0, 10)
+    const until = now.toISOString().replace(/\.\d+Z$/, 'Z')
+    const query = `{ viewer { accounts(filter: { accountTag: "${cloudflare.account}" }) {
+      workers: workersInvocationsAdaptive(limit: 10000, filter: { datetime_geq: "${day}T00:00:00Z", datetime_leq: "${until}" }) { sum { requests } }
+      d1: d1AnalyticsAdaptiveGroups(limit: 10000, filter: { date_geq: "${day}", date_leq: "${day}" }) { sum { rowsRead rowsWritten } }
+    } } }`
+    const r = await fetch(cloudflareApi, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${cloudflare.token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query }),
+      signal: AbortSignal.timeout(20_000),
+    })
+    const j = await r.json().catch(() => null)
+    if (!r.ok || j?.errors?.length) throw new Error(String(j?.errors?.[0]?.message || `HTTP ${r.status}`).slice(0, 200))
+    const acc = j?.data?.viewer?.accounts?.[0]
+    if (!acc) throw new Error('account not found (CLOUDFLARE_ACCOUNT_ID, or the token’s account)')
+    const sum = (list, k) => (Array.isArray(list) ? list : []).reduce((n, g) => n + (Number(g?.sum?.[k]) || 0), 0)
+    return { at: Date.now(), day, requests: sum(acc.workers, 'requests'), rowsRead: sum(acc.d1, 'rowsRead'), rowsWritten: sum(acc.d1, 'rowsWritten') }
+  }
+  /** Toutes les 15 min : une alerte par quota et par jour, passé 70 %. */
+  async function watchQuotas() {
+    if (!cfOn) return
+    let q
+    try {
+      q = await cfQuotas()
+    } catch (e) {
+      log.warn(`Discord bridge: Cloudflare quotas unreadable (${e.message})`)
+      return
+    }
+    for (const [id, label, max, note] of CF_QUOTAS) {
+      const n = q[id]
+      if (n >= 0.7 * max) await alertOncePerDay(`cf:${id}`, `☁️ **Cloudflare quota at ${pct(n, max)}%**: ${label} — ${num(n)} of ${num(max)} today (UTC, free plan); ${note}.`)
+    }
+  }
+
+  // Versions : l'image du relais (GIT_SHA) et le Worker (version_metadata)
+  // face aux derniers commits de GitHub (API publique, sans jeton), toutes
+  // les 30 min. Une alerte par version manquée, quand le retard dure encore
+  // 30 min après avoir été vu (le temps d'une construction, d'un déploiement).
+  // Pour le relais, seuls comptent ses fichiers : un changement du site seul
+  // (public/) ne le concerne pas.
+  const RELAY_PATHS = /^(worker\.js|Dockerfile|\.dockerignore|docker\/)/
+  const WORKER_PATHS = /^(worker\.js|wrangler\.toml)$/
+  const SHA = /^[0-9a-f]{7,40}$/
+  let lastVersions = null   // { at, relay, worker } : pour /status
+  /** Retard constaté (`target` : le commit attendu) → { target, since, sent } ;
+   *  null quand c'est à jour. */
+  async function lag(prev, target, text) {
+    if (!target) return null
+    const p = prev?.target === target ? prev : { target, since: Date.now(), sent: false }
+    if (p.sent || Date.now() - p.since < 30 * 60_000) return p
+    await alert(text())
+    return { ...p, sent: true }
+  }
+  /** Mémoire illisible (Worker injoignable) : passage abandonné. */
+  async function watchVersions() {
+    const prev = (await kvGet('version_alerts')) || {}
+    const next = { ...prev }
+    const out = { at: Date.now(), relay: null, worker: null }
+    if (SHA.test(version)) {
+      const ref = branch || 'main'
+      const cmp = await gh(`/repos/${repos.web}/compare/${version}...${encodeURIComponent(ref)}`)
+      if (cmp) {
+        const head = cmp.commits?.length ? cmp.commits[cmp.commits.length - 1].sha : null
+        const stale = Boolean(head) && (cmp.files || []).some((f) => RELAY_PATHS.test(f.filename || ''))
+        out.relay = { sha: version, branch: ref, head, ahead: Number(cmp.ahead_by) || 0, stale }
+        next.relay = await lag(prev.relay, stale ? head : null, () => `⬆️ **VPS not up to date**: the relay runs \`${version.slice(0, 7)}\`, \`${ref}\` is at \`${head.slice(0, 7)}\` (${plural(out.relay.ahead, 'commit')} ahead, the relay’s files changed). In the relay’s folder: \`docker compose pull && docker compose up -d\`.`)
+      }
+    }
+    const v = (await call({ action: 'ops' }).catch(() => null))?.version
+    if (v) {
+      let latest = null
+      let stale = false
+      if (SHA.test(v.tag || '')) {
+        // Étiquette = commit déployé (image Docker) : comparaison exacte.
+        const cmp = await gh(`/repos/${repos.web}/compare/${v.tag}...main`)
+        if (cmp) {
+          latest = cmp.commits?.length ? cmp.commits[cmp.commits.length - 1].sha : null
+          stale = Boolean(latest) && (cmp.files || []).some((f) => WORKER_PATHS.test(f.filename || ''))
+        }
+      } else if (v.timestamp) {
+        // Cloudflare : la date de la version face au dernier commit de main qui change worker.js.
+        const list = await gh(`/repos/${repos.web}/commits?sha=main&path=worker.js&per_page=1`)
+        const c = Array.isArray(list) ? list[0] : null
+        if (c?.sha) {
+          latest = c.sha
+          stale = Date.parse(c.commit?.committer?.date || '') > Date.parse(v.timestamp) + 60_000
+        }
+      }
+      out.worker = { id: v.id || null, tag: v.tag || null, deployedAt: Date.parse(v.timestamp || '') || null, latest, stale }
+      next.worker = await lag(prev.worker, stale ? latest : null, () => `⬆️ **Worker not up to date**: the last change to \`worker.js\` on \`main\` (\`${latest.slice(0, 7)}\`) is newer than the deployed version${out.worker.deployedAt ? ` (${ago(out.worker.deployedAt)})` : ''}. Check the Worker’s builds (Cloudflare → Workers & Pages → the Worker → Deployments).`)
+    }
+    lastVersions = out
+    if (JSON.stringify(next) !== JSON.stringify(prev)) await kvSet('version_alerts', next)
+  }
+
+  /** La racine d'un Worker répond-elle, et en combien de temps ? */
+  async function probeWorker(base) {
+    const t0 = Date.now()
+    try {
+      const r = await fetch(`${base}/`, { signal: AbortSignal.timeout(15_000) })
+      await r.body?.cancel().catch(() => {})
+      return { ok: r.ok, ms: Date.now() - t0, problem: r.ok ? null : `HTTP ${r.status}${r.status === 429 ? ' (daily quota?)' : ''}` }
+    } catch {
+      return { ok: false, ms: null, problem: 'unreachable' }
+    }
+  }
+
+  /** /status : l'état du serveur en un message. Quotas de Cloudflare relus ;
+   *  versions : la dernière comparaison (30 min au plus). */
+  async function statusText() {
+    const now = Date.now()
+    const [o, probes, q] = await Promise.all([
+      call({ action: 'ops' }).catch((e) => ({ error: e.status === 400 ? 'the Worker isn’t up to date' : e.message })),
+      Promise.all([['main', worker], ...fallbacks.map((f) => ['fallback', f])].map(async ([kind, base]) => ({ kind, ...(await probeWorker(base)) }))),
+      cfOn ? cfQuotas().catch((e) => ({ at: Date.now(), error: e.message })) : null,
+    ])
+    const L = [`📟 **Status** — <t:${Math.floor(now / 1000)}:f>`]
+    L.push(`**Workers**: ${probes.map((p) => `${p.kind} ${p.ok ? '✅' : `❌ ${p.problem}`}${p.ms !== null ? ` (${p.ms} ms)` : ''}`).join(' · ')}`)
+    if (o.error) L.push(`**Worker state**: unavailable (${o.error})`)
+    else {
+      L.push(`**Database**: ${mb(o.db?.bytes)} of ${mb(o.db?.max)} (${pct(o.db?.bytes, o.db?.max)}%)`)
+      const n = o.ntfy || {}
+      L.push(`**ntfy**: ${num(n.sentToday)}${n.quota ? ` / ${num(n.quota)}` : ''} sent today (${n.route === 'relay' ? 'through the relay' : 'direct'})`
+        + (n.pausedUntil ? ` · ⏸️ paused until <t:${Math.floor(n.pausedUntil / 1000)}:t>${n.code === 42908 ? ' (daily quota reached)' : ''}` : ''))
+      const lane = (k) => {
+        const x = o.queue?.[k] || {}
+        return `${k} ${num(x.n)}${x.n && x.oldest ? ` (oldest ${ago(x.oldest)})` : ''}`
+      }
+      L.push(`**Notification queue**: ${lane('web')} · ${lane('ntfy')}`)
+      const last = Number(o.cron?.at) || 0
+      L.push(`**Scheduled task**: ${last ? `last run ${ago(last)}${now - last > 5 * 60_000 ? ' ⚠️' : ''}` : 'no run recorded yet'}`)
+      const busy = (o.caps || []).filter((c) => c.n > 0 && c.max > 0).sort((a, b) => b.n / b.max - a.n / a.max).slice(0, 6)
+      L.push(`**Daily caps** (UTC): ${busy.length ? busy.map((c) => `${c.label} ${num(c.n)}/${num(c.max)}`).join(' · ') : 'nothing used yet'}`)
+    }
+    const vr = lastVersions?.relay
+    const relayV = SHA.test(version)
+      ? `\`${version.slice(0, 7)}\`${vr ? (vr.stale ? ` ⚠️ \`${vr.branch}\` is at \`${String(vr.head).slice(0, 7)}\`` : ' ✅') : ''}`
+      : 'unknown (image built without GIT_SHA)'
+    const wv = o.error ? null : o.version
+    const vw = lastVersions?.worker
+    const workerV = wv
+      ? `\`${String(wv.tag || wv.id).slice(0, 8)}\`${wv.timestamp ? ` deployed ${ago(Date.parse(wv.timestamp))}` : ''}${vw ? (vw.stale ? ' ⚠️ behind main' : ' ✅') : ''}`
+      : 'unknown (no version_metadata)'
+    L.push(`**Versions**: relay ${relayV} · Worker ${workerV}${lastVersions ? ` · compared with GitHub ${ago(lastVersions.at)}` : ''}`)
+    L.push(`**Bot**: ${gw.state === 'ready' && gw.readyAt ? `connected for ${dur(now - gw.readyAt)}` : gw.state}`
+      + `${gw.lastAck ? ` · last heartbeat ack ${dur(now - gw.lastAck)} ago` : ''} · relay up for ${dur(process.uptime() * 1000)}`)
+    if (!cfOn) L.push('**Cloudflare quotas**: off — set CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID in the relay’s .env')
+    else if (q?.error) L.push(`**Cloudflare quotas**: unreadable (${q.error})`)
+    else L.push(`**Cloudflare quotas** (today, UTC, free plan): ${CF_QUOTAS.map(([id, label, max]) => `${label} ${num(q[id])} / ${num(max)} (${pct(q[id], max)}%)`).join(' · ')}`)
+    return L.join('\n')
+  }
+
+  // ── /forget-user ─────────────────────────────────────────────────────────
+  // Aperçu d'abord (rien n'est effacé), puis « Erase for good ». Ce qui a été
+  // demandé est gardé ici 10 min, sous un jeton dans l'identifiant du bouton
+  // (100 caractères au plus pour lui).
+  const forgets = new Map()   // jeton → { who, at }
+  const FORGET_LABELS = {
+    sync: 'backup (history, progress)', settings: 'synced settings', usage: 'usage entries', votes: 'poll votes',
+    reactions: 'reactions', reports: 'reports', pictures: 'pictures', posts: 'Discord posts',
+    subscriptions: 'notification subscriptions', channels: 'followed channels',
+  }
+  const FORGET_HINT = 'ℹ️ Reports and notification subscriptions aren’t tied to a Twitch account or an install: add the report’s post (link or ID) or the person’s @Discord account, and their ntfy topic (tu-…) for the iOS app’s notifications.'
+  function forgetSummary(r) {
+    const found = Object.entries(r.found || {}).filter(([, n]) => n > 0).map(([k, n]) => `${FORGET_LABELS[k] || k} ${num(n)}`)
+    return [
+      `**Recognised**: ${(r.targets || []).map((x) => x.label).join(' · ') || 'nothing'}`,
+      `**${r.dry ? 'Found' : 'Erased'}**: ${found.join(' · ') || 'nothing stored'}`,
+      ...(r.unknown?.length ? [`**Not recognised**: ${r.unknown.join(' · ')}`] : []),
+    ].join('\n')
+  }
+  // Worker d'avant : l'action inconnue tombe sur « Bad post ID ».
+  const forgetError = (e) => (e.status === 400 && /post ID/i.test(e.message) ? 'the Worker isn’t up to date (it can’t erase yet): update it first.' : e.message)
+
+  async function forgetCommand(i, user) {
+    const who = String(opt(i, 'who') || '').slice(0, 1000)
+    await respond(i, 5, { flags: 64 })
+    try {
+      const r = await call({ action: 'forget', who, dry: true, by: byOf(user) })
+      const any = Object.values(r.found || {}).some((n) => n > 0)
+      let components = []
+      if (any) {
+        const now = Date.now()
+        for (const [k, f] of forgets) if (now - f.at > 10 * 60_000) forgets.delete(k)
+        const id = crypto.randomUUID().slice(0, 8)
+        forgets.set(id, { who, at: now })
+        components = [row(button('Erase for good', `fg:yes:${id}`, 4), button('Cancel', `fg:no:${id}`))]
+      }
+      const head = any ? '🧹 **Erase this person’s data?** Preview — nothing is erased yet.' : '🧹 Nothing stored for this — nothing to erase.'
+      await editOriginal(i, { content: `${head}\n${forgetSummary(r)}\n${FORGET_HINT}`.slice(0, 1900), components })
+    } catch (e) {
+      await editOriginal(i, { content: `❌ ${forgetError(e)}` })
+    }
+  }
+
+  async function forgetConfirm(i, user, choice, id) {
+    const f = forgets.get(id)
+    forgets.delete(id)
+    if (choice !== 'yes') return respond(i, 7, { content: 'Cancelled — nothing was erased.', components: [] })
+    if (!f || Date.now() - f.at > 10 * 60_000) return respond(i, 7, { content: 'This preview expired: run /forget-user again.', components: [] })
+    await respond(i, 6)
+    try {
+      const r = await call({ action: 'forget', who: f.who, dry: false, by: byOf(user) })
+      // Posts Discord des retours : dans la corbeille du Worker, vidée tout de suite.
+      if (r.found?.posts) emptyTrash().catch((e) => log.warn(`Discord bridge: trash — ${e.message}`))
+      await editOriginal(i, { content: `✅ **Erased.**\n${forgetSummary(r)}`.slice(0, 1900), components: [] })
+    } catch (e) {
+      await editOriginal(i, { content: `❌ Not erased: ${forgetError(e)}`, components: [] })
+    }
+  }
+
+  /** État de la passerelle pour /health du relais : `ok` faux quand le bot est
+   *  arrêté (jeton refusé…), pas connecté depuis plus de 5 min, ou sans accusé
+   *  de battement depuis trois battements. */
+  function health() {
+    const now = Date.now()
+    const late = gw.state === 'ready' && gw.interval > 0 && gw.lastAck > 0 && now - gw.lastAck > 3 * gw.interval
+    const stuck = gw.state !== 'ready' && now - gw.since > 5 * 60_000
+    return { state: gw.state, ok: gw.state !== 'stopped' && !late && !stuck, since: gw.since, readyAt: gw.readyAt || null, lastAck: gw.lastAck || null }
+  }
+
   function startTimers() {
     if (!timers || intervals.length) return
     const every = (ms, fn) => {
@@ -1658,8 +1989,11 @@ export function startDiscordBridge({
     every(10 * 60_000, watchActions)
     every(60 * 60_000, tidy)
     every(60_000, summaryClock)
+    every(5 * 60_000, watchOps)
+    every(15 * 60_000, watchQuotas)
+    every(30 * 60_000, watchVersions)
     const first = setTimeout(() => {
-      for (const fn of [watchReleases, watchActions, watchHealth, tidy]) fn().catch((e) => log.warn(`Discord bridge: ${fn.name} — ${e.message}`))
+      for (const fn of [watchReleases, watchActions, watchHealth, tidy, watchOps, watchQuotas, watchVersions]) fn().catch((e) => log.warn(`Discord bridge: ${fn.name} — ${e.message}`))
     }, 30_000)
     first.unref?.()
     intervals.push(first)
@@ -1682,6 +2016,8 @@ export function startDiscordBridge({
         st.me = d.user?.id
         st.app = d.application?.id || d.user?.id
         retries = 0
+        gwState('ready')
+        gw.readyAt = Date.now()
         log.log(`Discord bridge: connected (${d.user?.username || '?'})`)
         if (st.guild && !(d.guilds || []).some((g) => g.id === st.guild)) {
           log.warn('Discord bridge: the bot isn’t on the webhook’s server — invite it (README, “Discord bot”)')
@@ -1690,6 +2026,7 @@ export function startDiscordBridge({
         break
       case 'RESUMED':
         retries = 0
+        gwState('ready')
         break
       case 'GUILD_CREATE':
         if (d.id === st.guild) await onGuild(d)
@@ -1754,13 +2091,14 @@ export function startDiscordBridge({
         clearTimeout(firstBeat)
         acked = true
         const every = p.d.heartbeat_interval
+        Object.assign(gw, { interval: every, lastAck: Date.now() })
         firstBeat = setTimeout(beat, Math.random() * every)
         beatTimer = setInterval(beat, every)
         if (session) send(6, { token, session_id: session.id, seq })
         else send(2, { token, intents: INTENTS, properties: { os: 'linux', browser: 'twitchunblock-relay', device: 'twitchunblock-relay' } })
         break
       }
-      case 11: acked = true; break
+      case 11: acked = true; gw.lastAck = Date.now(); break
       case 1: send(1, seq); break
       case 7: ws.close(4000); break   // Discord demande de se reconnecter
       case 9:                         // session invalide : reprise ou nouvelle
@@ -1775,6 +2113,7 @@ export function startDiscordBridge({
 
   function connect() {
     if (stopped) return
+    gwState('connecting')
     const url = session?.resume ? `${session.resume.replace(/\/+$/, '')}/?v=10&encoding=json` : gateway
     const sock = new WebSocket(url)
     ws = sock
@@ -1791,6 +2130,7 @@ export function startDiscordBridge({
       if (stopped) return
       if (FATAL.has(ev.code)) {
         stopped = true
+        gwState('stopped')
         log.error(`Discord bridge stopped: ${FATAL.get(ev.code)}`)
         return
       }
@@ -1827,7 +2167,9 @@ export function startDiscordBridge({
       for (const h of intervals) { clearInterval(h); clearTimeout(h) }
       ws?.close(1000)
     },
+    // Passerelle Discord, pour /health du relais.
+    health,
     // Pour le banc : les tâches périodiques, à la demande.
-    run: { watchReleases, watchHealth, watchActions, tidy, postSummary, summaryClock, heartbeat },
+    run: { watchReleases, watchHealth, watchActions, tidy, postSummary, summaryClock, heartbeat, watchOps, watchQuotas, watchVersions, statusText },
   }
 }

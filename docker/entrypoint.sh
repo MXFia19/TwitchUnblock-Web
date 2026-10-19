@@ -30,6 +30,9 @@ set -- --config /app/wrangler.docker.toml --ip 127.0.0.1 --port "$INNER_PORT" \
 # Twitch connues : celle de ce site en fait partie.
 [ -n "$TWITCH_CLIENT_ID" ] && set -- "$@" --var "TWITCH_CLIENT_ID:$TWITCH_CLIENT_ID"
 [ -n "$PUBLIC_URL" ] && set -- "$@" --var "SITE_ORIGINS:$(echo "$PUBLIC_URL" | sed 's#/*$##')"
+# Version du Worker (pas de version_metadata hors de Cloudflare) : le commit
+# de l'image, posé à sa construction (Dockerfile).
+[ -n "$GIT_SHA" ] && set -- "$@" --var "BUILD_SHA:$GIT_SHA"
 
 # Notifications de live : la tâche planifiée de Cloudflare n'existe pas en
 # local. Une boucle la lance chaque minute par POST /api/cron, avec un secret

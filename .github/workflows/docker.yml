@@ -82,6 +82,11 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          # Commit et branche de la construction : le relais les donne sur
+          # /health, et son bot prévient quand le VPS a du retard (Dockerfile).
+          build-args: |
+            GIT_SHA=${{ github.sha }}
+            GIT_BRANCH=${{ github.ref_name }}
           # Cache des couches entre deux builds : seules celles qui changent
           # (site, Worker) sont refaites.
           cache-from: type=gha

@@ -32,6 +32,18 @@
 //                     pont Discord des retours (discord-bot.mjs) : répondre
 //                     aux retours et changer leur état depuis Discord. Sans
 //                     jeton, coupé.
+//    CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID
+//                     facultatifs : le bot surveille les quotas gratuits du
+//                     compte Cloudflare du Worker (jeton en lecture seule,
+//                     « Account Analytics: Read »). Sans eux, coupé.
+//    GIT_SHA, GIT_BRANCH  posés par l'image (Dockerfile) : commit et branche
+//                     de sa construction, donnés par /health ; le bot prévient
+//                     quand GitHub a plus récent.
+//
+//  /health répond 200 tant que le relais tourne (le site et le Worker ne
+//  regardent que ça), en JSON : version, et l'état de la passerelle Discord
+//  du bot ; `ok` y est faux quand le bot est arrêté ou déconnecté depuis
+//  plus de 5 min (HEALTHCHECK de l'image, docker/healthcheck.mjs).
 // ═══════════════════════════════════════════════════════════════════════════
 
 import http from 'node:http'
@@ -59,6 +71,11 @@ if (PUBLIC_ORIGIN) {
     process.exit(1)
   }
 }
+// Commit et branche de l'image (vides hors de l'image construite par GitHub).
+const VERSION = /^[0-9a-f]{7,40}$/i.test(String(process.env.GIT_SHA || '').trim()) ? process.env.GIT_SHA.trim().toLowerCase() : ''
+const BRANCH = String(process.env.GIT_BRANCH || '').trim().replace(/[^\w./-]/g, '').slice(0, 100)
+// Bot Discord (plus bas), lancé après le serveur : /health le lit.
+let bridge = null
 const ALLOWED = (process.env.ALLOWED_ORIGINS || '')
   .split(',')
   .map((s) => s.trim().replace(/\/+$/, ''))
@@ -91,6 +108,10 @@ const NTFY_URL = 'https://ntfy.sh'
 const NTFY_TOPIC = /^tu-[a-z0-9]{20,40}$/
 const NTFY_MAX = 50                // messages par lot
 const NTFY_BODY_MAX = 64 * 1024    // octets
+// Liens qui n'ouvrent que l'app (« TU Test » a son propre schéma).
+const APP_LINK = /^twitchunblock(-test)?:\/\//
+// Vignette du live et avatar de la chaîne : images du CDN de Twitch seulement.
+const TWITCH_IMAGE = /^https:\/\/static-cdn\.jtvnw\.net\/\S{1,300}$/
 
 let workerKey = null               // { key, at } : clé publique du Worker
 const usedTokens = new Map()       // en-tête.revendications.r → expiration (secondes)
@@ -161,8 +182,18 @@ async function publishNtfy(messages) {
       priority: Math.min(5, Math.max(1, Math.round(Number(m.priority)) || 3)),
     }
     // « TU Test » a son propre schéma (twitchunblock-test://).
-    if (typeof m.click === 'string' && /^twitchunblock(-test)?:\/\//.test(m.click)) msg.click = m.click.slice(0, 300)
+    if (typeof m.click === 'string' && APP_LINK.test(m.click)) msg.click = m.click.slice(0, 300)
     if (Array.isArray(m.tags)) msg.tags = m.tags.slice(0, 5).map((t) => String(t).slice(0, 40))
+    // Notification de live : vignette en pièce jointe, avatar en icône, et un
+    // bouton « Regarder » (action view) qui ouvre l'app, rien d'autre.
+    if (typeof m.attach === 'string' && TWITCH_IMAGE.test(m.attach)) msg.attach = m.attach
+    if (typeof m.icon === 'string' && TWITCH_IMAGE.test(m.icon)) msg.icon = m.icon
+    if (Array.isArray(m.actions)) {
+      const actions = m.actions.slice(0, 3)
+        .filter((a) => a?.action === 'view' && typeof a.url === 'string' && APP_LINK.test(a.url))
+        .map((a) => ({ action: 'view', label: String(a.label ?? '').slice(0, 40) || 'Open', url: a.url.slice(0, 300), clear: a.clear === true }))
+      if (actions.length) msg.actions = actions
+    }
     try {
       const r = await fetch(NTFY_URL, {
         method: 'POST',
@@ -333,8 +364,15 @@ const server = http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url || '/', PUBLIC_ORIGIN || `http://${req.headers.host || `localhost:${PORT}`}`)
     if (url.pathname === '/health') {
-      res.writeHead(200, { ...CORS, 'Content-Type': 'text/plain', 'Cache-Control': 'no-store' })
-      return res.end('ok')
+      // Toujours 200 tant que le relais répond : le site et le Worker ne
+      // regardent que le code (vidéo, ntfy). `ok` dit en plus si le bot
+      // Discord va bien (HEALTHCHECK de l'image).
+      const discord = bridge?.health?.() ?? null
+      res.writeHead(200, { ...CORS, 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
+      return res.end(JSON.stringify({
+        ok: !discord || discord.ok, relay: 'ok', version: VERSION || null, branch: BRANCH || null,
+        uptime: Math.round(process.uptime()), discord,
+      }))
     }
     if (url.pathname === '/ntfy') return await handleNtfy(req, res)
     if (url.pathname !== '/api/proxy') { res.writeHead(404, CORS); return res.end() }
@@ -377,13 +415,14 @@ server.keepAliveTimeout = 65_000
 server.listen(PORT, () => {
   console.log(`Relais vidéo sur le port ${PORT}${PUBLIC_ORIGIN ? ` — ${PUBLIC_ORIGIN}` : ''}`
     + (ALLOWED.length ? ` — ${ALLOWED.length} origine(s) autorisée(s)` : ' — toutes origines')
-    + (NTFY_WORKER ? ` — ntfy pour ${NTFY_WORKER}` : ''))
+    + (NTFY_WORKER ? ` — ntfy pour ${NTFY_WORKER}` : '')
+    + (VERSION ? ` — image ${VERSION.slice(0, 7)}${BRANCH ? ` (${BRANCH})` : ''}` : ''))
 })
 
 // ── Pont Discord des retours (facultatif) ─────────────────────────────────
 // Avec un jeton de bot : les retours se lisent, se répondent et changent
 // d'état dans un salon forum de Discord (voir discord-bot.mjs).
-const bridge = process.env.DISCORD_BOT_TOKEN?.trim()
+bridge = process.env.DISCORD_BOT_TOKEN?.trim()
   ? (await import('./discord-bot.mjs')).startDiscordBridge({
       token: process.env.DISCORD_BOT_TOKEN.trim(),
       secret: (process.env.FEEDBACK_BOT_SECRET || '').trim(),
@@ -395,6 +434,10 @@ const bridge = process.env.DISCORD_BOT_TOKEN?.trim()
       ...(process.env.FALLBACK_WORKERS ? { fallbacks: process.env.FALLBACK_WORKERS.split(',').map((s) => s.trim()).filter(Boolean) } : {}),
       ...(process.env.SUMMARY_TZ ? { summaryTz: process.env.SUMMARY_TZ.trim() } : {}),
       ...(Number.isInteger(Number(process.env.SUMMARY_HOUR)) && process.env.SUMMARY_HOUR ? { summaryHour: Number(process.env.SUMMARY_HOUR) } : {}),
+      // Version de l'image (alerte « VPS pas à jour ») et quotas de Cloudflare.
+      version: VERSION,
+      branch: BRANCH,
+      cloudflare: { token: (process.env.CLOUDFLARE_API_TOKEN || '').trim(), account: (process.env.CLOUDFLARE_ACCOUNT_ID || '').trim() },
     })
   : null
 

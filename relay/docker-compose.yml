@@ -19,6 +19,10 @@ services:
     image: ghcr.io/mxfia19/twitchunblock-web:${TAG:-latest}
     entrypoint: ["node", "/app/relay.mjs"]
     restart: unless-stopped
+    # Un petit init en premier processus : il transmet l'arrêt (docker stop)
+    # et ramasse les processus finis. Santé : HEALTHCHECK de l'image
+    # (/health, bot Discord compris), visible dans « docker ps ».
+    init: true
     # Joignable depuis le VPS seulement : c'est le serveur web qui le publie.
     ports:
       - "127.0.0.1:8788:8788"
@@ -47,6 +51,11 @@ services:
       FALLBACK_WORKERS: "${FALLBACK_WORKERS-}"
       SUMMARY_TZ: "${SUMMARY_TZ-}"
       SUMMARY_HOUR: "${SUMMARY_HOUR-}"
+      # Facultatif : quotas gratuits de Cloudflare surveillés par le bot (jeton
+      # en lecture seule « Account Analytics: Read » et compte du Worker).
+      # Vides = coupé (README, « Discord bot »).
+      CLOUDFLARE_API_TOKEN: "${CLOUDFLARE_API_TOKEN-}"
+      CLOUDFLARE_ACCOUNT_ID: "${CLOUDFLARE_ACCOUNT_ID-}"
     logging:
       driver: json-file
       options: { max-size: "10m", max-file: "3" }

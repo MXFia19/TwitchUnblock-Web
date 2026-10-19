@@ -33,6 +33,7 @@ COPY worker.js ./
 COPY worker.js ./worker.mjs
 COPY docker/relay.mjs ./relay.mjs
 COPY docker/discord-bot.mjs ./discord-bot.mjs
+COPY docker/healthcheck.mjs ./healthcheck.mjs
 COPY public ./public
 COPY docker/wrangler.docker.toml ./wrangler.docker.toml
 COPY docker/entrypoint.sh /entrypoint.sh
@@ -41,4 +42,18 @@ RUN chmod +x /entrypoint.sh && mkdir -p /data && chown -R node:node /app /data
 USER node
 VOLUME /data
 EXPOSE 8787
+
+# Santé du conteneur, site ou relais (docker/healthcheck.mjs) : « docker ps »
+# l'affiche ; pour le relais, elle tient compte du bot Discord.
+HEALTHCHECK --interval=60s --timeout=10s --start-period=90s --retries=3 CMD ["node", "/app/healthcheck.mjs"]
+
+# Commit et branche de la construction (.github/workflows/docker.yml) : le
+# relais les donne sur /health et son bot prévient quand GitHub a plus
+# récent ; le Worker de l'image s'en sert comme version. En dernier : ils
+# changent à chaque construction, les couches d'avant restent en cache.
+ARG GIT_SHA=""
+ARG GIT_BRANCH=""
+ENV GIT_SHA=$GIT_SHA \
+    GIT_BRANCH=$GIT_BRANCH
+
 ENTRYPOINT ["/entrypoint.sh"]
