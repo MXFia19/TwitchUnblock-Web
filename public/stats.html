@@ -397,6 +397,18 @@
         </div>
       </form>
     </div>
+    <div class="ann" id="forget">
+      <h3 data-t="fgTitle"></h3>
+      <p class="sub" data-t="fgSub"></p>
+      <form class="ann-form" id="forget-form">
+        <textarea id="forget-who" rows="2" maxlength="1000" data-tp="fgPh" spellcheck="false" autocomplete="off"></textarea>
+        <div class="ann-row">
+          <button class="btn" type="submit" data-t="fgPreview"></button>
+          <button class="btn danger" type="button" id="forget-go" data-t="fgErase" hidden></button>
+        </div>
+      </form>
+      <p class="ann-current" id="forget-result" style="white-space:pre-line;margin:10px 0 0"></p>
+    </div>
     <form class="dev-form" id="sync-form">
       <input id="sync-login" type="text" data-tp="loginPh" autocomplete="off" spellcheck="false" maxlength="25">
       <button class="btn danger" type="submit" data-t="syncBtn"></button>
@@ -410,6 +422,11 @@
       <span class="sub" id="dev-count" style="margin:0"></span>
     </div>
     <div class="dev-table"><table id="dev-entries"></table></div>
+    <div class="ann" id="audit" style="margin:16px 0 0">
+      <h3 data-t="auditTitle"></h3>
+      <p class="sub" data-t="auditSub"></p>
+      <div class="dev-table"><table id="audit-list"></table></div>
+    </div>
   </section>
 
   <footer data-t="footer"></footer>
@@ -480,6 +497,8 @@
       puNone: 'Pas encore de données : le comptage commence avec cette mise à jour.',
       puWeek: '7 derniers jours :', puWeekSent: '{n} envoyée(s)', puWeekLives: '{n} live(s) détecté(s)', puWeekTests: '{n} test(s)', puWeekFail: '{n} échec(s)', puWeekLimit: '{n} refus de ntfy.sh ou du service de push (429)', puWeekRelay: '{n} essai(s) avec le relais injoignable', puWeekGone: '{n} abonnement(s) expiré(s)',
       updated: 'Mis à jour à {t}', unavailable: 'Statistiques indisponibles ({e})',
+      fgTitle: 'Effacer les données d’une personne', fgSub: 'Compte Twitch (pseudo, ou identifiant), identifiant d’installation, retour (clé fb_… ou lien de son post Discord), compte Discord (<@…>) ou sujet ntfy (tu-…), plusieurs à la fois séparés par des espaces. Efface la sauvegarde et les réglages synchronisés, l’entrée du comptage, les votes et réactions, les retours (photos, réponses, posts Discord) et les abonnements aux notifications. Retours et abonnements ne sont liés ni au compte ni à l’installation : désigne-les à part. Aperçu d’abord : rien n’est effacé avant la confirmation.', fgPh: '@pseudo, identifiant d’installation, fb_…, lien du post, <@…>, tu-…', fgPreview: 'Aperçu', fgErase: 'Tout effacer', fgConfirm: 'Effacer définitivement ces données ?', fgRecognised: 'Reconnu :', fgFound: 'Trouvé :', fgErased: 'Effacé :', fgUnknown: 'Pas reconnu :', fgNothing: 'rien de stocké', fgNone: 'Rien de reconnu.', fg_sync: 'sauvegarde', fg_settings: 'réglages', fg_usage: 'comptage', fg_votes: 'votes', fg_reactions: 'réactions', fg_reports: 'retours', fg_pictures: 'photos', fg_posts: 'posts Discord', fg_subscriptions: 'abonnements aux notifications', fg_channels: 'chaînes suivies',
+      auditTitle: 'Journal des actions (90 jours)', auditSub: 'Chaque action d’administration faite depuis /stats, les apps ou Discord : quand, qui, d’où, quoi.', auditNone: 'Aucune action notée pour l’instant.', auditErr: 'Journal indisponible ({e})', thWhen: 'Quand', thFrom: 'D’où', thWhat: 'Action', thDetail: 'Détail', from_stats: '/stats', from_app: 'app', from_discord: 'Discord',
     },
     en: {
       title: 'Usage · TwitchUnblock', h1: 'usage', refresh: '↻ Refresh', back: 'Back to site',
@@ -536,6 +555,8 @@
       puNone: 'No data yet: counting starts with this update.',
       puWeek: 'Last 7 days:', puWeekSent: '{n} sent', puWeekLives: '{n} live(s) detected', puWeekTests: '{n} test(s)', puWeekFail: '{n} failed', puWeekLimit: '{n} refused by ntfy.sh or the push service (429)', puWeekRelay: '{n} attempt(s) with the relay unreachable', puWeekGone: '{n} expired subscription(s)',
       updated: 'Updated at {t}', unavailable: 'Stats unavailable ({e})',
+      fgTitle: 'Erase a person’s data', fgSub: 'Twitch account (username, or ID), install ID, report (fb_… key or the link to its Discord post), Discord account (<@…>) or ntfy topic (tu-…), several at once separated by spaces. Erases the backup and synced settings, the usage entry, votes and reactions, reports (photos, replies, Discord posts) and notification subscriptions. Reports and subscriptions aren’t tied to the account or the install: name them separately. Preview first: nothing is erased before you confirm.', fgPh: '@username, install ID, fb_…, post link, <@…>, tu-…', fgPreview: 'Preview', fgErase: 'Erase all', fgConfirm: 'Erase this data for good?', fgRecognised: 'Recognised:', fgFound: 'Found:', fgErased: 'Erased:', fgUnknown: 'Not recognised:', fgNothing: 'nothing stored', fgNone: 'Nothing recognised.', fg_sync: 'backup', fg_settings: 'settings', fg_usage: 'usage entries', fg_votes: 'votes', fg_reactions: 'reactions', fg_reports: 'reports', fg_pictures: 'photos', fg_posts: 'Discord posts', fg_subscriptions: 'notification subscriptions', fg_channels: 'followed channels',
+      auditTitle: 'Admin log (90 days)', auditSub: 'Every admin action taken from /stats, the apps or Discord: when, who, from where, what.', auditNone: 'No action logged yet.', auditErr: 'Log unavailable ({e})', thWhen: 'When', thFrom: 'From', thWhat: 'Action', thDetail: 'Detail', from_stats: '/stats', from_app: 'app', from_discord: 'Discord',
     },
     es: {
       title: 'Uso · TwitchUnblock', h1: 'uso', refresh: '↻ Actualizar', back: 'Volver al sitio',
@@ -592,6 +613,8 @@
       puNone: 'Aún no hay datos: el recuento empieza con esta actualización.',
       puWeek: 'Últimos 7 días:', puWeekSent: '{n} enviada(s)', puWeekLives: '{n} directo(s) detectado(s)', puWeekTests: '{n} prueba(s)', puWeekFail: '{n} fallo(s)', puWeekLimit: '{n} rechazo(s) de ntfy.sh o del servicio de push (429)', puWeekRelay: '{n} intento(s) con el relé inaccesible', puWeekGone: '{n} suscripción(es) caducada(s)',
       updated: 'Actualizado a las {t}', unavailable: 'Estadísticas no disponibles ({e})',
+      fgTitle: 'Borrar los datos de una persona', fgSub: 'Cuenta de Twitch (usuario o ID), ID de instalación, comentario (clave fb_… o enlace a su publicación de Discord), cuenta de Discord (<@…>) o tema ntfy (tu-…), varios a la vez separados por espacios. Borra la copia y los ajustes sincronizados, la entrada del recuento, los votos y reacciones, los comentarios (fotos, respuestas, publicaciones de Discord) y las suscripciones a notificaciones. Los comentarios y las suscripciones no están ligados a la cuenta ni a la instalación: indícalos aparte. Primero una vista previa: nada se borra antes de confirmar.', fgPh: '@usuario, ID de instalación, fb_…, enlace, <@…>, tu-…', fgPreview: 'Vista previa', fgErase: 'Borrar todo', fgConfirm: '¿Borrar estos datos definitivamente?', fgRecognised: 'Reconocido:', fgFound: 'Encontrado:', fgErased: 'Borrado:', fgUnknown: 'No reconocido:', fgNothing: 'nada guardado', fgNone: 'Nada reconocido.', fg_sync: 'copia', fg_settings: 'ajustes', fg_usage: 'recuento', fg_votes: 'votos', fg_reactions: 'reacciones', fg_reports: 'comentarios', fg_pictures: 'fotos', fg_posts: 'publicaciones de Discord', fg_subscriptions: 'suscripciones a notificaciones', fg_channels: 'canales seguidos',
+      auditTitle: 'Registro de acciones (90 días)', auditSub: 'Cada acción de administración hecha desde /stats, las apps o Discord: cuándo, quién, desde dónde, qué.', auditNone: 'Ninguna acción registrada todavía.', auditErr: 'Registro no disponible ({e})', thWhen: 'Cuándo', thFrom: 'Desde', thWhat: 'Acción', thDetail: 'Detalle', from_stats: '/stats', from_app: 'app', from_discord: 'Discord',
     },
   }
   const LANG = (() => {
@@ -905,7 +928,7 @@
       const me = await (await authed('/me')).json()
       // Instance auto-hébergée sans ADMIN_TWITCH_IDS : plus d'admin par défaut, on le dit.
       if (me.login) $('#who').innerHTML = `${t('signedIn')} <b>${esc(me.login)}</b>${me.admin ? ' · admin' : me.adminConfigured === false ? ` · ${esc(t('noAdmin'))}` : ''}`
-      if (me.admin) { $('#dev').hidden = false; loadEntries(); loadAnnouncement(); loadPollAdmin(); loadFeedback() }
+      if (me.admin) { $('#dev').hidden = false; loadEntries(); loadAnnouncement(); loadPollAdmin(); loadFeedback(); loadAudit() }
     } catch {}
   }
 
@@ -1446,6 +1469,64 @@
     } catch (err) { devMsg(t('fail', { e: err.message }), 'err') }
   })
 
+  // ── Effacer les données d'une personne : aperçu, puis effacement ──────
+  const FG_KEYS = ['sync', 'settings', 'usage', 'votes', 'reactions', 'reports', 'pictures', 'posts', 'subscriptions', 'channels']
+  let fgWho = ''   // ce que montre l'aperçu, seul effacé ensuite
+  function forgetText(r) {
+    const found = FG_KEYS.filter((k) => r.found?.[k] > 0).map((k) => `${t(`fg_${k}`)} ${fmt(r.found[k])}`)
+    return [
+      `${t('fgRecognised')} ${(r.targets || []).map((x) => x.label).join(' · ') || '—'}`,
+      `${t(r.dry ? 'fgFound' : 'fgErased')} ${found.join(' · ') || t('fgNothing')}`,
+      ...(r.unknown?.length ? [`${t('fgUnknown')} ${r.unknown.join(' · ')}`] : []),
+    ].join('\n')
+  }
+  async function forget(who, dry) {
+    const res = await authed('/forget', { method: 'POST', body: JSON.stringify({ who, dry }) })
+    const r = await res.json()
+    if (!res.ok) throw new Error(r.error || `HTTP ${res.status}`)
+    return r
+  }
+  $('#forget-form').addEventListener('submit', async (e) => {
+    e.preventDefault()
+    const who = $('#forget-who').value.trim()
+    $('#forget-go').hidden = true
+    fgWho = ''
+    if (!who) return
+    try {
+      const r = await forget(who, true)
+      $('#forget-result').textContent = r.targets?.length ? forgetText(r)
+        : `${t('fgNone')}${r.unknown?.length ? ` ${t('fgUnknown')} ${r.unknown.join(' · ')}` : ''}`
+      if (FG_KEYS.some((k) => r.found?.[k] > 0)) { fgWho = who; $('#forget-go').hidden = false }
+    } catch (err) { $('#forget-result').textContent = t('fail', { e: err.message }) }
+  })
+  $('#forget-go').addEventListener('click', async () => {
+    if (!fgWho || !confirm(t('fgConfirm'))) return
+    $('#forget-go').hidden = true
+    try {
+      const r = await forget(fgWho, false)
+      $('#forget-result').textContent = forgetText(r)
+      fgWho = ''
+      loadAudit(); loadEntries(); loadFeedback({ quiet: true })
+    } catch (err) { $('#forget-result').textContent = t('fail', { e: err.message }) }
+  })
+  // Texte changé : l'aperçu ne vaut plus, il faut le refaire.
+  $('#forget-who').addEventListener('input', () => { $('#forget-go').hidden = true; fgWho = '' })
+
+  // ── Journal d'audit (90 jours) ────────────────────────────────────────
+  async function loadAudit() {
+    const table = $('#audit-list')
+    try {
+      const res = await authed('/audit')
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const list = (await res.json()).entries ?? []
+      const when = (at) => new Date(at).toLocaleString(LOCALE, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
+      table.innerHTML = list.length
+        ? `<thead><tr><th>${esc(t('thWhen'))}</th><th>${esc(t('thWho'))}</th><th>${esc(t('thFrom'))}</th><th>${esc(t('thWhat'))}</th><th>${esc(t('thDetail'))}</th></tr></thead><tbody>${
+          list.map((a) => `<tr><td>${esc(when(a.at))}</td><td>${esc(a.who)}</td><td>${esc(t(`from_${a.from}`))}</td><td>${esc(a.what)}</td><td>${esc(a.detail || '')}</td></tr>`).join('')}</tbody>`
+        : `<tbody><tr><td>${esc(t('auditNone'))}</td></tr></tbody>`
+    } catch (e) { table.innerHTML = `<tbody><tr><td>${esc(t('auditErr', { e: e.message }))}</td></tr></tbody>` }
+  }
+
   async function load() {
     const btn = $('#refresh')
     btn.disabled = true
@@ -1470,7 +1551,7 @@
     clearTimeout(resizeTimer)
     resizeTimer = setTimeout(() => { if (lastStats) { chartNew(lastStats.daily); chartActive(lastStats); chartPush(lastStats) } }, 150)
   })
-  $('#refresh').addEventListener('click', () => { load(); if (!$('#dev').hidden) { loadEntries(); loadAnnouncement(); loadPollAdmin(); loadFeedback() } })
+  $('#refresh').addEventListener('click', () => { load(); if (!$('#dev').hidden) { loadEntries(); loadAnnouncement(); loadPollAdmin(); loadFeedback(); loadAudit() } })
   load()
   checkAdmin()
   // Rafraîchi toutes les 2 minutes tant que la page est affichée.

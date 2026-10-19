@@ -32,6 +32,8 @@ export default {
         // n'importe qui pouvait viser : il ne fait rien.
         if (dockerCron(env)) return;
         applyEnvConfig(env);
+        // Battement : dernier passage noté, pour le bot (section « Exploitation »).
+        ctx.waitUntil(opsCronBeat(env, 'cron').catch((e) => logCaught('cron/beat', e)));
         ctx.waitUntil(pushTick(env).catch((e) => recordServerError(env, 'cron/notifications', e)));
         ctx.waitUntil(relayWatch(env, new Date(event?.scheduledTime || Date.now())).catch((e) => recordServerError(env, 'cron/relay', e)));
     },
@@ -69,8 +71,12 @@ export default {
                 // Outils d'administration (compte du propriétaire uniquement)
                 case '/api/admin/me': return await handleAdminMe(request);
                 case '/api/admin/usage': return await handleAdminUsage(request, env);
-                case '/api/admin/usage/delete': return await handleAdminUsageDelete(request, env);
-                case '/api/admin/sync/delete': return await handleAdminSyncDelete(request, env);
+                // Actions notées au journal d'audit (audited, section « Exploitation »).
+                case '/api/admin/usage/delete': return await audited(request, env, ctx, (r) => handleAdminUsageDelete(r, env));
+                case '/api/admin/sync/delete': return await audited(request, env, ctx, (r) => handleAdminSyncDelete(r, env));
+                // Journal d'audit, effacement des données d'une personne
+                case '/api/admin/audit': return await handleAdminAudit(request, env);
+                case '/api/admin/forget': return await handleAdminForget(request, env, ctx);
 
                 // Annonces affichées dans l'app (lecture publique, écriture admin)
                 case '/api/announcement': return await handleAnnouncementGet(env);
@@ -78,14 +84,14 @@ export default {
                 // Sondages (lecture et vote publics, création admin ou bot)
                 case '/api/poll': return await handlePollState(request, env);
                 case '/api/poll/vote': return await handlePollVote(request, env);
-                case '/api/admin/poll': return await handleAdminPoll(request, env);
+                case '/api/admin/poll': return await audited(request, env, ctx, (r) => handleAdminPoll(r, env));
                 // Retours (bug, idée) du site et de l'app
                 case '/api/feedback': return await handleFeedback(request, env, ctx);
                 case '/api/feedback/thread': return await handleFeedbackThread(request, env);
                 case '/api/feedback/reply': return await handleFeedbackReply(request, env, ctx);
                 case '/api/feedback/photo': return await handleFeedbackPhoto(url, request, env);
-                case '/api/feedback/discord': return await handleFeedbackBot(request, env);
-                case '/api/admin/feedback': return await handleAdminFeedback(request, env, ctx);
+                case '/api/feedback/discord': return await audited(request, env, ctx, (r) => handleFeedbackBot(r, env, ctx));
+                case '/api/admin/feedback': return await audited(request, env, ctx, (r) => handleAdminFeedback(r, env, ctx));
 
                 // Notifications de live du site installé (Web Push)
                 case '/api/push/key': return await handlePushKey(env);
@@ -97,7 +103,7 @@ export default {
 
                 // Commandes Moobot pour le site (son API refuse les navigateurs)
                 case '/api/bot-commands/moobot': return await handleMoobotCommands(url);
-                case '/api/admin/announcement': return await handleAdminAnnouncement(request, env);
+                case '/api/admin/announcement': return await audited(request, env, ctx, (r) => handleAdminAnnouncement(r, env));
 
                 default:
                     // Docker (site + Worker ensemble) : les adresses du site façon
@@ -1506,9 +1512,13 @@ function cleanErrors(list) {
 async function readJsonObject(request) {
     try {
         const v = await request.json();
-        return v && typeof v === 'object' && !Array.isArray(v) ? v : null;
+        const body = v && typeof v === 'object' && !Array.isArray(v) ? v : null;
+        // Gardé pour le journal d'audit (audited) : rien à relire ni à recopier.
+        if (body) parsedBodies.set(request, body);
+        return body;
     } catch (e) { return null; }
 }
+const parsedBodies = new WeakMap();   // requête → corps lu par readJsonObject
 
 // ═══════════════════════════════════════════════════════════════════════════
 //  Administration : réservé aux comptes de ADMIN_IDS (jeton Twitch vérifié).
@@ -2548,9 +2558,11 @@ async function feedbackTeamUpdate(env, key, { message = '', photos = [], status 
 //   userReply (/bug sur Discord, réponses en message privé, photos
 //   comprises), delete, block, merge, fix / released (« c'est en ligne »),
 //   summary, health, announce, poll / poll-end / poll-state (sondage).
+//   Exploitation (opsBotTool, en fin de fichier) : ops (état du serveur),
+//   forget (effacer les données d'une personne), audit (note au journal).
 //   Messages d'erreur en anglais : le bot les
 //   affiche.
-async function handleFeedbackBot(request, env) {
+async function handleFeedbackBot(request, env, ctx = null) {
     const secret = String(env.FEEDBACK_BOT_SECRET || '');
     if (secret.length < 16 || !env.DB) return jsonError('Discord bridge not configured', 404);
     if (request.method !== 'POST') return jsonError('Method Not Allowed', 405);
@@ -2573,6 +2585,8 @@ async function handleFeedbackBot(request, env) {
     }
 
     if (body.action === 'backfill') return jsonResponse(await backfillDiscord(env));
+    const ops = await opsBotTool(env, ctx, body);
+    if (ops) return ops;
     const general = await feedbackBotTool(env, body);
     if (general) return general;
 
@@ -3646,7 +3660,7 @@ async function handleCron(request, env) {
     if (await sha256hex(request.headers.get('Authorization') || '') !== await sha256hex(`Bearer ${secret}`)) {
         return jsonError('Accès refusé', 403);
     }
-    const runs = await Promise.allSettled([pushTick(env), relayWatch(env, new Date())]);
+    const runs = await Promise.allSettled([pushTick(env), relayWatch(env, new Date()), opsCronBeat(env, 'docker')]);
     for (const r of runs) if (r.status === 'rejected') console.error(r.reason);
     return jsonResponse({ ok: true });
 }
@@ -4270,8 +4284,9 @@ async function pushCheckLives(env, now, counts = {}) {
             if (stream === before) continue;
             changes.push([login, stream]);
             if (stream && before !== '?') {
+                // stream : le live, pour la vignette des messages ntfy (ntfyLiveMessage).
                 started.push({ login, name: u.displayName || login, title: u.stream.title || '',
-                               game: u.stream.game?.displayName || '', icon: u.profileImageURL || '' });
+                               game: u.stream.game?.displayName || '', icon: u.profileImageURL || '', stream });
             }
         }
     }
@@ -4361,11 +4376,8 @@ async function pushSend(env, room, counts = {}) {
             return false;
         });
         if (!ntfyRows.length) return;
-        const results = await sendNtfy(env, ntfyRows.map((q) => {
-            const n = notice(q);
-            return { topic: ntfyTopic(q), title: n.title, message: n.body || n.title,
-                     click: ntfyClick(q, `live/${n.live.login}`), tags: ['red_circle'] };
-        }));
+        // Vignette, avatar et bouton « Regarder » en plus (section « Exploitation »).
+        const results = await sendNtfy(env, ntfyRows.map((q) => ntfyLiveMessage(q, notice(q))));
         // Relais en panne : un essai compté, pas un par message — ils sont
         // retentés à chaque passage, jusqu'à 30 minutes.
         if (results.length && results.every((r) => r.relay)) pushCount(counts, 'ntfy', results[0]);
@@ -4401,4 +4413,485 @@ async function pushSend(env, room, counts = {}) {
         cleanup.push(db.prepare('DELETE FROM push_queue WHERE sub IN (SELECT value FROM json_each(?1))').bind(list));
     }
     await db.batch(cleanup);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Exploitation : surveiller et administrer le serveur.
+//
+//  - Battement de la tâche planifiée (`ops_cron`) : son dernier passage. Le
+//    bot du relais prévient au-delà de 5 min sans passage (et /status).
+//  - État du serveur pour le bot (action `ops` de /api/feedback/discord) :
+//    plafonds du jour et leur remplissage, taille de la base, ntfy (envois du
+//    jour, pause), file des notifications, dernier passage de la tâche,
+//    version déployée (liaison `version_metadata` de wrangler.toml).
+//  - Journal d'audit (`audit_<date>_<hasard>`, 90 jours) : chaque action
+//    d'administration réussie, depuis /stats, les apps ou Discord — qui,
+//    quoi, quand, d'où (audited, autour des routes concernées). Lu par
+//    GET /api/admin/audit.
+//  - Effacement des données d'une personne : POST /api/admin/forget et
+//    l'action `forget` du bot (/forget-user), aperçu d'abord.
+//  - Messages ntfy de live enrichis : vignette, avatar, bouton « Regarder ».
+//  Rien ici ne change les routes existantes ni la forme de leurs réponses.
+// ═══════════════════════════════════════════════════════════════════════════
+const OPS_CRON_KEY = 'ops_cron';
+// D1 gratuit : 500 Mo par base (pleine, plus rien ne s'y écrit).
+const OPS_DB_FREE = 500 * 1024 * 1024;
+
+/** Passage de la tâche planifiée (`via` : « cron » de Cloudflare, « docker »
+ *  pour la boucle de l'image), noté à chaque minute : une écriture D1. */
+async function opsCronBeat(env, via) {
+    if (!env.DB) return;
+    await store(env).put(OPS_CRON_KEY, '', { metadata: { at: Date.now(), via } });
+}
+
+/** Version déployée : liaison `version_metadata` (identifiant, étiquette et
+ *  date de la version) ; absente en Docker, où le commit de l'image
+ *  (BUILD_SHA, posé par docker/entrypoint.sh) en tient lieu. null sinon. */
+function workerVersion(env) {
+    const m = env.CF_VERSION_METADATA;
+    if (m?.id) return { id: String(m.id), tag: m.tag ? String(m.tag) : null, timestamp: m.timestamp ? String(m.timestamp) : null };
+    const sha = String(env.BUILD_SHA || '').trim().toLowerCase();
+    return /^[0-9a-f]{7,40}$/.test(sha) ? { id: null, tag: sha, timestamp: null } : null;
+}
+
+/** Plafonds du jour (UTC) de tout le Worker, gardés en D1 (takeNtfyLimits) :
+ *  [compteur, plafond, nom affiché par le bot (en anglais, comme lui)]. */
+const OPS_DAILY_CAPS = [
+    ['fbd', FEEDBACK_PER_DAY, 'New reports'],
+    ['fbr', FEEDBACK_REPLIES_PER_DAY, 'Replies to reports'],
+    ['pnew', USAGE_NEW_PER_DAY, 'New anonymous installs counted'],
+    ['ntn', NTFY_NEW_PER_DAY, 'New ntfy topics'],
+    ['ntt', NTFY_TESTS_PER_DAY, 'ntfy tests'],
+    ['pfc', PUSH_CHANGES_PER_DAY, 'Followed-channel changes (notifications)'],
+    ['pfl', PUSH_NEW_LOGINS_PER_DAY, 'Channels new to the notifications'],
+];
+
+/** État du serveur pour le bot (alertes de pic, /status) : quelques lectures
+ *  par l'index, en une requête groupée. */
+async function opsSnapshot(env) {
+    await ensureSchema(env);
+    const db = env.DB;
+    const now = Date.now();
+    const day = new Date(now).toISOString().slice(0, 10);
+    const res = await db.batch([
+        db.prepare(`SELECT key, value FROM kv WHERE key IN (SELECT value FROM json_each(?1))`)
+            .bind(JSON.stringify(OPS_DAILY_CAPS.map(([name]) => ntfyLimitKey(name)))),
+        // Votes et réactions : un compteur par sondage ou annonce (`ndw_<p|a><id>`).
+        db.prepare(`SELECT key, value FROM kv WHERE key >= 'lim:ndw_' AND key < 'lim:ndw\`' AND substr(key, -10) = ?1`).bind(day),
+        db.prepare(`SELECT metric, n FROM stats_day WHERE day = ?1 AND metric IN ('fb_photo_b64', 'pu_ok_ntfy')`).bind(day),
+        db.prepare(`SELECT s.kind, COUNT(*) AS n, MIN(q.at) AS oldest FROM push_queue q JOIN push_subs s ON s.id = q.sub GROUP BY s.kind`),
+        db.prepare(`SELECT value FROM kv WHERE key = 'push_ntfy_pause'`),
+        db.prepare(`SELECT meta FROM kv WHERE key = ?1`).bind(OPS_CRON_KEY),
+    ]);
+    const [fixed, devices, stats, queue, pause, cron] = res.map((r) => r?.results || []);
+    // Taille de la base : D1 la donne avec chaque requête.
+    const bytes = Math.max(0, ...res.map((r) => Number(r?.meta?.size_after) || 0));
+    const value = new Map(fixed.map((r) => [r.key, Number(r.value) || 0]));
+    const caps = OPS_DAILY_CAPS.map(([id, max, label]) => ({ id, label, n: value.get(ntfyLimitKey(id)) || 0, max }));
+    for (const r of devices) {
+        const scope = String(r.key).slice('lim:ndw_'.length, -11);
+        caps.push({ id: `ndw_${scope}`, label: scope.startsWith('p') ? 'Poll votes' : 'Announcement reactions', n: Number(r.value) || 0, max: DEVICE_WRITES_PER_DAY });
+    }
+    const metric = new Map(stats.map((r) => [r.metric, Number(r.n) || 0]));
+    // Photos des retours : en Mo (de base64), comme leur plafond.
+    caps.push({ id: 'photos', label: 'Report screenshots (MB)', n: Math.round((metric.get('fb_photo_b64') || 0) / 1048576),
+                max: Math.round(FEEDBACK_PHOTOS_PER_DAY / 1048576) });
+    // Budget du jour des notifications ntfy de live (sans NTFY_TOKEN seulement).
+    if (!env.NTFY_TOKEN) {
+        const lives = await ntfyDayTotals(env, now).catch((e) => { logCaught('ops/ntfy', e); return null; });
+        if (lives) {
+            caps.push({ id: 'ntl', label: 'ntfy live notifications', n: lives.total, max: NTFY_LIVES_PER_DAY },
+                { id: 'ntly', label: 'ntfy live notifications to new topics', n: lives.young, max: NTFY_YOUNG_PER_DAY });
+        }
+    }
+    let p = null;
+    try { p = JSON.parse(pause[0]?.value || 'null'); } catch (e) { /* illisible : pas de pause */ }
+    const route = ntfyRoute(env);
+    const lanes = { web: { n: 0, oldest: 0 }, ntfy: { n: 0, oldest: 0 } };
+    for (const r of queue) {
+        const lane = lanes[r.kind === 'ntfy' ? 'ntfy' : 'web'];
+        lane.n += Number(r.n) || 0;
+        const oldest = Number(r.oldest) || 0;
+        if (oldest && (!lane.oldest || oldest < lane.oldest)) lane.oldest = oldest;
+    }
+    return {
+        at: now,
+        db: { bytes, max: OPS_DB_FREE, pauseAt: FEEDBACK_DB_MAX },
+        cron: parseMeta(cron[0]?.meta),
+        version: workerVersion(env),
+        ntfy: { route, sentToday: metric.get('pu_ok_ntfy') || 0, quota: env.NTFY_TOKEN ? null : NTFY_FREE_DAILY,
+                pausedUntil: p?.via === route && p.until > now ? p.until : 0, code: Number(p?.code) || 0 },
+        queue: lanes,
+        caps,
+    };
+}
+
+/** Outils d'exploitation du bot (/api/feedback/discord, secret partagé) :
+ *  une réponse si l'action est l'une des leurs, sinon null. */
+async function opsBotTool(env, ctx, body) {
+    switch (body.action) {
+        case 'ops':
+            return jsonResponse(await opsSnapshot(env));
+        // /forget-user : aperçu, puis effacement (`dry: false`) une fois confirmé.
+        case 'forget':
+            return jsonResponse(await forgetPerson(env, ctx, body.who, { dry: body.dry !== false, actor: botActor(body.by) }));
+        // Action du bot seul (réglages, notes de version publiées…), notée au journal.
+        case 'audit': {
+            const what = String(body.what || '');
+            if (!/^[a-z][a-z0-9.-]{1,39}$/.test(what)) return jsonError('Bad action name', 400);
+            await writeAudit(env, { ...botActor(body.by), what, detail: body.detail });
+            return jsonResponse({ ok: true });
+        }
+    }
+    return null;
+}
+
+// ── Journal d'audit ────────────────────────────────────────────────────────
+const AUDIT_PREFIX = 'audit_';
+const AUDIT_TTL = 90 * 86400;
+const AUDIT_FROM = ['stats', 'app', 'discord'];
+const auditExcerpt = (v, max = 60) => {
+    const s = cleanText(v, 400).replace(/\s+/g, ' ');
+    return s.length > max ? `${s.slice(0, max - 1)}…` : s;
+};
+
+/** Note au journal : `who` (pseudo Twitch ou nom Discord), `by` (son
+ *  identifiant), `from` (stats, app, discord), `what` (l'action), `detail`. */
+async function writeAudit(env, { who, by = null, from, what, detail = '' }) {
+    if (!env.DB) return;
+    const at = Date.now();
+    const meta = { at, who: cleanText(who, 60) || '?', from: AUDIT_FROM.includes(from) ? from : 'stats', what: cleanText(what, 40),
+                   ...(detail ? { detail: cleanText(detail, 300) } : {}), ...(by ? { by: cleanText(by, 40) } : {}) };
+    // Date en base 36 (8 caractères jusqu'en 2059) : l'ordre des clés est celui du temps.
+    await store(env).put(`${AUDIT_PREFIX}${at.toString(36)}_${crypto.randomUUID().slice(0, 6)}`, '', { metadata: meta, expirationTtl: AUDIT_TTL });
+}
+
+/** Qui agit depuis /stats ou une app : le compte Twitch du jeton (vérifié
+ *  par la route, gardé en cache). /stats envoie l'en-tête Origin, les apps
+ *  non. */
+async function adminActor(request) {
+    const who = await tokenIdentity(request).catch(() => null);
+    return { who: who?.login || (who?.userId ? `#${who.userId}` : '?'), by: who?.userId ? `twitch:${who.userId}` : null,
+             from: request.headers.get('Origin') ? 'stats' : 'app' };
+}
+
+/** Le membre Discord qui a agi (`by` envoyé par le bot ; un bot d'avant ne
+ *  l'envoie pas). */
+function botActor(by) {
+    const id = /^\d{5,25}$/.test(String(by?.id || '')) ? String(by.id) : null;
+    return { who: cleanText(by?.name, 60) || (id ? `#${id}` : 'Discord'), by: id ? `discord:${id}` : null, from: 'discord' };
+}
+
+/** Route d'administration dont les actions réussies (POST) vont au journal.
+ *  La réponse est rendue telle quelle ; la note s'écrit à côté (waitUntil).
+ *  Le corps est celui que la route a déjà lu (readJsonObject) : une réponse
+ *  avec photos (2 Mo) n'est ni recopiée ni relue. Seule la réponse d'une
+ *  action (quelques centaines d'octets) est relue, pour son identifiant. */
+async function audited(request, env, ctx, run) {
+    const res = await run(request);
+    const body = parsedBodies.get(request);
+    if (request.method !== 'POST' || !res.ok || !body || !env.DB) return res;
+    const path = new URL(request.url).pathname;
+    const bot = path === '/api/feedback/discord';
+    const describe = (answer) => (bot ? describeBotAction(body, answer) : describeAdminAction(path, body, answer));
+    if (!describe({})) return res;   // lecture, mémoire du bot, photo… : rien à noter
+    const out = res.clone();
+    const note = (async () => {
+        const act = describe((await out.json().catch(() => null)) || {});
+        if (act) await writeAudit(env, { ...(bot ? botActor(body.by) : await adminActor(request)), ...act });
+    })().catch((e) => logCaught('audit', e));
+    if (ctx?.waitUntil) ctx.waitUntil(note); else await note;
+    return res;
+}
+
+/** Action de /stats ou d'une app → { what, detail }, ou null (pas une
+ *  action : « Vu » sur un retour, simple lecture). */
+function describeAdminAction(path, b, out) {
+    switch (path) {
+        case '/api/admin/usage/delete': {
+            const key = String(b.key || '');
+            const target = b.target !== 'key' ? cleanText(b.target, 12)
+                : key.startsWith(USAGE_ACCOUNT_PREFIX) ? `account #${key.slice(USAGE_ACCOUNT_PREFIX.length)}`
+                : `install ${key.slice(USAGE_PREFIX.length, USAGE_PREFIX.length + 8)}…`;
+            return { what: 'usage.delete', detail: `${target} — ${Number(out.deleted) || 0} deleted` };
+        }
+        case '/api/admin/sync/delete':
+            return { what: 'sync.delete', detail: `@${cleanText(b.login, 25)}${out.existed === false ? ' (nothing stored)' : ''}` };
+        case '/api/admin/announcement':
+            if (Array.isArray(b.templates)) return { what: 'announce.templates', detail: `${(out.templates || []).length} template(s)` };
+            if (b.clear === true) return { what: 'announce.clear' };
+            return { what: b.edit === true ? 'announce.edit' : 'announce.publish', detail: auditExcerpt(out.announcement?.title || out.announcement?.message) };
+        case '/api/admin/poll':
+            if (b.clear === true) return { what: 'poll.clear' };
+            return { what: b.end === true ? 'poll.end' : 'poll.start', detail: auditExcerpt(out.poll?.question) };
+        case '/api/admin/feedback':
+            if (b.seen) return null;
+            if (typeof b.reply?.key === 'string') return { what: 'report.reply', detail: `${b.reply.key} — ${auditExcerpt(b.reply.message) || 'pictures'}` };
+            if (typeof b.status?.key === 'string') return { what: 'report.status', detail: `${b.status.key} → ${cleanText(b.status.status, 12)}` };
+            if (b.testWebhook === true) return { what: 'webhook.test' };
+            if (typeof b.delete === 'string') return { what: 'report.delete', detail: b.delete };
+            if (b.clear === true) return { what: 'report.clear', detail: `${Number(out.deleted) || 0} report(s)` };
+            return null;
+    }
+    return null;
+}
+
+/** Action du bot (au nom d'un membre, `by`) → { what, detail }, ou null
+ *  (lectures, mémoire du bot, retours des personnes, sorties). */
+function describeBotAction(b, out) {
+    const key = cleanText(out.key, 40);
+    switch (b.action) {
+        case 'status': return { what: 'report.status', detail: `${key} → ${cleanText(out.status || b.status, 12)}` };
+        case 'reply': return { what: 'report.reply', detail: `${key} — ${auditExcerpt(b.message) || 'pictures'}` };
+        case 'delete': return { what: 'report.delete', detail: key };
+        case 'block': return { what: 'report.close', detail: key };
+        case 'merge': return { what: 'report.merge', detail: `${key} → ${cleanText(out.into, 40)}` };
+        case 'fix': return { what: 'report.fix', detail: `${key} → ${cleanText(b.platform, 10)}` };
+        case 'announce':
+            if (b.clear === true) return { what: 'announce.clear' };
+            return { what: 'announce.publish', detail: auditExcerpt(out.announcement?.title || out.announcement?.message) };
+        case 'poll': return { what: 'poll.start', detail: auditExcerpt(out.poll?.question) };
+        case 'poll-end': return { what: 'poll.end', detail: auditExcerpt(out.poll?.question) };
+    }
+    return null;
+}
+
+// GET /api/admin/audit — le journal, du plus récent au plus ancien (300 au plus).
+async function handleAdminAudit(request, env) {
+    const { denied } = await requireAdmin(request);
+    if (denied) return denied;
+    if (!env.DB) return jsonError("Base D1 'DB' non liée au Worker.", 500);
+    await ensureSchema(env);
+    const { results } = await env.DB.prepare(`SELECT meta FROM kv WHERE key >= ?1 AND key < ?2 AND ${alive(Date.now())}
+        ORDER BY key DESC LIMIT 300`).bind(AUDIT_PREFIX, 'audit`').all();
+    const entries = (results || []).map((r) => parseMeta(r.meta)).filter(Boolean);
+    return new Response(JSON.stringify({ entries, days: AUDIT_TTL / 86400 }), {
+        headers: { ...RESPONSE_HEADERS, 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
+    });
+}
+
+// ── Effacement des données d'une personne ─────────────────────────────────
+// Ce qui se rattache à quoi : un compte Twitch a sa sauvegarde (`user_<id>`),
+// ses réglages synchronisés (`prefs_<id>`) et son entrée du comptage
+// (`usage_a_<id>`) ; un identifiant d'installation (ou de navigateur), son
+// entrée du comptage (`usage_<id>`), ses votes (`pollv_<sondage>_<id>`) et
+// ses réactions (`annr_<annonce>_<id>`). Les retours ne gardent ni compte ni
+// installation (seulement le compte Discord de qui a écrit avec /bug), et un
+// abonnement aux notifications non plus : on les désigne eux-mêmes — clé du
+// retour ou lien de son post, compte Discord, sujet ntfy (tu-…) ou adresse
+// d'envoi Web Push. Un retour part avec ses photos, sa discussion et son post
+// Discord (corbeille du bot).
+const FORGET_MAX = 10;
+const FORGET_FOUND = ['sync', 'settings', 'usage', 'votes', 'reactions', 'reports', 'pictures', 'posts', 'subscriptions', 'channels'];
+// Photos des retours de la liste JSON `?1` : clés `fbimg_<retour>_<n>`.
+const FORGET_PHOTOS = `key >= 'fbimg_' AND key < 'fbimg\`'
+    AND EXISTS (SELECT 1 FROM json_each(?1) AS j WHERE substr(kv.key, 7, length(j.value) + 1) = j.value || '_')`;
+
+const pushEndpointOk = (s) => {
+    try { const u = new URL(s); return u.protocol === 'https:' && PUSH_HOSTS.test(u.hostname) && s.length <= 1000; }
+    catch (e) { return false; }
+};
+
+/** Identifiants reconnus dans un texte libre (espaces, virgules) : 10 au
+ *  plus. Un nombre de 15 chiffres et plus est de Discord (post ou personne),
+ *  un plus court un identifiant Twitch ; « @nom » force un pseudo. */
+function parseForgetTargets(raw) {
+    const t = { twitch: [], logins: [], installs: [], reports: [], posts: [], discord: [], snowflakes: [], subs: [], unknown: [] };
+    const tokens = [...new Set(String(raw ?? '').split(/[\s,;]+/).filter(Boolean))];
+    for (const tok of tokens.slice(0, FORGET_MAX)) {
+        let m;
+        if ((m = /^<@!?(\d{5,25})>$/.exec(tok))) t.discord.push(m[1]);
+        else if ((m = /^https:\/\/(?:(?:ptb|canary)\.)?discord(?:app)?\.com\/channels\/\d+\/(\d{5,25})(?:\/\d+)?\/?$/.exec(tok))) t.posts.push(m[1]);
+        else if (FEEDBACK_KEY_RE.test(tok)) t.reports.push(tok);
+        else if (/^[0-9a-fA-F-]{36}$/.test(tok)) t.installs.push(tok);
+        else if ((m = /^(?:https:\/\/ntfy\.sh\/)?(tu-[a-z0-9]{20,40})$/.exec(tok))) t.subs.push({ endpoint: `${NTFY_URL}/${m[1]}`, label: `ntfy topic ${m[1].slice(0, 7)}…` });
+        else if (pushEndpointOk(tok)) t.subs.push({ endpoint: tok, label: `Web Push (${new URL(tok).hostname})` });
+        else if (/^\d{15,25}$/.test(tok)) t.snowflakes.push(tok);
+        else if (/^\d{1,14}$/.test(tok)) t.twitch.push(tok);
+        else if ((m = /^@?([A-Za-z0-9_]{1,25})$/.exec(tok))) t.logins.push(m[1].toLowerCase());
+        else t.unknown.push(tok.slice(0, 40));
+    }
+    if (tokens.length > FORGET_MAX) t.unknown.push(`+${tokens.length - FORGET_MAX} more (${FORGET_MAX} at most)`);
+    return t;
+}
+
+/**
+ * Aperçu (`dry`, par défaut) ou effacement des données désignées par `raw`.
+ * Rend { ok, dry, targets: [{ kind, label }], unknown: [texte], found:
+ * { catégorie: nombre } } ; l'effacement est noté au journal (`actor`).
+ * Une dizaine de requêtes D1 en tout, quel que soit le nombre de clés (listes
+ * en JSON) : un Worker gratuit en a 50 par appel.
+ */
+async function forgetPerson(env, ctx, raw, { dry = true, actor = null } = {}) {
+    await ensureSchema(env);
+    const db = env.DB;
+    const live = alive(Date.now());
+    const t = parseForgetTargets(raw);
+    const targets = [];
+    const unknown = [...t.unknown];
+    const found = Object.fromEntries(FORGET_FOUND.map((k) => [k, 0]));
+    // Comptes Twitch : pseudo → identifiant (le pseudo peut changer, pas lui).
+    const accounts = new Map(t.twitch.map((id) => [id, `Twitch #${id}`]));
+    for (const login of t.logins) {
+        let id = null;
+        try { id = (await twitchGQL('query($l: String!) { user(login: $l) { id } }', { l: login }))?.data?.user?.id; }
+        catch (e) { logCaught('forget/login', e); }
+        if (/^\d{1,20}$/.test(String(id || ''))) accounts.set(String(id), `@${login}`);
+        else unknown.push(`@${login} (no such Twitch account)`);
+    }
+    for (const label of accounts.values()) targets.push({ kind: 'twitch', label });
+    for (const d of t.installs) targets.push({ kind: 'install', label: `install ${d.slice(0, 8)}…` });
+    for (const k of t.reports) targets.push({ kind: 'report', label: k });
+    for (const p of t.posts) targets.push({ kind: 'post', label: `Discord post ${p}` });
+    for (const d of t.discord) targets.push({ kind: 'discord', label: `Discord user ${d}` });
+    for (const s of t.snowflakes) targets.push({ kind: 'discord', label: `Discord ${s}` });
+    for (const s of t.subs) targets.push({ kind: 'subscription', label: s.label });
+
+    // Clés connues d'avance → catégorie (`link` : post Discord → retour).
+    const kinds = new Map();
+    for (const id of accounts.keys()) {
+        kinds.set(`user_${id}`, 'sync');
+        kinds.set(`prefs_${id}`, 'settings');   // réglages synchronisés (/api/sync/prefs)
+        kinds.set(`${USAGE_ACCOUNT_PREFIX}${id}`, 'usage');
+    }
+    // L'app iPhone envoie son identifiant en majuscules, le site en minuscules.
+    for (const d of t.installs) for (const v of [d, d.toLowerCase(), d.toUpperCase()]) kinds.set(`${USAGE_PREFIX}${v}`, 'usage');
+    for (const p of [...t.posts, ...t.snowflakes]) kinds.set(`${FEEDBACK_DISCORD_PREFIX}${p}`, 'link');
+    const devices = [...new Set(t.installs.map((d) => d.toLowerCase()))];
+    const people = [...new Set([...t.discord, ...t.snowflakes])];
+    const reads = [];
+    if (kinds.size) reads.push(['have', db.prepare(`SELECT key, value FROM kv WHERE key IN (SELECT value FROM json_each(?1)) AND ${live}`).bind(JSON.stringify([...kinds.keys()]))]);
+    if (devices.length) {
+        reads.push(['votes', db.prepare(`SELECT key FROM kv WHERE ((key >= 'pollv_' AND key < 'pollv\`') OR (key >= 'annr_' AND key < 'annr\`'))
+            AND lower(substr(key, -36)) IN (SELECT value FROM json_each(?1)) AND ${live}`).bind(JSON.stringify(devices))]);
+    }
+    // Retours écrits depuis Discord (/bug) : le compte Discord est gardé (`du`).
+    if (people.length) {
+        reads.push(['discord', db.prepare(`SELECT key FROM kv WHERE key >= 'fb_' AND key < 'fb\`'
+            AND (CASE WHEN json_valid(meta) THEN json_extract(meta, '$.du') END) IN (SELECT value FROM json_each(?1)) AND ${live}`).bind(JSON.stringify(people))]);
+    }
+    const got = reads.length ? await db.batch(reads.map(([, q]) => q)) : [];
+    const rows = Object.fromEntries(reads.map(([name], i) => [name, got[i]?.results || []]));
+    const doomed = new Set();
+    const reportKeys = new Set(t.reports);
+    const posts = new Set();
+    for (const r of rows.have || []) {
+        const kind = kinds.get(r.key);
+        if (kind === 'link') {
+            if (FEEDBACK_KEY_RE.test(String(r.value))) reportKeys.add(String(r.value));
+            doomed.add(r.key);
+            posts.add(r.key.slice(FEEDBACK_DISCORD_PREFIX.length));
+            continue;
+        }
+        found[kind]++;
+        doomed.add(r.key);
+    }
+    for (const r of rows.votes || []) {
+        doomed.add(r.key);
+        found[r.key.startsWith(POLL_VOTE_PREFIX) ? 'votes' : 'reactions']++;
+    }
+    for (const r of rows.discord || []) reportKeys.add(r.key);
+
+    // Retours : leur post Discord (`dt`) et leurs photos.
+    const reportList = JSON.stringify([...reportKeys]);
+    if (reportKeys.size) {
+        const [metas, pics] = (await db.batch([
+            db.prepare(`SELECT key, meta FROM kv WHERE key IN (SELECT value FROM json_each(?1)) AND ${live}`).bind(reportList),
+            db.prepare(`SELECT COUNT(*) AS n FROM kv WHERE ${FORGET_PHOTOS}`).bind(reportList),
+        ])).map((r) => r?.results || []);
+        for (const r of metas) {
+            const m = parseMeta(r.meta) || {};
+            found.reports++;
+            doomed.add(r.key);
+            if (/^\d{5,25}$/.test(String(m.dt || ''))) {
+                posts.add(String(m.dt));
+                doomed.add(`${FEEDBACK_DISCORD_PREFIX}${m.dt}`);
+            }
+        }
+        found.pictures = Number(pics[0]?.n) || 0;
+    }
+    found.posts = posts.size;
+
+    // Abonnements aux notifications (Web Push ou sujet ntfy) et leurs chaînes.
+    const subIds = [...new Set(await Promise.all(t.subs.map((s) => pushIdOf(s.endpoint))))];
+    const subList = JSON.stringify(subIds);
+    if (subIds.length) {
+        const [subs, follows] = (await db.batch([
+            db.prepare(`SELECT id FROM push_subs WHERE id IN (SELECT value FROM json_each(?1))`).bind(subList),
+            db.prepare(`SELECT COUNT(*) AS n FROM push_follow WHERE sub IN (SELECT value FROM json_each(?1))`).bind(subList),
+        ])).map((r) => r?.results || []);
+        found.subscriptions = subs.length;
+        found.channels = Number(follows[0]?.n) || 0;
+    }
+
+    if (!dry) {
+        const ops = [];
+        if (doomed.size) ops.push(db.prepare(`DELETE FROM kv WHERE key IN (SELECT value FROM json_each(?1))`).bind(JSON.stringify([...doomed])));
+        if (reportKeys.size) ops.push(db.prepare(`DELETE FROM kv WHERE ${FORGET_PHOTOS}`).bind(reportList));
+        if (subIds.length) {
+            ops.push(
+                // Ses chaînes que plus personne ne suivra : plus vérifiées (comme handlePushUnsubscribe).
+                db.prepare(`DELETE FROM push_live WHERE login IN (SELECT login FROM push_follow WHERE sub IN (SELECT value FROM json_each(?1)))
+                    AND NOT EXISTS (SELECT 1 FROM push_follow f WHERE f.login = push_live.login AND f.sub NOT IN (SELECT value FROM json_each(?1)))`).bind(subList),
+                db.prepare(`DELETE FROM push_subs WHERE id IN (SELECT value FROM json_each(?1))`).bind(subList),
+                db.prepare(`DELETE FROM push_follow WHERE sub IN (SELECT value FROM json_each(?1))`).bind(subList),
+                db.prepare(`DELETE FROM push_queue WHERE sub IN (SELECT value FROM json_each(?1))`).bind(subList),
+            );
+        }
+        if (ops.length) await db.batch(ops);
+        // Posts Discord des retours : supprimés par le bot (corbeille).
+        if (posts.size) await trashDiscordPosts(env, ctx, [...posts]);
+        pollCountCache = null;
+        statsCache = null;
+        const counts = FORGET_FOUND.filter((k) => found[k]).map((k) => `${k} ${found[k]}`).join(', ') || 'nothing stored';
+        await writeAudit(env, { ...(actor || { who: '?', from: 'stats' }), what: 'forget',
+            detail: `${targets.map((x) => x.label).join(', ') || '—'} — ${counts}` });
+    }
+    return { ok: true, dry, targets, unknown, found };
+}
+
+// POST /api/admin/forget { who, dry } — `who` : identifiants séparés par des
+// espaces ; `dry` (par défaut) : aperçu, rien n'est effacé ; `dry: false` :
+// effacement, noté au journal.
+async function handleAdminForget(request, env, ctx) {
+    if (request.method !== 'POST') return jsonError('Method Not Allowed', 405);
+    const { denied } = await requireAdmin(request);
+    if (denied) return denied;
+    if (!env.DB) return jsonError("Base D1 'DB' non liée au Worker.", 500);
+    let body;
+    if (!(body = await readJsonObject(request))) return jsonError('JSON invalide', 400);
+    const r = await forgetPerson(env, ctx, body.who, { dry: body.dry !== false, actor: await adminActor(request) });
+    return new Response(JSON.stringify(r), { headers: { ...RESPONSE_HEADERS, 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } });
+}
+
+// ── Notifications ntfy de live enrichies ───────────────────────────────────
+/** Bouton des messages ntfy de live, dans la langue de l'abonnement. */
+const NTFY_WATCH = { fr: 'Regarder', en: 'Watch', es: 'Ver', ru: 'Смотреть' };
+const TWITCH_IMAGE = /^https:\/\/static-cdn\.jtvnw\.net\/\S{1,300}$/;
+
+/**
+ * Message ntfy d'un live qui commence (`q` : ligne de la file et son
+ * abonnement ; `n` : notice de pushSend). Titre et texte comme avant, et en
+ * plus :
+ *   - attach : la vignette du live, en grande image dans la notification ;
+ *     `s` (le live) pour qu'une image d'un live précédent, gardée en cache,
+ *     ne resserve pas ;
+ *   - icon : l'avatar de la chaîne, en petite image (seule l'app Android de
+ *     ntfy affiche `icon` : d'où la vignette en pièce jointe) ;
+ *   - click et un bouton « Regarder » (action view) : l'app, par le schéma de
+ *     l'abonnement (« TU Test » a le sien).
+ * Un relais d'avant ne transmet que les champs qu'il connaît : la
+ * notification reste alors celle d'avant.
+ */
+function ntfyLiveMessage(q, n) {
+    const login = String(n.live.login || '').toLowerCase();
+    const click = ntfyClick(q, `live/${login}`);
+    const msg = { topic: ntfyTopic(q), title: n.title, message: n.body || n.title, click, tags: ['red_circle'] };
+    if (LOGIN_RE.test(login)) {
+        const s = /^\d{1,20}$/.test(String(n.live.stream || '')) ? `?s=${n.live.stream}` : '';
+        msg.attach = `https://static-cdn.jtvnw.net/previews-ttv/live_user_${login}-640x360.jpg${s}`;
+        msg.actions = [{ action: 'view', label: NTFY_WATCH[pushLang(q.lang)] || NTFY_WATCH.en, url: click, clear: true }];
+    }
+    if (TWITCH_IMAGE.test(String(n.live.icon || ''))) msg.icon = n.live.icon;
+    return msg;
 }

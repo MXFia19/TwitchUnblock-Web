@@ -47,6 +47,12 @@ binding = "DB"
 database_name = "twitchunblock"
 database_id = "b586defd-3216-425b-9c13-e75abd8dbd13"
 
+# Version déployée (identifiant, date) : le bot du relais la compare au
+# dernier commit de main qui change worker.js, et prévient quand le Worker a
+# du retard (worker.js, workerVersion). Une liaison, rien à poser.
+[version_metadata]
+binding = "CF_VERSION_METADATA"
+
 # Worker de secours, sur un AUTRE compte Cloudflare : le quota gratuit
 # (100 000 requêtes par jour) est par compte. Déployé sous le nom
 # « test2-fallback » avec `npx wrangler deploy --env fallback`.
