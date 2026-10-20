@@ -44,7 +44,8 @@
 //  vers le site et vers l'app (une adresse du Worker qui y renvoie) ;
 //  /my-reports (ce qu'on a envoyé et son état) ; /suggest (une suggestion :
 //  un retour, et une carte publique où les membres votent ; boutons d'état
-//  pour le développeur) et /suggestions top.
+//  pour le développeur ; la carte part avec la suggestion, par la corbeille)
+//  et /suggestions top — réponses gardées 60 s.
 //  Bienvenue (/setup use: Welcome) : un message pour chaque arrivée, avec
 //  Download, Pick roles et Help ; il demande l'intent GUILD_MEMBERS, refusé
 //  par Discord s'il n'est pas activé dans le portail (le bot repart alors
@@ -2466,12 +2467,38 @@ export function startDiscordBridge({
     return links.length ? ` · ${links.join(' · ')}` : ''
   }
 
+  // Chaque lecture parcourt tous les retours en D1 : réponses du Worker
+  // gardées 60 s, celle de /suggestions top pour tous, celles de /my-reports
+  // par membre. Un retour, une suggestion ou un vote d'un membre fait relire
+  // les siennes (et /suggestions top) ; un changement d'état d'une
+  // suggestion, /suggestions top ; une suppression ou un effacement
+  // (/delete, /forget-user, corbeille), tout. Une lecture ratée n'est pas
+  // gardée.
+  const READ_TTL = 60_000
+  const reads = new Map()   // « top » ou « mr:<membre> » → { at, value: promesse }
+  function keptRead(key, load) {
+    const now = Date.now()
+    const hit = reads.get(key)
+    if (hit && now - hit.at < READ_TTL) return hit.value
+    if (reads.size > 5000) for (const [k, v] of reads) if (now - v.at >= READ_TTL) reads.delete(k)
+    const value = load()
+    reads.set(key, { at: now, value })
+    value.catch(() => { if (reads.get(key)?.value === value) reads.delete(key) })
+    return value
+  }
+  /** Après un envoi ou un vote de `who` : ses /my-reports relus, et
+   *  /suggestions top avec `top`. */
+  function readsChanged(who, top = true) {
+    reads.delete(`mr:${who}`)
+    if (top) reads.delete('top')
+  }
+
   /** /my-reports : ce que la personne a envoyé depuis Discord — le sien seul,
    *  d'après l'interaction. */
   async function myReports(i, user) {
     const t = lang(i.locale)
     let r
-    try { r = await call({ action: 'my-reports', du: user.id }) } catch (e) { return lookupError(t, e) }
+    try { r = await keptRead(`mr:${user.id}`, () => call({ action: 'my-reports', du: user.id })) } catch (e) { return lookupError(t, e) }
     const items = Array.isArray(r?.items) ? r.items : []
     if (!items.length) return t('mr_none')
     const seeForum = await forumVisible(i, user)
@@ -2484,7 +2511,7 @@ export function startDiscordBridge({
   async function topSuggestions(i, user) {
     const t = lang(i.locale)
     let r
-    try { r = await call({ action: 'suggestions', du: user.id }) } catch (e) { return lookupError(t, e) }
+    try { r = await keptRead('top', () => call({ action: 'suggestions', du: user.id })) } catch (e) { return lookupError(t, e) }
     const items = Array.isArray(r?.items) ? r.items : []
     if (!items.length) return t('st_none')
     const seeForum = await forumVisible(i, user)
@@ -2554,14 +2581,22 @@ export function startDiscordBridge({
     ? rest('PATCH', `/channels/${channel}/messages/${message.id}`, suggestionCard(key, s, message.embeds?.[0] || {}))
       .catch((e) => log.warn(`Discord bridge: suggestion card not updated (${e.message})`))
     : Promise.resolve())
-  /** Carte d'une suggestion supprimée (/stats, /delete) : plus de boutons. */
+  /** Carte d'une suggestion qui n'est plus là : plus de boutons. */
   const retireCard = (channel, message) => (channel && message?.id
     ? rest('PATCH', `/channels/${channel}/messages/${message.id}`, { components: [] }).catch(() => {})
     : Promise.resolve())
+  /** Suggestion supprimée, vue en appuyant sur sa carte : la carte perd ses
+   *  boutons, et la corbeille est vidée tout de suite (la carte y attend
+   *  peut-être : suppression faite dans /stats, sans post à prévenir). */
+  async function cardGone(i) {
+    await retireCard(i.channel_id, i.message)
+    emptyTrash().catch((e) => log.warn(`Discord bridge: trash — ${e.message}`))
+  }
 
   /** Carte relue (votes, état) après un changement venu d'ailleurs :
    *  étiquette du post, réponse rapide, /stats, fusion. */
   async function refreshCard(key) {
+    reads.delete('top')
     const s = await call({ action: 'suggestion', key })
     if (!s?.card?.c || !s.card.m) return
     const m = await rest('GET', `/channels/${s.card.c}/messages/${s.card.m}`).catch(() => null)
@@ -2600,6 +2635,7 @@ export function startDiscordBridge({
       avatar: user.avatar ? `https://cdn.discordapp.com/avatars/${user.id}/${user.avatar}.png?size=64` : null, votes: 0,
     })).catch((e) => { log.warn(`Discord bridge: suggestion card not posted in ${channel} (${e.message})`); return null })
     if (card?.id) await call({ action: 'suggest-card', key: r.key, channel, message: card.id }).catch((e) => log.warn(`Discord bridge: suggestion card not saved (${e.message})`))
+    readsChanged(user.id)   // carte comprise
     // Son post du forum (l'ordre des événements du post est gardé) : étiquette et lien.
     if (r.thread) {
       serial(r.thread, () => markSuggestion(r.thread, card?.id ? discordLink(channel, card.id) : null))
@@ -2661,9 +2697,11 @@ export function startDiscordBridge({
       } catch (e) {
         const why = e.data?.reason
         if (why === 'closed') await editCard(i.channel_id, i.message, key, e.data)
-        if (why === 'gone') await retireCard(i.channel_id, i.message)
+        if (why === 'gone') await cardGone(i)
+        if (why === 'closed' || why === 'gone') readsChanged(user.id)
         return reply(why === 'closed' ? t('v_closed') : why === 'gone' ? t('v_gone') : why === 'busy' || why === 'daily' ? t('v_wait') : `❌ ${e.message}`)
       }
+      readsChanged(user.id)
       await editCard(i.channel_id, i.message, key, r)
       return reply(t(r.voted ? 'v_added' : 'v_removed', t.num(r.votes)))
     })
@@ -2682,9 +2720,10 @@ export function startDiscordBridge({
       try {
         r = await call({ action: 'suggest-status', key, status, by: byOf(user) })
       } catch (e) {
-        if (e.data?.reason === 'gone') await retireCard(i.channel_id, i.message)
+        if (e.data?.reason === 'gone') await cardGone(i)
         return reply(e.data?.reason === 'gone' ? t('v_gone') : `❌ ${e.message}`)
       }
+      reads.delete('top')
       await editCard(i.channel_id, i.message, key, r)
       if (r.thread && !r.unchanged) {
         await serial(r.thread, async () => {
@@ -2967,13 +3006,17 @@ export function startDiscordBridge({
       case 'del': {
         if (a !== 'yes') return respond(i, 7, { content: 'Cancelled.', components: [] })
         await respond(i, 6)
+        let r
         try {
-          await call({ action: 'delete', thread, by: byOf(user) })
+          r = await call({ action: 'delete', thread, by: byOf(user) })
         } catch (e) {
           await editOriginal(i, { content: `❌ ${e.message}`, components: [] })
           return
         }
         forget(thread)
+        reads.clear()
+        // Carte publique d'une suggestion : dans la corbeille du Worker, vidée tout de suite.
+        if (r?.card) emptyTrash().catch((e) => log.warn(`Discord bridge: trash — ${e.message}`))
         await editOriginal(i, { content: 'Deleted.', components: [] })
         try {
           await rest('DELETE', `/channels/${thread}`)
@@ -3029,6 +3072,7 @@ export function startDiscordBridge({
           message: field(i, 'text'), where: field(i, 'where'), photos: photos.ok,
           user: { id: user.id, name: user.global_name || user.username },
         })
+        readsChanged(user.id, false)   // son /my-reports
         const dm = await sendDm(user.id, `👋 Thanks for your ${what}! It was sent to the developer — their replies will arrive here, and you can answer with the buttons (text or screenshots).`, r.key)
           .then(() => true, () => false)
         return `Thanks! Your ${what} was sent to the developer.` + (dm
@@ -3351,8 +3395,9 @@ export function startDiscordBridge({
   }
 
   /** Posts des retours supprimés dans /stats (liste `trash` écrite par le
-   *  Worker, qui ne peut pas les supprimer lui-même) : supprimés ici, au mot
-   *  du Worker et toutes les 10 min. Rend ceux qui sont partis. */
+   *  Worker, qui ne peut pas les supprimer lui-même), et cartes publiques des
+   *  suggestions supprimées ou effacées (« card:<salon>:<message>:<suggestion> ») :
+   *  supprimés ici, au mot du Worker et toutes les 10 min. Rend ceux qui sont partis. */
   async function emptyTrash() {
     if (!st.forum) return []
     const list = await kvGet('trash').catch(() => null)
@@ -3360,6 +3405,11 @@ export function startDiscordBridge({
     const done = []
     for (const t of list.slice(0, 50)) {
       const id = String(t)
+      const card = /^card:(\d{5,25}):(\d{5,25}):(fb_[a-z0-9]+_[0-9a-f]+)$/.exec(id)
+      if (card) {
+        if (await trashCard(card[1], card[2], card[3])) done.push(t)
+        continue
+      }
       if (!/^\d{5,25}$/.test(id)) { done.push(t); continue }
       try {
         // Seulement un post du forum des retours : tout autre salon ou fil
@@ -3379,6 +3429,7 @@ export function startDiscordBridge({
       done.push(t)
     }
     if (done.length) {
+      reads.clear()   // /my-reports et /suggestions top gardés : sans ce qui est parti
       // Retirés sur place par le Worker : relue puis réécrite ici, la liste
       // perdait un post qu'il y ajoutait entre les deux. Worker d'avant
       // (action inconnue : 400), comme avant. Pas mise à jour : ces posts,
@@ -3388,9 +3439,34 @@ export function startDiscordBridge({
         const now = (await kvGet('trash').catch(() => null)) || []
         await kvSet('trash', now.filter((t) => !done.includes(t)), 7 * 86400)
       }).catch((e) => log.warn(`Discord bridge: trash list not updated (${e.message})`))
-      log.log(`Discord bridge: ${done.length} post(s) of reports deleted in /stats removed`)
+      log.log(`Discord bridge: ${done.length} post(s) or suggestion card(s) of deleted reports removed`)
     }
     return done
+  }
+
+  /** Carte d'une suggestion supprimée (corbeille) : supprimée seulement si
+   *  c'est bien une carte de suggestion postée par le bot — celle de cette
+   *  suggestion (son bouton 👍), ou une carte déjà retirée (sans boutons).
+   *  Sans cette vérification, tout message que le bot peut supprimer, mis
+   *  dans la liste, partirait. Vrai quand elle n'est plus à traiter ; faux :
+   *  retentée plus tard. */
+  async function trashCard(channel, message, key) {
+    if (!st.me) return false   // pas encore connecté : auteur invérifiable
+    try {
+      const m = await rest('GET', `/channels/${channel}/messages/${message}`)
+      const buttons = (m?.components || []).flatMap((r) => r.components || [])
+      const ours = m?.author?.id === st.me && /^Suggestion from /.test(String(m.embeds?.[0]?.author?.name || ''))
+        && (buttons.some((b) => b.custom_id === `sv:${key}`) || !buttons.length)
+      if (!ours) {
+        log.warn(`Discord bridge: message ${message} isn’t the card of this suggestion — not deleted`)
+        return true
+      }
+      await rest('DELETE', `/channels/${channel}/messages/${message}`)
+    } catch (e) {
+      // Déjà supprimée (message ou salon inconnu) : rien à faire ; autre refus : retentée plus tard.
+      if (e.code !== 10008 && e.code !== 10003) { log.warn(`Discord bridge: suggestion card ${message} not deleted (${e.message})`); return false }
+    }
+    return true
   }
 
   async function heartbeat() {
@@ -3673,7 +3749,7 @@ export function startDiscordBridge({
   const forgets = new Map()   // jeton → { who, at }
   const FORGET_LABELS = {
     sync: 'backup (history, progress)', settings: 'synced settings', usage: 'usage entries', votes: 'poll votes',
-    reactions: 'reactions', reports: 'reports', pictures: 'pictures', posts: 'Discord posts',
+    reactions: 'reactions', reports: 'reports', pictures: 'pictures', posts: 'Discord posts', cards: 'suggestion cards',
     subscriptions: 'notification subscriptions', channels: 'followed channels',
   }
   const FORGET_HINT = 'ℹ️ Reports and notification subscriptions aren’t tied to a Twitch account or an install: add the report’s post (link or ID) or the person’s @Discord account, and their ntfy topic (tu-…) for the iOS app’s notifications.'
@@ -3720,8 +3796,10 @@ export function startDiscordBridge({
     await respond(i, 6)
     try {
       const r = await call({ action: 'forget', who: f.who, dry: false, by: byOf(user) })
-      // Posts Discord des retours : dans la corbeille du Worker, vidée tout de suite.
-      if (r.found?.posts) emptyTrash().catch((e) => log.warn(`Discord bridge: trash — ${e.message}`))
+      reads.clear()
+      // Posts Discord des retours et cartes des suggestions : dans la
+      // corbeille du Worker, vidée tout de suite.
+      if (r.found?.posts || r.found?.cards) emptyTrash().catch((e) => log.warn(`Discord bridge: trash — ${e.message}`))
       await editOriginal(i, { content: `✅ **Erased.**\n${forgetSummary(r)}`.slice(0, 1900), components: [] })
     } catch (e) {
       await editOriginal(i, { content: `❌ Not erased: ${forgetError(e)}`, components: [] })

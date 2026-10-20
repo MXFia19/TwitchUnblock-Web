@@ -171,7 +171,7 @@ ntfy.sh's free tier counts messages per IP address (250 a day). Every Cloudflare
 - Usage pings only accept random UUIDs and store no IP address.
 - Rate limits (feedback, replies, pings, notifications) count an IPv6 address by its `/64` block. Screenshots attached to feedback have a daily share per person (address or Discord account, counted in one of 65,536 anonymous buckets: no address is stored), per network (`/48`) and a daily cap for the whole Worker, and stop before the D1 database fills up; the message itself still goes through, and the website says the screenshots weren't kept.
 - Per-address limits only hold in one Worker instance's memory, and a free IPv6 `/48` holds 65,536 `/64`s, so whatever writes to D1 also has daily caps kept in D1, for the whole Worker and per network: feedback (300 new reports a day, 30 per network; 1,000 replies a day; no new report or reply once the database passes 400 MB), Discord suggestions (one every 10 minutes per person, 5 a day per person, 50 a day in all, within the 300 reports) and their votes (5,000 a day, 60 an hour per member), new anonymous installs counted (1,000 a day, 100 per network), votes and reactions (2,000 a day per poll or announcement, 40 new devices per network), followed channels for live notifications (only the difference is written: 2,000 changes a day per subscription, 3,000 per network, 10,000 in all, and 1,000 channels new to the server a day). Over a cap the answer is `429` (an install is just not counted), and a cap already reached refuses without writing anything.
-- The Discord bot's actions on the Worker all carry the shared secret (`FEEDBACK_BOT_SECRET`); `/live` and `/top` go through at most 120 Twitch lookups a minute, `/my-reports` and `/suggestions` 30 a minute per member. `/api/open/live` (the **Open in the app** button) only takes a valid Twitch name and only redirects to `twitchunblock://live/<name>`.
+- The Discord bot's actions on the Worker all carry the shared secret (`FEEDBACK_BOT_SECRET`); `/live` and `/top` go through at most 120 Twitch lookups a minute, `/my-reports` and `/suggestions` 30 a minute per member — and as each of those two reads every report in D1, the bot keeps their answers 60 seconds (`/suggestions top` the same for everyone, `/my-reports` per member; read again once that member sends something or votes). `/api/open/live` (the **Open in the app** button) only takes a valid Twitch name and only redirects to `twitchunblock://live/<name>`.
 - The developer tools only accept Twitch tokens issued to the official website and apps (or to `TWITCH_CLIENT_ID`): a token of the owner's account issued to another Twitch app doesn't open them.
 - **Admin log**: every admin action — from `/stats`, the apps or Discord: deleting, closing or merging a report, replies and statuses, announcements, polls, erasing someone's data… — is kept 90 days (who, what, when, from where) and listed at the bottom of the developer tools on `/stats`.
 - **Erasing someone's data** (`/stats` → developer tools, or `/forget-user` on Discord): shows what will go first — with the Twitch account found, ID and current username —, then erases exactly that; the admin log only notes what kind of data went and how much, nothing that identifies the person — see [Discord bot](#discord-bot-feedback-alerts-releases), *Operations*.
@@ -497,7 +497,11 @@ limited to server admins in Discord.
   **Suggestion** (the bot creates that tag if it can, next to the status
   tags), with a link to their public card. Replies, statuses, quick replies,
   `/merge`, `/delete` and `/stats` work as for any report; the card follows
-  the status.
+  the status. Deleting the suggestion (`/delete`, `/stats` — one report or
+  *Erase all* —, `/forget-user`) deletes its card too, with the author's
+  name, avatar and text: like the posts deleted in `/stats`, it goes through
+  the bot's trash, and the bot first checks the message is one of its
+  suggestion cards (that suggestion's, or one already without buttons).
 
 **Alerts and daily summary** (a private channel, picked with `/setup`): main
 or fallback Worker failing (daily request quota), ntfy notifications paused,
@@ -541,7 +545,8 @@ per version):
   reactions; **reports** (their `fb_…` key, or the link or ID of their
   Discord post; or a `@Discord user`, for what they sent with `/bug`, `/idea`
   or `/suggest`, and their suggestion votes) with their screenshots,
-  conversation, Discord post and the votes they got; **notification
+  conversation, Discord post, public card (a suggestion's) and the votes
+  they got; **notification
   subscriptions** (the iOS app's ntfy topic, `tu-…`). Reports and
   subscriptions aren't tied to an account or an install, so name them too.
   Up to 10 at once, separated by spaces. The preview shows the Twitch account
@@ -626,11 +631,15 @@ in a channel stays in English):
   (the report's status — Accepted, Done, Declined —, so the post's tag, the
   card and a direct message to the author). One suggestion every 10 minutes
   per person, 5 a day per person, 50 a day in all. `/suggestions top`: the 10
-  most voted open suggestions, with a link to their card.
+  most voted open suggestions, with a link to their card — the same answer
+  for everyone for 60 seconds, read again sooner after a vote, a new
+  suggestion, a status change or a deletion.
 - `/my-reports`: what the person sent with `/bug`, `/idea` and `/suggest`
   (only theirs: the bot takes their Discord ID from the command, never from
   an option) — short title, date, status, votes, a link to the card and, for
-  those who can open the private forum, to the post.
+  those who can open the private forum, to the post. Kept 60 seconds per
+  member (votes others give may show up to a minute late), read again once
+  they send something or vote.
 
 **Welcome messages** (`/setup use: Welcome messages for new members` in the
 channel; *Stop the welcome messages* to turn them off): each newcomer gets a

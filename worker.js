@@ -2465,10 +2465,21 @@ async function discordHook(webhook, payload, files = [], { threadId = null, thre
  *  Ajoutés sur place, en une requête (le bot retire les siens de même,
  *  action `trash-done`) : relue puis réécrite par l'un et par l'autre, la
  *  liste perdait un post ajouté entre les deux, qui restait en ligne. Plus
- *  de limite à 500, et gardée 90 jours (bot arrêté plus d'une semaine). */
+ *  de limite à 500, et gardée 90 jours (bot arrêté plus d'une semaine).
+ *  Les cartes publiques des suggestions supprimées (`cards`, entrées de
+ *  suggestionCardTrash) prennent le même chemin : le bot vérifie que c'est
+ *  bien une de ses cartes de suggestion avant de la supprimer. */
 const BOT_TRASH_TTL = 90 * 86400;
-async function trashDiscordPosts(env, ctx, threads) {
-    const ids = threads.filter((t) => /^\d{5,25}$/.test(t));
+const SUGGEST_CARD_TRASH_RE = /^card:\d{5,25}:\d{5,25}:fb_[a-z0-9]{6,12}_[0-9a-f]{8}$/;
+/** Carte publique de la suggestion `key` (`m.sc` : salon, message) pour la
+ *  corbeille du bot, « card:<salon>:<message>:<suggestion> » ; null sans carte. */
+const suggestionCardTrash = (key, m) => {
+    const id = m?.sg && m.sc ? `card:${m.sc.c}:${m.sc.m}:${key}` : '';
+    return SUGGEST_CARD_TRASH_RE.test(id) ? id : null;
+};
+async function trashDiscordPosts(env, ctx, threads, cards = []) {
+    const posts = threads.filter((t) => /^\d{5,25}$/.test(t));
+    const ids = [...posts, ...cards.filter((c) => SUGGEST_CARD_TRASH_RE.test(String(c)))];
     if (!ids.length || !env.FEEDBACK_BOT_SECRET) return;
     await ensureSchema(env);
     await env.DB.prepare(`INSERT INTO kv (key, value, expires) VALUES (?1, ?2, ?3)
@@ -2477,7 +2488,8 @@ async function trashDiscordPosts(env, ctx, threads) {
                 SELECT o.value AS id FROM json_each(CASE WHEN json_valid(kv.value) AND json_type(kv.value) = 'array' THEN kv.value ELSE '[]' END) AS o
                 UNION SELECT n.value FROM json_each(excluded.value) AS n))`)
         .bind(`${BOT_STORE_PREFIX}trash`, JSON.stringify([...new Set(ids)]), Date.now() + BOT_TRASH_TTL * 1000).run();
-    echoTeamToDiscord(env, ctx, { dt: ids[0] }, { note: '🗑️ Report deleted from /stats: this post is being deleted.' });
+    // Sans post (une carte seule) : le bot la supprime à son prochain passage.
+    if (posts.length) echoTeamToDiscord(env, ctx, { dt: posts[0] }, { note: '🗑️ Report deleted from /stats: this post is being deleted.' });
 }
 
 function echoTeamToDiscord(env, ctx, meta, { message = '', photos = [], status = null, note = null }) {
@@ -2676,7 +2688,11 @@ async function handleFeedbackBot(request, env, ctx = null) {
         await store(env).deletePrefix(`${FEEDBACK_PHOTO_PREFIX}${key}_`);
         await store(env).deletePrefix(`${SUGGEST_VOTE_PREFIX}${key}_`);
         await store(env).delete(`${FEEDBACK_DISCORD_PREFIX}${thread}`);
-        return jsonResponse({ ok: true, key });
+        // Le post, le bot le supprime lui-même ; la carte publique d'une
+        // suggestion va dans sa corbeille (`card` : à vider tout de suite).
+        const card = suggestionCardTrash(key, metadata);
+        if (card) await trashDiscordPosts(env, ctx, [], [card]);
+        return jsonResponse({ ok: true, key, ...(card ? { card: true } : {}) });
     }
     if (body.action === 'block') {
         const meta = { ...metadata, bl: true };
@@ -2751,10 +2767,12 @@ async function feedbackBotTool(env, body) {
             await store(env).put(BOT_STORE_PREFIX + k, text, ttl > 0 ? { expirationTtl: Math.max(60, ttl) } : {});
             return jsonResponse({ ok: true });
         }
-        // Posts de la corbeille (trashDiscordPosts) que le bot a supprimés :
-        // retirés de la liste sur place, ceux ajoutés entre-temps restent.
+        // Posts et cartes de la corbeille (trashDiscordPosts) que le bot a
+        // supprimés : retirés de la liste sur place, ceux ajoutés entre-temps
+        // restent. Une carte (« card:<salon>:<message>:<suggestion> ») fait
+        // jusqu'à 81 caractères.
         case 'trash-done': {
-            const ids = (Array.isArray(body.ids) ? body.ids : []).map(String).filter((t) => t.length <= 40).slice(0, 500);
+            const ids = (Array.isArray(body.ids) ? body.ids : []).map(String).filter((t) => t.length <= 100).slice(0, 500);
             if (!ids.length) return jsonResponse({ ok: true });
             await ensureSchema(env);
             await env.DB.prepare(`UPDATE kv SET value = (SELECT json_group_array(o.value) FROM json_each(kv.value) AS o
@@ -3368,18 +3386,21 @@ async function handleAdminFeedback(request, env, ctx) {
             if (metadata?.dt) await store(env).delete(`${FEEDBACK_DISCORD_PREFIX}${metadata.dt}`);
             await store(env).deletePrefix(`${FEEDBACK_PHOTO_PREFIX}${body.delete}_`);
             await store(env).deletePrefix(`${SUGGEST_VOTE_PREFIX}${body.delete}_`);   // votes d'une suggestion
-            // Son post Discord part aussi (supprimé par le bot du relais).
-            if (metadata?.dt) await trashDiscordPosts(env, ctx, [metadata.dt]);
+            // Son post Discord part aussi (supprimé par le bot du relais), et
+            // la carte publique d'une suggestion (nom, avatar, texte de l'auteur).
+            const card = suggestionCardTrash(body.delete, metadata);
+            if (metadata?.dt || card) await trashDiscordPosts(env, ctx, metadata?.dt ? [metadata.dt] : [], card ? [card] : []);
             return jsonResponse({ ok: true, deleted: 1 });
         }
         if (body.clear === true) {
             // Une requête par préfixe : une écriture par entrée dépassait le
             // plafond de requêtes D1 d'un appel (erreur 500, effacement partiel).
-            const count = (await listAll(FEEDBACK_PREFIX)).length;
+            const all = await listAll(FEEDBACK_PREFIX);
             const links = await listAll(FEEDBACK_DISCORD_PREFIX);
             for (const p of [FEEDBACK_PREFIX, FEEDBACK_PHOTO_PREFIX, FEEDBACK_DISCORD_PREFIX, SUGGEST_VOTE_PREFIX]) await store(env).deletePrefix(p);
-            await trashDiscordPosts(env, ctx, links.map((k) => k.name.slice(FEEDBACK_DISCORD_PREFIX.length)));
-            return jsonResponse({ ok: true, deleted: count });
+            await trashDiscordPosts(env, ctx, links.map((k) => k.name.slice(FEEDBACK_DISCORD_PREFIX.length)),
+                all.map((k) => suggestionCardTrash(k.name, k.metadata)).filter(Boolean));
+            return jsonResponse({ ok: true, deleted: all.length });
         }
         return jsonError('Action inconnue', 400);
     }
@@ -4973,10 +4994,10 @@ async function handleAdminAudit(request, env) {
 // installation (seulement le compte Discord de qui a écrit avec /bug), et un
 // abonnement aux notifications non plus : on les désigne eux-mêmes — clé du
 // retour ou lien de son post, compte Discord, sujet ntfy (tu-…) ou adresse
-// d'envoi Web Push. Un retour part avec ses photos, sa discussion et son post
-// Discord (corbeille du bot).
+// d'envoi Web Push. Un retour part avec ses photos, sa discussion, son post
+// Discord et, pour une suggestion, sa carte publique (corbeille du bot).
 const FORGET_MAX = 10;
-const FORGET_FOUND = ['sync', 'settings', 'usage', 'votes', 'reactions', 'reports', 'pictures', 'posts', 'subscriptions', 'channels'];
+const FORGET_FOUND = ['sync', 'settings', 'usage', 'votes', 'reactions', 'reports', 'pictures', 'posts', 'cards', 'subscriptions', 'channels'];
 /** Ce qu'un effacement a emporté, par sorte et en nombre (« sync 1, usage
  *  2 ») : tout ce que le journal en garde, rien qui désigne la personne. */
 const forgetCounts = (found) => FORGET_FOUND.filter((k) => Number(found?.[k]) > 0)
@@ -5112,6 +5133,7 @@ async function forgetPerson(env, ctx, raw, { dry = true, actor = null } = {}) {
     const doomed = new Set();
     const reportKeys = new Set(t.reports);
     const posts = new Set();
+    const cards = [];   // cartes des suggestions (suggestionCardTrash)
     for (const r of rows.have || []) {
         const kind = kinds.get(r.key);
         if (kind === 'link') {
@@ -5148,10 +5170,14 @@ async function forgetPerson(env, ctx, raw, { dry = true, actor = null } = {}) {
                 posts.add(String(m.dt));
                 doomed.add(`${FEEDBACK_DISCORD_PREFIX}${m.dt}`);
             }
+            // Carte publique d'une suggestion : nom, avatar et texte de l'auteur.
+            const card = suggestionCardTrash(r.key, m);
+            if (card) cards.push(card);
         }
         found.pictures = Number(pics[0]?.n) || 0;
     }
     found.posts = posts.size;
+    found.cards = cards.length;
 
     // Abonnements aux notifications (Web Push ou sujet ntfy) et leurs chaînes.
     const subIds = [...new Set(await Promise.all(t.subs.map((s) => pushIdOf(s.endpoint))))];
@@ -5185,8 +5211,9 @@ async function forgetPerson(env, ctx, raw, { dry = true, actor = null } = {}) {
             );
         }
         if (ops.length) await db.batch(ops);
-        // Posts Discord des retours : supprimés par le bot (corbeille).
-        if (posts.size) await trashDiscordPosts(env, ctx, [...posts]);
+        // Posts Discord des retours et cartes des suggestions : supprimés par
+        // le bot (corbeille).
+        if (posts.size || cards.length) await trashDiscordPosts(env, ctx, [...posts], cards);
         pollCountCache = null;
         statsCache = null;
         await writeAudit(env, { ...(actor || { who: '?', from: 'stats' }), what: 'forget', detail: forgetCounts(found) });
