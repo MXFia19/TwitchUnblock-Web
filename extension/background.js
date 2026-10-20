@@ -1051,9 +1051,12 @@ const POLL_STATUSES = ["ACTIVE", "COMPLETED", "TERMINATED", "ARCHIVED"];
 
 function normalizePoll(p) {
   if (!p || typeof p.id !== "string" || !TWITCH_ID_RE.test(p.id)) return null;
-  let status = typeof p.status === "string" ? p.status.toUpperCase() : null;
+  // Sans état : ACTIVE, comme l'app (LiveEventsService.fetchPoll). Le protocole
+  // n'admet pas null : le site rejetterait tout le sondage, et la réponse d'un
+  // vote pourtant compté passerait pour un échec.
+  let status = typeof p.status === "string" ? p.status.toUpperCase() : "ACTIVE";
   // Autre état de Twitch (MODERATED, INVALID…) : sondage fini.
-  if (status !== null && !POLL_STATUSES.includes(status)) status = "TERMINATED";
+  if (!POLL_STATUSES.includes(status)) status = "TERMINATED";
   const choices = arr(p.choices)
     .filter((c) => c && typeof c.id === "string" && TWITCH_ID_RE.test(c.id))
     .slice(0, 10)
@@ -1337,7 +1340,7 @@ async function opPollsVote(args, session) {
   const sendBy = Date.now() + LIMIT.spendSendMs;
   const [user, poll] = await Promise.all([sessionUser(session), readPoll(session, channel, true)]);
   if (!poll || poll.id !== args.pollId) throw new TuError("bad_args", "pollId");
-  if (poll.status !== null && poll.status !== "ACTIVE") throw new TuError("bad_args", "not_active");
+  if (poll.status !== "ACTIVE") throw new TuError("bad_args", "not_active");
   if (!poll.choices.some((c) => c.id === args.choiceId)) throw new TuError("bad_args", "choiceId");
 
   // tokens null = vote gratuit (comme l'app). Vote payé en points : forme

@@ -1053,6 +1053,13 @@ test("sondages : lecture, vote gratuit, vote avec des points", async () => {
   h.tw.poll.status = "COMPLETED";
   h.clock.now += 3001;
   assert.deepEqual((await h.spend("polls.vote", { channel: CHANNEL, pollId: "poll-1", choiceId: "ch-a", withPoints: false })).error, { code: "bad_args", message: "not_active" });
+  // Sans état chez Twitch : ACTIVE comme l'app, jamais null (hors protocole, le site rejetterait le sondage).
+  delete h.tw.poll.status;
+  h.clock.now += 3001;
+  assert.equal((await h.op("polls.get", { channel: CHANNEL })).data.poll.status, "ACTIVE");
+  h.tw.poll.status = "moderated";
+  h.clock.now += 3001;
+  assert.equal((await h.op("polls.get", { channel: CHANNEL })).data.poll.status, "TERMINATED");
 });
 
 test("sans session twitch.tv : no_session ; session refusée : no_session", async () => {
