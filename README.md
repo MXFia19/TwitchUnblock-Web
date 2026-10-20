@@ -72,7 +72,7 @@ Watch Twitch lives and VODs in your browser, no subscription needed, with the re
 - The chat connects within a few seconds even when an emote or badge source is slow (filtered network, VPN): emotes that arrive later show up in the next messages and in the pinned message. A source that failed (network, server error) is asked again the next time a chat opens
 - **Pinned message**: compact banner with badges, emotes, who pinned it and a countdown — collapse it to a chip in the chat's header
 - **Drops card**: when the channel runs a drops campaign, a card under the pinned message shows the reward, the watch time, the end date and a link to the details; dismissed, it stays away for that campaign
-- **Predictions** live (read-only), incoming **raids** and **announcements** highlighted
+- **Predictions** live (read-only — bets with the [TwitchUnblock Connect](#twitchunblock-connect-browser-extension) extension), incoming **raids** and **announcements** highlighted
 - **Hype train**, without an account: the “Incoming” card when a channel is one or two supports away from a Hype Train (dots and countdown), the departure, the current level with its real progress bar and time left, a line when a level is completed, and the end of a completed train — in real time in the main chat, every few seconds in the multi-live chat
 - Your name and **chosen words highlighted**; **filters**: hide bots, `!commands`, muted words, hide someone
 - Chat once logged in: emote and username autocomplete (Tab or a click picks the suggestion — Tab only takes an emote whose name starts with what you typed —, the arrows move through them and Enter then takes the one picked; otherwise Enter sends), emote picker, replies. Your messages show as others see them (display name, badges, `/me`, the Twitch emotes your account can use) and can be replied to once Twitch has accepted them
@@ -108,6 +108,31 @@ Watch Twitch lives and VODs in your browser, no subscription needed, with the re
 
 ---
 
+## TwitchUnblock Connect (browser extension)
+
+The website can't use your Twitch web session: twitch.tv's login cookie is out of any other site's reach, and the site never asks for it. **TwitchUnblock Connect** is a small extension for desktop browsers (Chrome and other Chromium browsers, Firefox) that keeps that session on its side and does a short, closed list of things for the site — in the main player, during a live only (not the multi-live tiles, not VODs):
+
+- **Channel points while you watch**: a “minute watched” every 60 s while the live plays (a hidden tab counts, a paused player doesn't), like the iPhone app. Your balance — with the channel's own points name and icon — and your watch streak show at the top of the chat
+- **Bonus chests**: claimed on their own (“+50” in place of the balance for a moment), or with a click on the gift when *Automatic chests* is off in the extension
+- **Predictions**: the prediction card gets an amount box with quick amounts (10, 100, 1,000, max), the outcome buttons, then a confirmation (amount and outcome) before anything is sent; your bet shows on the card, then whether it won. One outcome per prediction, as on Twitch
+- **Twitch polls**: a card with the choices, their share and a vote button; extra votes paid with channel points (cost shown, confirmed first) when the channel allows them
+- **Raids**: joined as soon as the channel announces one, for the raid bonus (“Raid bonus” in the raid banner); following the raid works as before, and an error never stops it
+
+Without the extension, with its connection to the site turned off, or on a phone, the player shows nothing more. When it's installed but the browser isn't logged in to twitch.tv, a line in the chat says so.
+
+**Install**: follow [`extension/README.md`](extension/README.md). The website's **Settings → TwitchUnblock Connect (extension)** says whether it's installed (and which version), connected (`@login`), missing a Twitch session or turned off, with the link to install it.
+
+**Security**
+- The Twitch session cookie and the integrity token never leave the extension's background: not to the page, not to its content script, not to TwitchUnblock's servers. The site sends nothing about it to the Worker or the relay, and counts nothing more in the usage statistics.
+- The page and the extension only talk through `window.postMessage` to the page's own origin; each side drops anything from another window, another origin or another protocol. The content script only runs on the official website and the test branch's preview, top frame only.
+- A closed list of operations, every argument checked on both sides (channel login, amounts from 1 to 250,000…): no free GQL request, no generic relay. Every answer is checked again by the site before use; a malformed one is an error, never a guess.
+- Spending points (bets, paid poll votes) and voting need a real click: the site sends the request inside the click on **Confirm** (or **Vote**), and the extension refuses it otherwise, or when *Bets and votes from the site* is off. Its settings are only changed in its own window, never by the page.
+- The extension limits the pace itself (reads at most once per 3 s per channel, one minute watched per 50 s, 60 requests a minute in all).
+
+Messages, operations, error codes and limits: [`extension/PROTOCOL.md`](extension/PROTOCOL.md). On the site's side, `public/assets/js/connect.js` is the bridge (detection, requests, time limits, answers checked) and `public/assets/js/chat/connect-live.js` the player and chat part; `node tools/connect-check.mjs` checks the bridge with a fake window and a fake extension (no browser, no network).
+
+---
+
 ## Community
 
 Questions, bugs, ideas: **[join the Discord](https://discord.gg/cEsMRdxsVq)**.
@@ -131,7 +156,10 @@ public/              The website, served as-is by Vercel (no build step)
       i18n.js        Translations
       store.js       History, progress, preferences (localStorage)
       util.js        Escaping, formatting, icons
-      chat/          Chat: IRC, emotes, badges, pinned message, hype train, VOD replay
+      connect.js     TwitchUnblock Connect: bridge to the browser extension
+      chat/          Chat: IRC, emotes, badges, pinned message, hype train, VOD replay,
+                     the extension's points, bets, polls and raids (connect-live.js)
+extension/           TwitchUnblock Connect, the browser extension (README.md, PROTOCOL.md)
 worker.js            Backend: Cloudflare Worker
 wrangler.toml        Worker configuration
 docker/relay.mjs     Video relay for your own server (same proxy as the Worker)
@@ -139,6 +167,7 @@ docker/discord-bot.mjs  Discord bot (feedback, alerts, releases), run by the rel
 docker/healthcheck.mjs  Container health check (site or relay)
 relay/               Its docker-compose.yml and Caddyfile (HTTPS)
 tools/reports.mjs    Reads bug reports and suggestions from the owner's computer (read-only key)
+tools/connect-check.mjs  Checks of the extension bridge (Node, no browser or network)
 .github/workflows/   Docker image (docker.yml), daily database backup (d1-backup.yml)
 vercel.json          Website configuration on Vercel
 ```

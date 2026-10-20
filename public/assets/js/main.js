@@ -13,6 +13,7 @@ import * as usage from './usage.js'
 import * as multi from './multi.js'
 import * as dl from './download.js'
 import { CHANGELOG } from './changelog.js'
+import { INSTALL_URL as CONNECT_INSTALL_URL, connect } from './connect.js'
 import { captureGlobalErrors, clearErrors, errorCount, errorLines, logError } from './errlog.js'
 import {
   $, $$, debounce, esc, formatClock, formatDuration, formatViewers, icon, isIOS, isMobile,
@@ -87,6 +88,10 @@ async function boot() {
   loadPoll(true)
   renderIcons()
   bindGlobal()
+  // Extension TwitchUnblock Connect : détectée tout de suite (messages à la
+  // page elle-même, rien vers le Worker) ; les réglages suivent son état.
+  connect.onChange(refreshConnectUi)
+  connect.start()
   setupPlayer()
   // Erreurs non rattrapées du site : dans le journal des erreurs.
   captureGlobalErrors()
@@ -3600,6 +3605,12 @@ function setupPlayer() {
     session: () => session,
     onLogin: () => login(),
     onHide: () => toggleChat(false),
+    // Points, mises, sondages et raids par l'extension TwitchUnblock
+    // Connect : chat du lecteur principal seulement (pas le multi-live).
+    connect,
+    // Direct en lecture (pas en pause, pas fini) : les minutes regardées
+    // comptent, onglet caché compris.
+    isPlaying: () => state.watch?.kind === 'live' && !state.watch.ended && player.kind === 'live' && !player.video.paused,
   })
   applyChatOpen()
   applyStatic(watch)
@@ -3988,6 +3999,10 @@ function onRaid(token, data) {
   token.raidTarget = { login: target, name: raid.target_display_name || target }
   const follow = () => { chat.hideRaid(); openLive(target) }
   if (data.type === 'raid_update_v2' || data.type === 'raid_update') {
+    // Extension TwitchUnblock Connect : le raid est rejoint (bonus de points
+    // de raid), une fois par raid, sans rien attendre ; la suite est la même
+    // avec ou sans elle, réussite ou échec.
+    chat.joinRaid(raid.id)
     chat.showRaid(raid, {
       auto: store.prefs.autoRaid,
       onFollow: follow,
@@ -4025,6 +4040,8 @@ function liveEnded(token) {
   // Lecteur arrêté, pas seulement en pause : hls.js relisait sans fin la
   // playlist du direct fini (404), sur le quota du Worker.
   player.stop()
+  // Extension : plus de minutes regardées ni de relectures pour ce direct.
+  chat.stopConnect()
   $('#watch-sub').innerHTML = `<span class="pill sm">${esc(t('offline'))}</span>`
 }
 
@@ -4909,6 +4926,40 @@ function qualityPrefOptions(cur) {
     .map((v) => `<option value="${v}" ${v === sel ? 'selected' : ''}>${esc(label(v))}</option>`).join('')
 }
 
+/** Réglages → TwitchUnblock Connect : état de l'extension dans ce
+ *  navigateur, ce qu'elle apporte, la vie privée, et où l'installer. Ses
+ *  propres réglages ne se changent que dans sa fenêtre. */
+function connectSectionInner() {
+  const s = connect.state()
+  let line
+  let tone = 'on'
+  if (s.availability === 'idle' || s.availability === 'detecting') [line, tone] = [t('connect_detecting'), 'wait']
+  else if (s.availability === 'absent') [line, tone] = [t('connect_absent'), 'off']
+  else if (s.availability === 'off') [line, tone] = [t('connect_state_off'), 'warn']
+  else if (s.session) line = t('connect_state_on', { u: s.session.login })
+  else if (s.session === null) [line, tone] = [t('connect_state_nosession'), 'warn']
+  else line = t('connect_state_installed')
+  const installed = s.availability === 'on' || s.availability === 'off'
+  if (installed && s.version) line += ` · v${s.version}`
+  const opts = s.availability === 'on' && s.session && s.settings
+    ? `<p class="muted small">${esc(t(s.settings.autoClaim ? 'connect_autoclaim_on' : 'connect_autoclaim_off'))} · ${esc(t(s.settings.allowSpend ? 'connect_spend_on' : 'connect_spend_off'))}</p>`
+    : ''
+  return `<h3>${esc(t('connect_title'))}</h3>
+    <p class="cx-state" data-tone="${tone}" role="status"><i></i><span>${esc(line)}</span></p>
+    ${opts}
+    <p class="muted small cx-about">${esc(t('connect_about'))}</p>
+    <p class="muted small cx-about">${esc(t('connect_privacy'))}</p>
+    <div class="sheet-group">
+      <a class="sheet-row" href="${CONNECT_INSTALL_URL}" target="_blank" rel="noopener">${icon('github', 18)}<span>${esc(t(installed ? 'connect_page' : 'connect_install'))}</span>${icon('external', 16)}</a>
+    </div>`
+}
+
+/** État de l'extension changé : la section des réglages suit, si ouverte. */
+function refreshConnectUi() {
+  const el = $('#set-connect')
+  if (el) el.innerHTML = connectSectionInner()
+}
+
 function openSettings() {
   const p = store.prefs
   const toggle = (id, label, checked, sub = '') => `
@@ -5017,6 +5068,7 @@ function openSettings() {
         <span class="size-ctl"><input type="range" id="set-size" min="12" max="20" step="1" value="${p.chatSize}"><output>${p.chatSize}</output></span>
       </label>
     </div>
+    <div class="sheet-section" id="set-connect">${connectSectionInner()}</div>
     <div class="sheet-section">
       <h3>${esc(t('backup'))}</h3>
       <p class="muted small">${esc(t('backup_sub'))}</p>
@@ -5062,6 +5114,8 @@ function openSettings() {
     </div>`)
   renderSettingsAccount()
   renderUsageStats()
+  // Session et réglages de l'extension relus : la section suit (onChange).
+  if (connect.state().availability === 'on') connect.refreshStatus()
 
   const sheet = $('#sheet')
   sheet.onclick = (e) => {

@@ -1307,19 +1307,89 @@ html.multi-open { overflow: hidden; }
 .raid-text b { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .raid-sub { font-size: 11px; color: var(--muted); }
 .chat-raid .icon-btn { color: var(--muted); }
-.chat-pred { padding: 7px 10px 8px; background: var(--card-hi); border-bottom: 1px solid var(--line); cursor: pointer; }
+.chat-pred, .chat-tpoll { padding: 7px 10px 8px; background: var(--card-hi); border-bottom: 1px solid var(--line); cursor: pointer; }
 .pred-head { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--purple); }
 .pred-head b { flex: 1; min-width: 0; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .pred-state { flex: none; font-size: 11px; font-weight: 700; color: var(--muted); font-variant-numeric: tabular-nums; }
 .pred-body { display: none; margin-top: 6px; flex-direction: column; gap: 6px; }
-.chat-pred.open .pred-body { display: flex; }
-.chat-pred.open .pred-head b { white-space: normal; }
+:is(.chat-pred, .chat-tpoll).open .pred-body { display: flex; }
+:is(.chat-pred, .chat-tpoll).open .pred-head b { white-space: normal; }
 .pred-label { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; }
 .pred-label span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
 .pred-label span:last-child { flex: none; color: var(--muted); font-size: 11px; }
 .pred-row.win .pred-label span:first-child { color: var(--text); }
 .pred-bar { height: 5px; margin-top: 3px; border-radius: 3px; background: var(--card); overflow: hidden; }
 .pred-bar i { display: block; height: 100%; border-radius: 3px; transition: width 0.4s ease; }
+
+/* ── TwitchUnblock Connect (extension) : points, mises, sondages, raids ─── */
+/* Solde des points de la chaîne dans l'en-tête du chat, série de visionnage,
+   et le coffre à réclamer quand les coffres automatiques sont coupés. */
+.cx-points { flex: none; display: inline-flex; align-items: center; gap: 5px; }
+.cx-bal {
+  display: inline-flex; align-items: center; gap: 4px; height: 24px; padding: 0 8px; border-radius: 12px;
+  border: 1px solid var(--line); color: var(--text); font-size: 12px; font-weight: 700;
+  font-variant-numeric: tabular-nums; white-space: nowrap; transition: color 0.2s, border-color 0.2s;
+}
+.cx-bal-ic { display: inline-flex; color: var(--purple); }
+.cx-bal-ic img { width: 14px; height: 14px; object-fit: contain; }
+.cx-bal.gain { border-color: var(--success); color: var(--success); }
+.cx-streak { display: inline-flex; align-items: center; gap: 2px; color: var(--muted); font-size: 11px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.cx-claim {
+  display: inline-grid; place-items: center; width: 28px; height: 24px; border-radius: 12px;
+  background: var(--success); color: #0e0e10; animation: cx-claim 1.6s ease-in-out infinite;
+}
+.cx-claim:hover { filter: brightness(1.1); }
+@keyframes cx-claim { 50% { transform: scale(1.08); } }
+.cx-live { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+/* Pastille de l'en-tête de la carte : « Miser », ou la mise faite. */
+.cx-tag {
+  flex: none; display: inline-flex; align-items: center; gap: 3px; height: 18px; padding: 0 6px; border-radius: 999px;
+  background: rgba(var(--primary-rgb), 0.2); color: var(--purple); font-size: 10.5px; font-weight: 800; font-variant-numeric: tabular-nums;
+}
+/* Mise : montant, boutons rapides, issue, puis confirmation. */
+.pred-act { display: none; flex-direction: column; gap: 6px; margin-top: 8px; cursor: default; }
+.chat-pred.open .pred-act:not(:empty) { display: flex; }
+.cx-amount { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.cx-amount .text-input { flex: 1 1 84px; min-width: 0; height: 30px; padding: 0 8px; font-size: 13px; font-variant-numeric: tabular-nums; }
+.cx-chip {
+  flex: none; height: 28px; padding: 0 9px; border-radius: 8px; border: 1px solid var(--line-strong); background: var(--surface);
+  color: var(--text); font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; transition: border-color 0.15s;
+}
+.cx-chip:hover:not(:disabled) { border-color: var(--purple); }
+.cx-picks { display: flex; flex-wrap: wrap; gap: 6px; }
+.cx-pick {
+  flex: 1 1 110px; min-width: 0; min-height: 32px; padding: 4px 10px; border-radius: 8px; background: var(--c); color: #fff;
+  font-size: 12.5px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; transition: filter 0.15s;
+}
+.cx-pick.blue { --c: #387aff; }
+.cx-pick.pink { --c: #f5009b; }
+.cx-pick:hover:not(:disabled) { filter: brightness(1.12); }
+.cx-line { font-size: 12px; line-height: 1.4; overflow-wrap: anywhere; }
+.cx-line.ok { color: var(--success); font-weight: 700; }
+.cx-line.lost { color: var(--muted); font-weight: 700; }
+.cx-err { font-size: 12px; line-height: 1.4; color: var(--danger); }
+.cx-confirm { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.cx-confirm span { flex: 1 1 150px; min-width: 0; font-size: 12.5px; font-weight: 600; overflow-wrap: anywhere; }
+.cx-confirm .btn.sm { height: 30px; padding: 0 10px; font-size: 12.5px; }
+/* Sondage Twitch : même allure que la prédiction, un bouton par choix. */
+.tpoll-row { display: flex; align-items: center; gap: 8px; }
+.tpoll-main { flex: 1; min-width: 0; }
+/* Extension sans session Twitch : une ligne, à fermer. */
+.cx-note { display: flex; align-items: center; gap: 8px; padding: 5px 6px 5px 10px; background: var(--card-hi); border-bottom: 1px solid var(--line); color: var(--purple); font-size: 12px; }
+.cx-note a { flex: 1; min-width: 0; color: var(--text); font-weight: 600; }
+.cx-note a:hover { text-decoration: underline; }
+.cx-note .icon-btn { color: var(--muted); }
+.raid-bonus { display: inline-flex; align-items: center; gap: 3px; color: var(--success); font-weight: 700; }
+/* Réglages → TwitchUnblock Connect */
+.cx-state { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-size: 14px; font-weight: 600; }
+.cx-state i { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+.cx-state[data-tone='on'] i { background: var(--success); }
+.cx-state[data-tone='warn'] i { background: #e6b400; }
+.cx-state[data-tone='wait'] i { animation: cx-wait 0.8s ease-in-out infinite alternate; }
+@keyframes cx-wait { to { opacity: 0.3; } }
+.cx-about { margin-top: 6px; line-height: 1.45; }
+:root[data-bg="light"] :is(.cx-bal.gain, .cx-line.ok, .raid-bonus) { color: #0b7a4c; }
+@media (prefers-reduced-motion: reduce) { .cx-claim, .cx-state i { animation: none; } }
 /* Hype train : approche (pastilles), départ, niveau en cours (barre), fin */
 .chat-hype { padding: 7px 10px 8px; background: var(--card-hi); border-bottom: 1px solid var(--line); cursor: pointer; }
 .chat-hype:focus-visible { outline-offset: -2px; }
@@ -1629,4 +1699,5 @@ html.touring { overflow: hidden; }
    page à chaque toucher. */
 @media (pointer: coarse) {
   .text-input, .emote-search, .bot-cmds-filter, .filter input, .multi-add input, .cat-lang select { font-size: 16px; }
+  .cx-amount .text-input { font-size: 16px; height: 34px; }
 }

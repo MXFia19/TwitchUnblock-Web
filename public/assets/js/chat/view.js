@@ -11,6 +11,7 @@ import { fetchPinned } from './pinned.js'
 import { fetchHypeTrain, hypeFromGQL, hypeFromHermes, hypeView, mergeHype } from './hype.js'
 import { fetchBotCommands } from './botcmds.js'
 import { VodChat } from './vod.js'
+import { ConnectLive } from './connect-live.js'
 import { badgeInfo, parseBadgeTag } from './badges.js'
 import { emoteCatalog, findEmote, suggestEmotes } from './emotes.js'
 import { linkifyHtml, plainText, resolveWords, systemMessage } from './message.js'
@@ -185,6 +186,27 @@ function formatPoints(n) {
   return n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${(n / 1e3).toFixed(1)}k` : String(n)
 }
 
+/** Couleurs des issues d'une prédiction, comme sur Twitch (aussi dans
+ *  styles.css, boutons de mise .cx-pick). */
+const PRED_COLORS = { BLUE: '#387aff', PINK: '#f5009b' }
+
+/** Prédiction reçue d'Hermes (PubSub, champs en snake_case) → forme de la
+ *  carte, commune avec celle lue par l'extension (connect-live.js). */
+function predFromHermes(ev) {
+  if (!ev?.id) return null
+  const created = Date.parse(ev.created_at)
+  return {
+    id: ev.id,
+    title: ev.title ?? '',
+    status: ev.status,
+    endsAt: Number.isFinite(created) && ev.prediction_window_seconds ? created + ev.prediction_window_seconds * 1000 : null,
+    winnerId: ev.winning_outcome_id ?? null,
+    outcomes: (ev.outcomes ?? []).map((o) => ({
+      id: o.id, title: o.title ?? '', color: o.color, points: o.total_points ?? 0, users: o.total_users ?? 0,
+    })),
+  }
+}
+
 /** L'appareil affiche-t-il l'heure en 12 h (AM/PM) ? Lu une fois, d'après
  *  sa langue (navigateur), pas celle du site. */
 const DEVICE_12H = (() => {
@@ -245,6 +267,9 @@ export class ChatView {
    * @param {() => {token: string|null, login: string|null, canChat: boolean, needRescope: boolean}} o.session
    * @param {() => void} o.onLogin
    * @param {() => void} [o.onHide]
+   * @param {object} [o.connect]      client de l'extension TwitchUnblock Connect
+   *   (connect.js) : chat du lecteur principal seulement, pas du multi-live
+   * @param {() => boolean} [o.isPlaying]  direct en lecture (pas en pause)
    */
   constructor(root, o) {
     this.root = root
@@ -272,7 +297,11 @@ export class ChatView {
     this.infoSeq = 0
     /** Hype train : génération de la boucle de lecture (une par chaîne ouverte). */
     this.hypeGen = 0
+    /** Prédiction affichée (forme de la carte), ou null. */
+    this.pred = null
     this.build()
+    /** Points, mises et sondages par l'extension, pendant un direct. */
+    this.cx = o.connect ? new ConnectLive(this, { connect: o.connect, isPlaying: o.isPlaying }) : null
   }
 
   // ── Structure ───────────────────────────────────────────────────────────
@@ -282,6 +311,7 @@ export class ChatView {
       <header class="chat-head">
         <span class="chat-title">${icon('chat', 16)}<span class="chat-title-text"></span></span>
         <span class="chat-status"></span>
+        <span class="cx-points" hidden></span>
         <button class="chat-sync" type="button" hidden></button>
         <button class="pin-chip" type="button" hidden>${icon('pin', 13)}<span data-i18n="pinned_short">${esc(t('pinned_short'))}</span></button>
         <button class="icon-btn sm chat-cmds-btn" type="button" data-i18n-title="bot_commands" title="${esc(t('bot_commands'))}">${icon('terminal', 17)}</button>
@@ -343,6 +373,7 @@ export class ChatView {
       drops: $('.chat-drops', this.root),
       info: $('.chat-info', this.root),
       events: $('.chat-events', this.root),
+      points: $('.cx-points', this.root),
     }
 
     this.el.list.addEventListener('scroll', () => this.onScroll(), { passive: true })
@@ -515,6 +546,13 @@ export class ChatView {
     this.startHype(channel)
     this.startDrops(channel)
     this.loadChatSettings(channel)
+    this.cx?.start(channel)
+  }
+
+  /** Fin du direct : plus de présence ni de relecture par l'extension (le
+   *  chat, lui, reste ouvert). */
+  stopConnect() {
+    this.cx?.stop()
   }
 
   // ── Modes du salon et règles ───────────────────────────────────────────
@@ -838,7 +876,7 @@ export class ChatView {
       ${avatar ? `<img class="raid-avatar" src="${esc(avatar)}" alt="">` : `<span class="raid-avatar">${icon('users', 16)}</span>`}
       <div class="raid-text">
         <b>${esc(t('raid_title', { u: target }))}</b>
-        <span class="raid-sub">${esc(t('raid_viewers', { n: raid.viewer_count ?? 0 }))}${auto ? ` · <span class="raid-count"></span>` : ''}</span>
+        <span class="raid-sub">${esc(t('raid_viewers', { n: raid.viewer_count ?? 0 }))}${auto ? ` · <span class="raid-count"></span>` : ''}${this.cx?.raidBonusHtml(raid) ?? ''}</span>
       </div>
       <button class="btn primary sm" type="button" data-raid-follow>${esc(t('raid_follow'))}</button>
       ${auto ? `<button class="icon-btn xs" type="button" data-raid-cancel aria-label="${esc(t('cancel'))}">${icon('x', 14)}</button>` : ''}`
@@ -859,6 +897,12 @@ export class ChatView {
   hideRaid() {
     clearInterval(this.raidTimer)
     $('.chat-raid', this.el.events)?.remove()
+  }
+
+  /** Raid annoncé sur la chaîne regardée : rejoint par l'extension
+   *  TwitchUnblock Connect (bonus de points de raid), si elle est là. */
+  joinRaid(raidId) {
+    this.cx?.joinRaid(raidId)
   }
 
   // ── Hype train ─────────────────────────────────────────────────────────
@@ -1006,51 +1050,75 @@ export class ChatView {
   }
 
   // ── Prédiction ─────────────────────────────────────────────────────────
-  /** Carte de prédiction en lecture seule : issues en %, points, compte à
-   *  rebours, puis l'issue gagnante une minute après la résolution. */
+  /** Prédiction reçue d'Hermes (temps réel, sans compte). */
   setPrediction(ev) {
+    this.showPrediction(predFromHermes(ev))
+  }
+
+  /** Carte de prédiction : issues en %, points, participants, compte à
+   *  rebours, puis l'issue gagnante une minute après la résolution. En
+   *  lecture seule, sauf avec l'extension TwitchUnblock Connect : elle la
+   *  relit aussi et y ajoute la mise (bloc .pred-act, rempli par
+   *  connect-live.js et gardé d'une mise à jour à l'autre — un montant en
+   *  cours de saisie reste). `p` : forme commune (predFromHermes). */
+  showPrediction(p) {
     clearInterval(this.predTimer)
     clearTimeout(this.predHide)
     let box = $('.chat-pred', this.el.events)
-    const status = ev?.status
-    if (!ev || status === 'CANCELED' || status === 'CANCEL_PENDING') { box?.remove(); return }
+    if (!p || p.status === 'CANCELED' || p.status === 'CANCEL_PENDING') {
+      const old = this.pred
+      box?.remove()
+      this.pred = null
+      this.cx?.predChanged(null, p ?? old)
+      return
+    }
     if (!box) {
       box = document.createElement('div')
       box.className = 'chat-pred'
+      box.innerHTML = '<div class="pred-head"></div><div class="pred-body"></div><div class="pred-act"></div>'
       this.el.events.append(box)
-      box.addEventListener('click', () => box.classList.toggle('open'))
+      // Déplier / replier, sauf depuis les commandes de mise — y compris un
+      // bouton que son propre clic vient de retirer (bloc refait).
+      box.addEventListener('click', (e) => {
+        if (box.contains(e.target) && !e.target.closest('.pred-act')) box.classList.toggle('open')
+      })
     }
-    const outcomes = ev.outcomes ?? []
-    const total = Math.max(1, outcomes.reduce((n, o) => n + (o.total_points ?? 0), 0))
-    const winner = ev.winning_outcome_id
-    const colors = { BLUE: '#387aff', PINK: '#f5009b' }
-    box.innerHTML = `
-      <div class="pred-head">
-        ${icon('sparkles', 14)}
-        <b>${esc(ev.title ?? '')}</b>
-        <span class="pred-state">${esc(status === 'RESOLVED' ? t('pred_result') : status === 'LOCKED' ? t('pred_locked') : '')}</span>
-      </div>
-      <div class="pred-body">
-        ${outcomes.map((o) => {
-          const pct = Math.round(((o.total_points ?? 0) / total) * 100)
-          const color = winner && winner !== o.id ? 'var(--muted)' : colors[o.color] ?? 'var(--purple)'
-          return `<div class="pred-row${winner === o.id ? ' win' : ''}">
-            <div class="pred-label"><span>${winner === o.id ? '🏆 ' : ''}${esc(o.title ?? '')}</span><span>${pct}% · ${esc(formatPoints(o.total_points ?? 0))} · ${esc(String(o.total_users ?? 0))} 👤</span></div>
-            <div class="pred-bar"><i style="width:${pct}%;background:${color}"></i></div>
-          </div>`
-        }).join('')}
+    this.pred = p
+    const total = Math.max(1, p.outcomes.reduce((n, o) => n + (o.points ?? 0), 0))
+    const winner = p.winnerId
+    $('.pred-body', box).innerHTML = p.outcomes.map((o) => {
+      const pct = Math.round(((o.points ?? 0) / total) * 100)
+      const color = winner && winner !== o.id ? 'var(--muted)' : PRED_COLORS[o.color] ?? 'var(--purple)'
+      // Participants inconnus (null) : rien plutôt qu'un zéro inventé.
+      const users = o.users == null ? '' : ` · ${esc(String(o.users))} 👤`
+      return `<div class="pred-row${winner === o.id ? ' win' : ''}">
+        <div class="pred-label"><span>${winner === o.id ? '🏆 ' : ''}${esc(o.title)}</span><span>${pct}% · ${esc(formatPoints(o.points ?? 0))}${users}</span></div>
+        <div class="pred-bar"><i style="width:${pct}%;background:${color}"></i></div>
       </div>`
-    if (status === 'ACTIVE' && ev.created_at && ev.prediction_window_seconds) {
-      const ends = Date.parse(ev.created_at) + ev.prediction_window_seconds * 1000
+    }).join('')
+    this.paintPredHead(box)
+    if (p.status === 'RESOLVED') this.predHide = setTimeout(() => this.showPrediction(null), 60_000)
+    this.cx?.predChanged(box, p)
+  }
+
+  /** En-tête de la carte : titre, mise possible ou faite (extension), état
+   *  ou compte à rebours. Refait seul quand la mise change. */
+  paintPredHead(box = $('.chat-pred', this.el.events)) {
+    const p = this.pred
+    if (!box || !p) return
+    clearInterval(this.predTimer)
+    const state = p.status === 'RESOLVED' ? t('pred_result') : p.status === 'LOCKED' ? t('pred_locked')
+      : p.status === 'RESOLVE_PENDING' ? t('pred_pending') : ''
+    $('.pred-head', box).innerHTML = `${icon('sparkles', 14)}<b>${esc(p.title)}</b>${this.cx?.predTag(p) ?? ''}<span class="pred-state">${esc(state)}</span>`
+    if (p.status === 'ACTIVE' && p.endsAt) {
       const el = $('.pred-state', box)
       const tickPred = () => {
-        const s = Math.max(0, Math.round((ends - Date.now()) / 1000))
+        const s = Math.max(0, Math.round((p.endsAt - Date.now()) / 1000))
         el.textContent = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
       }
       tickPred()
       this.predTimer = setInterval(tickPred, 1000)
     }
-    if (status === 'RESOLVED') this.predHide = setTimeout(() => box.remove(), 60_000)
   }
 
   /** « Épinglé par X · il y a 3 min · 12 min restantes » */
@@ -1104,6 +1172,10 @@ export class ChatView {
     clearInterval(this.raidTimer)
     clearInterval(this.predTimer)
     clearTimeout(this.predHide)
+    this.pred = null
+    // Extension : présence et relectures arrêtées (changement de chaîne,
+    // VOD, fermeture du lecteur).
+    this.cx?.stop()
     // Hype train : la boucle de lecture s'arrête (génération changée), la
     // carte part avec les autres événements.
     this.hypeGen++
