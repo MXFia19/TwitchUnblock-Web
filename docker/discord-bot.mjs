@@ -1,9 +1,9 @@
 // ═══════════════════════════════════════════════════════════════════════════
 //  Bot Discord de TwitchUnblock, lancé par relay.mjs. Tout ce qu'il poste est
 //  en anglais : la communauté l'est surtout. Seules les réponses visibles de
-//  la personne seule de /roles, /roles-config, /download, /version et /help
-//  suivent la langue de son Discord (français, espagnol, russe ; anglais
-//  sinon).
+//  la personne seule de /roles, /roles-config, /download, /version, /help,
+//  /live, /top, /my-reports, /suggest, /suggestions et /app-announce suivent
+//  la langue de son Discord (français, espagnol, russe ; anglais sinon).
 //
 //  Retours (bugs, idées) — le pont :
 //    - le Worker publie chaque retour dans un salon « Forum » (un post par
@@ -39,7 +39,17 @@
 //  message permanent dans le salon, le même menu pour tous. Seuls des rôles
 //  sûrs, revérifiés à chaque fois ; un changement toutes les 5 s par personne.
 //  Pour tous aussi : /download (toutes les façons d'installer), /version
-//  (dernières versions, lues sur GitHub et le site), /help.
+//  (dernières versions, lues sur GitHub et le site), /help ; /live (une
+//  chaîne en direct ?) et /top (les 10 plus gros directs), avec des boutons
+//  vers le site et vers l'app (une adresse du Worker qui y renvoie) ;
+//  /my-reports (ce qu'on a envoyé et son état) ; /suggest (une suggestion :
+//  un retour, et une carte publique où les membres votent ; boutons d'état
+//  pour le développeur) et /suggestions top.
+//  Bienvenue (/setup use: Welcome) : un message pour chaque arrivée, avec
+//  Download, Pick roles et Help ; il demande l'intent GUILD_MEMBERS, refusé
+//  par Discord s'il n'est pas activé dans le portail (le bot repart alors
+//  sans lui et coupe la bienvenue).
+//  /app-announce : l'annonce des apps et du site, publiée après un aperçu.
 //  À faire : « Add to to-do » (menu Apps d'un message : une bonne idée lue
 //  sur le serveur) et /todo (texte libre) postent une carte dans le salon
 //  choisi par /setup, avec un bouton Done / Reopen.
@@ -67,7 +77,11 @@
 // renvoyer vers les boutons qui écrit au bot en privé), MESSAGE_CONTENT
 // (intention privilégiée, à activer dans le portail : le texte des messages).
 const INTENTS = (1 << 0) | (1 << 9) | (1 << 12) | (1 << 15)
-// Fermetures sans nouvel essai possible.
+// GUILD_MEMBERS (intention privilégiée « Server Members ») : les arrivées,
+// pour la bienvenue — demandée seulement quand un salon est choisi.
+const GUILD_MEMBERS = 1 << 1
+// Fermetures sans nouvel essai possible (4014 avec GUILD_MEMBERS demandée :
+// nouvel essai sans elle).
 const FATAL = new Map([
   [4004, 'token refused (DISCORD_BOT_TOKEN)'],
   [4010, 'invalid shard'],
@@ -108,6 +122,11 @@ const ADMIN = '0'
 // /bug et /idea : capture facultative (type 11, pièce jointe), gardée le
 // temps de remplir le formulaire.
 const screenshotOption = (description) => [{ type: 11, name: 'screenshot', description, required: false }]
+// /top language: : codes de langue de Twitch (25 choix au plus dans Discord),
+// les mêmes que ceux qu'accepte le Worker.
+const TOP_LANGUAGES = ['en', 'es', 'pt', 'de', 'fr', 'ru', 'ja', 'ko', 'zh', 'it', 'pl', 'tr', 'ar',
+  'th', 'id', 'hi', 'uk', 'nl', 'sv', 'cs', 'hu', 'fi', 'da', 'no', 'vi']
+const languageNames = new Intl.DisplayNames(['en'], { type: 'language' })
 const COMMANDS = [
   { name: 'bug', description: 'Report a bug in TwitchUnblock (app or website)', options: screenshotOption('A screenshot of the problem (optional)') },
   { name: 'idea', description: 'Suggest an idea for TwitchUnblock', options: screenshotOption('An image to go with your idea (optional)') },
@@ -134,6 +153,9 @@ const COMMANDS = [
           { name: 'Release announcements', value: 'announcements' },
           { name: 'Test builds', value: 'testers' },
           { name: 'To-do list (suggestions to keep)', value: 'todo' },
+          { name: 'Suggestions (/suggest cards, members vote)', value: 'suggestions' },
+          { name: 'Welcome messages for new members', value: 'welcome' },
+          { name: 'Stop the welcome messages', value: 'welcome-off' },
         ],
       },
       { type: 8, name: 'role', description: 'Role to mention (release announcements or test builds)', required: false },
@@ -174,6 +196,41 @@ const COMMANDS = [
   },
   { name: 'version', description: 'Latest versions of the apps and the website' },
   { name: 'help', description: 'What the bot can do for you' },
+  {
+    name: 'live', description: 'Is a Twitch channel live? Title, category, viewers, uptime',
+    options: [{ type: 3, name: 'channel', description: 'The channel’s name (or its twitch.tv link)', required: true, max_length: 60 }],
+  },
+  {
+    name: 'top', description: 'The 10 biggest lives right now',
+    options: [
+      { type: 3, name: 'category', description: 'Only this category (e.g. Just Chatting)', required: false, max_length: 100 },
+      {
+        type: 3, name: 'language', description: 'Only streams in this language', required: false,
+        choices: TOP_LANGUAGES.map((value) => ({ name: languageNames.of(value), value })),
+      },
+    ],
+  },
+  { name: 'my-reports', description: 'What you sent with /bug, /idea or /suggest, and its status' },
+  { name: 'suggest', description: 'Suggest a feature — members can vote for it' },
+  {
+    name: 'suggestions', description: 'Suggestions sent with /suggest',
+    options: [{ type: 1, name: 'top', description: 'The 10 most voted open suggestions' }],
+  },
+  {
+    name: 'app-announce', description: 'Announcement in the apps and on the website, after a preview', default_member_permissions: ADMIN,
+    options: [
+      {
+        type: 1, name: 'post', description: 'Preview an announcement, then publish it with a button',
+        options: [
+          { type: 3, name: 'text', description: 'The message (500 characters at most)', required: true, max_length: 500 },
+          { type: 3, name: 'duration', description: 'How long: 30m, 6h, 3d… — 1 minute to 30 days (default 24h)', required: false, max_length: 12, autocomplete: true },
+          { type: 3, name: 'link', description: 'A link (https://…)', required: false, max_length: 300 },
+          { type: 3, name: 'title', description: 'A title above the message', required: false, max_length: 80 },
+        ],
+      },
+      { type: 1, name: 'clear', description: 'Remove the current announcement' },
+    ],
+  },
   { name: 'status', description: 'Server status: Workers, database, notifications, versions, quotas', default_member_permissions: ADMIN },
   {
     name: 'forget-user', description: 'Erase a person’s data (shows what will go, then asks to confirm)', default_member_permissions: ADMIN,
@@ -290,7 +347,7 @@ const I18N = {
     h_help: 'this list',
     h_replies: 'Replies to your reports come in a direct message: answer with the buttons under them.',
     h_admin: '**Developer only**',
-    h_setup: 'use this channel for alerts, release announcements, test builds or the to-do list',
+    h_setup: 'use this channel for alerts, release announcements, test builds, the to-do list, suggestions or welcome messages',
     h_announce: 'banner in the app and on the website, and remove it',
     h_poll: 'poll in the app and on the website, and end it (results posted)',
     h_todo: 'add to the to-do channel (or a message’s Apps menu → Add to to-do)',
@@ -300,6 +357,63 @@ const I18N = {
     h_public: 'post them in this channel for everyone',
     h_report: 'in a report’s post: delete it, close it, merge it into another',
     h_forget: 'erase a person’s data, after a preview',
+    h_suggest: 'suggest a feature: members vote for it',
+    h_suggestions: 'the most voted open suggestions',
+    h_my_reports: 'what you sent (bugs, ideas, suggestions) and its status',
+    h_live: 'is a channel live? Title, category, viewers',
+    h_top: 'the biggest lives right now (by category, language)',
+    h_app_announce: 'announcement in the apps and on the website, after a preview (and remove it)',
+    admin_only: 'Only the developer can use this.',
+    live_bad: 'That isn’t a Twitch channel name (letters, digits and _, 25 at most).',
+    live_wait: '⏳ One lookup every 5 seconds — try again in a moment.',
+    live_busy: '⏳ Too many lookups right now — try again in a minute.',
+    live_error: '❌ Twitch didn’t answer — try again in a moment.',
+    live_none: (n) => `No Twitch channel is called **${n}**.`,
+    live_offline: (n) => `⚫ **${n}** is offline.`,
+    live_last: (t) => `Last live: ${t}`,
+    live_tag: '🔴 LIVE',
+    f_category: 'Category', f_viewers: 'Viewers', f_uptime: 'Live for',
+    dur: (h, m) => (h ? `${h} h ${String(m).padStart(2, '0')}` : `${m} min`),
+    b_watch: 'Watch on the website', b_app: 'Open in the app',
+    top_title: 'Biggest lives right now',
+    top_none: 'No lives found.',
+    top_cat_none: (c) => `No category matches “${c}”.`,
+    top_pick: 'Open a live…',
+    mr_head: '🗂️ **What you sent from Discord**',
+    mr_none: 'Nothing sent from Discord yet — /bug, /idea or /suggest.',
+    mr_more: 'Older ones aren’t listed.',
+    mr_post: 'post', mr_card: 'card', mr_merged: 'merged into another report',
+    k_bug: 'Bug', k_idea: 'Idea', k_other: 'Other', k_suggestion: 'Suggestion',
+    s_new: 'New', s_seen: 'Seen', s_accepted: 'Accepted', s_progress: 'In progress', s_done: 'Done', s_refused: 'Declined',
+    sg_modal: 'Suggest a feature', sg_title: 'Title', sg_title_ph: 'In a few words', sg_desc: 'Description',
+    sg_desc_ph: 'What should it do, and why would it help? (members will see it)',
+    sg_wait: (t) => `⏳ One suggestion every 10 minutes — you can send the next one ${t}.`,
+    sg_daily: '⏳ That’s enough suggestions for today — try again tomorrow.',
+    sg_paused: '⏳ Suggestions are paused for now — try again later.',
+    sg_failed: (m) => `❌ Not sent (${m}).`,
+    sg_keep: 'Your text, to send it again later:',
+    sg_sent: (c) => `💡 Thanks! Your suggestion is up in <#${c}>: members can vote for it.`,
+    sg_sent_nocard: '💡 Thanks! Your suggestion was sent to the developer (it couldn’t be posted for votes right now).',
+    sg_dm: ' The developer’s replies will come in a direct message.',
+    sg_dm_off: ' I couldn’t send you a direct message: allow DMs from this server’s members (Privacy settings) to get the replies.',
+    v_added: (n) => `👍 Vote counted — ${n} in all. Tap again to remove it.`,
+    v_removed: (n) => `Vote removed — ${n} left.`,
+    v_closed: 'Voting is closed: this suggestion is done, declined or merged.',
+    v_gone: 'This suggestion no longer exists.',
+    v_wait: '⏳ Too many votes — try again in a moment.',
+    st_head: '🏆 **Most voted open suggestions**',
+    st_none: 'No open suggestions yet — add one with /suggest.',
+    ss_set: (s) => `✅ Status set: **${s}**.`,
+    ss_same: (s) => `It’s already **${s}**.`,
+    aa_preview: (until) => `👀 **Preview** — once published, it shows at the top of the apps and the website until about ${until}. Nothing is sent before you press **Publish**.`,
+    aa_replaces: (x) => `It replaces the current announcement: “${x}”.`,
+    aa_bad_duration: '❌ Duration: a number with m, h or d (30m, 6h, 3d) — from 1 minute to 30 days.',
+    aa_bad_link: '❌ Link: https:// only.',
+    aa_published: (until) => `✅ Announcement live in the apps and on the website until ${until}.`,
+    aa_cancelled: 'Cancelled — nothing was published.',
+    aa_expired: 'This preview has expired — run /app-announce post again.',
+    aa_cleared: 'Announcement removed from the apps and the website.',
+    b_publish: 'Publish', b_cancel: 'Cancel',
   },
   fr: {
     roles_intro: '🏷️ **Tes rôles** — cochés : ceux que tu as. Coche ou décoche, puis ferme le menu pour enregistrer.',
@@ -361,7 +475,7 @@ const I18N = {
     h_help: 'cette liste',
     h_replies: 'Les réponses à tes retours arrivent en message privé : réponds avec les boutons dessous.',
     h_admin: '**Réservé au développeur**',
-    h_setup: 'ce salon pour les alertes, les annonces de version, les builds de test ou la liste à faire',
+    h_setup: 'ce salon pour les alertes, les annonces de version, les builds de test, la liste à faire, les suggestions ou la bienvenue',
     h_announce: 'bandeau dans l’app et sur le site, et le retirer',
     h_poll: 'sondage dans l’app et sur le site, et le clore (résultats postés)',
     h_todo: 'ajouter à la liste à faire (ou menu Apps d’un message → Add to to-do)',
@@ -371,6 +485,62 @@ const I18N = {
     h_public: 'les poster dans ce salon pour tout le monde',
     h_report: 'dans le post d’un retour : le supprimer, le clore, le fusionner avec un autre',
     h_forget: 'effacer les données d’une personne, après un aperçu',
+    h_suggest: 'proposer une fonctionnalité : les membres votent pour elle',
+    h_suggestions: 'les suggestions ouvertes les plus votées',
+    h_my_reports: 'ce que tu as envoyé (bugs, idées, suggestions) et son état',
+    h_live: 'une chaîne est-elle en live ? Titre, catégorie, spectateurs',
+    h_top: 'les plus gros lives du moment (par catégorie, langue)',
+    h_app_announce: 'annonce dans les apps et sur le site, après un aperçu (et la retirer)',
+    admin_only: 'Seul le développeur peut s’en servir.',
+    live_bad: 'Ce n’est pas un nom de chaîne Twitch (lettres, chiffres et _, 25 au plus).',
+    live_wait: '⏳ Une recherche toutes les 5 secondes — réessaie dans un instant.',
+    live_busy: '⏳ Trop de recherches en ce moment — réessaie dans une minute.',
+    live_error: '❌ Twitch n’a pas répondu — réessaie dans un instant.',
+    live_none: (n) => `Aucune chaîne Twitch ne s’appelle **${n}**.`,
+    live_offline: (n) => `⚫ **${n}** est hors ligne.`,
+    live_last: (t) => `Dernier live : ${t}`,
+    live_tag: '🔴 EN DIRECT',
+    f_category: 'Catégorie', f_viewers: 'Spectateurs', f_uptime: 'En live depuis',
+    b_watch: 'Regarder sur le site', b_app: 'Ouvrir dans l’app',
+    top_title: 'Les plus gros lives du moment',
+    top_none: 'Aucun live trouvé.',
+    top_cat_none: (c) => `Aucune catégorie ne correspond à « ${c} ».`,
+    top_pick: 'Ouvrir un live…',
+    mr_head: '🗂️ **Ce que tu as envoyé depuis Discord**',
+    mr_none: 'Rien d’envoyé depuis Discord pour l’instant — /bug, /idea ou /suggest.',
+    mr_more: 'Les plus anciens ne sont pas listés.',
+    mr_post: 'post', mr_card: 'carte', mr_merged: 'fusionné avec un autre retour',
+    k_bug: 'Bug', k_idea: 'Idée', k_other: 'Autre', k_suggestion: 'Suggestion',
+    s_new: 'Nouveau', s_seen: 'Vu', s_accepted: 'Accepté', s_progress: 'En cours', s_done: 'Fait', s_refused: 'Refusé',
+    sg_modal: 'Proposer une fonctionnalité', sg_title: 'Titre', sg_title_ph: 'En quelques mots', sg_desc: 'Description',
+    sg_desc_ph: 'Que devrait-elle faire, et en quoi aiderait-elle ? (les membres la verront)',
+    sg_wait: (t) => `⏳ Une suggestion toutes les 10 minutes — tu pourras envoyer la suivante ${t}.`,
+    sg_daily: '⏳ Assez de suggestions pour aujourd’hui — réessaie demain.',
+    sg_paused: '⏳ Les suggestions sont en pause pour l’instant — réessaie plus tard.',
+    sg_failed: (m) => `❌ Pas envoyée (${m}).`,
+    sg_keep: 'Ton texte, pour le renvoyer plus tard :',
+    sg_sent: (c) => `💡 Merci ! Ta suggestion est dans <#${c}> : les membres peuvent voter pour elle.`,
+    sg_sent_nocard: '💡 Merci ! Ta suggestion a été envoyée au développeur (elle n’a pas pu être postée pour les votes pour l’instant).',
+    sg_dm: ' Les réponses du développeur arriveront en message privé.',
+    sg_dm_off: ' Je n’ai pas pu t’envoyer de message privé : autorise ceux des membres de ce serveur (paramètres de confidentialité) pour recevoir les réponses.',
+    v_added: (n) => `👍 Vote compté — ${n} en tout. Appuie encore pour le retirer.`,
+    v_removed: (n) => `Vote retiré — il en reste ${n}.`,
+    v_closed: 'Les votes sont clos : cette suggestion est faite, refusée ou fusionnée.',
+    v_gone: 'Cette suggestion n’existe plus.',
+    v_wait: '⏳ Trop de votes — réessaie dans un instant.',
+    st_head: '🏆 **Suggestions ouvertes les plus votées**',
+    st_none: 'Aucune suggestion ouverte pour l’instant — ajoutes-en une avec /suggest.',
+    ss_set: (s) => `✅ État posé : **${s}**.`,
+    ss_same: (s) => `C’est déjà **${s}**.`,
+    aa_preview: (until) => `👀 **Aperçu** — une fois publiée, elle s’affiche en haut des apps et du site jusqu’à ${until} environ. Rien ne part avant **Publier**.`,
+    aa_replaces: (x) => `Elle remplace l’annonce en cours : « ${x} ».`,
+    aa_bad_duration: '❌ Durée : un nombre avec m, h ou d (30m, 6h, 3d) — de 1 minute à 30 jours.',
+    aa_bad_link: '❌ Lien : https:// uniquement.',
+    aa_published: (until) => `✅ Annonce en ligne dans les apps et sur le site jusqu’à ${until}.`,
+    aa_cancelled: 'Annulé — rien n’a été publié.',
+    aa_expired: 'Cet aperçu a expiré — relance /app-announce post.',
+    aa_cleared: 'Annonce retirée des apps et du site.',
+    b_publish: 'Publier', b_cancel: 'Annuler',
   },
   es: {
     roles_intro: '🏷️ **Tus roles** — marcados: los que tienes. Marca o desmarca y cierra el menú para guardar.',
@@ -432,7 +602,7 @@ const I18N = {
     h_help: 'esta lista',
     h_replies: 'Las respuestas a tus informes llegan por mensaje directo: contesta con los botones de debajo.',
     h_admin: '**Solo para el desarrollador**',
-    h_setup: 'usar este canal para alertas, anuncios de versiones, versiones de prueba o la lista de tareas',
+    h_setup: 'usar este canal para alertas, anuncios de versiones, versiones de prueba, la lista de tareas, sugerencias o bienvenidas',
     h_announce: 'aviso en la app y el sitio web, y quitarlo',
     h_poll: 'encuesta en la app y el sitio web, y cerrarla (resultados publicados)',
     h_todo: 'añadir a la lista de tareas (o menú Apps de un mensaje → Add to to-do)',
@@ -442,6 +612,62 @@ const I18N = {
     h_public: 'publicarlos en este canal para todos',
     h_report: 'en el hilo de un informe: borrarlo, cerrarlo, fusionarlo con otro',
     h_forget: 'borrar los datos de una persona, tras una vista previa',
+    h_suggest: 'sugerir una función: los miembros la votan',
+    h_suggestions: 'las sugerencias abiertas más votadas',
+    h_my_reports: 'lo que enviaste (errores, ideas, sugerencias) y su estado',
+    h_live: '¿está en directo un canal? Título, categoría, espectadores',
+    h_top: 'los directos más grandes ahora (por categoría, idioma)',
+    h_app_announce: 'anuncio en las apps y el sitio web, tras una vista previa (y quitarlo)',
+    admin_only: 'Solo el desarrollador puede usar esto.',
+    live_bad: 'Eso no es un nombre de canal de Twitch (letras, números y _, 25 como máximo).',
+    live_wait: '⏳ Una búsqueda cada 5 segundos: vuelve a intentarlo en un momento.',
+    live_busy: '⏳ Demasiadas búsquedas ahora mismo: vuelve a intentarlo en un minuto.',
+    live_error: '❌ Twitch no respondió: vuelve a intentarlo en un momento.',
+    live_none: (n) => `Ningún canal de Twitch se llama **${n}**.`,
+    live_offline: (n) => `⚫ **${n}** no está en directo.`,
+    live_last: (t) => `Último directo: ${t}`,
+    live_tag: '🔴 EN DIRECTO',
+    f_category: 'Categoría', f_viewers: 'Espectadores', f_uptime: 'En directo desde hace',
+    b_watch: 'Ver en el sitio web', b_app: 'Abrir en la app',
+    top_title: 'Los directos más grandes ahora',
+    top_none: 'No se encontró ningún directo.',
+    top_cat_none: (c) => `Ninguna categoría coincide con «${c}».`,
+    top_pick: 'Abrir un directo…',
+    mr_head: '🗂️ **Lo que enviaste desde Discord**',
+    mr_none: 'Todavía no enviaste nada desde Discord: /bug, /idea o /suggest.',
+    mr_more: 'Los más antiguos no aparecen.',
+    mr_post: 'hilo', mr_card: 'tarjeta', mr_merged: 'fusionado con otro informe',
+    k_bug: 'Error', k_idea: 'Idea', k_other: 'Otro', k_suggestion: 'Sugerencia',
+    s_new: 'Nuevo', s_seen: 'Visto', s_accepted: 'Aceptado', s_progress: 'En curso', s_done: 'Hecho', s_refused: 'Rechazado',
+    sg_modal: 'Sugerir una función', sg_title: 'Título', sg_title_ph: 'En pocas palabras', sg_desc: 'Descripción',
+    sg_desc_ph: '¿Qué debería hacer y en qué ayudaría? (los miembros la verán)',
+    sg_wait: (t) => `⏳ Una sugerencia cada 10 minutos: podrás enviar la siguiente ${t}.`,
+    sg_daily: '⏳ Ya son suficientes sugerencias por hoy: vuelve a intentarlo mañana.',
+    sg_paused: '⏳ Las sugerencias están en pausa por ahora: vuelve a intentarlo más tarde.',
+    sg_failed: (m) => `❌ No enviada (${m}).`,
+    sg_keep: 'Tu texto, para enviarlo de nuevo más tarde:',
+    sg_sent: (c) => `💡 ¡Gracias! Tu sugerencia está en <#${c}>: los miembros pueden votarla.`,
+    sg_sent_nocard: '💡 ¡Gracias! Tu sugerencia se envió al desarrollador (por ahora no se pudo publicar para votarla).',
+    sg_dm: ' Las respuestas del desarrollador llegarán por mensaje directo.',
+    sg_dm_off: ' No pude enviarte un mensaje directo: permite los de los miembros de este servidor (ajustes de privacidad) para recibir las respuestas.',
+    v_added: (n) => `👍 Voto contado: ${n} en total. Pulsa otra vez para quitarlo.`,
+    v_removed: (n) => `Voto quitado: quedan ${n}.`,
+    v_closed: 'La votación está cerrada: esta sugerencia está hecha, rechazada o fusionada.',
+    v_gone: 'Esta sugerencia ya no existe.',
+    v_wait: '⏳ Demasiados votos: vuelve a intentarlo en un momento.',
+    st_head: '🏆 **Sugerencias abiertas más votadas**',
+    st_none: 'Todavía no hay sugerencias abiertas: añade una con /suggest.',
+    ss_set: (s) => `✅ Estado: **${s}**.`,
+    ss_same: (s) => `Ya está en **${s}**.`,
+    aa_preview: (until) => `👀 **Vista previa**: una vez publicado, aparece arriba en las apps y el sitio web hasta aproximadamente ${until}. No se envía nada hasta que pulses **Publicar**.`,
+    aa_replaces: (x) => `Sustituye al anuncio actual: «${x}».`,
+    aa_bad_duration: '❌ Duración: un número con m, h o d (30m, 6h, 3d), de 1 minuto a 30 días.',
+    aa_bad_link: '❌ Enlace: solo https://.',
+    aa_published: (until) => `✅ Anuncio visible en las apps y el sitio web hasta ${until}.`,
+    aa_cancelled: 'Cancelado: no se publicó nada.',
+    aa_expired: 'Esta vista previa caducó: vuelve a usar /app-announce post.',
+    aa_cleared: 'Anuncio retirado de las apps y del sitio web.',
+    b_publish: 'Publicar', b_cancel: 'Cancelar',
   },
   ru: {
     roles_intro: '🏷️ **Твои роли** — отмечены те, что у тебя есть. Отметь или сними отметки и закрой меню, чтобы сохранить.',
@@ -503,7 +729,7 @@ const I18N = {
     h_help: 'этот список',
     h_replies: 'Ответы на твои сообщения приходят в личку: отвечай кнопками под ними.',
     h_admin: '**Только для разработчика**',
-    h_setup: 'этот канал для оповещений, анонсов версий, тестовых сборок или списка задач',
+    h_setup: 'этот канал для оповещений, анонсов версий, тестовых сборок, списка задач, предложений или приветствий',
     h_announce: 'баннер в приложении и на сайте, и убрать его',
     h_poll: 'опрос в приложении и на сайте, и завершить его (итоги публикуются)',
     h_todo: 'добавить в список задач (или меню «Приложения» у сообщения → Add to to-do)',
@@ -513,20 +739,87 @@ const I18N = {
     h_public: 'опубликовать их в этом канале для всех',
     h_report: 'в посте отчёта: удалить, закрыть, объединить с другим',
     h_forget: 'стереть данные человека после предпросмотра',
+    h_suggest: 'предложить функцию: участники за неё голосуют',
+    h_suggestions: 'открытые предложения с наибольшим числом голосов',
+    h_my_reports: 'что ты отправил (ошибки, идеи, предложения) и их статус',
+    h_live: 'идёт ли трансляция на канале? Название, категория, зрители',
+    h_top: 'самые популярные трансляции сейчас (по категории, языку)',
+    h_app_announce: 'объявление в приложениях и на сайте после предпросмотра (и убрать его)',
+    admin_only: 'Это может использовать только разработчик.',
+    live_bad: 'Это не имя канала Twitch (буквы, цифры и _, не больше 25).',
+    live_wait: '⏳ Один поиск раз в 5 секунд — попробуй чуть позже.',
+    live_busy: '⏳ Сейчас слишком много запросов — попробуй через минуту.',
+    live_error: '❌ Twitch не ответил — попробуй чуть позже.',
+    live_none: (n) => `Канала Twitch с именем **${n}** нет.`,
+    live_offline: (n) => `⚫ **${n}** сейчас не в эфире.`,
+    live_last: (t) => `Последний эфир: ${t}`,
+    live_tag: '🔴 В ЭФИРЕ',
+    f_category: 'Категория', f_viewers: 'Зрители', f_uptime: 'В эфире',
+    dur: (h, m) => (h ? `${h} ч ${String(m).padStart(2, '0')} мин` : `${m} мин`),
+    b_watch: 'Смотреть на сайте', b_app: 'Открыть в приложении',
+    top_title: 'Самые популярные трансляции сейчас',
+    top_none: 'Трансляций не найдено.',
+    top_cat_none: (c) => `Нет категории «${c}».`,
+    top_pick: 'Открыть трансляцию…',
+    mr_head: '🗂️ **Что ты отправил из Discord**',
+    mr_none: 'Ты пока ничего не отправлял из Discord — /bug, /idea или /suggest.',
+    mr_more: 'Более старые не показаны.',
+    mr_post: 'пост', mr_card: 'карточка', mr_merged: 'объединено с другим отчётом',
+    k_bug: 'Ошибка', k_idea: 'Идея', k_other: 'Другое', k_suggestion: 'Предложение',
+    s_new: 'Новое', s_seen: 'Просмотрено', s_accepted: 'Принято', s_progress: 'В работе', s_done: 'Готово', s_refused: 'Отклонено',
+    sg_modal: 'Предложить функцию', sg_title: 'Заголовок', sg_title_ph: 'В двух словах', sg_desc: 'Описание',
+    sg_desc_ph: 'Что она должна делать и чем поможет? (участники это увидят)',
+    sg_wait: (t) => `⏳ Одно предложение раз в 10 минут — следующее можно будет отправить ${t}.`,
+    sg_daily: '⏳ На сегодня предложений достаточно — попробуй завтра.',
+    sg_paused: '⏳ Предложения пока на паузе — попробуй позже.',
+    sg_failed: (m) => `❌ Не отправлено (${m}).`,
+    sg_keep: 'Твой текст, чтобы отправить его позже:',
+    sg_sent: (c) => `💡 Спасибо! Твоё предложение в <#${c}>: участники могут за него голосовать.`,
+    sg_sent_nocard: '💡 Спасибо! Предложение отправлено разработчику (опубликовать его для голосования пока не получилось).',
+    sg_dm: ' Ответы разработчика придут в личные сообщения.',
+    sg_dm_off: ' Не удалось написать тебе в личку: разреши личные сообщения от участников этого сервера (настройки конфиденциальности), чтобы получать ответы.',
+    v_added: (n) => `👍 Голос учтён — всего ${n}. Нажми ещё раз, чтобы отменить.`,
+    v_removed: (n) => `Голос отменён — осталось ${n}.`,
+    v_closed: 'Голосование закрыто: предложение выполнено, отклонено или объединено.',
+    v_gone: 'Этого предложения больше нет.',
+    v_wait: '⏳ Слишком много голосов — попробуй чуть позже.',
+    st_head: '🏆 **Открытые предложения с наибольшим числом голосов**',
+    st_none: 'Открытых предложений пока нет — добавь своё через /suggest.',
+    ss_set: (s) => `✅ Статус: **${s}**.`,
+    ss_same: (s) => `Уже **${s}**.`,
+    aa_preview: (until) => `👀 **Предпросмотр** — после публикации объявление будет вверху приложений и сайта примерно до ${until}. Ничего не отправится, пока ты не нажмёшь **Опубликовать**.`,
+    aa_replaces: (x) => `Оно заменит текущее объявление: «${x}».`,
+    aa_bad_duration: '❌ Длительность: число с m, h или d (30m, 6h, 3d) — от 1 минуты до 30 дней.',
+    aa_bad_link: '❌ Ссылка: только https://.',
+    aa_published: (until) => `✅ Объявление показывается в приложениях и на сайте до ${until}.`,
+    aa_cancelled: 'Отменено — ничего не опубликовано.',
+    aa_expired: 'Предпросмотр устарел — снова запусти /app-announce post.',
+    aa_cleared: 'Объявление убрано из приложений и с сайта.',
+    b_publish: 'Опубликовать', b_cancel: 'Отмена',
   },
 }
 /** Textes de I18N pour `locale` (« fr », « es-ES », « es-419 », « ru »…). */
 function lang(locale) {
   const own = I18N[String(locale || '').slice(0, 2).toLowerCase()] || I18N.en
-  return (key, ...args) => {
+  const t = (key, ...args) => {
     const v = own[key] ?? I18N.en[key]
     return typeof v === 'function' ? v(...args) : v ?? key
   }
+  // Nombres et noms de langue à la façon de la personne (« 12 345 », « français »).
+  let numbers = null
+  let languages = null
+  try {
+    numbers = new Intl.NumberFormat(String(locale || 'en'))
+    languages = new Intl.DisplayNames([String(locale || 'en')], { type: 'language' })
+  } catch {}
+  t.num = (n) => (numbers || new Intl.NumberFormat('en')).format(Number(n) || 0)
+  t.language = (code) => { try { return (languages || languageNames).of(code) || code } catch { return code } }
+  return t
 }
 const EN = lang('en')
 // /help : commandes du développeur, montrées à lui seul.
 const ADMIN_HELP = [
-  ['/setup', 'h_setup'], ['/announce · /announce-clear', 'h_announce'], ['/poll · /poll-end', 'h_poll'],
+  ['/setup', 'h_setup'], ['/announce · /announce-clear', 'h_announce'], ['/app-announce', 'h_app_announce'], ['/poll · /poll-end', 'h_poll'],
   ['/todo', 'h_todo'], ['/summary', 'h_summary'], ['/status', 'h_status'], ['/roles-config', 'h_roles_config'],
   ['/roles public:True · /download public:True', 'h_public'], ['/delete · /block · /merge', 'h_report'], ['/forget-user', 'h_forget'],
 ]
@@ -593,6 +886,8 @@ export function startDiscordBridge({
   cloudflare = {},
   cloudflareApi = 'https://api.cloudflare.com/client/v4/graphql',
   timers = true,
+  // Arrivées regroupées pendant ce temps en un message de bienvenue (ms).
+  welcomeDelay = 5000,
   log = console,
 }) {
   if (!token || !secret || !worker) {
@@ -614,6 +909,7 @@ export function startDiscordBridge({
   const st = {
     forum: null, forumType: null, guild: null, owner: null, me: null, app: null, labels: {},
     settings: {},          // salons choisis avec /setup
+    suggestionTag: null,   // étiquette « Suggestion » du forum (posts de /suggest)
     tagOf: new Map(),      // état → étiquette
     stateOf: new Map(),    // étiquette → état
     threads: new Map(),    // post du forum → étiquettes posées
@@ -637,6 +933,7 @@ export function startDiscordBridge({
   let retries = 0
   let stopped = false
   let backfilling = false
+  let intents = INTENTS   // demandées à l'identification de la session en cours
   const intervals = []
   // Passerelle : état pour /health du relais (sa HEALTHCHECK) et /status.
   // waiting (réglages du Worker), connecting, ready, stopped (refus définitif).
@@ -693,6 +990,7 @@ export function startDiscordBridge({
     if (!r.ok) {
       const e = new Error(data.error || `HTTP ${r.status}`)
       e.status = r.status
+      e.data = data   // `reason`, `retryAt`… des actions récentes
       throw e
     }
     return data
@@ -763,7 +1061,9 @@ export function startDiscordBridge({
   function readTags(channel) {
     st.tagOf.clear()
     st.stateOf.clear()
+    st.suggestionTag = null
     for (const t of channel?.available_tags || []) {
+      if (!st.suggestionTag && ['suggestion', 'suggestions'].includes(normName(t.name))) { st.suggestionTag = t.id; continue }
       const s = statusOfName(t.name)
       if (s && !st.tagOf.has(s)) {
         st.tagOf.set(s, t.id)
@@ -773,7 +1073,8 @@ export function startDiscordBridge({
   }
 
   /** Étiquettes d'état : créées s'il en manque, renommées en anglais
-   *  (même identifiant : les posts gardent les leurs). Droit « Gérer les
+   *  (même identifiant : les posts gardent les leurs). Celle des suggestions
+   *  (« Suggestion ») aussi, s'il reste de la place. Droit « Gérer les
    *  salons » ; sinon, à faire à la main avec ces noms. */
   async function ensureTags(channel) {
     if (!channel) return
@@ -781,7 +1082,8 @@ export function startDiscordBridge({
     const tags = channel.available_tags || []
     const missing = STATUSES.filter((s) => !st.tagOf.has(s))
     const renamed = new Map([...st.tagOf].filter(([s, id]) => tags.find((t) => t.id === id)?.name !== label(s)).map(([s, id]) => [id, label(s)]))
-    if (!missing.length && !renamed.size) return
+    const suggestion = !st.suggestionTag && tags.length + missing.length < 20 ? ['Suggestion'] : []
+    if (!missing.length && !renamed.size && !suggestion.length) return
     if (tags.length + missing.length > 20) {
       log.warn(`Discord bridge: no room left for the tags ${missing.map(label).join(', ')} (20 per forum)`)
       return
@@ -790,14 +1092,14 @@ export function startDiscordBridge({
       const updated = await rest('PATCH', `/channels/${channel.id}`, {
         available_tags: [
           ...tags.map((t) => ({ id: t.id, name: renamed.get(t.id) || t.name, moderated: t.moderated, emoji_id: t.emoji_id, emoji_name: t.emoji_name })),
-          ...missing.map((s) => ({ name: label(s), moderated: true })),
+          ...[...missing.map(label), ...suggestion].map((name) => ({ name, moderated: true })),
         ],
       })
       readTags(updated || channel)
-      if (missing.length) log.log(`Discord bridge: tags created (${missing.map(label).join(', ')})`)
+      if (missing.length || suggestion.length) log.log(`Discord bridge: tags created (${[...missing.map(label), ...suggestion].join(', ')})`)
       if (renamed.size) log.log(`Discord bridge: tags renamed (${[...renamed.values()].join(', ')})`)
     } catch (e) {
-      log.warn(`Discord bridge: create or rename the tags by hand (${STATUSES.map(label).join(', ')}) — ${e.message}`)
+      log.warn(`Discord bridge: create or rename the tags by hand (${[...STATUSES.map(label), 'Suggestion'].join(', ')}) — ${e.message}`)
     }
   }
 
@@ -1001,7 +1303,9 @@ export function startDiscordBridge({
     })
   }
 
-  async function afterTeamUpdate(thread, s, prevStatus) {
+  /** `card` : la carte publique d'une suggestion suit l'état (sauf quand
+   *  ses propres boutons viennent de la refaire). */
+  async function afterTeamUpdate(thread, s, prevStatus, { card = true } = {}) {
     if (!s) return
     await syncTags(thread, s.status)
     // État précédent inconnu (bot redémarré, changement fait dans /stats) :
@@ -1009,6 +1313,9 @@ export function startDiscordBridge({
     // sinon jamais prévenue.
     if (s.status === 'done' && prevStatus !== 'done' && !s.fix) await fixPrompt(thread)
     if (s.discord) await deliverDm(thread)
+    if (card && s.suggestion?.card && s.status !== prevStatus) {
+      await refreshCard(s.key).catch((e) => log.warn(`Discord bridge: suggestion card not updated (${e.message})`))
+    }
     // Doublons fusionnés ici : leur état a suivi (Worker) ; leur étiquette et
     // leurs messages privés aussi.
     for (const dt of s.dupThreads || []) {
@@ -1016,6 +1323,7 @@ export function startDiscordBridge({
       if (!ds) continue
       await syncTags(dt, ds.status)
       if (ds.discord) await deliverDm(dt)
+      if (ds.suggestion?.card) await refreshCard(ds.key).catch(() => {})
     }
   }
 
@@ -1202,7 +1510,9 @@ export function startDiscordBridge({
   /** Message à emojis (`send(true)`) refait sans (`send(false)`) quand
    *  Discord en refuse un : emoji d'un rôle supprimé depuis, inconnu… */
   const withEmojiFallback = (send) => send(true).catch((e) => (e.code === 50035 ? send(false) : Promise.reject(e)))
-  const adminOnly = (i) => respond(i, 4, { flags: 64, content: 'Only the developer can use this.' })
+  /** Réponse visible de la personne seule, sans mention. */
+  const quiet = (content, extra = {}) => ({ flags: 64, content: String(content).slice(0, 2000), allowed_mentions: { parse: [] }, ...extra })
+  const adminOnly = (i) => respond(i, 4, quiet(lang(i.locale)('admin_only')))
 
   const reportModal = (kind, shot) => ({
     custom_id: `report:${kind}`,
@@ -1259,9 +1569,17 @@ export function startDiscordBridge({
     if (Array.isArray(r?.templates)) Object.assign(templates, { list: r.templates, at: Date.now() })
   }
 
-  /** /announce template: : les modèles enregistrés. */
+  /** /announce template: : les modèles enregistrés ; /app-announce
+   *  duration: les durées de /stats (et celle tapée, si elle est valable). */
   async function onAutocomplete(i, user) {
     if (!isAdmin(user.id)) return respond(i, 8, { choices: [] })
+    if (i.data?.name === 'app-announce') {
+      const typed = String((i.data.options?.[0]?.options || []).find((o) => o.focused)?.value || '').trim().toLowerCase()
+      const own = typed && parseHours(typed) !== null && !DURATIONS.includes(typed) ? [typed] : []
+      const choices = [...own, ...DURATIONS.filter((d) => d.startsWith(typed))].slice(0, 25)
+        .map((d) => ({ name: d === '24h' ? '24h (default)' : d, value: d }))
+      return respond(i, 8, { choices })
+    }
     if (Date.now() - templates.at > 30_000) refreshTemplates().catch(() => {})
     const typed = String(i.data?.options?.find((o) => o.focused)?.value || '').toLowerCase()
     const choices = templates.list.filter((x) => String(x.name).toLowerCase().includes(typed))
@@ -1297,8 +1615,14 @@ export function startDiscordBridge({
     if (name === 'download') return downloadCommand(i, user)
     if (name === 'version') return deferred(i, () => versionText(lang(i.locale)))
     if (name === 'help') return respond(i, 4, { flags: 64, content: helpText(i, user), allowed_mentions: { parse: [] } })
+    if (name === 'live') return liveCommand(i, user, opt(i, 'channel'))
+    if (name === 'top') return topCommand(i, user)
+    if (name === 'my-reports') return deferred(i, () => myReports(i, user))
+    if (name === 'suggest') return suggestCommand(i, user)
+    if (name === 'suggestions') return deferred(i, () => topSuggestions(i, user))
     if (!isAdmin(user.id)) return adminOnly(i)
     switch (name) {
+      case 'app-announce': return appAnnounce(i, user)
       case 'roles-config': return deferred(i, () => rolesConfig(i, user))
       case 'Add to to-do':
       case 'todo':
@@ -1361,6 +1685,8 @@ export function startDiscordBridge({
     // Son étiquette suit l'état repris de l'autre retour.
     const s = await stateOf(thread, { fresh: true }).catch(() => null)
     if (s) await syncTags(thread, s.status)
+    // Suggestion fusionnée : sa carte le dit, ses votes sont clos.
+    if (s?.suggestion?.card) await refreshCard(s.key).catch(() => {})
     await rest('PATCH', `/channels/${thread}`, { archived: true }).catch(() => {})
     return 'Merged.'
   }
@@ -1377,9 +1703,16 @@ export function startDiscordBridge({
     else if (use === 'announcements') { settings.announcements = i.channel_id; settings.announcementsRole = role }
     else if (use === 'testers') { settings.testers = i.channel_id; settings.testersRole = role }
     else if (use === 'todo') settings.todo = i.channel_id
+    else if (use === 'suggestions') settings.suggestions = i.channel_id
+    // Bienvenue : choisie (ou coupée) de nouveau, l'intent est redemandée.
+    else if (use === 'welcome') { settings.welcome = i.channel_id; delete settings.welcomeBlocked }
+    else if (use === 'welcome-off') { settings.welcome = null; delete settings.welcomeBlocked }
     else return 'Unknown choice.'
     await kvSet('settings', settings)
     st.settings = settings
+    // GUILD_MEMBERS se demande à l'identification : nouvelle session s'il
+    // faut la demander, ou ne plus la demander.
+    if (Boolean(intents & GUILD_MEMBERS) !== wantsMembers()) reidentify()
     // Journal d'audit du Worker (un Worker d'avant refuse : sans importance).
     call({ action: 'audit', what: 'bot.setup', detail: `${use} → #${i.channel_id}${role ? ` (role ${role})` : ''}`, by: byOf(i.member?.user || i.user) }).catch(() => {})
     // Rôle des sorties : un bouton dans le salon, pour le prendre ou le rendre.
@@ -1394,6 +1727,9 @@ export function startDiscordBridge({
         : 'Published release notes will go to this channel (add a role to mention it at each release).',
       testers: `New test builds will be posted here${role ? ` and mention <@&${role}> (the role must be mentionable)` : ''}.`,
       todo: 'To-do items will be listed here: right-click a message → Apps → “Add to to-do”, or /todo.',
+      suggestions: 'Suggestions (/suggest) will be posted here as public cards that members vote on. Their report also gets a post in the forum, tagged “Suggestion”.',
+      welcome: 'New members will be welcomed here, with Download, Pick roles and Help buttons. This needs the **Server Members Intent** (developer portal → your application → Bot → Privileged Gateway Intents): if it’s off, Discord refuses the connection — I then reconnect without it, turn the welcome off and say so in the alerts channel.',
+      'welcome-off': 'Welcome messages are off.',
     }[use]
   }
 
@@ -1933,7 +2269,8 @@ export function startDiscordBridge({
     const admin = isAdmin(user.id)
     const cmd = (c) => c.split(' · ').map((x) => `\`${x}\``).join(' · ')
     const mine = [
-      ['/bug', 'h_bug'], ['/idea', 'h_idea'],
+      ['/bug', 'h_bug'], ['/idea', 'h_idea'], ['/suggest', 'h_suggest'], ['/suggestions top', 'h_suggestions'], ['/my-reports', 'h_my_reports'],
+      ['/live', 'h_live'], ['/top', 'h_top'],
       ...(admin || offeredRoles().length ? [['/roles', 'h_roles']] : []),
       ...(admin || st.settings.announcementsRole ? [['/release-pings', 'h_release_pings']] : []),
       ['/download', 'h_download'], ['/version', 'h_version'], ['/help', 'h_help'],
@@ -1941,6 +2278,554 @@ export function startDiscordBridge({
     const lines = [t('h_head'), ...mine.map(([c, k]) => `${cmd(c)} — ${t(k)}`), `-# ${t('h_replies')}`]
     if (admin) lines.push('', t('h_admin'), ...ADMIN_HELP.map(([c, k]) => `${cmd(c)} — ${t(k)}`))
     return lines.join('\n').slice(0, 1900)
+  }
+
+  // ── Petits outils des commandes pour tous ───────────────────────────────
+  const sec = (ms) => Math.floor(Number(ms) / 1000)
+  /** Texte d'autrui dans du Markdown : sur une ligne, sans mise en forme ni
+   *  lien masqué ([texte](adresse)) ni mention. */
+  const md = (s) => String(s ?? '').replace(/\s+/g, ' ').trim().replace(/[\\`*_~|[\]<>]/g, '\\$&')
+  const discordLink = (...ids) => `https://discord.com/channels/${st.guild}/${ids.join('/')}`
+  const linkButton = (label, url, emoji) => ({ type: 2, style: 5, label, url, emoji: { name: emoji } })
+  /** Lignes jointes dans `max` caractères : celles de `tail` toujours, celles
+   *  de `lines` tant qu'elles tiennent (dans l'ordre). */
+  function fit(lines, tail = [], max = 1900) {
+    const out = []
+    let size = tail.join('\n').length
+    for (const l of lines) {
+      if (size + l.length + 1 > max) break
+      out.push(l)
+      size += l.length + 1
+    }
+    return [...out, ...tail].join('\n')
+  }
+
+  // ── /live et /top ───────────────────────────────────────────────────────
+  // Données du Worker (actions live et top : la GQL publique de Twitch),
+  // gardées 60 s par chaîne (par recherche pour /top) ; une lecture au
+  // Worker toutes les 5 s au plus par personne — une réponse gardée ne
+  // compte pas. Réponses visibles de la personne seule, dans sa langue.
+  const LOOKUP_TTL = 60_000
+  const LOOKUP_COOLDOWN = 5000
+  const liveCache = new Map()   // chaîne → { at, value: promesse }
+  const topCache = new Map()    // « catégorie|langue » → { at, value: promesse }
+  const lookups = new Map()     // personne → dernière lecture au Worker
+  // « Open in the app » : une adresse https du Worker qui renvoie vers l'app
+  // (twitchunblock://live/<chaîne>) — Discord n'accepte que des liens http(s).
+  const openInApp = /^https:\/\//i.test(worker)
+  if (!openInApp) log.warn('Discord bridge: FEEDBACK_WORKER isn’t an https address — /live and /top won’t have “Open in the app”')
+
+  /** Réponse gardée, ou lue au Worker (`load`) ; null quand la personne doit
+   *  attendre. Une lecture ratée n'est pas gardée. */
+  function lookup(cache, key, user, load) {
+    const now = Date.now()
+    const hit = cache.get(key)
+    if (hit && now - hit.at < LOOKUP_TTL) return hit.value
+    if (now - (lookups.get(user.id) || 0) < LOOKUP_COOLDOWN) return null
+    if (lookups.size > 5000) for (const [id, at] of lookups) if (now - at >= LOOKUP_COOLDOWN) lookups.delete(id)
+    if (cache.size > 500) for (const [k, v] of cache) if (now - v.at >= LOOKUP_TTL) cache.delete(k)
+    lookups.set(user.id, now)
+    const value = load()
+    cache.set(key, { at: now, value })
+    value.catch(() => { if (cache.get(key)?.value === value) cache.delete(key) })
+    return value
+  }
+  /** Échec d'une lecture au Worker, dans la langue de la personne. */
+  const lookupError = (t, e) => (e.data?.reason === 'busy' ? t('live_busy') : e.data?.reason === 'twitch' ? t('live_error') : `❌ ${e.message}`)
+
+  /** Nom de chaîne tapé (« xqc », « @xqc », un lien twitch.tv), en minuscules ; null s'il n'en est pas un. */
+  function channelName(raw) {
+    const s = String(raw || '').trim().replace(/^(?:https?:\/\/)?(?:www\.|m\.)?twitch\.tv\//i, '').replace(/^@/, '').replace(/[/?#].*$/, '')
+    return /^[a-z0-9_]{1,25}$/i.test(s) ? s.toLowerCase() : null
+  }
+  const liveButtons = (t, login) => row(linkButton(t('b_watch'), `${site}/${login}`, '🌐'),
+    ...(openInApp ? [linkButton(t('b_app'), `${worker}/api/open/live?channel=${login}`, '📱')] : []))
+  const uptime = (t, startedAt) => {
+    const started = Date.parse(startedAt || '')
+    if (!Number.isFinite(started)) return null
+    const mins = Math.max(0, Math.floor((Date.now() - started) / 60_000))
+    return t('dur', Math.floor(mins / 60), mins % 60)
+  }
+
+  /** Encadré de /live (et du menu de /top) : le direct, ou « hors ligne »
+   *  avec la date du dernier. */
+  function liveMessage(t, d) {
+    if (!d?.found) return t('live_none', md(d?.login || '?'))
+    const s = d.live
+    const author = { name: d.name, url: `${site}/${d.login}`, ...(d.avatar ? { icon_url: d.avatar } : {}) }
+    if (!s) {
+      const last = Date.parse(d.lastLive || '')
+      return {
+        embeds: [{
+          author, color: 0x6b7280, ...(d.avatar ? { thumbnail: { url: d.avatar } } : {}),
+          description: `${t('live_offline', md(d.name))}${Number.isFinite(last) ? `\n${t('live_last', `<t:${sec(last)}:R>`)}` : ''}`,
+        }],
+        components: [liveButtons(t, d.login)],
+      }
+    }
+    return {
+      embeds: [{
+        author: { ...author, name: `${d.name} · ${t('live_tag')}` },
+        title: String(s.title || d.name).slice(0, 256), url: `${site}/${d.login}`, color: 0xeb0400,
+        fields: [
+          { name: t('f_category'), value: s.game || '—', inline: true },
+          { name: t('f_viewers'), value: t.num(s.viewers), inline: true },
+          { name: t('f_uptime'), value: uptime(t, s.startedAt) || '—', inline: true },
+        ],
+        // Vignette relue chaque minute : Discord garde une image par adresse.
+        ...(s.thumb ? { image: { url: `${s.thumb}${s.thumb.includes('?') ? '&' : '?'}t=${Math.floor(Date.now() / 60_000)}` } } : {}),
+      }],
+      components: [liveButtons(t, d.login)],
+    }
+  }
+
+  /** /live channel: — et un direct choisi dans le menu de /top. */
+  function liveCommand(i, user, raw) {
+    const t = lang(i.locale)
+    const login = channelName(raw)
+    if (!login) return respond(i, 4, quiet(t('live_bad')))
+    const data = lookup(liveCache, login, user, () => call({ action: 'live', login }))
+    if (!data) return respond(i, 4, quiet(t('live_wait')))
+    return deferred(i, () => data.then((d) => liveMessage(t, d), (e) => lookupError(t, e)))
+  }
+
+  /** /top [category] [language]. */
+  function topCommand(i, user) {
+    const t = lang(i.locale)
+    const category = String(opt(i, 'category') || '').replace(/\s+/g, ' ').trim().slice(0, 100)
+    const language = TOP_LANGUAGES.includes(opt(i, 'language')) ? opt(i, 'language') : ''
+    const data = lookup(topCache, `${category.toLowerCase()}|${language}`, user, () => call({ action: 'top', category, language }))
+    if (!data) return respond(i, 4, quiet(t('live_wait')))
+    return deferred(i, () => data.then((d) => topMessage(t, d, category), (e) => lookupError(t, e)))
+  }
+
+  /** /top : les directs en liste (liens vers le site et vers l'app), et un
+   *  menu qui ouvre l'encadré de l'un d'eux, celui de /live. */
+  function topMessage(t, d, asked) {
+    if (d?.notFound) return t('top_cat_none', md(asked))
+    const list = Array.isArray(d?.streams) ? d.streams : []
+    if (!list.length) return t('top_none')
+    const now = Date.now()
+    // Le menu ouvre l'encadré sans relire le Worker : ces directs sont gardés.
+    for (const s of list) {
+      const hit = liveCache.get(s.login)
+      if (!hit || now - hit.at >= LOOKUP_TTL) {
+        liveCache.set(s.login, { at: now, value: Promise.resolve({ found: true, login: s.login, name: s.name, avatar: s.avatar, live: s, lastLive: null }) })
+      }
+    }
+    const lines = list.map((s, n) => {
+      const app = openInApp ? ` · [📱](${worker}/api/open/live?channel=${s.login})` : ''
+      const time = uptime(t, s.startedAt)
+      return `**${n + 1}. [${md(s.name)}](${site}/${s.login})**${app} — ${md(String(s.title || '').slice(0, 90)) || '—'}\n`
+        + `${s.game ? `${md(s.game)} · ` : ''}👁 ${t.num(s.viewers)}${time ? ` · ⏱ ${time}` : ''}`
+    })
+    return {
+      embeds: [{
+        title: `🔥 ${t('top_title')}${d.category ? ` — ${d.category}` : ''}${d.language ? ` · ${t.language(d.language)}` : ''}`.slice(0, 256),
+        description: lines.join('\n').slice(0, 4000), color: 0x9146ff,
+      }],
+      components: [row({
+        type: 3, custom_id: 'top:pick', placeholder: t('top_pick'),
+        options: list.map((s, n) => ({
+          label: `${n + 1}. ${s.name}`.slice(0, 100), value: s.login,
+          description: `${s.game ? `${s.game} · ` : ''}👁 ${t.num(s.viewers)}`.slice(0, 100),
+        })),
+      })],
+    }
+  }
+
+  // ── /my-reports et /suggestions top ─────────────────────────────────────
+  /** Peut-il ouvrir ce salon ? Droits du serveur puis du salon (rôles, puis
+   *  le membre lui-même), comme Discord les calcule ; non si on ne sait pas. */
+  function canView(f, member, channel) {
+    const id = member?.user?.id
+    if (!id || !channel) return false
+    if (id === st.owner) return true
+    const c = f?.channels?.find((x) => x.id === channel)
+    if (!c || !f.roles) return false
+    const mine = new Set(member.roles || [])
+    let perms = 0n
+    for (const r of f.roles) if (r.id === st.guild || mine.has(r.id)) perms |= BigInt(r.permissions || 0)
+    if (perms & 8n) return true   // administrateur
+    const ow = c.permission_overwrites || []
+    const apply = (o) => { if (o) perms = (perms & ~BigInt(o.deny || 0)) | BigInt(o.allow || 0) }
+    apply(ow.find((o) => o.id === st.guild))
+    const roles = ow.filter((o) => Number(o.type) === 0 && mine.has(o.id))
+    apply({ allow: roles.reduce((a, o) => a | BigInt(o.allow || 0), 0n), deny: roles.reduce((a, o) => a | BigInt(o.deny || 0), 0n) })
+    apply(ow.find((o) => Number(o.type) === 1 && o.id === id))
+    return Boolean(perms & 1024n)   // voir le salon
+  }
+  /** Le forum des retours est privé : son lien n'est donné qu'à qui peut l'ouvrir. */
+  const forumVisible = async (i, user) => isAdmin(user.id)
+    || (Boolean(st.guild && st.forum && i.guild_id === st.guild) && canView(await guildFacts(st.guild), i.member, st.forum))
+  /** Liens d'un retour : sa carte publique (suggestion), son post du forum. */
+  function reportLinks(t, x, seeForum) {
+    const links = []
+    if (x.card?.c && x.card?.m) links.push(`[${t('mr_card')}](${discordLink(x.card.c, x.card.m)})`)
+    if (seeForum && x.thread) links.push(`[${t('mr_post')}](${discordLink(x.thread)})`)
+    return links.length ? ` · ${links.join(' · ')}` : ''
+  }
+
+  /** /my-reports : ce que la personne a envoyé depuis Discord — le sien seul,
+   *  d'après l'interaction. */
+  async function myReports(i, user) {
+    const t = lang(i.locale)
+    let r
+    try { r = await call({ action: 'my-reports', du: user.id }) } catch (e) { return lookupError(t, e) }
+    const items = Array.isArray(r?.items) ? r.items : []
+    if (!items.length) return t('mr_none')
+    const seeForum = await forumVisible(i, user)
+    const lines = items.map((x) => `- **${md(x.title) || '—'}** — ${t(x.suggestion ? 'k_suggestion' : `k_${x.kind}`)} · <t:${sec(x.at)}:d> · `
+      + `${x.merged ? t('mr_merged') : t(`s_${x.status}`)}${x.suggestion ? ` · 👍 ${t.num(x.votes)}` : ''}${reportLinks(t, x, seeForum)}`)
+    return fit([t('mr_head'), ...lines], [...(r.more ? [`-# ${t('mr_more')}`] : []), `-# ${t('h_replies')}`])
+  }
+
+  /** /suggestions top : les 10 suggestions ouvertes les plus votées. */
+  async function topSuggestions(i, user) {
+    const t = lang(i.locale)
+    let r
+    try { r = await call({ action: 'suggestions', du: user.id }) } catch (e) { return lookupError(t, e) }
+    const items = Array.isArray(r?.items) ? r.items : []
+    if (!items.length) return t('st_none')
+    const seeForum = await forumVisible(i, user)
+    return fit([t('st_head'), ...items.map((x, n) => `**${n + 1}.** 👍 ${t.num(x.votes)} — **${md(x.title) || '—'}** · ${t(`s_${x.status}`)}${reportLinks(t, x, seeForum)}`)])
+  }
+
+  // ── /suggest : suggestions publiques et votes ───────────────────────────
+  // Une suggestion est un retour (Worker : forum, /stats, /my-reports,
+  // réponses en message privé) avec une carte publique, en anglais, dans le
+  // salon des suggestions (/setup ; à défaut, celui de la commande) : 👍 N
+  // pour voter (un vote par membre, un second appui le retire ; compté par
+  // le Worker), Planned / Done / Declined pour le développeur — l'état du
+  // retour, donc l'étiquette de son post. Le Worker tient le délai entre
+  // deux suggestions d'une personne et les plafonds du jour ; le bot retient
+  // le dernier envoi pour refuser tout de suite, formulaire pas encore rempli.
+  const SUGGEST_COOLDOWN = 10 * 60_000
+  const suggested = new Map()   // personne → dernier envoi
+  const votePace = new Map()    // personne → dernier vote (un toutes les 2 s)
+  const CARD_STATUS = { new: 'Open', seen: 'Open', accepted: 'Planned', progress: 'In progress', done: 'Done', refused: 'Declined' }
+  const CARD_COLORS = { accepted: 0x3b82f6, progress: 0x3b82f6, done: 0x2ecc71, refused: 0x6b7280 }
+  let tagTriedAt = 0
+
+  function suggestCommand(i, user) {
+    const t = lang(i.locale)
+    const last = suggested.get(user.id) || 0
+    if (Date.now() - last < SUGGEST_COOLDOWN) return respond(i, 4, quiet(t('sg_wait', `<t:${sec(last + SUGGEST_COOLDOWN)}:R>`)))
+    return respond(i, 9, {
+      custom_id: 'suggest',
+      title: t('sg_modal').slice(0, 45),
+      components: [
+        row(textInput('title', t('sg_title'), 1, { min: 5, max: 100, placeholder: t('sg_title_ph') })),
+        row(textInput('text', t('sg_desc'), 2, { min: 10, max: 1500, placeholder: t('sg_desc_ph') })),
+      ],
+    })
+  }
+
+  /** Carte publique d'une suggestion. `s` : { title, text, author, avatar }
+   *  pour une nouvelle, et { status, votes, open, merged } ; `base` : son
+   *  encadré, quand elle est refaite (le texte reste le même). */
+  function suggestionCard(key, s, base = null) {
+    const status = s.status || 'new'
+    const open = s.open ?? !['done', 'refused'].includes(status)
+    const embed = base ? {
+      title: base.title, description: base.description,
+      ...(base.author?.name ? { author: { name: base.author.name, ...(base.author.icon_url ? { icon_url: base.author.icon_url } : {}) } } : {}),
+      ...(base.timestamp ? { timestamp: base.timestamp } : {}),
+    } : {
+      title: `💡 ${s.title}`.slice(0, 256),
+      // Écrit par un membre : ni lien masqué ni mention.
+      description: String(s.text || '').replace(/[[\]<>]/g, '\\$&').slice(0, 4000),
+      author: { name: `Suggestion from ${s.author}`.slice(0, 256), ...(s.avatar ? { icon_url: s.avatar } : {}) },
+      timestamp: new Date().toISOString(),
+    }
+    const state = s.merged ? 'Merged into another suggestion' : `Status: ${CARD_STATUS[status] || status}`
+    return {
+      embeds: [{ ...embed, color: CARD_COLORS[status] || 0x9146ff, footer: { text: `${state} · ${open ? 'one vote per member — tap 👍 again to take yours back' : 'voting closed'}` } }],
+      components: [row(
+        { type: 2, style: open ? 1 : 2, label: String(Math.max(0, Number(s.votes) || 0)), emoji: { name: '👍' }, custom_id: `sv:${key}`, disabled: !open },
+        button('Planned', `ss:${key}:accepted`), button('Done', `ss:${key}:done`, 3), button('Declined', `ss:${key}:refused`, 4),
+      )],
+      allowed_mentions: { parse: [] },
+    }
+  }
+  /** Carte refaite (votes, état), son texte gardé. */
+  const editCard = (channel, message, key, s) => (channel && message?.id
+    ? rest('PATCH', `/channels/${channel}/messages/${message.id}`, suggestionCard(key, s, message.embeds?.[0] || {}))
+      .catch((e) => log.warn(`Discord bridge: suggestion card not updated (${e.message})`))
+    : Promise.resolve())
+  /** Carte d'une suggestion supprimée (/stats, /delete) : plus de boutons. */
+  const retireCard = (channel, message) => (channel && message?.id
+    ? rest('PATCH', `/channels/${channel}/messages/${message.id}`, { components: [] }).catch(() => {})
+    : Promise.resolve())
+
+  /** Carte relue (votes, état) après un changement venu d'ailleurs :
+   *  étiquette du post, réponse rapide, /stats, fusion. */
+  async function refreshCard(key) {
+    const s = await call({ action: 'suggestion', key })
+    if (!s?.card?.c || !s.card.m) return
+    const m = await rest('GET', `/channels/${s.card.c}/messages/${s.card.m}`).catch(() => null)
+    if (m) await editCard(s.card.c, m, key, s)
+  }
+
+  /** Formulaire de /suggest envoyé : le retour (Worker), sa carte publique,
+   *  l'étiquette de son post, un message privé pour les réponses. */
+  async function submitSuggestion(i, user) {
+    const t = lang(i.locale)
+    const title = field(i, 'title').replace(/\s+/g, ' ')
+    const text = field(i, 'text')
+    let r
+    try {
+      r = await call({ action: 'suggest', user: { id: user.id, name: user.global_name || user.username }, title, description: text })
+    } catch (e) {
+      const why = e.data?.reason
+      const retryAt = Number(e.data?.retryAt) || Date.now() + SUGGEST_COOLDOWN
+      if (why === 'cooldown') suggested.set(user.id, retryAt - SUGGEST_COOLDOWN)
+      const head = why === 'cooldown' ? t('sg_wait', `<t:${sec(retryAt)}:R>`)
+        : why === 'daily' ? t('sg_daily') : why === 'paused' ? t('sg_paused') : t('sg_failed', e.message)
+      // Le formulaire est perdu : son texte, à recopier.
+      return `${head}\n${t('sg_keep')}\n\`\`\`\n${`${title}\n\n${text}`.replace(/`/g, 'ˋ').slice(0, 1600)}\n\`\`\``
+    }
+    const now = Date.now()
+    if (suggested.size > 5000) for (const [id, at] of suggested) if (now - at >= SUGGEST_COOLDOWN) suggested.delete(id)
+    suggested.set(user.id, now)
+    const channel = st.settings.suggestions || i.channel_id
+    const card = await rest('POST', `/channels/${channel}/messages`, suggestionCard(r.key, {
+      title, text, author: user.global_name || user.username || 'a member',
+      avatar: user.avatar ? `https://cdn.discordapp.com/avatars/${user.id}/${user.avatar}.png?size=64` : null, votes: 0,
+    })).catch((e) => { log.warn(`Discord bridge: suggestion card not posted in ${channel} (${e.message})`); return null })
+    if (card?.id) await call({ action: 'suggest-card', key: r.key, channel, message: card.id }).catch((e) => log.warn(`Discord bridge: suggestion card not saved (${e.message})`))
+    // Son post du forum (l'ordre des événements du post est gardé) : étiquette et lien.
+    if (r.thread) {
+      serial(r.thread, () => markSuggestion(r.thread, card?.id ? discordLink(channel, card.id) : null))
+        .catch((e) => log.warn(`Discord bridge: suggestion post not tagged (${e.message})`))
+    }
+    const dm = await sendDm(user.id, `💡 Thanks for your suggestion “${title}”! Members can vote for it, and the developer’s replies will arrive here — answer with the buttons (text or screenshots).`, r.key)
+      .then(() => true, () => false)
+    return `${card?.id ? t('sg_sent', channel) : t('sg_sent_nocard')}${dm ? t('sg_dm') : t('sg_dm_off')}`
+  }
+
+  /** Post du forum d'une suggestion : l'étiquette « Suggestion » (créée si
+   *  elle manque et si le bot en a le droit), son état gardé (« New » s'il
+   *  n'en a pas encore), et le lien de sa carte. */
+  async function markSuggestion(thread, link) {
+    if (!st.suggestionTag && st.forum && Date.now() - tagTriedAt > 3600_000) {
+      tagTriedAt = Date.now()
+      await ensureTags(await rest('GET', `/channels/${st.forum}`).catch(() => null))
+    }
+    let cur = st.threads.get(thread)
+    if (!cur) {
+      const c = await rest('GET', `/channels/${thread}`).catch(() => null)
+      cur = c?.applied_tags || []
+      if (c?.parent_id === st.forum) st.threads.set(thread, cur)
+    }
+    const tag = st.suggestionTag
+    if (tag && !cur.includes(tag)) {
+      const next = [tag, ...cur]
+      const fresh = st.tagOf.get('new')
+      if (fresh && !cur.some((x) => st.stateOf.has(x))) next.push(fresh)
+      const tags = next.slice(0, MAX_TAGS)
+      st.expected.set(thread, tags)
+      try {
+        await rest('PATCH', `/channels/${thread}`, { applied_tags: tags })
+        st.threads.set(thread, tags)
+      } catch (e) {
+        st.expected.delete(thread)
+        log.warn(`Discord bridge: suggestion tag not set on post ${thread} (${e.message})`)
+      }
+    }
+    if (link) await say(thread, `🗳️ Public card, where members vote: ${link}`)
+  }
+
+  /** 👍 N : le vote de la personne, posé ou retiré (Worker), la carte à jour
+   *  et une réponse pour elle seule. Votes d'une carte l'un après l'autre :
+   *  son compteur suit le dernier. */
+  async function onVote(i, user, key) {
+    const t = lang(i.locale)
+    const now = Date.now()
+    if (now - (votePace.get(user.id) || 0) < 2000) return respond(i, 4, quiet(t('v_wait')))
+    if (votePace.size > 5000) for (const [id, at] of votePace) if (now - at >= 2000) votePace.delete(id)
+    votePace.set(user.id, now)
+    await respond(i, 6)
+    const reply = (content) => rest('POST', `/webhooks/${st.app}/${i.token}`, quiet(content))
+      .catch((e) => log.warn(`Discord bridge: vote answer not sent (${e.message})`))
+    return serial(`card:${key}`, async () => {
+      let r
+      try {
+        r = await call({ action: 'suggest-vote', key, du: user.id })
+      } catch (e) {
+        const why = e.data?.reason
+        if (why === 'closed') await editCard(i.channel_id, i.message, key, e.data)
+        if (why === 'gone') await retireCard(i.channel_id, i.message)
+        return reply(why === 'closed' ? t('v_closed') : why === 'gone' ? t('v_gone') : why === 'busy' || why === 'daily' ? t('v_wait') : `❌ ${e.message}`)
+      }
+      await editCard(i.channel_id, i.message, key, r)
+      return reply(t(r.voted ? 'v_added' : 'v_removed', t.num(r.votes)))
+    })
+  }
+
+  /** Planned / Done / Declined (développeur) : l'état du retour, puis la
+   *  carte, l'étiquette du post, la question du correctif et le message
+   *  privé à l'auteur, comme pour une étiquette posée à la main. */
+  async function onSuggestionStatus(i, user, key, status) {
+    const t = lang(i.locale)
+    if (!['accepted', 'done', 'refused'].includes(status)) return respond(i, 6)
+    await respond(i, 6)
+    const reply = (content) => rest('POST', `/webhooks/${st.app}/${i.token}`, quiet(content)).catch(() => {})
+    return serial(`card:${key}`, async () => {
+      let r
+      try {
+        r = await call({ action: 'suggest-status', key, status, by: byOf(user) })
+      } catch (e) {
+        if (e.data?.reason === 'gone') await retireCard(i.channel_id, i.message)
+        return reply(e.data?.reason === 'gone' ? t('v_gone') : `❌ ${e.message}`)
+      }
+      await editCard(i.channel_id, i.message, key, r)
+      if (r.thread && !r.unchanged) {
+        await serial(r.thread, async () => {
+          remember(r.thread, r)
+          await afterTeamUpdate(r.thread, r, r.prev, { card: false })
+        }).catch((e) => log.warn(`Discord bridge: suggestion post not updated (${e.message})`))
+      }
+      return reply(t(r.unchanged ? 'ss_same' : 'ss_set', t(`s_${r.status}`)))
+    })
+  }
+
+  // ── /app-announce : l'annonce des apps et du site, après un aperçu ──────
+  // La même action que /announce et /stats (Worker : mêmes champs, durée de
+  // 1 min à 30 jours, mêmes limites, journal d'audit) ; rien ne part sans
+  // « Publish ». Aperçus gardés 15 min, en mémoire.
+  const previews = new Map()   // identifiant → { title, message, link, hours, at }
+  const DURATIONS = ['1h', '6h', '24h', '3d', '7d', '30d']
+
+  /** « 30m », « 6h », « 3d » (« 2 j », « 1.5h »…) en heures — 24 sans rien ;
+   *  null hors de 1 minute à 30 jours. */
+  function parseHours(raw) {
+    const s = String(raw ?? '').trim().toLowerCase().replace(',', '.')
+    if (!s) return 24
+    const m = s.match(/^(\d+(?:\.\d+)?)\s*(m|mins?|minutes?|h|hours?|d|days?|j|jours?)?$/)
+    if (!m) return null
+    const n = Number(m[1])
+    const unit = (m[2] || 'h')[0]
+    const hours = unit === 'm' ? n / 60 : unit === 'd' || unit === 'j' ? n * 24 : n
+    return hours >= 1 / 60 - 1e-9 && hours <= 720 ? hours : null
+  }
+
+  function appAnnounce(i, user) {
+    const t = lang(i.locale)
+    const sub = i.data?.options?.[0]
+    const arg = (name) => String(sub?.options?.find((o) => o.name === name)?.value ?? '').trim()
+    if (sub?.name === 'clear') {
+      return deferred(i, async () => { await call({ action: 'announce', clear: true, by: byOf(user) }); return t('aa_cleared') })
+    }
+    const message = arg('text').slice(0, 500)
+    const title = arg('title').slice(0, 80)
+    const link = arg('link').slice(0, 300)
+    const hours = parseHours(arg('duration'))
+    if (hours === null) return respond(i, 4, quiet(t('aa_bad_duration')))
+    if (link && !/^https:\/\/[^\s]+$/i.test(link)) return respond(i, 4, quiet(t('aa_bad_link')))
+    const now = Date.now()
+    for (const [id, p] of previews) if (now - p.at > 15 * 60_000) previews.delete(id)
+    const id = `${now.toString(36)}${Math.random().toString(36).slice(2, 6)}`
+    previews.set(id, { title, message, link, hours, at: now })
+    return deferred(i, async () => {
+      // L'annonce en cours (route publique des apps), qu'elle remplacerait.
+      const cur = (await readJson(`${worker}/api/announcement`))?.announcement
+      const lines = [t('aa_preview', `<t:${sec(now + hours * 3600_000)}:f>`), ...(cur ? [t('aa_replaces', md(cur.title || cur.message))] : [])]
+      return {
+        content: lines.join('\n'),
+        embeds: [{ ...(title ? { title } : {}), ...(message ? { description: message } : {}), color: 0x9146ff, ...(link ? { fields: [{ name: '🔗', value: link }] } : {}) }],
+        components: [row(button(t('b_publish'), `aa:pub:${id}`, 3), button(t('b_cancel'), `aa:no:${id}`))],
+      }
+    })
+  }
+
+  /** Publish / Cancel de l'aperçu (développeur ; visible de lui seul). */
+  async function onAnnouncePreview(i, user, choice, id) {
+    const t = lang(i.locale)
+    const p = previews.get(id)
+    const none = { parse: [] }
+    if (choice !== 'pub') {
+      previews.delete(id)
+      return respond(i, 7, { content: t('aa_cancelled'), embeds: [], components: [], allowed_mentions: none })
+    }
+    if (!p) return respond(i, 7, { content: t('aa_expired'), embeds: [], components: [], allowed_mentions: none })
+    previews.delete(id)   // un seul envoi, même sur un double appui
+    await respond(i, 6)
+    try {
+      const r = await call({ action: 'announce', title: p.title, message: p.message, link: p.link, hours: p.hours, by: byOf(user) })
+      await editOriginal(i, { content: t('aa_published', `<t:${sec(r.announcement.until)}:f>`), components: [], allowed_mentions: none })
+    } catch (e) {
+      previews.set(id, p)   // l'aperçu reste, pour réessayer
+      await editOriginal(i, { content: `❌ ${e.message}`, components: i.message?.components || [], allowed_mentions: none })
+    }
+  }
+
+  // ── Bienvenue (/setup use: Welcome) ─────────────────────────────────────
+  // GUILD_MEMBER_ADD n'arrive qu'avec l'intent privilégié GUILD_MEMBERS, à
+  // activer dans le portail : demandée seulement quand un salon de bienvenue
+  // est choisi. Refusée par Discord (fermeture 4014), le bot se reconnecte
+  // sans elle, coupe la bienvenue (welcomeBlocked, jusqu'au prochain /setup)
+  // et prévient dans le salon d'alertes. Arrivées regroupées sur quelques
+  // secondes (un message pour plusieurs, qui ne mentionne qu'eux) ; plus de
+  // 10 en une minute (raid) : plus aucun message jusqu'à 10 min après la
+  // dernière arrivée.
+  const WELCOME_RAID = 10
+  const welcome = { pending: [], timer: null, joins: [], quietUntil: 0 }
+  const wantsMembers = () => Boolean(st.settings.welcome && !st.settings.welcomeBlocked)
+
+  /** Nouvelle session (identification), pour demander GUILD_MEMBERS ou ne
+   *  plus la demander. */
+  function reidentify() {
+    session = null
+    seq = null
+    if (ws) hangUp(ws)
+  }
+
+  /** 4014 avec GUILD_MEMBERS demandée : l'intent n'est pas activée. */
+  function membersRefused() {
+    st.settings = { ...st.settings, welcomeBlocked: true }
+    log.warn('Discord bridge: Discord refused the Server Members intent — welcome messages turned off, reconnecting without it')
+    saveSettings({ welcomeBlocked: true }).catch((e) => log.warn(`Discord bridge: welcome setting not saved (${e.message})`))
+    alert('⚠️ **Welcome messages are off**: Discord refused the **Server Members Intent**, so I reconnected without it. Turn it on (developer portal → your application → Bot → Privileged Gateway Intents), then run `/setup use: Welcome messages for new members` again in the welcome channel.')
+  }
+
+  function onMemberJoin(d) {
+    const u = d.user
+    if (!u?.id || u.bot || !wantsMembers()) return
+    const now = Date.now()
+    welcome.joins = [...welcome.joins.filter((at) => now - at < 60_000), now]
+    if (welcome.joins.length > WELCOME_RAID || now < welcome.quietUntil) {
+      if (now >= welcome.quietUntil) alert(`🚨 **${welcome.joins.length} members joined within a minute** — no welcome messages until 10 minutes after the last arrival.`)
+      welcome.quietUntil = now + 10 * 60_000
+      welcome.pending = []
+      clearTimeout(welcome.timer)
+      welcome.timer = null
+      return
+    }
+    welcome.pending.push(u.id)
+    welcome.timer ??= setTimeout(() => flushWelcome().catch((e) => log.warn(`Discord bridge: welcome not posted (${e.message})`)), welcomeDelay)
+  }
+
+  async function flushWelcome() {
+    const ids = [...new Set(welcome.pending)].slice(0, WELCOME_RAID)
+    welcome.pending = []
+    welcome.timer = null
+    const channel = st.settings.welcome
+    if (!ids.length || !channel || !wantsMembers() || Date.now() < welcome.quietUntil) return
+    const who = ids.map((id) => `<@${id}>`)
+    const names = who.length > 1 ? `${who.slice(0, -1).join(', ')} and ${who.at(-1)}` : who[0]
+    const roles = offeredRoles().length > 0
+    await rest('POST', `/channels/${channel}/messages`, {
+      content: `👋 Welcome to the TwitchUnblock server, ${names}! TwitchUnblock lets you watch Twitch lives and VODs on iPhone, Apple TV, Android and the web. `
+        + `**Download** shows how to install it${roles ? ', **Pick roles** lets you choose your roles' : ''} and **Help** lists what I can do.`,
+      // Seuls les nouveaux venus sont mentionnés.
+      allowed_mentions: { parse: [], users: ids },
+      components: [row(
+        { ...button('Download', 'wl:dl', 1), emoji: { name: '📥' } },
+        ...(roles ? [{ ...button('Pick roles', 'wl:roles'), emoji: { name: '🏷️' } }] : []),
+        { ...button('Help', 'wl:help'), emoji: { name: '📖' } },
+      )],
+    })
   }
 
   /** « Add to to-do » (menu d'un message) et /todo : une carte dans le salon
@@ -2021,9 +2906,20 @@ export function startDiscordBridge({
     }
     if (kind === 'rp') return deferred(i, () => toggleReleaseRole(i, user))
     if (kind === 'roles') return onRolesMenu(i, user, a)
+    // Menu de /top, vote d'une suggestion, boutons du message de bienvenue
+    // (les réponses de /download, /roles et /help, pour soi seul).
+    if (kind === 'top') return liveCommand(i, user, i.data?.values?.[0])
+    if (kind === 'sv') return onVote(i, user, a)
+    if (kind === 'wl') {
+      if (a === 'dl') return downloadCommand(i, user)
+      if (a === 'roles') return rolesCommand(i, user)
+      return respond(i, 4, { flags: 64, content: helpText(i, user), allowed_mentions: { parse: [] } })
+    }
     if (!isAdmin(user.id)) return adminOnly(i)
     const thread = i.channel_id
     switch (kind) {
+      case 'ss': return onSuggestionStatus(i, user, a, b)
+      case 'aa': return onAnnouncePreview(i, user, a, b)
       case 'todo': {
         const done = a === 'done'
         return respond(i, 7, {
@@ -2110,6 +3006,7 @@ export function startDiscordBridge({
 
   async function onModal(i, user) {
     const [kind, a] = String(i.data?.custom_id || '').split(':')
+    if (kind === 'suggest') return deferred(i, () => submitSuggestion(i, user))
     if (kind === 'report') {
       return deferred(i, async () => {
         const what = a === 'idea' ? 'idea' : 'report'
@@ -2913,6 +3810,10 @@ export function startDiscordBridge({
       case 'MESSAGE_CREATE':
         await serial(d.channel_id, () => onMessage(d))
         break
+      // Seulement avec GUILD_MEMBERS (bienvenue choisie avec /setup).
+      case 'GUILD_MEMBER_ADD':
+        if (d.guild_id === st.guild) onMemberJoin(d)
+        break
       case 'INTERACTION_CREATE':
         await onInteraction(d)
         break
@@ -2959,7 +3860,11 @@ export function startDiscordBridge({
         firstBeat = setTimeout(beat, Math.random() * every)
         beatTimer = setInterval(beat, every)
         if (session) send(6, { token, session_id: session.id, seq })
-        else send(2, { token, intents: INTENTS, properties: { os: 'linux', browser: 'twitchunblock-relay', device: 'twitchunblock-relay' } })
+        else {
+          // GUILD_MEMBERS (privilégiée) seulement pour la bienvenue.
+          intents = INTENTS | (wantsMembers() ? GUILD_MEMBERS : 0)
+          send(2, { token, intents, properties: { os: 'linux', browser: 'twitchunblock-relay', device: 'twitchunblock-relay' } })
+        }
         break
       }
       case 11: acked = true; gw.lastAck = Date.now(); break
@@ -2992,6 +3897,18 @@ export function startDiscordBridge({
       clearInterval(beatTimer)
       clearTimeout(firstBeat)
       if (stopped) return
+      // Intent privilégiée refusée alors que GUILD_MEMBERS était demandée :
+      // l'intent « Server Members » n'est pas activée dans le portail. Le bot
+      // repart sans elle (bienvenue coupée) au lieu de s'arrêter ; sans elle,
+      // un nouveau 4014 vise MESSAGE_CONTENT, et arrête tout comme avant.
+      if (ev.code === 4014 && intents & GUILD_MEMBERS) {
+        session = null
+        seq = null
+        intents = INTENTS
+        membersRefused()
+        setTimeout(connect, 1000)
+        return
+      }
       if (FATAL.has(ev.code)) {
         stopped = true
         gwState('stopped')

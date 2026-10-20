@@ -170,7 +170,8 @@ ntfy.sh's free tier counts messages per IP address (250 a day). Every Cloudflare
 - **The proxy only relays Twitch and the proxy sources** (`ttvnw.net`, `jtvnw.net`, `twitch.tv`, `twitchcdn.net`, `luminous.dev`, exactly `twitch-al.nadeko.net`, and on `cloudfront.net` only Twitch's own VOD distributions — a new one is accepted once Twitch itself points to it), over HTTPS — it is not an open proxy. Redirects are followed one by one (4 at most), each new address checked the same way. What comes back is served as media with only the headers a player needs, never as a web page (`nosniff`, sandboxing CSP).
 - Usage pings only accept random UUIDs and store no IP address.
 - Rate limits (feedback, replies, pings, notifications) count an IPv6 address by its `/64` block. Screenshots attached to feedback have a daily share per person (address or Discord account, counted in one of 65,536 anonymous buckets: no address is stored), per network (`/48`) and a daily cap for the whole Worker, and stop before the D1 database fills up; the message itself still goes through, and the website says the screenshots weren't kept.
-- Per-address limits only hold in one Worker instance's memory, and a free IPv6 `/48` holds 65,536 `/64`s, so whatever writes to D1 also has daily caps kept in D1, for the whole Worker and per network: feedback (300 new reports a day, 30 per network; 1,000 replies a day; no new report or reply once the database passes 400 MB), new anonymous installs counted (1,000 a day, 100 per network), votes and reactions (2,000 a day per poll or announcement, 40 new devices per network), followed channels for live notifications (only the difference is written: 2,000 changes a day per subscription, 3,000 per network, 10,000 in all, and 1,000 channels new to the server a day). Over a cap the answer is `429` (an install is just not counted), and a cap already reached refuses without writing anything.
+- Per-address limits only hold in one Worker instance's memory, and a free IPv6 `/48` holds 65,536 `/64`s, so whatever writes to D1 also has daily caps kept in D1, for the whole Worker and per network: feedback (300 new reports a day, 30 per network; 1,000 replies a day; no new report or reply once the database passes 400 MB), Discord suggestions (one every 10 minutes per person, 5 a day per person, 50 a day in all, within the 300 reports) and their votes (5,000 a day, 60 an hour per member), new anonymous installs counted (1,000 a day, 100 per network), votes and reactions (2,000 a day per poll or announcement, 40 new devices per network), followed channels for live notifications (only the difference is written: 2,000 changes a day per subscription, 3,000 per network, 10,000 in all, and 1,000 channels new to the server a day). Over a cap the answer is `429` (an install is just not counted), and a cap already reached refuses without writing anything.
+- The Discord bot's actions on the Worker all carry the shared secret (`FEEDBACK_BOT_SECRET`); `/live` and `/top` go through at most 120 Twitch lookups a minute, `/my-reports` and `/suggestions` 30 a minute per member. `/api/open/live` (the **Open in the app** button) only takes a valid Twitch name and only redirects to `twitchunblock://live/<name>`.
 - The developer tools only accept Twitch tokens issued to the official website and apps (or to `TWITCH_CLIENT_ID`): a token of the owner's account issued to another Twitch app doesn't open them.
 - **Admin log**: every admin action — from `/stats`, the apps or Discord: deleting, closing or merging a report, replies and statuses, announcements, polls, erasing someone's data… — is kept 90 days (who, what, when, from where) and listed at the bottom of the developer tools on `/stats`.
 - **Erasing someone's data** (`/stats` → developer tools, or `/forget-user` on Discord): shows what will go first — with the Twitch account found, ID and current username —, then erases exactly that; the admin log only notes what kind of data went and how much, nothing that identifies the person — see [Discord bot](#discord-bot-feedback-alerts-releases), *Operations*.
@@ -485,11 +486,18 @@ limited to server admins in Discord.
 - Update order: the **Worker first**, then the bot (`docker compose pull`). An
   older bot keeps working with a newer Worker (no pictures in DMs, as before);
   a newer bot with an older Worker can't store the person's screenshots and
-  says so.
+  says so, and its `/live`, `/top`, `/my-reports` and `/suggest` answer with
+  an error until the Worker is updated.
 - Reports from before the bridge (or whose delivery failed) get their post
   too, oldest first: the original message with its screenshots, then the rest
   of the conversation in one message. A report is never kept longer because
   of it.
+- Suggestions sent with `/suggest` (see *For everyone*) are ideas with a
+  title: they get their post too, named "💡 Suggestion · title", tagged
+  **Suggestion** (the bot creates that tag if it can, next to the status
+  tags), with a link to their public card. Replies, statuses, quick replies,
+  `/merge`, `/delete` and `/stats` work as for any report; the card follows
+  the status.
 
 **Alerts and daily summary** (a private channel, picked with `/setup`): main
 or fallback Worker failing (daily request quota), ntfy notifications paused,
@@ -531,8 +539,9 @@ per version):
   synced settings and usage entry; for an **install ID** (random ID of an app
   install or a browser) its usage entry, poll votes and announcement
   reactions; **reports** (their `fb_…` key, or the link or ID of their
-  Discord post; or a `@Discord user`, for what they sent with `/bug`) with
-  their screenshots, conversation and Discord post; **notification
+  Discord post; or a `@Discord user`, for what they sent with `/bug`, `/idea`
+  or `/suggest`, and their suggestion votes) with their screenshots,
+  conversation, Discord post and the votes they got; **notification
   subscriptions** (the iOS app's ntfy topic, `tu-…`). Reports and
   subscriptions aren't tied to an account or an install, so name them too.
   Up to 10 at once, separated by spaces. The preview shows the Twitch account
@@ -547,7 +556,14 @@ per version):
   [admin log](#security) with the member's name.
 
 **Community**: `/announce` shows the developer banner in the app and on the
-website (`/announce-clear` removes it). When a new app or website version is
+website (`/announce-clear` removes it). `/app-announce post text: [duration]
+[link] [title]` does the same from the command line, with the same fields,
+limits and durations as `/stats` (title 80 characters, message 500, `https://`
+link, 1 minute to 30 days — `30m`, `6h`, `3d`…, 24 hours by default): it
+first shows a preview only you see — with the announcement it would replace —
+and nothing goes out before **Publish** (**Cancel** drops it; a preview lasts
+15 minutes). `/app-announce clear` removes it. Publishing and removing go to
+the admin log, as from `/stats`. When a new app or website version is
 out, a draft of its release notes appears in the private channel — **Publish**
 posts it in the announcements channel, mentioning the release role if you
 picked one. Members take or drop that role with `/release-pings` or the
@@ -588,6 +604,46 @@ in a channel stays in English):
   website, kept 10 minutes; one that can't be read shows as unknown.
 - `/help`: the commands useful to the person (the developer's too, for the
   developer).
+- `/live channel:` (a name, `@name` or a twitch.tv link): if the channel is
+  live, its title, category, viewers, uptime and thumbnail; otherwise
+  "offline" with when its last live started. `/top [category] [language]`:
+  the 10 biggest lives right now, of a category (found by its name, like the
+  website's search) and a language if given, with a menu that opens one of
+  them like `/live`. Both have buttons to the channel's page on the website
+  and **Open in the app** — Discord only takes http(s) links, so it points to
+  the Worker's `/api/open/live?channel=<name>`, which checks the name and
+  redirects (302) to `twitchunblock://live/<name>` (no button when
+  `FEEDBACK_WORKER` isn't an `https://` address). The data comes from the
+  Worker (Twitch's public GQL, like the website), kept 60 seconds per channel
+  or search; one new lookup every 5 seconds per person.
+- `/suggest`: a form (title, description). The suggestion becomes a report
+  (in the forum, `/stats` and `/my-reports`; the developer's replies come in
+  a direct message, as for `/bug`) and a public card in the suggestions
+  channel (`/setup`; without one, the channel where `/suggest` was used):
+  **👍 N** to vote — one vote per member, tapping again takes it back, counted
+  by the Worker — and **Planned**, **Done**, **Declined** for the developer
+  (the report's status — Accepted, Done, Declined —, so the post's tag, the
+  card and a direct message to the author). One suggestion every 10 minutes
+  per person, 5 a day per person, 50 a day in all. `/suggestions top`: the 10
+  most voted open suggestions, with a link to their card.
+- `/my-reports`: what the person sent with `/bug`, `/idea` and `/suggest`
+  (only theirs: the bot takes their Discord ID from the command, never from
+  an option) — short title, date, status, votes, a link to the card and, for
+  those who can open the private forum, to the post.
+
+**Welcome messages** (`/setup use: Welcome messages for new members` in the
+channel; *Stop the welcome messages* to turn them off): each newcomer gets a
+message in English that mentions only them, with **Download** (the `/download`
+answer), **Pick roles** (the `/roles` menu, when roles are offered) and
+**Help** (`/help`) — answers only they see, in their language. No message for
+bots; members who join within a few seconds of each other share one message;
+more than 10 arrivals in a minute (a raid) means no message at all until 10
+minutes after the last one, and the alerts channel is told once. This needs
+the privileged **Server Members Intent** (step 2 below): the bot only asks for
+it while a welcome channel is set. If it isn't enabled, Discord refuses the
+connection (code 4014): the bot reconnects without it, turns the welcome off
+and says so once in the alerts channel — enable the intent, then run `/setup`
+again in the welcome channel.
 
 **To-do**: right-click a message (long-press on mobile) → *Apps* → **Add to
 to-do** sends a good suggestion to the to-do channel — author, text, a link to
@@ -602,7 +658,9 @@ Setting it up:
    message per report, without the bridge.)
 2. **Bot**: in the [Discord developer portal](https://discord.com/developers/applications),
    *New Application → Bot*: *Reset Token* (keep it secret) and turn on
-   **Message Content Intent**. Invite it with
+   **Message Content Intent** — and, for welcome messages only, **Server
+   Members Intent** (same page, *Privileged Gateway Intents*; past 100
+   servers it needs Discord's approval, not a concern for one server). Invite it with
    `https://discord.com/oauth2/authorize?client_id=<application ID>&scope=bot%20applications.commands&permissions=292326280272`
    (view channels, send messages, send messages in threads, read message
    history, add reactions, manage threads — to set the tags — manage
@@ -629,8 +687,12 @@ Setting it up:
    and release drafts*), in the announcements channel (*Release
    announcements*, optionally with the role to mention at each release), in
    the test builds channel (*Test builds*, with the role to mention) and in
-   the to-do channel (*To-do list*). Make the roles mentionable. Optionally, a
-   webhook of the private channel in the Worker's `ALERT_WEBHOOK` secret.
+   the to-do channel (*To-do list*). Make the roles mentionable. Optionally:
+   the public suggestions channel (*Suggestions*), the welcome channel
+   (*Welcome messages for new members*, once the Server Members Intent is on),
+   and a webhook of the private channel in the Worker's `ALERT_WEBHOOK`
+   secret. The bot must be able to send messages with embeds in the
+   suggestions and welcome channels.
 
 Without *manage channels*, create the status tags by hand with those names
 (Discord allows 20 tags per forum and 5 per post). The bot keeps its settings

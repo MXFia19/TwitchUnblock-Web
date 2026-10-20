@@ -92,6 +92,8 @@ export default {
                 case '/api/feedback/photo': return await handleFeedbackPhoto(url, request, env);
                 case '/api/feedback/discord': return await audited(request, env, ctx, (r) => handleFeedbackBot(r, env, ctx));
                 case '/api/admin/feedback': return await audited(request, env, ctx, (r) => handleAdminFeedback(r, env, ctx));
+                // Bouton « Open in the app » du bot Discord (/live, /top) : vers l'app.
+                case '/api/open/live': return handleOpenLive(url, request);
 
                 // Notifications de live du site installé (Web Push)
                 case '/api/push/key': return await handlePushKey(env);
@@ -2332,7 +2334,8 @@ function readableInfo(text) {
 async function postFeedbackToDiscord(webhook, e, photos = [], { inReplyTo = null, test = false, bot = false, requireThread = false } = {}) {
     const KINDS = { bug: '🐞 Bug', idea: '💡 Idea', other: '💬 Other' };
     const COLORS = { bug: 0xeb0400, idea: 0x9147ff, other: 0x6b7280 };
-    const kind = KINDS[e.k] || KINDS.other;
+    // Suggestion (/suggest sur Discord) : une idée, nommée comme telle.
+    const kind = e.sg ? '💡 Suggestion' : KINDS[e.k] || KINDS.other;
     const PLACES = { ios: 'iOS app', tvos: 'Apple TV app', android: 'Android app', discord: 'Discord', web: 'Website' };
     const fields = [{ name: 'Platform', value: `${PLACES[e.p] || PLACES.web} · ${e.v}`, inline: true }];
     if (e.c) fields.push({ name: 'Contact', value: e.c, inline: true });
@@ -2358,8 +2361,9 @@ async function postFeedbackToDiscord(webhook, e, photos = [], { inReplyTo = null
             timestamp: new Date(e.u || e.at).toISOString(),
         }],
     };
-    // Nom du post (salon forum) : genre et début du premier message.
-    const first = String(inReplyTo ?? e.m ?? '').replace(/\s+/g, ' ').trim();
+    // Nom du post (salon forum) : genre et début du premier message (le titre
+    // d'une suggestion).
+    const first = String(inReplyTo ?? (e.sg && e.st ? e.st : e.m) ?? '').replace(/\s+/g, ' ').trim();
     const threadName = test ? 'Webhook test' : `${kind} · ${first || '📷'}`.slice(0, 100);
     return discordHook(webhook, payload, photoFiles(photos), { threadId: e.dt, threadName, requireThread });
 }
@@ -2560,6 +2564,9 @@ async function feedbackTeamUpdate(env, key, { message = '', photos = [], status 
 //   userReply (/bug sur Discord, réponses en message privé, photos
 //   comprises), delete, block, merge, fix / released (« c'est en ligne »),
 //   summary, health, announce, poll / poll-end / poll-state (sondage).
+//   Communauté (communityBotTool) : live / top (/live et /top), my-reports,
+//   suggest / suggest-card / suggest-vote / suggest-status / suggestion /
+//   suggestions (/suggest et ses votes).
 //   Exploitation (opsBotTool, en fin de fichier) : ops (état du serveur),
 //   forget (effacer les données d'une personne), audit (note au journal).
 //   Messages d'erreur en anglais : le bot les
@@ -2591,6 +2598,8 @@ async function handleFeedbackBot(request, env, ctx = null) {
     if (ops) return ops;
     const general = await feedbackBotTool(env, body);
     if (general) return general;
+    const community = await communityBotTool(env, body);
+    if (community) return community;
 
     const thread = String(body.thread || '');
     if (!/^\d{5,25}$/.test(thread)) return jsonError('Bad post ID', 400);
@@ -2598,10 +2607,7 @@ async function handleFeedbackBot(request, env, ctx = null) {
     if (!key || !FEEDBACK_KEY_RE.test(key)) return jsonError('Unknown post', 404);
     const { value, metadata } = await store(env).getWithMetadata(key);
     if (!metadata) return jsonError('Report not found', 404);
-    const state = (m) => ({
-        key, status: m.s || 'new', lastFrom: m.r || 'u',
-        fix: m.fx || null, blocked: Boolean(m.bl), discord: Boolean(m.du), mergedInto: m.mg || null,
-    });
+    const state = (m) => botReportState(key, m);
 
     if (body.action === 'state') return jsonResponse(state(metadata));
     if (body.action === 'status') {
@@ -2668,6 +2674,7 @@ async function handleFeedbackBot(request, env, ctx = null) {
     if (body.action === 'delete') {
         await store(env).delete(key);
         await store(env).deletePrefix(`${FEEDBACK_PHOTO_PREFIX}${key}_`);
+        await store(env).deletePrefix(`${SUGGEST_VOTE_PREFIX}${key}_`);
         await store(env).delete(`${FEEDBACK_DISCORD_PREFIX}${thread}`);
         return jsonResponse({ ok: true, key });
     }
@@ -2900,6 +2907,283 @@ async function feedbackBotTool(env, body) {
     return null;
 }
 
+/** État d'un retour pour le bot (actions sur un post, suggestions). */
+function botReportState(key, m) {
+    return {
+        key, status: m.s || 'new', lastFrom: m.r || 'u',
+        fix: m.fx || null, blocked: Boolean(m.bl), discord: Boolean(m.du), mergedInto: m.mg || null,
+        // Suggestion (/suggest) : sa carte publique, que le bot remet à jour.
+        ...(m.sg ? { suggestion: { card: m.sc || null } } : {}),
+    };
+}
+
+// ── Communauté : /live, /top, /my-reports, /suggest (bot du relais) ────────
+// Actions du bot, derrière le même secret partagé. Les directs viennent de la
+// GQL publique de Twitch, comme pour les notifications du Worker et les pages
+// du site (mêmes champs) ; le bot garde chaque réponse 60 s et limite chaque
+// personne. Une suggestion est un retour de genre « idea » (donc dans
+// /stats, /my-reports, réponses en message privé) marqué `sg`, avec son
+// titre (`st`) et sa carte publique (`sc` : { c: salon, m: message }), où les
+// membres votent. Un vote par membre : la clé `sgv_<retour>_<membre
+// Discord>`, comptée à la demande — aucun compteur à tenir à jour.
+const SUGGEST_VOTE_PREFIX = 'sgv_';
+const SUGGEST_COOLDOWN_PREFIX = 'sgcd_';
+const SUGGEST_COOLDOWN = 10 * 60 * 1000;   // entre deux suggestions d'une personne
+const SUGGEST_PER_PERSON = 5;              // suggestions par jour et par personne
+const SUGGEST_PER_DAY = 50;                // … en tout
+const SUGGEST_VOTES_PER_DAY = 5000;        // votes et retraits par jour, en tout
+const SUGGEST_VOTES_PER_PERSON = 60;       // … par heure et par membre (mémoire de l'instance)
+const BOT_LOOKUPS_PER_MINUTE = 120;        // /live et /top : questions à Twitch, en tout
+const BOT_READS_PER_MINUTE = 30;           // /my-reports et /suggestions, par membre
+// Langues de /top (les choix de la commande), valeurs de l'énumération Language de GQL.
+const BOT_TOP_LANGUAGES = new Set(['en', 'es', 'pt', 'de', 'fr', 'ru', 'ja', 'ko', 'zh', 'it', 'pl', 'tr', 'ar',
+    'th', 'id', 'hi', 'uk', 'nl', 'sv', 'cs', 'hu', 'fi', 'da', 'no', 'vi']);
+const botLookupHits = new Map();
+const botReadHits = new Map();
+const suggestVoteHits = new Map();
+const openLiveHits = new Map();
+// Votes encore valables de la suggestion `f` (requête corrélée ; ?1 : maintenant).
+const SUGGEST_VOTES_SQL = `(SELECT COUNT(*) FROM kv v WHERE v.key >= 'sgv_' || f.key || '_' AND v.key < 'sgv_' || f.key || '\`'
+    AND (v.expires IS NULL OR v.expires > ?1))`;
+const SUGGEST_META_SQL = 'CASE WHEN json_valid(f.meta) THEN f.meta END';
+const suggestionOpen = (m) => !m.mg && m.s !== 'done' && m.s !== 'refused';
+const suggestionView = (key, m, votes) => ({
+    key, title: m.st || '', status: m.s || 'new', open: suggestionOpen(m), merged: Boolean(m.mg),
+    votes, thread: m.dt || null, card: m.sc || null,
+});
+
+async function suggestionVotes(env, key) {
+    const row = await env.DB.prepare(`SELECT COUNT(*) AS n FROM kv WHERE key >= ?1 AND key < ?2 AND ${alive(Date.now())}`)
+        .bind(`${SUGGEST_VOTE_PREFIX}${key}_`, `${SUGGEST_VOTE_PREFIX}${key}\``).first();
+    return Number(row?.n) || 0;
+}
+
+/** Un direct (GQL) tel que l'affichent /live et /top. */
+function botStream(n) {
+    const started = Date.parse(n?.createdAt || '');
+    return {
+        title: cleanText(n?.title, 200), game: cleanText(n?.game?.displayName, 80),
+        viewers: Math.max(0, Number(n?.viewersCount) || 0),
+        startedAt: Number.isFinite(started) ? new Date(started).toISOString() : null,
+        thumb: TWITCH_IMAGE.test(String(n?.previewImageURL || '')) ? n.previewImageURL : '',
+    };
+}
+const twitchPicture = (u) => (TWITCH_IMAGE.test(String(u || '')) ? u : '');
+
+/** Rend une réponse si l'action est l'une des siennes, sinon null. Messages
+ *  d'erreur en anglais (le bot les affiche) ; `reason`, pour qu'il les
+ *  traduise. */
+async function communityBotTool(env, body) {
+    const twitchDown = () => jsonError('Twitch didn’t answer — try again', 502, { reason: 'twitch' });
+    const busy = () => jsonError('Too many requests — try again in a minute', 429, { reason: 'busy' });
+    const failed = (where) => (e) => { logCaught(where, e); return null; };
+    switch (body.action) {
+        // /live : la chaîne et son direct, ou la date du dernier.
+        case 'live': {
+            const login = String(body.login || '').trim().toLowerCase();
+            if (!LOGIN_RE.test(login)) return jsonError('Bad channel name', 400);
+            if (overLimit(botLookupHits, 'twitch', BOT_LOOKUPS_PER_MINUTE, 60000)) return busy();
+            const data = await twitchGQL(`query($l: String!) { user(login: $l) { login displayName profileImageURL(width: 70)
+                lastBroadcast { startedAt }
+                stream { title viewersCount createdAt previewImageURL(width: 640, height: 360) game { displayName } } } }`, { l: login })
+                .catch(failed('bot/live'));
+            if (!data?.data) return twitchDown();
+            const u = data.data.user;
+            if (!u || !LOGIN_RE.test(String(u.login || ''))) return jsonResponse({ found: false, login });
+            const last = Date.parse(u.lastBroadcast?.startedAt || '');
+            return jsonResponse({
+                found: true, login: u.login.toLowerCase(), name: cleanText(u.displayName, 40) || u.login,
+                avatar: twitchPicture(u.profileImageURL), live: u.stream ? botStream(u.stream) : null,
+                lastLive: Number.isFinite(last) ? new Date(last).toISOString() : null,
+            });
+        }
+        // /top : les 10 plus gros directs, d'une catégorie (cherchée par son
+        // nom, comme la recherche du site) et d'une langue s'il le faut.
+        case 'top': {
+            const language = String(body.language || '').toLowerCase();
+            if (language && !BOT_TOP_LANGUAGES.has(language)) return jsonError('Unknown language', 400);
+            const category = cleanText(body.category, 100).replace(/\s+/g, ' ');
+            if (overLimit(botLookupHits, 'twitch', BOT_LOOKUPS_PER_MINUTE, 60000)) return busy();
+            const langs = language ? [language.toUpperCase()] : null;
+            let game = null;
+            if (category) {
+                const found = await twitchGQL(`query($q: String!) { searchCategories(query: $q, first: 5) { edges { node { id name displayName } } } }`, { q: category })
+                    .catch(failed('bot/top'));
+                if (!found?.data) return twitchDown();
+                const list = (found.data.searchCategories?.edges || []).map((e) => e?.node).filter((n) => /^\d{1,20}$/.test(String(n?.id || '')));
+                const same = (n) => [n.displayName, n.name].some((x) => String(x || '').toLowerCase() === category.toLowerCase());
+                game = list.find(same) || list[0] || null;
+                if (!game) return jsonResponse({ category: null, language: language || null, streams: [], notFound: true });
+            }
+            const fields = 'title viewersCount createdAt previewImageURL(width: 640, height: 360) game { displayName } broadcaster { login displayName profileImageURL(width: 70) }';
+            const data = await twitchGQL(game
+                ? `query($id: ID!, $langs: [Language!]) { game(id: $id) { streams(first: 10, options: { broadcasterLanguages: $langs }) { edges { node { ${fields} } } } } }`
+                : `query($langs: [Language!]) { streams(first: 10, options: { broadcasterLanguages: $langs }) { edges { node { ${fields} } } } }`,
+            game ? { id: String(game.id), langs } : { langs }).catch(failed('bot/top'));
+            if (!data?.data) return twitchDown();
+            const edges = (game ? data.data.game?.streams?.edges : data.data.streams?.edges) || [];
+            const streams = edges.map((e) => e?.node).filter((n) => LOGIN_RE.test(String(n?.broadcaster?.login || ''))).slice(0, 10)
+                .map((n) => ({
+                    login: n.broadcaster.login.toLowerCase(), name: cleanText(n.broadcaster.displayName, 40) || n.broadcaster.login,
+                    avatar: twitchPicture(n.broadcaster.profileImageURL), ...botStream(n),
+                }));
+            return jsonResponse({ category: game ? cleanText(game.displayName || game.name, 100) : null, language: language || null, streams });
+        }
+        // /my-reports : ce que ce membre a envoyé depuis Discord (/bug, /idea,
+        // /suggest), le plus récent d'abord. Le sien seulement : le bot passe
+        // l'auteur de la commande, jamais un paramètre.
+        case 'my-reports': {
+            const du = String(body.du || '');
+            if (!/^\d{5,25}$/.test(du)) return jsonError('Bad Discord user', 400);
+            if (overLimit(botReadHits, `mr:${du}`, BOT_READS_PER_MINUTE, 60000)) return busy();
+            await ensureSchema(env);
+            const { results } = await env.DB.prepare(`SELECT f.key AS key, f.meta AS meta, ${SUGGEST_VOTES_SQL} AS votes FROM kv f
+                WHERE f.key >= 'fb_' AND f.key < 'fb\`' AND (f.expires IS NULL OR f.expires > ?1)
+                  AND json_extract(${SUGGEST_META_SQL}, '$.du') = ?2
+                ORDER BY f.key DESC LIMIT 11`).bind(Date.now(), du).all();
+            const items = (results || []).map((r) => {
+                const m = parseMeta(r.meta) || {};
+                return {
+                    key: r.key, kind: FEEDBACK_KINDS.includes(m.k) ? m.k : 'other', suggestion: Boolean(m.sg),
+                    title: auditExcerpt(m.sg && m.st ? m.st : m.m, 80), at: Number(m.at) || 0, status: m.s || 'new',
+                    merged: Boolean(m.mg), thread: m.dt || null, card: m.sc || null, ...(m.sg ? { votes: Number(r.votes) || 0 } : {}),
+                };
+            });
+            return jsonResponse({ items: items.slice(0, 10), more: items.length > 10 });
+        }
+        // /suggest : titre et description. Un délai entre deux suggestions
+        // d'une personne, et des plafonds du jour gardés en D1 (ceux des
+        // retours compris).
+        case 'suggest': {
+            const du = String(body.user?.id || '');
+            if (!/^\d{5,25}$/.test(du)) return jsonError('Bad Discord user', 400);
+            const title = cleanText(body.title, 100).replace(/\s+/g, ' ');
+            const text = cleanText(body.description, 1500);
+            if (title.length < 5) return jsonError('Title too short', 400);
+            if (text.length < 10) return jsonError('Description too short', 400);
+            await ensureSchema(env);
+            if (await dbBytes(env) > FEEDBACK_DB_MAX) return jsonError('Suggestions are paused (database almost full) — try again later', 429, { reason: 'paused' });
+            const now = Date.now();
+            const cooldown = `${SUGGEST_COOLDOWN_PREFIX}${du}`;
+            // Délai pris d'un coup (de deux envois simultanés, un seul passe),
+            // rendu si un plafond du jour refuse ensuite.
+            const took = await env.DB.prepare(`INSERT INTO kv (key, value, expires) VALUES (?1, '', ?2)
+                ON CONFLICT(key) DO UPDATE SET expires = excluded.expires WHERE kv.expires IS NOT NULL AND kv.expires <= ?3`)
+                .bind(cooldown, now + SUGGEST_COOLDOWN, now).run();
+            if (!((took?.meta?.changes || 0) > 0)) {
+                const row = await env.DB.prepare('SELECT expires FROM kv WHERE key = ?1').bind(cooldown).first();
+                return jsonError('One suggestion every 10 minutes — try again later', 429, { reason: 'cooldown', retryAt: Number(row?.expires) || now + SUGGEST_COOLDOWN });
+            }
+            if (!(await takeNtfyLimits(env, [['fbd', FEEDBACK_PER_DAY], [`sgp_${du}`, SUGGEST_PER_PERSON], ['sgd', SUGGEST_PER_DAY]]).catch(() => true))) {
+                await store(env).delete(cooldown);
+                return jsonError('Too many suggestions today — try again tomorrow', 429, { reason: 'daily' });
+            }
+            const key = `${FEEDBACK_PREFIX}${now.toString(36)}_${crypto.randomUUID().slice(0, 8)}`;
+            const token = (crypto.randomUUID() + crypto.randomUUID()).replace(/-/g, '').slice(0, 48);
+            const message = `${title}\n\n${text}`;
+            const entry = {
+                k: 'idea', m: message, st: title, sg: 1,
+                c: `@${cleanText(body.user?.name, 40) || du} (Discord)`,
+                p: 'discord', v: 'Suggestion', i: null,
+                at: now, s: 'new', u: now, r: 'u', n: 1, ph: 0,
+                h: await sha256hex(token), du, dd: 1,
+            };
+            await store(env).put(key, JSON.stringify([{ f: 'u', m: message, at: now }]), { metadata: entry, expirationTtl: FEEDBACK_TTL });
+            const r = await notifyDiscord(env, null, entry, [], { key });
+            return jsonResponse({ ok: true, key, thread: r?.thread || null });
+        }
+        // Carte publique de la suggestion, postée par le bot.
+        case 'suggest-card': {
+            const key = String(body.key || '');
+            const channel = String(body.channel || '');
+            const message = String(body.message || '');
+            if (!FEEDBACK_KEY_RE.test(key) || !/^\d{5,25}$/.test(channel) || !/^\d{5,25}$/.test(message)) return jsonError('Bad suggestion or message', 400);
+            const { metadata: m } = await store(env).getWithMetadata(key);
+            if (!m?.sg) return jsonError('Suggestion not found', 404, { reason: 'gone' });
+            await store(env).patchMeta(key, 'sc', { c: channel, m: message });
+            return jsonResponse({ ok: true });
+        }
+        // Vote d'un membre : posé, ou retiré s'il y était. Suggestion fermée
+        // (faite, refusée, fusionnée) : plus de vote, son état revient pour
+        // la carte.
+        case 'suggest-vote': {
+            const key = String(body.key || '');
+            const du = String(body.du || '');
+            if (!FEEDBACK_KEY_RE.test(key) || !/^\d{5,25}$/.test(du)) return jsonError('Bad suggestion or user', 400);
+            if (overLimit(suggestVoteHits, du, SUGGEST_VOTES_PER_PERSON)) return busy();
+            const { metadata: m } = await store(env).getWithMetadata(key);
+            if (!m?.sg) return jsonError('Suggestion not found', 404, { reason: 'gone' });
+            if (!suggestionOpen(m)) return jsonError('Voting is closed for this suggestion', 409, { reason: 'closed', ...suggestionView(key, m, await suggestionVotes(env, key)) });
+            if (!(await takeNtfyLimits(env, [['sgv', SUGGEST_VOTES_PER_DAY]]).catch(() => true))) {
+                return jsonError('Too many votes today — try again tomorrow', 429, { reason: 'daily' });
+            }
+            const vote = `${SUGGEST_VOTE_PREFIX}${key}_${du}`;
+            const now = Date.now();
+            // Posé d'un coup s'il n'y était pas (ou plus : expiré) ; sinon retiré.
+            const put = await env.DB.prepare(`INSERT INTO kv (key, value, expires) VALUES (?1, '', ?2)
+                ON CONFLICT(key) DO UPDATE SET expires = excluded.expires WHERE kv.expires IS NOT NULL AND kv.expires <= ?3`)
+                .bind(vote, now + FEEDBACK_TTL * 1000, now).run();
+            const voted = (put?.meta?.changes || 0) > 0;
+            if (!voted) await store(env).delete(vote);
+            return jsonResponse({ ok: true, voted, ...suggestionView(key, m, await suggestionVotes(env, key)) });
+        }
+        // État posé depuis la carte (Planned, Done, Declined : le développeur),
+        // noté au journal comme un changement d'état (describeBotAction).
+        case 'suggest-status': {
+            const key = String(body.key || '');
+            const status = String(body.status || '');
+            if (!FEEDBACK_KEY_RE.test(key)) return jsonError('Bad suggestion', 400);
+            if (!FEEDBACK_STATUSES.includes(status)) return jsonError('Unknown status', 400);
+            const { metadata: m } = await store(env).getWithMetadata(key);
+            if (!m?.sg) return jsonError('Suggestion not found', 404, { reason: 'gone' });
+            const r = await feedbackTeamUpdate(env, key, { status });
+            if (r.error) return jsonError(r.en, r.code);
+            return jsonResponse({
+                ok: true, ...botReportState(key, r.metadata), ...suggestionView(key, r.metadata, await suggestionVotes(env, key)),
+                prev: m.s || 'new', dupThreads: r.dupThreads || [], ...(r.unchanged ? { unchanged: true } : {}),
+            });
+        }
+        // Une suggestion, pour remettre sa carte à jour.
+        case 'suggestion': {
+            const key = String(body.key || '');
+            if (!FEEDBACK_KEY_RE.test(key)) return jsonError('Bad suggestion', 400);
+            const { metadata: m } = await store(env).getWithMetadata(key);
+            if (!m?.sg) return jsonError('Suggestion not found', 404, { reason: 'gone' });
+            return jsonResponse(suggestionView(key, m, await suggestionVotes(env, key)));
+        }
+        // /suggestions top : les 10 suggestions ouvertes les plus votées.
+        case 'suggestions': {
+            const du = String(body.du || '');
+            if (!/^\d{5,25}$/.test(du)) return jsonError('Bad Discord user', 400);
+            if (overLimit(botReadHits, `sg:${du}`, BOT_READS_PER_MINUTE, 60000)) return busy();
+            await ensureSchema(env);
+            const { results } = await env.DB.prepare(`SELECT f.key AS key, f.meta AS meta, ${SUGGEST_VOTES_SQL} AS votes FROM kv f
+                WHERE f.key >= 'fb_' AND f.key < 'fb\`' AND (f.expires IS NULL OR f.expires > ?1)
+                  AND json_extract(${SUGGEST_META_SQL}, '$.sg') = 1 AND json_extract(${SUGGEST_META_SQL}, '$.mg') IS NULL
+                  AND COALESCE(json_extract(${SUGGEST_META_SQL}, '$.s'), 'new') NOT IN ('done', 'refused')
+                ORDER BY votes DESC, f.key DESC LIMIT 10`).bind(Date.now()).all();
+            return jsonResponse({ items: (results || []).map((r) => suggestionView(r.key, parseMeta(r.meta) || {}, Number(r.votes) || 0)) });
+        }
+    }
+    return null;
+}
+
+/** GET /api/open/live?channel=<pseudo> — redirige (302) vers le direct dans
+ *  l'app (twitchunblock://live/<pseudo>, comme le bouton des notifications
+ *  ntfy) : Discord n'accepte que des liens http(s) dans ses boutons. Seul le
+ *  pseudo vérifié part dans l'adresse. */
+function handleOpenLive(url, request) {
+    if (request.method !== 'GET' && request.method !== 'HEAD') return jsonError('Method Not Allowed', 405);
+    const login = String(url.searchParams.get('channel') || '').trim().toLowerCase();
+    if (!LOGIN_RE.test(login)) return jsonError('Bad channel name', 400);
+    if (overLimit(openLiveHits, clientKey(request), 60, 60000)) return jsonError('Too many requests', 429);
+    const target = `twitchunblock://live/${login}`;
+    return new Response(`<!doctype html><meta charset="utf-8"><title>TwitchUnblock</title><p><a href="${target}">Open ${login} in TwitchUnblock</a></p>`, {
+        status: 302,
+        headers: { Location: target, 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer', 'X-Content-Type-Options': 'nosniff' },
+    });
+}
+
 /**
  * Nouvelle version en ligne (le bot lit les apps — iPhone, Apple TV,
  * Android — sur GitHub et le site sur Vercel ; FEEDBACK_RELEASE_PLATFORMS) :
@@ -3083,6 +3367,7 @@ async function handleAdminFeedback(request, env, ctx) {
             await store(env).delete(body.delete);
             if (metadata?.dt) await store(env).delete(`${FEEDBACK_DISCORD_PREFIX}${metadata.dt}`);
             await store(env).deletePrefix(`${FEEDBACK_PHOTO_PREFIX}${body.delete}_`);
+            await store(env).deletePrefix(`${SUGGEST_VOTE_PREFIX}${body.delete}_`);   // votes d'une suggestion
             // Son post Discord part aussi (supprimé par le bot du relais).
             if (metadata?.dt) await trashDiscordPosts(env, ctx, [metadata.dt]);
             return jsonResponse({ ok: true, deleted: 1 });
@@ -3092,7 +3377,7 @@ async function handleAdminFeedback(request, env, ctx) {
             // plafond de requêtes D1 d'un appel (erreur 500, effacement partiel).
             const count = (await listAll(FEEDBACK_PREFIX)).length;
             const links = await listAll(FEEDBACK_DISCORD_PREFIX);
-            for (const p of [FEEDBACK_PREFIX, FEEDBACK_PHOTO_PREFIX, FEEDBACK_DISCORD_PREFIX]) await store(env).deletePrefix(p);
+            for (const p of [FEEDBACK_PREFIX, FEEDBACK_PHOTO_PREFIX, FEEDBACK_DISCORD_PREFIX, SUGGEST_VOTE_PREFIX]) await store(env).deletePrefix(p);
             await trashDiscordPosts(env, ctx, links.map((k) => k.name.slice(FEEDBACK_DISCORD_PREFIX.length)));
             return jsonResponse({ ok: true, deleted: count });
         }
@@ -4658,6 +4943,9 @@ function describeBotAction(b, out) {
             return { what: 'announce.publish', detail: auditExcerpt(out.announcement?.title || out.announcement?.message) };
         case 'poll': return { what: 'poll.start', detail: auditExcerpt(out.poll?.question) };
         case 'poll-end': return { what: 'poll.end', detail: auditExcerpt(out.poll?.question) };
+        // Boutons d'état de la carte d'une suggestion (déjà dans cet état : rien).
+        case 'suggest-status':
+            return out.unchanged ? null : { what: 'report.status', detail: `${key} → ${cleanText(out.status || b.status, 12)}` };
     }
     return null;
 }
@@ -4815,6 +5103,9 @@ async function forgetPerson(env, ctx, raw, { dry = true, actor = null } = {}) {
     if (people.length) {
         reads.push(['discord', db.prepare(`SELECT key FROM kv WHERE key >= 'fb_' AND key < 'fb\`'
             AND (CASE WHEN json_valid(meta) THEN json_extract(meta, '$.du') END) IN (SELECT value FROM json_each(?1)) AND ${live}`).bind(JSON.stringify(people))]);
+        // Ses votes pour des suggestions (/suggest) : `sgv_<retour>_<compte Discord>`.
+        reads.push(['sgvotes', db.prepare(`SELECT key FROM kv WHERE key >= 'sgv_' AND key < 'sgv\`'
+            AND EXISTS (SELECT 1 FROM json_each(?1) AS j WHERE substr(kv.key, -length(j.value) - 1) = '_' || j.value) AND ${live}`).bind(JSON.stringify(people))]);
     }
     const got = reads.length ? await db.batch(reads.map(([, q]) => q)) : [];
     const rows = Object.fromEntries(reads.map(([name], i) => [name, got[i]?.results || []]));
@@ -4837,6 +5128,10 @@ async function forgetPerson(env, ctx, raw, { dry = true, actor = null } = {}) {
         found[r.key.startsWith(POLL_VOTE_PREFIX) ? 'votes' : 'reactions']++;
     }
     for (const r of rows.discord || []) reportKeys.add(r.key);
+    for (const r of rows.sgvotes || []) {
+        doomed.add(r.key);
+        found.votes++;
+    }
 
     // Retours : leur post Discord (`dt`) et leurs photos.
     const reportList = JSON.stringify([...reportKeys]);
@@ -4873,7 +5168,12 @@ async function forgetPerson(env, ctx, raw, { dry = true, actor = null } = {}) {
     if (!dry) {
         const ops = [];
         if (doomed.size) ops.push(db.prepare(`DELETE FROM kv WHERE key IN (SELECT value FROM json_each(?1))`).bind(JSON.stringify([...doomed])));
-        if (reportKeys.size) ops.push(db.prepare(`DELETE FROM kv WHERE ${FORGET_PHOTOS}`).bind(reportList));
+        if (reportKeys.size) {
+            ops.push(db.prepare(`DELETE FROM kv WHERE ${FORGET_PHOTOS}`).bind(reportList));
+            // Votes des suggestions effacées (ceux des autres membres : sans eux, rien n'y renvoie).
+            ops.push(db.prepare(`DELETE FROM kv WHERE key >= 'sgv_' AND key < 'sgv\`'
+                AND EXISTS (SELECT 1 FROM json_each(?1) AS j WHERE substr(kv.key, 5, length(j.value) + 1) = j.value || '_')`).bind(reportList));
+        }
         if (subIds.length) {
             ops.push(
                 // Ses chaînes que plus personne ne suivra : plus vérifiées (comme handlePushUnsubscribe).
