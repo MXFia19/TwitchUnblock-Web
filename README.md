@@ -574,7 +574,10 @@ per version):
 - `/status` (developer only): main and fallback Workers, database size, ntfy
   messages sent today against ntfy.sh's 250 and any pause, notification queue,
   the scheduled task's last run, relay and Worker versions, how long the bot
-  has been connected, and the Cloudflare quotas when set — in one message.
+  has been connected, and the Cloudflare quotas when set — in one message,
+  ending with the 5 D1 queries that read the most rows today (UTC): the start of
+  each query, rows read and calls (D1 query insights, same token; if Cloudflare
+  refuses, one short line says so).
 - `/forget-user who:` (developer only) erases a person's data, after showing
   what will go: for a **Twitch account** (`@name` or numeric ID) its backup,
   synced settings and usage entry; for an **install ID** (random ID of an app

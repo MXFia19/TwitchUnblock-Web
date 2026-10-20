@@ -232,7 +232,7 @@ const COMMANDS = [
       { type: 1, name: 'clear', description: 'Remove the current announcement' },
     ],
   },
-  { name: 'status', description: 'Server status: Workers, database, notifications, versions, quotas', default_member_permissions: ADMIN },
+  { name: 'status', description: 'Server status: Workers, database, notifications, versions, quotas, top D1 reads', default_member_permissions: ADMIN },
   {
     name: 'forget-user', description: 'Erase a person’s data (shows what will go, then asks to confirm)', default_member_permissions: ADMIN,
     options: [{ type: 3, name: 'who', description: 'Twitch name/ID, install ID, report link/ID, @user, ntfy topic (several allowed)', required: true, max_length: 1000 }],
@@ -353,7 +353,7 @@ const I18N = {
     h_poll: 'poll in the app and on the website, and end it (results posted)',
     h_todo: 'add to the to-do channel (or a message’s Apps menu → Add to to-do)',
     h_summary: 'post the daily summary now',
-    h_status: 'server status in one message',
+    h_status: 'server status in one message, with the D1 queries that read the most today',
     h_roles_config: 'roles offered in /roles: add, remove, list',
     h_public: 'post them in this channel for everyone',
     h_report: 'in a report’s post: delete it, close it, merge it into another',
@@ -481,7 +481,7 @@ const I18N = {
     h_poll: 'sondage dans l’app et sur le site, et le clore (résultats postés)',
     h_todo: 'ajouter à la liste à faire (ou menu Apps d’un message → Add to to-do)',
     h_summary: 'poster le résumé du jour maintenant',
-    h_status: 'état du serveur en un message',
+    h_status: 'état du serveur en un message, avec les requêtes D1 qui lisent le plus aujourd’hui',
     h_roles_config: 'rôles proposés dans /roles : ajouter, retirer, lister',
     h_public: 'les poster dans ce salon pour tout le monde',
     h_report: 'dans le post d’un retour : le supprimer, le clore, le fusionner avec un autre',
@@ -608,7 +608,7 @@ const I18N = {
     h_poll: 'encuesta en la app y el sitio web, y cerrarla (resultados publicados)',
     h_todo: 'añadir a la lista de tareas (o menú Apps de un mensaje → Add to to-do)',
     h_summary: 'publicar ahora el resumen del día',
-    h_status: 'estado del servidor en un mensaje',
+    h_status: 'estado del servidor en un mensaje, con las consultas D1 que más filas leen hoy',
     h_roles_config: 'roles ofrecidos en /roles: añadir, quitar, listar',
     h_public: 'publicarlos en este canal para todos',
     h_report: 'en el hilo de un informe: borrarlo, cerrarlo, fusionarlo con otro',
@@ -735,7 +735,7 @@ const I18N = {
     h_poll: 'опрос в приложении и на сайте, и завершить его (итоги публикуются)',
     h_todo: 'добавить в список задач (или меню «Приложения» у сообщения → Add to to-do)',
     h_summary: 'опубликовать сводку дня сейчас',
-    h_status: 'состояние сервера одним сообщением',
+    h_status: 'состояние сервера одним сообщением, с запросами D1, которые сегодня читают больше всего строк',
     h_roles_config: 'роли в /roles: добавить, убрать, список',
     h_public: 'опубликовать их в этом канале для всех',
     h_report: 'в посте отчёта: удалить, закрыть, объединить с другим',
@@ -3585,14 +3585,10 @@ export function startDiscordBridge({
   /** Requêtes des Workers et lignes D1 lues et écrites du jour, par l'API
    *  GraphQL Analytics (jeton en lecture seule). Valeurs écrites dans la
    *  requête : dates calculées ici, compte vérifié (32 caractères hexa). */
-  async function cfQuotas() {
-    const now = new Date()
-    const day = now.toISOString().slice(0, 10)
-    const until = now.toISOString().replace(/\.\d+Z$/, 'Z')
-    const query = `{ viewer { accounts(filter: { accountTag: "${cloudflare.account}" }) {
-      workers: workersInvocationsAdaptive(limit: 10000, filter: { datetime_geq: "${day}T00:00:00Z", datetime_leq: "${until}" }) { sum { requests } }
-      d1: d1AnalyticsAdaptiveGroups(limit: 10000, filter: { date_geq: "${day}", date_leq: "${day}" }) { sum { rowsRead rowsWritten } }
-    } } }`
+  /** Une requête GraphQL Analytics sur le compte (`fields` : ses champs) →
+   *  le compte ; lève avec le message de Cloudflare. */
+  async function cfAccount(fields) {
+    const query = `{ viewer { accounts(filter: { accountTag: "${cloudflare.account}" }) { ${fields} } } }`
     const r = await fetch(cloudflareApi, {
       method: 'POST',
       headers: { Authorization: `Bearer ${cloudflare.token}`, 'Content-Type': 'application/json' },
@@ -3603,8 +3599,30 @@ export function startDiscordBridge({
     if (!r.ok || j?.errors?.length) throw new Error(String(j?.errors?.[0]?.message || `HTTP ${r.status}`).slice(0, 200))
     const acc = j?.data?.viewer?.accounts?.[0]
     if (!acc) throw new Error('account not found (CLOUDFLARE_ACCOUNT_ID, or the token’s account)')
+    return acc
+  }
+  async function cfQuotas() {
+    const now = new Date()
+    const day = now.toISOString().slice(0, 10)
+    const until = now.toISOString().replace(/\.\d+Z$/, 'Z')
+    const acc = await cfAccount(`
+      workers: workersInvocationsAdaptive(limit: 10000, filter: { datetime_geq: "${day}T00:00:00Z", datetime_leq: "${until}" }) { sum { requests } }
+      d1: d1AnalyticsAdaptiveGroups(limit: 10000, filter: { date_geq: "${day}", date_leq: "${day}" }) { sum { rowsRead rowsWritten } }`)
     const sum = (list, k) => (Array.isArray(list) ? list : []).reduce((n, g) => n + (Number(g?.sum?.[k]) || 0), 0)
     return { at: Date.now(), day, requests: sum(acc.workers, 'requests'), rowsRead: sum(acc.d1, 'rowsRead'), rowsWritten: sum(acc.d1, 'rowsWritten') }
+  }
+  /** Les requêtes D1 qui ont lu le plus de lignes aujourd'hui (UTC) :
+   *  [{ query, rowsRead, count }], 5 au plus. Requête à part : refusée
+   *  (jeton sans ce droit, jeu de données absent), les quotas restent. */
+  async function cfTopReads() {
+    const day = new Date().toISOString().slice(0, 10)
+    const acc = await cfAccount(`
+      top: d1QueriesAdaptiveGroups(limit: 5, filter: { date_geq: "${day}", date_leq: "${day}" }, orderBy: [sum_rowsRead_DESC]) {
+        count sum { rowsRead } dimensions { query }
+      }`)
+    return (Array.isArray(acc.top) ? acc.top : []).map((g) => ({
+      query: String(g?.dimensions?.query || ''), rowsRead: Number(g?.sum?.rowsRead) || 0, count: Number(g?.count) || 0,
+    }))
   }
   /** Toutes les 15 min : une alerte par quota et par jour, passé 70 %. */
   async function watchQuotas() {
@@ -3699,10 +3717,11 @@ export function startDiscordBridge({
    *  versions : la dernière comparaison (30 min au plus). */
   async function statusText() {
     const now = Date.now()
-    const [o, probes, q] = await Promise.all([
+    const [o, probes, q, top] = await Promise.all([
       call({ action: 'ops' }).catch((e) => ({ error: e.status === 400 ? 'the Worker isn’t up to date' : e.message })),
       Promise.all([['main', worker], ...fallbacks.map((f) => ['fallback', f])].map(async ([kind, base]) => ({ kind, ...(await probeWorker(base)) }))),
       cfOn ? cfQuotas().catch((e) => ({ at: Date.now(), error: e.message })) : null,
+      cfOn ? cfTopReads().catch((e) => ({ error: e.message })) : null,
     ])
     const L = [`📟 **Status** — <t:${Math.floor(now / 1000)}:f>`]
     L.push(`**Workers**: ${probes.map((p) => `${p.kind} ${p.ok ? '✅' : `❌ ${p.problem}`}${p.ms !== null ? ` (${p.ms} ms)` : ''}`).join(' · ')}`)
@@ -3737,7 +3756,26 @@ export function startDiscordBridge({
     if (!cfOn) L.push('**Cloudflare quotas**: off — set CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID in the relay’s .env')
     else if (q?.error) L.push(`**Cloudflare quotas**: unreadable (${q.error})`)
     else L.push(`**Cloudflare quotas** (today, UTC, free plan): ${CF_QUOTAS.map(([id, label, max]) => `${label} ${num(q[id])} / ${num(max)} (${pct(q[id], max)}%)`).join(' · ')}`)
+    // En dernier, raccourcies pour que tout tienne dans le message (1 900).
+    if (cfOn) L.push(topReadsText(top, 1900 - L.join('\n').length - 1))
     return L.join('\n')
+  }
+  /** Les requêtes D1 qui lisent le plus aujourd'hui (cfTopReads), en `room`
+   *  caractères au plus : début de chaque requête, lignes lues, appels. */
+  function topReadsText(top, room) {
+    const title = '**D1 rows read by query**'
+    if (!top || top.error) return `${title}: unavailable (${String(top?.error || 'no answer').slice(0, 100)})`.slice(0, Math.max(0, room))
+    if (!top.length) return `${title}: nothing recorded yet today`.slice(0, Math.max(0, room))
+    const sql = (s, n) => {
+      const t = String(s || '?').replace(/\s+/g, ' ').replace(/`/g, "'").trim()
+      return t.length > n ? `${t.slice(0, n - 1)}…` : t
+    }
+    for (const width of [90, 70, 50, 35, 20]) {
+      const text = [`${title} (top ${top.length} today, UTC):`, ...top.map((t, i) =>
+        `${i + 1}. \`${sql(t.query, width)}\` — ${num(t.rowsRead)} rows · ${num(t.count)} ${t.count === 1 ? 'call' : 'calls'}`)].join('\n')
+      if (text.length <= room) return text
+    }
+    return `${title}: too long to show here`.slice(0, Math.max(0, room))
   }
 
   // ── /forget-user ─────────────────────────────────────────────────────────
