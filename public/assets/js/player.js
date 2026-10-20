@@ -240,6 +240,18 @@ export function mediaFixAllowed(state) {
   return true
 }
 
+/** Réparation sur place (recoverMediaError) : hls.js détache puis rattache
+ *  la vidéo. Elle s'y retrouvait en pause — sans événement « pause », l'image
+ *  restait figée — et une VOD repartait de la position de départ de sa
+ *  configuration (le début, ou le lien ?t=) : elle reprend à `at` (VOD ;
+ *  -1, un direct, repart d'où il en était), et la lecture en cours continue. */
+export function recoverMedia(hls, video, at = -1) {
+  const playing = !video.paused
+  if (at >= 0) hls.config.startPosition = at
+  hls.recoverMediaError()
+  if (playing) video.play().catch(() => {})
+}
+
 // ── Mémoire tampon de hls.js ────────────────────────────────────────────
 // Par défaut, hls.js garde derrière la lecture tout ce qu'il a chargé
 // (backBufferLength infini) et charge d'avance jusqu'à 60 Mo (maxBufferSize),
@@ -891,7 +903,7 @@ export class Player {
         }
         // Réparée sur place une fois ; revenue aussitôt, ou d'un autre type :
         // nouvelle instance (voir MEDIA_FIX_MS).
-        if (data.type === Hls.ErrorTypes.MEDIA_ERROR && mediaFixAllowed(this)) hls.recoverMediaError()
+        if (data.type === Hls.ErrorTypes.MEDIA_ERROR && mediaFixAllowed(this)) recoverMedia(hls, v, this.kind === 'vod' ? this.resumeAt() : -1)
         else this.rebuild(token)
       })
     } else if (native) {
@@ -963,7 +975,10 @@ export class Player {
    *  la même position pour une VOD, au bord pour un direct. Au-delà de
    *  MAX_REBUILDS en REBUILD_WINDOW_MS, l'erreur. */
   rebuild(token) {
-    if (token !== this.attachToken) return
+    // Relance déjà prévue : elle ne compte qu'une fois. L'ancienne instance
+    // signale parfois d'autres erreurs fatales d'ici là ; trois d'un coup
+    // affichaient l'erreur, et la relance repartait derrière.
+    if (token !== this.attachToken || this.rebuildTimer) return
     const now = Date.now()
     this.rebuilds = (this.rebuilds ?? []).filter((at) => now - at < REBUILD_WINDOW_MS)
     if (this.rebuilds.length >= MAX_REBUILDS) {
@@ -977,8 +992,8 @@ export class Player {
     this.el.spinner.hidden = false
     // Hors de l'événement d'erreur : hls.js n'est pas détruit pendant qu'il
     // le diffuse encore à ses propres contrôleurs.
-    clearTimeout(this.rebuildTimer)
     this.rebuildTimer = setTimeout(() => {
+      this.rebuildTimer = null
       if (token === this.attachToken) this.attach(this.links[this.quality], this.kind === 'vod' ? this.resumeAt() : 0)
     }, 1000)
   }
@@ -1104,14 +1119,22 @@ export class Player {
    *  pause. */
   stop() {
     this.clearRetry()
+    // Relance prévue (rebuild) et guet d'un calage annulés : le lecteur ne
+    // repart pas derrière l'écran d'erreur ou de fin du direct.
+    this.clearRebuild()
     this.hls?.stopLoad()
     this.video.pause()
   }
 
-  destroyHls() {
-    this.clearRetry()
+  clearRebuild() {
     clearTimeout(this.stallTimer)
     clearTimeout(this.rebuildTimer)
+    this.rebuildTimer = null
+  }
+
+  destroyHls() {
+    this.clearRetry()
+    this.clearRebuild()
     if (this.hls) { this.hls.destroy(); this.hls = null }
     // Niveau d'Auto inconnu jusqu'au prochain LEVEL_SWITCHED : le bouton
     // ne garde pas celui de la source précédente.

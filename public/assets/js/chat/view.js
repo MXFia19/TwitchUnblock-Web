@@ -1318,8 +1318,11 @@ export class ChatView {
     // derrière ceux qui attendent, pour garder l'ordre.
     if (this.syncDelay() < 0.5 && !this.delayed.length) { this.enqueue(msg); return }
     this.delayed.push({ msg, at: Date.now() })
-    // File pleine (voir DELAYED_MAX) : les plus anciens sortent tout de suite.
-    if (this.delayed.length > DELAYED_MAX) for (const d of this.delayed.splice(0, this.delayed.length - DELAYED_MAX)) this.enqueue(d.msg)
+    // File pleine, page masquée (voir DELAYED_MAX) : les plus anciens sortent
+    // tout de suite. Page affichée, le minuteur la vide à l'heure : un très
+    // gros chat, loin derrière le direct, y dépasse le plafond sans rien
+    // empiler, et ses messages sortaient en avance sur l'image.
+    if (document.hidden && this.delayed.length > DELAYED_MAX) for (const d of this.delayed.splice(0, this.delayed.length - DELAYED_MAX)) this.enqueue(d.msg)
     if (!this.delayTimer) this.delayTimer = setInterval(() => this.releaseDelayed(), 100)
   }
 

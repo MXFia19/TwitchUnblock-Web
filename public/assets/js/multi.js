@@ -8,7 +8,7 @@
 
 import * as api from './api.js'
 import { t } from './i18n.js'
-import { bufferConfig, failedProxy, heightOf, liveRequestUrl, loadHls, mediaFixAllowed, noteDirectSegmentError, sortQualities } from './player.js'
+import { bufferConfig, failedProxy, heightOf, liveRequestUrl, loadHls, mediaFixAllowed, noteDirectSegmentError, recoverMedia, sortQualities } from './player.js'
 import { store } from './store.js'
 import { $, esc, formatClock, icon, toast, twitchTime } from './util.js'
 
@@ -491,7 +491,7 @@ async function startLive(tile, { avoid = null } = {}) {
       if (!data.fatal) return
       // Erreur média réparée sur place une fois ; revenue aussitôt, la tuile
       // repart sur une nouvelle instance (retryLive) — elle restait figée.
-      if (data.type === Hls.ErrorTypes.MEDIA_ERROR && mediaFixAllowed(tile)) return hls.recoverMediaError()
+      if (data.type === Hls.ErrorTypes.MEDIA_ERROR && mediaFixAllowed(tile)) return recoverMedia(hls, v)
       const network = data.type === Hls.ErrorTypes.NETWORK_ERROR
       retryLive(tile, token, network && navigator.onLine !== false ? failedProxy(data) : null, network)
     })
@@ -612,7 +612,8 @@ async function attachVod(tile, links, variants, at, token) {
     hls.on(Hls.Events.ERROR, (_e, data) => {
       if (!data.fatal || tile.token !== token) return
       // Comme un direct : une réparation sur place, puis une nouvelle instance.
-      if (data.type === Hls.ErrorTypes.MEDIA_ERROR && mediaFixAllowed(tile)) return hls.recoverMediaError()
+      // Au même endroit (recoverMedia) : la tuile repartait de `at`.
+      if (data.type === Hls.ErrorTypes.MEDIA_ERROR && mediaFixAllowed(tile)) return recoverMedia(hls, v, tile.pos > 0 ? tile.pos : at)
       const from = tile.pos > 0 ? tile.pos : at
       // Relais vidéo du VPS en panne : les mêmes liens par le Worker, au
       // même endroit, sans les redemander (comme switchWorker dans main.js).
