@@ -1471,7 +1471,9 @@
 
   // ── Effacer les données d'une personne : aperçu, puis effacement ──────
   const FG_KEYS = ['sync', 'settings', 'usage', 'votes', 'reactions', 'reports', 'pictures', 'posts', 'subscriptions', 'channels']
-  let fgWho = ''   // ce que montre l'aperçu, seul effacé ensuite
+  // Ce que montre l'aperçu, seul effacé ensuite : son `who`, où chaque @pseudo
+  // est déjà l'identifiant du compte montré (pas cherché une seconde fois).
+  let fgWho = ''
   function forgetText(r) {
     const found = FG_KEYS.filter((k) => r.found?.[k] > 0).map((k) => `${t(`fg_${k}`)} ${fmt(r.found[k])}`)
     return [
@@ -1496,7 +1498,7 @@
       const r = await forget(who, true)
       $('#forget-result').textContent = r.targets?.length ? forgetText(r)
         : `${t('fgNone')}${r.unknown?.length ? ` ${t('fgUnknown')} ${r.unknown.join(' · ')}` : ''}`
-      if (FG_KEYS.some((k) => r.found?.[k] > 0)) { fgWho = who; $('#forget-go').hidden = false }
+      if (FG_KEYS.some((k) => r.found?.[k] > 0) && typeof r.who === 'string') { fgWho = r.who; $('#forget-go').hidden = false }
     } catch (err) { $('#forget-result').textContent = t('fail', { e: err.message }) }
   })
   $('#forget-go').addEventListener('click', async () => {

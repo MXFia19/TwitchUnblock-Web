@@ -172,7 +172,7 @@ ntfy.sh's free tier counts messages per IP address (250 a day). Every Cloudflare
 - Per-address limits only hold in one Worker instance's memory, and a free IPv6 `/48` holds 65,536 `/64`s, so whatever writes to D1 also has daily caps kept in D1, for the whole Worker and per network: feedback (300 new reports a day, 30 per network; 1,000 replies a day; no new report or reply once the database passes 400 MB), new anonymous installs counted (1,000 a day, 100 per network), votes and reactions (2,000 a day per poll or announcement, 40 new devices per network), followed channels for live notifications (only the difference is written: 2,000 changes a day per subscription, 3,000 per network, 10,000 in all, and 1,000 channels new to the server a day). Over a cap the answer is `429` (an install is just not counted), and a cap already reached refuses without writing anything.
 - The developer tools only accept Twitch tokens issued to the official website and apps (or to `TWITCH_CLIENT_ID`): a token of the owner's account issued to another Twitch app doesn't open them.
 - **Admin log**: every admin action — from `/stats`, the apps or Discord: deleting, closing or merging a report, replies and statuses, announcements, polls, erasing someone's data… — is kept 90 days (who, what, when, from where) and listed at the bottom of the developer tools on `/stats`.
-- **Erasing someone's data** (`/stats` → developer tools, or `/forget-user` on Discord): shows what will go first, then erases it — see [Discord bot](#discord-bot-feedback-alerts-releases), *Operations*.
+- **Erasing someone's data** (`/stats` → developer tools, or `/forget-user` on Discord): shows what will go first — with the Twitch account found, ID and current username —, then erases exactly that; the admin log only notes what kind of data went and how much, nothing that identifies the person — see [Discord bot](#discord-bot-feedback-alerts-releases), *Operations*.
 
 ---
 
@@ -269,7 +269,10 @@ the Worker's D1 database every night (03:23 UTC, `wrangler d1 export
 an artifact of the workflow run. Artifacts of a public repository can be
 downloaded by anyone signed in to GitHub: only the passphrase protects them.
 During the export (a few seconds for a small database), D1 doesn't serve other
-queries.
+queries. Each secret only reaches the step that uses it: the Cloudflare token
+the export (wrangler and its npm dependencies), the passphrase the encryption
+(gpg alone, through its standard input); the plain dump is then erased, and
+only the encrypted file is uploaded.
 
 Repository secrets (*Settings → Secrets and variables → Actions*):
 
@@ -531,8 +534,13 @@ per version):
   their screenshots, conversation and Discord post; **notification
   subscriptions** (the iOS app's ntfy topic, `tu-…`). Reports and
   subscriptions aren't tied to an account or an install, so name them too.
-  Up to 10 at once, separated by spaces. Same tool on `/stats`, and both go
-  to the admin log.
+  Up to 10 at once, separated by spaces. The preview shows the Twitch account
+  it found — numeric ID and current username — and confirming erases that
+  very account, by its ID: the username isn't looked up again, so it can't
+  have moved to someone else in between (erasing without a preview takes IDs
+  only). Same tool on `/stats`. Both go to the admin log with only what kind
+  of data was erased and how much (and who erased it, from where, when) —
+  never whose it was; same for erasing a backup and synced settings.
 - What the bot does for the developer (replies, statuses, deletions, merges,
   announcements, polls, `/setup`, published release notes) goes to the
   [admin log](#security) with the member's name.

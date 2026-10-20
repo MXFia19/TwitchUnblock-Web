@@ -1612,13 +1612,15 @@ async function handleAdminSyncDelete(request, env) {
     const d = await twitchGQL('query($l: String!) { user(login: $l) { id } }', { l: login });
     const id = d?.data?.user?.id;
     if (!id) return jsonError('Compte introuvable', 404);
-    let existed = false;
-    for (const key of [`user_${id}`, prefsKey(id)]) {
+    // `found` : ce qui est parti, par sorte (comme l'effacement d'une personne),
+    // seul noté au journal d'audit.
+    const found = { sync: 0, settings: 0 };
+    for (const [kind, key] of [['sync', `user_${id}`], ['settings', prefsKey(id)]]) {
         if (!(await store(env).get(key))) continue;
-        existed = true;
+        found[kind]++;
         await store(env).delete(key);
     }
-    return jsonResponse({ ok: true, existed });
+    return jsonResponse({ ok: true, existed: found.sync + found.settings > 0, found });
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -4429,9 +4431,12 @@ async function pushSend(env, room, counts = {}) {
 //    quoi, quand, d'où (audited, autour des routes concernées). Lu par
 //    GET /api/admin/audit.
 //  - Effacement des données d'une personne : POST /api/admin/forget et
-//    l'action `forget` du bot (/forget-user), aperçu d'abord.
+//    l'action `forget` du bot (/forget-user), aperçu d'abord ; il efface le
+//    compte Twitch que l'aperçu a montré, et le journal n'en garde que les
+//    sortes de données et les nombres.
 //  - Messages ntfy de live enrichis : vignette, avatar, bouton « Regarder ».
-//  Rien ici ne change les routes existantes ni la forme de leurs réponses.
+//  Rien ici ne change les routes existantes ni la forme de leurs réponses
+//  (sync/delete rend seulement `found` en plus, pour le journal).
 // ═══════════════════════════════════════════════════════════════════════════
 const OPS_CRON_KEY = 'ops_cron';
 // D1 gratuit : 500 Mo par base (pleine, plus rien ne s'y écrit).
@@ -4615,8 +4620,9 @@ function describeAdminAction(path, b, out) {
                 : `install ${key.slice(USAGE_PREFIX.length, USAGE_PREFIX.length + 8)}…`;
             return { what: 'usage.delete', detail: `${target} — ${Number(out.deleted) || 0} deleted` };
         }
+        // Ni pseudo ni identifiant de la personne : ce qui est parti, et combien.
         case '/api/admin/sync/delete':
-            return { what: 'sync.delete', detail: `@${cleanText(b.login, 25)}${out.existed === false ? ' (nothing stored)' : ''}` };
+            return { what: 'sync.delete', detail: forgetCounts(out.found) };
         case '/api/admin/announcement':
             if (Array.isArray(b.templates)) return { what: 'announce.templates', detail: `${(out.templates || []).length} template(s)` };
             if (b.clear === true) return { what: 'announce.clear' };
@@ -4683,6 +4689,10 @@ async function handleAdminAudit(request, env) {
 // Discord (corbeille du bot).
 const FORGET_MAX = 10;
 const FORGET_FOUND = ['sync', 'settings', 'usage', 'votes', 'reactions', 'reports', 'pictures', 'posts', 'subscriptions', 'channels'];
+/** Ce qu'un effacement a emporté, par sorte et en nombre (« sync 1, usage
+ *  2 ») : tout ce que le journal en garde, rien qui désigne la personne. */
+const forgetCounts = (found) => FORGET_FOUND.filter((k) => Number(found?.[k]) > 0)
+    .map((k) => `${k} ${Number(found[k])}`).join(', ') || 'nothing stored';
 // Photos des retours de la liste JSON `?1` : clés `fbimg_<retour>_<n>`.
 const FORGET_PHOTOS = `key >= 'fbimg_' AND key < 'fbimg\`'
     AND EXISTS (SELECT 1 FROM json_each(?1) AS j WHERE substr(kv.key, 7, length(j.value) + 1) = j.value || '_')`;
@@ -4694,9 +4704,10 @@ const pushEndpointOk = (s) => {
 
 /** Identifiants reconnus dans un texte libre (espaces, virgules) : 10 au
  *  plus. Un nombre de 15 chiffres et plus est de Discord (post ou personne),
- *  un plus court un identifiant Twitch ; « @nom » force un pseudo. */
+ *  un plus court un identifiant Twitch ; « @nom » force un pseudo. `kept` :
+ *  le reste de ce qui est reconnu, tel qu'écrit. */
 function parseForgetTargets(raw) {
-    const t = { twitch: [], logins: [], installs: [], reports: [], posts: [], discord: [], snowflakes: [], subs: [], unknown: [] };
+    const t = { twitch: [], logins: [], installs: [], reports: [], posts: [], discord: [], snowflakes: [], subs: [], unknown: [], kept: [] };
     const tokens = [...new Set(String(raw ?? '').split(/[\s,;]+/).filter(Boolean))];
     for (const tok of tokens.slice(0, FORGET_MAX)) {
         let m;
@@ -4707,18 +4718,49 @@ function parseForgetTargets(raw) {
         else if ((m = /^(?:https:\/\/ntfy\.sh\/)?(tu-[a-z0-9]{20,40})$/.exec(tok))) t.subs.push({ endpoint: `${NTFY_URL}/${m[1]}`, label: `ntfy topic ${m[1].slice(0, 7)}…` });
         else if (pushEndpointOk(tok)) t.subs.push({ endpoint: tok, label: `Web Push (${new URL(tok).hostname})` });
         else if (/^\d{15,25}$/.test(tok)) t.snowflakes.push(tok);
-        else if (/^\d{1,14}$/.test(tok)) t.twitch.push(tok);
-        else if ((m = /^@?([A-Za-z0-9_]{1,25})$/.exec(tok))) t.logins.push(m[1].toLowerCase());
-        else t.unknown.push(tok.slice(0, 40));
+        else if (/^\d{1,14}$/.test(tok)) { t.twitch.push(tok); continue; }
+        else if ((m = /^@?([A-Za-z0-9_]{1,25})$/.exec(tok))) { t.logins.push(m[1].toLowerCase()); continue; }
+        else { t.unknown.push(tok.slice(0, 40)); continue; }
+        t.kept.push(tok);
     }
     if (tokens.length > FORGET_MAX) t.unknown.push(`+${tokens.length - FORGET_MAX} more (${FORGET_MAX} at most)`);
     return t;
 }
 
+/** Comptes Twitch par identifiant et par pseudo (10 au plus), en une
+ *  requête : Map « id:… » ou « login:… » → { id, login } de ceux qui
+ *  existent, ou null si Twitch n'a pas répondu. */
+async function forgetAccounts(ids, logins) {
+    const asks = [...ids.map((v) => ['id', 'ID', v]), ...logins.map((v) => ['login', 'String', v])];
+    const out = new Map();
+    if (!asks.length) return out;
+    let data = null;
+    try {
+        data = (await twitchGQL(`query(${asks.map(([, type], i) => `$v${i}: ${type}!`).join(', ')}) {
+            ${asks.map(([by], i) => `a${i}: user(${by}: $v${i}) { id login }`).join(' ')} }`,
+        Object.fromEntries(asks.map(([, , v], i) => [`v${i}`, v]))))?.data;
+    } catch (e) { logCaught('forget/twitch', e); }
+    if (!data) return null;
+    asks.forEach(([by, , v], i) => {
+        const u = data[`a${i}`];
+        // 14 chiffres au plus : renvoyé dans `who`, il se relit comme un compte Twitch.
+        if (/^\d{1,14}$/.test(String(u?.id || '')) && LOGIN_RE.test(String(u.login || ''))) {
+            out.set(`${by}:${v}`, { id: String(u.id), login: String(u.login).toLowerCase() });
+        }
+    });
+    return out;
+}
+
 /**
  * Aperçu (`dry`, par défaut) ou effacement des données désignées par `raw`.
  * Rend { ok, dry, targets: [{ kind, label }], unknown: [texte], found:
- * { catégorie: nombre } } ; l'effacement est noté au journal (`actor`).
+ * { catégorie: nombre }, who } ; `who` : ce qui a été reconnu, chaque
+ * pseudo remplacé par l'identifiant du compte trouvé — le texte que la
+ * confirmation renvoie. L'effacement ne prend que des identifiants Twitch :
+ * il efface le compte que l'aperçu a montré (identifiant et pseudo actuel),
+ * même si le pseudo a changé de main entre-temps. Il est noté au journal
+ * (`actor`) par sortes de données et nombres seulement, sans rien qui
+ * désigne la personne.
  * Une dizaine de requêtes D1 en tout, quel que soit le nombre de clés (listes
  * en JSON) : un Worker gratuit en a 50 par appel.
  */
@@ -4730,16 +4772,20 @@ async function forgetPerson(env, ctx, raw, { dry = true, actor = null } = {}) {
     const targets = [];
     const unknown = [...t.unknown];
     const found = Object.fromEntries(FORGET_FOUND.map((k) => [k, 0]));
-    // Comptes Twitch : pseudo → identifiant (le pseudo peut changer, pas lui).
-    const accounts = new Map(t.twitch.map((id) => [id, `Twitch #${id}`]));
-    for (const login of t.logins) {
-        let id = null;
-        try { id = (await twitchGQL('query($l: String!) { user(login: $l) { id } }', { l: login }))?.data?.user?.id; }
-        catch (e) { logCaught('forget/login', e); }
-        if (/^\d{1,20}$/.test(String(id || ''))) accounts.set(String(id), `@${login}`);
-        else unknown.push(`@${login} (no such Twitch account)`);
+    // Comptes Twitch : identifiant → pseudo actuel ('' : plus de compte ;
+    // null : Twitch n'a pas répondu). Un pseudo n'est cherché qu'à l'aperçu.
+    const logins = dry ? [...new Set(t.logins)] : [];
+    if (!dry) for (const l of t.logins) unknown.push(`@${l} (erasing needs the Twitch ID: preview first)`);
+    const twitch = await forgetAccounts(t.twitch, logins);
+    const accounts = new Map(t.twitch.map((id) => [id, twitch ? twitch.get(`id:${id}`)?.login || '' : null]));
+    for (const l of logins) {
+        const u = twitch?.get(`login:${l}`);
+        if (u) accounts.set(u.id, u.login);
+        else unknown.push(twitch ? `@${l} (no such Twitch account)` : `@${l} (Twitch didn’t answer: try again)`);
     }
-    for (const label of accounts.values()) targets.push({ kind: 'twitch', label });
+    for (const [id, login] of accounts) {
+        targets.push({ kind: 'twitch', label: `Twitch #${id}${login ? ` (@${login})` : login === '' ? ' (no Twitch account now)' : ''}` });
+    }
     for (const d of t.installs) targets.push({ kind: 'install', label: `install ${d.slice(0, 8)}…` });
     for (const k of t.reports) targets.push({ kind: 'report', label: k });
     for (const p of t.posts) targets.push({ kind: 'post', label: `Discord post ${p}` });
@@ -4843,16 +4889,14 @@ async function forgetPerson(env, ctx, raw, { dry = true, actor = null } = {}) {
         if (posts.size) await trashDiscordPosts(env, ctx, [...posts]);
         pollCountCache = null;
         statsCache = null;
-        const counts = FORGET_FOUND.filter((k) => found[k]).map((k) => `${k} ${found[k]}`).join(', ') || 'nothing stored';
-        await writeAudit(env, { ...(actor || { who: '?', from: 'stats' }), what: 'forget',
-            detail: `${targets.map((x) => x.label).join(', ') || '—'} — ${counts}` });
+        await writeAudit(env, { ...(actor || { who: '?', from: 'stats' }), what: 'forget', detail: forgetCounts(found) });
     }
-    return { ok: true, dry, targets, unknown, found };
+    return { ok: true, dry, targets, unknown, found, who: [...accounts.keys(), ...t.kept].join(' ') };
 }
 
 // POST /api/admin/forget { who, dry } — `who` : identifiants séparés par des
 // espaces ; `dry` (par défaut) : aperçu, rien n'est effacé ; `dry: false` :
-// effacement, noté au journal.
+// effacement du `who` rendu par l'aperçu (pas de pseudo), noté au journal.
 async function handleAdminForget(request, env, ctx) {
     if (request.method !== 'POST') return jsonError('Method Not Allowed', 405);
     const { denied } = await requireAdmin(request);

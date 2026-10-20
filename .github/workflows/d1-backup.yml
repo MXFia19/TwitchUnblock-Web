@@ -4,6 +4,11 @@
 # Les artefacts d'un dépôt public se téléchargent par n'importe quel compte
 # GitHub : seule la phrase secrète les protège.
 #
+# Chaque secret ne va qu'à l'étape qui s'en sert : le jeton Cloudflare à
+# l'export (wrangler et ses dépendances, venus de npm), la phrase secrète au
+# chiffrement (gpg seul). Le dump en clair est effacé avant le téléversement,
+# qui ne prend que le .gpg.
+#
 # Secrets du dépôt (Settings → Secrets and variables → Actions) :
 #   CLOUDFLARE_API_TOKEN   jeton Cloudflare « D1 : Edit » sur le compte du
 #                          Worker (l'export demande l'écriture) ; pas celui
@@ -55,10 +60,13 @@ jobs:
             echo "ready=false" >> "$GITHUB_OUTPUT"
           fi
 
-      # wrangler.toml : le nom de la base mène à son identifiant.
+      # wrangler.toml : le nom de la base mène à son identifiant. Sans le jeton
+      # GitHub gardé dans .git : l'export n'en a pas besoin.
       - name: Checkout repository
         if: steps.secrets.outputs.ready == 'true'
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Set up Node
         if: steps.secrets.outputs.ready == 'true'
@@ -66,18 +74,21 @@ jobs:
         with:
           node-version: 22
 
-      - name: Export and encrypt
+      # Export : les variables Cloudflare seules, jamais la phrase secrète.
+      - name: Export
         id: export
         if: steps.secrets.outputs.ready == 'true'
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          BACKUP_PASSPHRASE: ${{ secrets.BACKUP_PASSPHRASE }}
           WRANGLER_SEND_METRICS: 'false'
         run: |
           set -eu -o pipefail
           umask 077
           name="d1-$DATABASE-$(date -u +%Y-%m-%d)"
+          # Nom donné d'abord : l'étape d'effacement le retrouve même si
+          # l'export échoue à mi-chemin.
+          echo "name=$name" >> "$GITHUB_OUTPUT"
           # wrangler écrit dans son journal l'adresse signée de l'export (le
           # dump en clair, valable une heure), et les journaux d'un dépôt
           # public se lisent par tous : adresses masquées, le reste gardé.
@@ -85,13 +96,34 @@ jobs:
             | sed -E 's#[A-Za-z][A-Za-z0-9+.-]*://[^[:space:]]+#[link hidden]#g'
           test -s "$RUNNER_TEMP/$name.sql"
           echo "Export: $(wc -c < "$RUNNER_TEMP/$name.sql") bytes"
+
+      # Chiffrement : la phrase secrète seule, sans wrangler ni npm.
+      - name: Encrypt
+        if: steps.secrets.outputs.ready == 'true'
+        env:
+          BACKUP_PASSPHRASE: ${{ secrets.BACKUP_PASSPHRASE }}
+          NAME: ${{ steps.export.outputs.name }}
+        run: |
+          set -eu -o pipefail
+          umask 077
           # Phrase secrète par l'entrée standard : jamais dans la ligne de commande.
           printf '%s' "$BACKUP_PASSPHRASE" | gpg --batch --yes --pinentry-mode loopback --passphrase-fd 0 \
             --symmetric --cipher-algo AES256 --s2k-digest-algo SHA512 --s2k-count 65011712 \
-            --output "$name.sql.gpg" "$RUNNER_TEMP/$name.sql"
-          shred -u "$RUNNER_TEMP/$name.sql" 2>/dev/null || rm -f "$RUNNER_TEMP/$name.sql"
-          echo "name=$name" >> "$GITHUB_OUTPUT"
+            --output "$NAME.sql.gpg" "$RUNNER_TEMP/$NAME.sql"
+          test -s "$NAME.sql.gpg"
 
+      # Dump en clair effacé, même après un échec, avant tout téléversement.
+      - name: Erase the plain dump
+        if: always() && steps.export.outputs.name != ''
+        env:
+          NAME: ${{ steps.export.outputs.name }}
+        run: |
+          set -eu -o pipefail
+          dump="$RUNNER_TEMP/$NAME.sql"
+          if [ -e "$dump" ]; then shred -u "$dump" 2>/dev/null || rm -f "$dump"; fi
+          test ! -e "$dump"
+
+      # Le .gpg seul (le dump en clair n'est plus là).
       - name: Keep for 14 days
         if: steps.secrets.outputs.ready == 'true'
         uses: actions/upload-artifact@v4

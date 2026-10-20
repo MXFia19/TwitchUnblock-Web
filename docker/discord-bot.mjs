@@ -1914,9 +1914,11 @@ export function startDiscordBridge({
   }
 
   // ── /forget-user ─────────────────────────────────────────────────────────
-  // Aperçu d'abord (rien n'est effacé), puis « Erase for good ». Ce qui a été
-  // demandé est gardé ici 10 min, sous un jeton dans l'identifiant du bouton
-  // (100 caractères au plus pour lui).
+  // Aperçu d'abord (rien n'est effacé), puis « Erase for good ». Le texte que
+  // rend l'aperçu (`who` : chaque @pseudo y est déjà l'identifiant du compte
+  // montré) est gardé ici 10 min, sous un jeton dans l'identifiant du bouton
+  // (100 caractères au plus pour lui) : la confirmation efface ce compte-là,
+  // sans chercher le pseudo une seconde fois.
   const forgets = new Map()   // jeton → { who, at }
   const FORGET_LABELS = {
     sync: 'backup (history, progress)', settings: 'synced settings', usage: 'usage entries', votes: 'poll votes',
@@ -1933,7 +1935,8 @@ export function startDiscordBridge({
     ].join('\n')
   }
   // Worker d'avant : l'action inconnue tombe sur « Bad post ID ».
-  const forgetError = (e) => (e.status === 400 && /post ID/i.test(e.message) ? 'the Worker isn’t up to date (it can’t erase yet): update it first.' : e.message)
+  const FORGET_OUTDATED = 'the Worker isn’t up to date (it can’t erase yet): update it first.'
+  const forgetError = (e) => (e.status === 400 && /post ID/i.test(e.message) ? FORGET_OUTDATED : e.message)
 
   async function forgetCommand(i, user) {
     const who = String(opt(i, 'who') || '').slice(0, 1000)
@@ -1941,12 +1944,14 @@ export function startDiscordBridge({
     try {
       const r = await call({ action: 'forget', who, dry: true, by: byOf(user) })
       const any = Object.values(r.found || {}).some((n) => n > 0)
+      // Sans `who`, le Worker d'avant chercherait le pseudo à nouveau.
+      if (any && typeof r.who !== 'string') throw new Error(FORGET_OUTDATED)
       let components = []
       if (any) {
         const now = Date.now()
         for (const [k, f] of forgets) if (now - f.at > 10 * 60_000) forgets.delete(k)
         const id = crypto.randomUUID().slice(0, 8)
-        forgets.set(id, { who, at: now })
+        forgets.set(id, { who: r.who, at: now })
         components = [row(button('Erase for good', `fg:yes:${id}`, 4), button('Cancel', `fg:no:${id}`))]
       }
       const head = any ? '🧹 **Erase this person’s data?** Preview — nothing is erased yet.' : '🧹 Nothing stored for this — nothing to erase.'
