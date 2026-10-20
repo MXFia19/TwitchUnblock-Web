@@ -131,10 +131,12 @@ async function pageIntegrityFetch(clientId, oauthToken, deviceId) {
   }
 }
 
-// Cherche un onglet twitch.tv deja ouvert (de preference charge).
+// Cherche un onglet www.twitch.tv deja ouvert (de preference charge). Seulement
+// www : c'est la que tourne le script anti-robots, et la session n'est confiee
+// a aucun autre sous-domaine.
 async function findTwitchTab() {
   try {
-    const tabs = await api.tabs.query({ url: ["*://*.twitch.tv/*"] });
+    const tabs = await api.tabs.query({ url: ["https://www.twitch.tv/*"] });
     if (!tabs || !tabs.length) return null;
     return tabs.find((t) => t.status === "complete") || tabs[0];
   } catch (e) {
