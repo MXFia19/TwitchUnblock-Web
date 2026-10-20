@@ -480,6 +480,7 @@ function loadBackground(opts = {}) {
         assert.equal(args[1], AUTH_TOKEN, "la session ne va qu'à la page twitch.tv");
         assert.equal(args[2], UNIQUE_ID);
         tabLog.scripts.push({ tabId: target.tabId, url: tab.url, func });
+        if (tw.mintTakesMs) clock.now += tw.mintTakesMs; // obtention lente
         if (tw.mintFailNext > 0) {
           tw.mintFailNext--;
           return [{ result: { status: 403, token: "" } }];
@@ -1316,6 +1317,28 @@ test("rewards.redeem : vérifications, mutation de l'app, solde", async () => {
   h.tw.redeemError = "NOT_ENOUGH_POINTS";
   assert.deepEqual((await redeem({})).error, { code: "twitch", message: "NOT_ENOUGH_POINTS" });
   assertNoLeaks(h, "récompenses");
+});
+
+test("dépense : rien n'est envoyé plus de 30 s après la demande (le site abandonne à 45 s)", async () => {
+  const h = loadBackground({ tabs: [liveTab()] });
+  h.tw.prediction = { id: "ev-5", title: "Win?", outcomes: [{ id: "o-blue", title: "Yes", color: "BLUE", totalPoints: 0, totalUsers: 0 }] };
+  const bet = () => h.spend("predictions.bet", { channel: CHANNEL, eventId: "ev-5", outcomeId: "o-blue", points: 100 });
+  h.tw.mintTakesMs = 30001;
+  assert.equal(code(await bet()), "timeout");
+  assert.equal(h.tw.lastBet, undefined, "pari jamais envoyé : le site croirait à un échec et laisserait recommencer");
+  assert.equal(h.tw.balance, 1000);
+  // Jeton gardé : le pari suivant part tout de suite.
+  h.tw.mintTakesMs = 0;
+  h.clock.now += 3001;
+  assert.equal(code(await bet()), "ok");
+  assert.equal(h.tw.lastBet.points, 100);
+  // Jeton refusé, nouvelle obtention trop longue : le rachat n'est pas renvoyé.
+  h.tw.integrityFailNext = 1;
+  h.tw.mintTakesMs = 30001;
+  h.clock.now += 3001;
+  assert.equal(code(await h.spend("rewards.redeem", REDEEM)), "timeout");
+  assert.equal(h.tw.lastRedeem, null);
+  assert.equal(h.tw.balance, 900);
 });
 
 // --- Content script --------------------------------------------------------------------------------------

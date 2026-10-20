@@ -89,6 +89,8 @@ const LIMIT = {
   claimMs: 10000,            // points.claim et coffre automatique : 1 par 10 s
   beatMs: 50000,             // watch.beat : 1 par 50 s et par chaîne
   spendMs: 3000,             // paris et votes : 1 par 3 s
+  spendSendMs: 30000,        // dépense envoyée à Twitch au plus 30 s après la demande : avec sa
+                             // requête (12 s au plus), la réponse arrive avant les 45 s du site
   raidMs: 30000,             // raid.join : 1 par 30 s et par chaîne
   raidKeepMs: 3600000,       // réponse gardée par raid : 1 h
   dropsClaimMs: 5000,        // drops.claim : 1 par 5 s
@@ -600,11 +602,14 @@ function persisted(operationName, variables, sha256Hash) {
 
 // Mutation signée du jeton d'intégrité. Refusée pour l'intégrité : jeton
 // oublié, nouvelle obtention, un seul nouvel essai (mêmes variables, donc
-// même transaction), comme TwitchGQL.send de l'app.
+// même transaction), comme TwitchGQL.send de l'app. `opts.sendBy` (dépenses) :
+// rien ne part après cette heure. Le site aurait déjà abandonné la demande et
+// laisserait recommencer : deux paris ou deux rachats.
 async function mutation(body, session, opts) {
   const o = opts || {};
   for (let attempt = 0; attempt < 2; attempt++) {
     const integrity = await getIntegrity(session, { force: attempt > 0, auto: !!o.auto });
+    if (o.sendBy && Date.now() > o.sendBy) throw new TuError("timeout");
     const json = await gql(body, session, { integrity });
     const first = Array.isArray(json) ? json[0] : json;
     if (!first || typeof first !== "object") throw new TuError("twitch", "bad_response");
@@ -1287,6 +1292,7 @@ async function opPredictionsGet(args, session) {
 
 async function opPredictionsBet(args, session) {
   const channel = args.channel;
+  const sendBy = Date.now() + LIMIT.spendSendMs;
   const [pts, ev, selfMap] = await Promise.all([
     readPoints(session, channel, true),
     readPredictionContext(session, channel, true),
@@ -1300,7 +1306,7 @@ async function opPredictionsBet(args, session) {
   if (mine && mine.outcomeId !== args.outcomeId) throw new TuError("bad_args", "other_outcome");
 
   const input = { eventID: ev.id, outcomeID: args.outcomeId, points: args.points, transactionID: hex32() };
-  const res = await mutation(persisted("MakePrediction", { input }, HASH.makePrediction), session);
+  const res = await mutation(persisted("MakePrediction", { input }, HASH.makePrediction), session, { sendBy });
   const made = res.data && res.data.makePrediction;
   if (!made || typeof made !== "object") {
     throwGqlErrors(res);
@@ -1314,7 +1320,8 @@ async function opPredictionsBet(args, session) {
   pruneMap(mem.predBets, 50);
   save("predBets");
   invalidate(session, channel, ["points", "pred", "predself"]);
-  const after = await readPoints(session, channel, true).catch(() => null);
+  // Solde relu seulement s'il reste le temps de répondre avant l'abandon du site.
+  const after = Date.now() <= sendBy ? await readPoints(session, channel, true).catch(() => null) : null;
   const expected = pts.balance - args.points;
   const balance = after ? Math.min(after.balance, expected) : expected;
   return { balance: Math.max(0, balance), self: { outcomeId: args.outcomeId, points: total } };
@@ -1327,6 +1334,7 @@ async function opPollsGet(args, session) {
 
 async function opPollsVote(args, session) {
   const channel = args.channel;
+  const sendBy = Date.now() + LIMIT.spendSendMs;
   const [user, poll] = await Promise.all([sessionUser(session), readPoll(session, channel, true)]);
   if (!poll || poll.id !== args.pollId) throw new TuError("bad_args", "pollId");
   if (poll.status !== null && poll.status !== "ACTIVE") throw new TuError("bad_args", "not_active");
@@ -1345,7 +1353,7 @@ async function opPollsVote(args, session) {
     tokens = { bits: 0, channelPoints: cost };
   }
   const input = { pollID: poll.id, choiceID: args.choiceId, userID: user.userId, voteID: hex32(), tokens };
-  const res = await mutation(persisted("ChannelPollContext_VoteInPoll", { input }, HASH.voteInPoll), session);
+  const res = await mutation(persisted("ChannelPollContext_VoteInPoll", { input }, HASH.voteInPoll), session, { sendBy });
   const vote = res.data && res.data.voteInPoll;
   if (!vote || gqlErrors(res).length) {
     throwGqlErrors(res);
@@ -1362,7 +1370,7 @@ async function opPollsVote(args, session) {
   pruneMap(mem.pollVotes, 50);
   save("pollVotes");
   invalidate(session, channel, args.withPoints ? ["poll", "points"] : ["poll"]);
-  const fresh = await readPoll(session, channel, true).catch(() => null);
+  const fresh = Date.now() <= sendBy ? await readPoll(session, channel, true).catch(() => null) : null;
   return { poll: withPollSelf(fresh && fresh.id === poll.id ? fresh : poll) };
 }
 
@@ -1835,6 +1843,7 @@ function gqlString(s) {
 // PROPERTIES_MISMATCH) : ils viennent de la récompense relue.
 async function opRewardsRedeem(args, session) {
   const channel = args.channel;
+  const sendBy = Date.now() + LIMIT.spendSendMs;
   const [pts, rw, cooldowns] = await Promise.all([
     readPoints(session, channel, true),
     readRewards(session, channel, true),
@@ -1863,7 +1872,7 @@ async function opRewardsRedeem(args, session) {
     "channelID: " + gqlString(pts.channelId) + ", cost: " + r.cost + ", " + promptField + ", " +
     "rewardID: " + gqlString(r.id) + ", title: " + gqlString(r.title) + ", transactionID: " + gqlString(crypto.randomUUID()) +
     " }) { redemption { id } error { code } } }";
-  const res = await mutation({ query: text }, session);
+  const res = await mutation({ query: text }, session, { sendBy });
   const result = res.data && res.data.redeemCommunityPointsCustomReward;
   if (!result || typeof result !== "object") {
     throwGqlErrors(res);
