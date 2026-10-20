@@ -4101,7 +4101,10 @@ let schemaReady = null;   // une fois par instance du Worker
 function ensureSchema(env) {
     schemaReady ??= (async () => {
         await env.DB.batch(SCHEMA.map((q) => env.DB.prepare(q)));
-        await migrateSchema(env);
+        // Migration à part : si D1 la refusait, seules les notifications (la
+        // colonne `kind` de la file) en pâtiraient, pas toute la base
+        // (synchro, sondage, retours…). Retentée par la prochaine instance.
+        await migrateSchema(env).catch((e) => logCaught('schema/migrate', e));
     })().catch((e) => { schemaReady = null; throw e; });
     return schemaReady;
 }
