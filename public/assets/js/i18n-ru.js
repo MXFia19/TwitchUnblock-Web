@@ -552,6 +552,7 @@ export const RU = {
   connect_err_offline: 'Канал не в эфире.',
   connect_err_no_claim: 'Сундук уже недоступен.',
   connect_err_timeout: 'Расширение не отвечает.',
+  connect_err_maybe: 'Нет ответа вовремя: запрос мог пройти. Проверьте, прежде чем повторять.',
   connect_err_points: 'Недостаточно баллов.',
   connect_err_max: 'Достигнут предел баллов для этого прогноза.',
   connect_err_closed: 'Уже закрыто: слишком поздно для ставки или голоса.',

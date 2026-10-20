@@ -55,9 +55,13 @@ function keepKeys(e) {
 
 /** Erreur d'une demande → phrase pour l'utilisateur. Pour `twitch`, le
  *  code de Twitch est lu au mieux (il n'est pas documenté) ; `ctx` :
- *  « reward » pour l'échange d'une récompense, dont les refus sont à part. */
-export function errorText(e, ctx = '') {
+ *  « reward » pour l'échange d'une récompense, dont les refus sont à part.
+ *  `spend` : pari, vote ou échange — un délai dépassé ne dit pas que rien
+ *  n'est parti (l'extension envoie jusqu'à 30 s après la demande), donc
+ *  pas de « recommence » qui pourrait payer deux fois. */
+export function errorText(e, ctx = '', spend = false) {
   const code = e?.code || 'internal'
+  if (spend && code === 'timeout') return t('connect_err_maybe')
   if (code === 'bad_args') {
     // Refus de l'extension après relecture chez Twitch (background.js) : le
     // détail dit lequel — prédiction fermée, points qui manquent, récompense
@@ -577,7 +581,9 @@ export class ConnectLive {
     let input = null
     if (r.requiresInput) {
       // Une ligne, comme sur Twitch : 1 à 200 caractères.
-      input = rw.input.replace(/\s+/g, ' ').trim().slice(0, MAX_REWARD_INPUT)
+      // Coupé par caractères, pas par unités UTF-16 : un emoji n'est
+      // jamais coupé en deux (moitié seule que Twitch refuserait).
+      input = Array.from(rw.input.replace(/\s+/g, ' ').trim()).slice(0, MAX_REWARD_INPUT).join('')
       if (!input) {
         rw.error = t('reward_input_needed')
         this.renderRewards()
@@ -602,8 +608,9 @@ export class ConnectLive {
       toast(t('reward_done', { r: r.title }), 'success')
     }, (e) => {
       if (gen !== this.gen) return
-      if (this.rw !== rw) { toast(errorText(e, 'reward'), 'error'); return }
-      Object.assign(rw, { step: 'confirm', error: errorText(e, 'reward') })
+      this.at.points = 0   // échange peut-être passé : solde relu
+      if (this.rw !== rw) { toast(errorText(e, 'reward', true), 'error'); return }
+      Object.assign(rw, { step: 'confirm', error: errorText(e, 'reward', true) })
       this.renderRewards()
     })
   }
@@ -920,7 +927,10 @@ export class ConnectLive {
       setTimeout(() => { if (this.bet === b && b.note) { b.note = ''; this.renderAct() } }, NOTE_SHOWN)
     }, (e) => {
       if (gen !== this.gen || this.bet !== b) return
-      Object.assign(b, { step: 'idle', pick: null, error: errorText(e) })
+      // Mise peut-être passée : prédiction et solde relus au prochain tour.
+      this.at.pred = 0
+      this.at.points = 0
+      Object.assign(b, { step: 'idle', pick: null, error: errorText(e, '', true) })
       this.renderAct()
     })
   }
@@ -1082,7 +1092,10 @@ export class ConnectLive {
       setTimeout(() => { if (this.pollUi === ui && ui.note) { ui.note = ''; this.renderPoll() } }, NOTE_SHOWN)
     }, (e) => {
       if (gen !== this.gen || this.pollUi !== ui) return
-      Object.assign(ui, { step: 'idle', pick: null, error: errorText(e) })
+      // Vote peut-être passé : sondage (et solde s'il était payant) relus.
+      this.at.poll = 0
+      if (withPoints) this.at.points = 0
+      Object.assign(ui, { step: 'idle', pick: null, error: errorText(e, '', withPoints) })
       this.renderPoll()
     })
   }
