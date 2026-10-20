@@ -1,0 +1,163 @@
+"use strict";
+
+// ---------------------------------------------------------------------------
+// TwitchUnblock Connect — pont entre le site et l'extension (PROTOCOL.md)
+//
+// Injecté seulement sur les deux origines du site, cadre principal, au tout
+// début du chargement. Il ne fait QUE relayer : il filtre les messages de la
+// page, vérifie la forme et la taille des arguments, exige un vrai clic pour
+// les dépenses, transmet à l'arrière-plan et renvoie sa réponse. Il ne touche
+// pas au DOM, ne lit aucun stockage et ne voit jamais la session Twitch.
+// ---------------------------------------------------------------------------
+
+(() => {
+  const api = globalThis.browser || globalThis.chrome;
+  if (!api || !api.runtime || typeof api.runtime.sendMessage !== "function") return;
+
+  const ORIGIN = location.origin;
+  const PROTOCOL = 1;
+  const MAX_IN_FLIGHT = 16;
+
+  const ERROR_CODES = [
+    "disabled", "no_session", "needs_activation", "spend_disabled", "bad_args", "unknown_op",
+    "rate_limited", "integrity", "twitch", "offline", "no_claim", "timeout", "internal"
+  ];
+
+  // --- Validation des demandes (même code que background.js) ----------------
+
+  const CHANNEL_RE = /^[a-z0-9_]{1,25}$/;
+  const TWITCH_ID_RE = /^[A-Za-z0-9._:-]{1,64}$/;
+  const RAID_ID_RE = /^[A-Za-z0-9-]{1,64}$/;
+
+  const OP_ARGS = {
+    "hello": {},
+    "status": {},
+    "points.get": { channel: "channel" },
+    "points.claim": { channel: "channel" },
+    "watch.beat": { channel: "channel" },
+    "predictions.get": { channel: "channel" },
+    "predictions.bet": { channel: "channel", eventId: "id", outcomeId: "id", points: "points" },
+    "polls.get": { channel: "channel" },
+    "polls.vote": { channel: "channel", pollId: "id", choiceId: "id", withPoints: "bool" },
+    "raid.join": { channel: "channel", raidId: "raid" }
+  };
+  const SPEND_OPS = ["predictions.bet", "polls.vote"];
+
+  // Rend { args } (copie des seuls champs attendus) ou { bad: "<champ fautif>" }.
+  function checkArgs(op, raw) {
+    const spec = OP_ARGS[op];
+    if (raw === undefined || raw === null) raw = {};
+    if (typeof raw !== "object" || Array.isArray(raw)) return { bad: "args" };
+    const keys = Object.keys(raw);
+    if (keys.length > 8) return { bad: "args" };
+    for (const k of keys) {
+      if (!Object.prototype.hasOwnProperty.call(spec, k)) return { bad: /^[A-Za-z0-9_]{1,24}$/.test(k) ? k : "args" };
+    }
+    const args = {};
+    for (const k of Object.keys(spec)) {
+      const v = raw[k];
+      const kind = spec[k];
+      const good =
+        kind === "channel" ? typeof v === "string" && CHANNEL_RE.test(v) :
+        kind === "id" ? typeof v === "string" && TWITCH_ID_RE.test(v) :
+        kind === "raid" ? typeof v === "string" && RAID_ID_RE.test(v) :
+        kind === "points" ? typeof v === "number" && Number.isInteger(v) && v >= 1 && v <= 250000 :
+        kind === "bool" ? typeof v === "boolean" :
+        false;
+      if (!good) return { bad: k };
+      args[k] = v;
+    }
+    return { args };
+  }
+
+  // --- Envoi vers la page -----------------------------------------------------
+
+  function post(msg) {
+    try {
+      window.postMessage(msg, ORIGIN);
+    } catch (e) {
+      // page en cours de fermeture
+    }
+  }
+
+  function reply(id, res) {
+    if (res && res.ok === true && res.data && typeof res.data === "object") {
+      post({ tuConnect: 1, dir: "res", id, ok: true, data: res.data });
+      return;
+    }
+    const err = res && res.ok === false && res.error ? res.error : null;
+    const code = err && ERROR_CODES.includes(err.code) ? err.code : "internal";
+    const error = { code };
+    if (err && typeof err.message === "string" && err.message) error.message = err.message.slice(0, 80);
+    post({ tuConnect: 1, dir: "res", id, ok: false, error });
+  }
+
+  function failure(code, message) {
+    const error = { code };
+    if (message) error.message = message;
+    return { ok: false, error };
+  }
+
+  function toBackground(msg) {
+    try {
+      return Promise.resolve(api.runtime.sendMessage(msg));
+    } catch (e) {
+      // extension rechargée ou retirée
+      return Promise.reject(e);
+    }
+  }
+
+  // --- Demandes de la page ----------------------------------------------------
+
+  let inFlight = 0;
+
+  window.addEventListener("message", (event) => {
+    if (event.source !== window || event.origin !== ORIGIN) return;
+    const m = event.data;
+    if (!m || typeof m !== "object" || m.tuConnect !== 1 || m.dir !== "req") return;
+    const id = m.id;
+    if (typeof id !== "string" || id.length < 1 || id.length > 64) return;
+
+    const op = m.op;
+    if (typeof op !== "string" || !Object.prototype.hasOwnProperty.call(OP_ARGS, op)) {
+      reply(id, failure("unknown_op"));
+      return;
+    }
+    const checked = checkArgs(op, m.args);
+    if (!checked.args) {
+      reply(id, failure("bad_args", checked.bad));
+      return;
+    }
+    // Dépense : seulement juste après un vrai clic de l'utilisateur sur la page.
+    const spend = SPEND_OPS.includes(op);
+    const ua = navigator.userActivation;
+    const activation = spend && !!ua && ua.isActive === true;
+    if (spend && !activation) {
+      reply(id, failure("needs_activation"));
+      return;
+    }
+    if (inFlight >= MAX_IN_FLIGHT) {
+      reply(id, failure("rate_limited"));
+      return;
+    }
+
+    inFlight++;
+    toBackground({ tuConnect: 1, kind: "op", id, op, args: checked.args, activation })
+      .then((res) => reply(id, res), () => reply(id, failure("internal")))
+      .finally(() => { inFlight--; });
+  });
+
+  // --- Annonce au chargement --------------------------------------------------
+
+  toBackground({ tuConnect: 1, kind: "op", id: "announce", op: "hello", args: {}, activation: false })
+    .then((res) => {
+      if (!res || res.ok !== true || !res.data) return;
+      post({
+        tuConnect: 1,
+        dir: "hello",
+        protocol: PROTOCOL,
+        version: String(res.data.version || api.runtime.getManifest().version),
+        enabled: res.data.enabled === true
+      });
+    }, () => {});
+})();

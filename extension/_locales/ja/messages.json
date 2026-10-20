@@ -1,0 +1,205 @@
+{
+  "extName": {
+    "message": "TwitchUnblock Connect"
+  },
+  "extDescription": {
+    "message": "TwitchUnblock サイトを Twitch セッションにつなぎます：ポイント、ボーナス、予想、投票、レイド。セッションは拡張機能の外に出ません。"
+  },
+  "actionTitle": {
+    "message": "TwitchUnblock Connect"
+  },
+  "subtitle": {
+    "message": "TwitchUnblock サイト用の Twitch セッション"
+  },
+  "stateTitle": {
+    "message": "状態"
+  },
+  "sessionChecking": {
+    "message": "Twitch のセッションを確認しています…"
+  },
+  "sessionConnected": {
+    "message": "@$LOGIN$ としてログイン中",
+    "placeholders": {
+      "login": {
+        "content": "$1"
+      }
+    }
+  },
+  "sessionNone": {
+    "message": "このブラウザで twitch.tv にログインしてください。"
+  },
+  "sessionInvalid": {
+    "message": "Twitch がセッションを拒否しました。twitch.tv に再ログインしてください。"
+  },
+  "sessionError": {
+    "message": "Twitch のセッションを確認できませんでした（ネットワーク？）。"
+  },
+  "openTwitch": {
+    "message": "twitch.tv を開く"
+  },
+  "integrityUntil": {
+    "message": "整合性トークンの有効期限：$DATE$",
+    "placeholders": {
+      "date": {
+        "content": "$1"
+      }
+    }
+  },
+  "integrityNone": {
+    "message": "整合性トークンはまだありません。必要になった最初の操作で取得されます。"
+  },
+  "permsMissing": {
+    "message": "拡張機能に必要なアクセス（twitch.tv と TwitchUnblock サイト）がすべて許可されていません。"
+  },
+  "permsGrant": {
+    "message": "アクセスを許可"
+  },
+  "permsHint": {
+    "message": "何も起きない場合：アドオンマネージャーを開き、TwitchUnblock Connect を選んで「権限」からすべてのサイトを許可してください。"
+  },
+  "settingsTitle": {
+    "message": "設定"
+  },
+  "setSite": {
+    "message": "TwitchUnblock サイトとの接続"
+  },
+  "setSiteHelp": {
+    "message": "サイトがポイント・予想・投票を読み取り、下の操作にあなたのセッションを使えるようにします。"
+  },
+  "setClaim": {
+    "message": "ボーナスの自動受け取り"
+  },
+  "setClaimHelp": {
+    "message": "サイトで配信を視聴中にボーナスを自動で受け取ります。"
+  },
+  "setSpend": {
+    "message": "サイトからの予想と投票"
+  },
+  "setSpendHelp": {
+    "message": "サイトでの実際のクリックと確認の後にだけ行います。"
+  },
+  "diagTitle": {
+    "message": "診断"
+  },
+  "diagButton": {
+    "message": "診断を実行"
+  },
+  "diagRunning": {
+    "message": "セッションを確認し、新しい整合性トークンを取得しています…（数秒）"
+  },
+  "diagFailed": {
+    "message": "拡張機能のバックグラウンドが応答しませんでした。"
+  },
+  "diagSessionOk": {
+    "message": "セッション OK — @$LOGIN$（id $ID$）",
+    "placeholders": {
+      "login": {
+        "content": "$1"
+      },
+      "id": {
+        "content": "$2"
+      }
+    }
+  },
+  "diagSessionNone": {
+    "message": "Twitch のセッションがありません（auth-token クッキーなし）。twitch.tv にログインしてください。"
+  },
+  "diagSessionInvalid": {
+    "message": "Twitch がセッションを拒否しました（期限切れまたは無効）。"
+  },
+  "diagSessionError": {
+    "message": "セッションを確認できません：$CODE$",
+    "placeholders": {
+      "code": {
+        "content": "$1"
+      }
+    }
+  },
+  "diagClientId": {
+    "message": "トークンの Client-ID：$ID$",
+    "placeholders": {
+      "id": {
+        "content": "$1"
+      }
+    }
+  },
+  "diagAuthToken": {
+    "message": "auth-token：$MASK$",
+    "placeholders": {
+      "mask": {
+        "content": "$1"
+      }
+    }
+  },
+  "diagIntegrityOk": {
+    "message": "整合性トークン OK：$MASK$",
+    "placeholders": {
+      "mask": {
+        "content": "$1"
+      }
+    }
+  },
+  "diagIntegrityUntil": {
+    "message": "有効期限：$DATE$",
+    "placeholders": {
+      "date": {
+        "content": "$1"
+      }
+    }
+  },
+  "diagDevice": {
+    "message": "デバイス：$MASK$",
+    "placeholders": {
+      "mask": {
+        "content": "$1"
+      }
+    }
+  },
+  "diagVia": {
+    "message": "取得方法：$VIA$",
+    "placeholders": {
+      "via": {
+        "content": "$1"
+      }
+    }
+  },
+  "viaTab": {
+    "message": "開いている twitch.tv のタブ"
+  },
+  "viaTemp": {
+    "message": "一時的な twitch.tv のタブ（取得後に閉じます）"
+  },
+  "diagIntegrityFail": {
+    "message": "整合性トークンを取得できません（$DETAIL$）。",
+    "placeholders": {
+      "detail": {
+        "content": "$1"
+      }
+    }
+  },
+  "maskFormat": {
+    "message": "$HEAD$…（$LEN$ 文字）",
+    "placeholders": {
+      "head": {
+        "content": "$1"
+      },
+      "len": {
+        "content": "$2"
+      }
+    }
+  },
+  "securityTitle": {
+    "message": "セキュリティ"
+  },
+  "securityText": {
+    "message": "Twitch のセッションとトークンが拡張機能の外に出ることはありません。サイトが要求できるのは決められた操作だけで、予想と投票には実際のクリックが必要です。Twitch 以外には何も送信しません。"
+  },
+  "versionLabel": {
+    "message": "バージョン $VERSION$",
+    "placeholders": {
+      "version": {
+        "content": "$1"
+      }
+    }
+  }
+}
