@@ -92,6 +92,8 @@ export default {
                 case '/api/feedback/photo': return await handleFeedbackPhoto(url, request, env);
                 case '/api/feedback/discord': return await audited(request, env, ctx, (r) => handleFeedbackBot(r, env, ctx));
                 case '/api/admin/feedback': return await audited(request, env, ctx, (r) => handleAdminFeedback(r, env, ctx));
+                // Lecture seule des retours par la clé REPORTS_KEY (tools/reports.mjs).
+                case '/api/admin/reports': return await handleAdminReports(request, env, ctx);
                 // Bouton « Open in the app » du bot Discord (/live, /top) : vers l'app.
                 case '/api/open/live': return handleOpenLive(url, request);
 
@@ -3424,6 +3426,212 @@ async function handleAdminFeedback(request, env, ctx) {
     }), { headers: noStore });
 }
 
+// ── Lecture des retours par clé (outil du développeur) ────────────────────
+// GET /api/admin/reports — les retours en lecture seule, pour tools/reports.mjs
+// (l'assistant de développement les lit depuis le PC du propriétaire, sans
+// qu'il ait à les recopier). Seul accès : le secret REPORTS_KEY du Worker (32
+// caractères au moins) dans `Authorization: Bearer <clé>`, comparé en temps
+// constant ; ni jeton Twitch ni secret du bot n'ouvrent cette route, et la
+// clé n'ouvre rien d'autre (aucune écriture). Sans le secret, la route
+// répond comme une adresse inconnue (404). Clé fausse : 401 ; après
+// REPORTS_FAILS essais ratés en une heure depuis une adresse (/64 en IPv6),
+// 429 pour toute requête de cette adresse jusqu'à la fin de l'heure
+// (mémoire de l'instance : avec une clé de 64 caractères, deviner reste
+// hors de portée).
+//   ?id=fb_…    un retour, discussion et textes entiers (les filtres ne comptent pas)
+//   ?kind=      bug | idea (suggestions comprises) | suggestion | other | all (défaut)
+//   ?status=    open (défaut : ni fait, ni refusé, ni fusionné) | all | new |
+//               seen | accepted | progress | done | refused
+//   ?platform=  ios | web | tvos | android | discord | all (défaut)
+//   ?since=     date ISO (2026-10-13) ou durée (30m, 24h, 7d, 2w) : retours
+//               actifs depuis (création, message ou changement d'état)
+//   ?limit=     50 par défaut, 200 au plus : les plus récents (création) d'abord
+// Lecture bornée : une requête D1 sur la plage des clés `fb_`, parcourue de
+// la plus récente à la plus ancienne et arrêtée à `limit` (+1, pour `more`) ;
+// votes comptés seulement pour les suggestions rendues ; jamais de photo
+// (leur nombre seulement). Chaque champ rendu est choisi un à un
+// (reportView) : ni contact (e-mail, compte Discord), ni identifiant
+// d'installation, ni adresse, ni jeton ou son empreinte, ni lien Discord ;
+// les infos techniques passent par une liste blanche (reportInfo). Chaque
+// lecture est notée au journal d'audit (« reports.read » : filtres et
+// nombre de retours, rien de personnel).
+const REPORTS_FAILS = 10;            // clés fausses par heure et par adresse
+const REPORTS_LIST_DEFAULT = 50;
+const REPORTS_LIST_MAX = 200;
+const REPORTS_LIST_REPLIES = 5;      // derniers messages de chaque discussion, en liste
+const REPORTS_LIST_TEXT = 600;       // … coupés à tant de caractères (entiers avec ?id=)
+const reportsFailHits = new Map();   // adresse → { n, until } (mémoire de l'instance)
+// Infos techniques jointes par le site (navigateur, page, lecteur) et les
+// apps (appareil, système, build, langue) qui peuvent sortir. Un client
+// modifié pourrait y glisser autre chose (un identifiant…) : jamais rendu.
+const REPORT_INFO_KEYS = ['app', 'build', 'device', 'ios', 'tvos', 'android', 'os', 'browser', 'screen',
+    'lang', 'page', 'watching', 'player', 'account'];
+
+/** Même texte ? En temps constant : les empreintes SHA-256 des deux (même
+ *  longueur quelle que soit l'entrée), comparées octet par octet sans
+ *  s'arrêter au premier écart. */
+async function sameSecret(a, b) {
+    const hash = async (s) => new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(String(s))));
+    const [x, y] = await Promise.all([hash(a), hash(b)]);
+    let diff = 0;
+    for (let i = 0; i < x.length; i++) diff |= x[i] ^ y[i];
+    return diff === 0;
+}
+
+/** Début de la période de `since` : date ISO, ou durée jusqu'à maintenant
+ *  (minutes, heures, jours, semaines). null sans `since`, NaN si illisible. */
+function reportsSince(v, now) {
+    if (!v) return null;
+    const d = /^(\d{1,4})([mhdw])$/i.exec(v);
+    if (d) return now - Number(d[1]) * { m: 60000, h: 3600000, d: 86400000, w: 604800000 }[d[2].toLowerCase()];
+    if (!/^\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|[+-]\d{2}:?\d{2})?)?$/i.test(v)) return NaN;
+    const t = Date.parse(v);
+    return Number.isFinite(t) ? t : NaN;
+}
+
+const isoDate = (ms) => (Number(ms) > 0 ? new Date(Number(ms)).toISOString() : null);
+
+/** Infos techniques d'un retour (JSON du client, coupé à 600 caractères —
+ *  parfois au milieu : lues alors champ par champ) : seulement les champs
+ *  de REPORT_INFO_KEYS, et la page sans ce qui suit « ? » ou « # ». */
+function reportInfo(text) {
+    if (!text) return null;
+    let o = null;
+    try { o = JSON.parse(text); } catch (e) { /* coupé : champ par champ */ }
+    const out = {};
+    if (o && typeof o === 'object' && !Array.isArray(o)) {
+        for (const k of REPORT_INFO_KEYS) {
+            const v = o[k];
+            if (typeof v === 'boolean' || (typeof v === 'number' && Number.isFinite(v))) out[k] = v;
+            else if (typeof v === 'string' && v.trim()) out[k] = cleanText(v, 200);
+        }
+    } else {
+        for (const [, k, v] of String(text).matchAll(/"([a-z]+)"\s*:\s*"((?:[^"\\]|\\.)*)"/g)) {
+            if (!REPORT_INFO_KEYS.includes(k) || k in out) continue;
+            try { out[k] = cleanText(JSON.parse(`"${v}"`), 200); } catch (e) { /* illisible : laissé */ }
+        }
+    }
+    if (typeof out.page === 'string') out.page = out.page.split(/[?#]/)[0];
+    return Object.keys(out).length ? out : null;
+}
+
+/** Un retour tel que le rend /api/admin/reports, champ par champ (voir plus
+ *  haut). `full` : discussion et textes entiers ; sinon les
+ *  REPORTS_LIST_REPLIES derniers messages, coupés. `n` : place du message
+ *  dans la discussion (0 : le retour lui-même). */
+function reportView(key, m, value, votes, full) {
+    const thread = feedbackThread(value, m);
+    const status = FEEDBACK_STATUSES.includes(m.s) ? m.s : 'new';
+    const info = reportInfo(m.i);
+    const cut = (s) => {
+        const t = String(s ?? '');
+        return full || t.length <= REPORTS_LIST_TEXT ? t : `${t.slice(0, REPORTS_LIST_TEXT - 1)}…`;
+    };
+    const pics = (x) => (Array.isArray(x?.ph) ? x.ph.length : 0);
+    const entries = thread.map((x, n) => ({
+        n, from: x?.f === 'a' ? 'developer' : 'user', at: isoDate(x?.at),
+        ...(x?.s ? { status: String(x.s), statusLabel: FEEDBACK_STATUS_LABELS[x.s] || String(x.s) } : { text: cut(x?.m) }),
+        ...(pics(x) ? { photos: pics(x) } : {}),
+    }));
+    return {
+        key, kind: FEEDBACK_KINDS.includes(m.k) ? m.k : 'other', suggestion: Boolean(m.sg),
+        platform: cleanText(m.p, 20) || 'web', version: cleanText(m.v, 60) || '?',
+        build: typeof info?.build === 'string' ? info.build : null,
+        createdAt: isoDate(m.at), updatedAt: isoDate(m.u || m.at),
+        status, statusLabel: FEEDBACK_STATUS_LABELS[status], open: status !== 'done' && status !== 'refused' && !m.mg,
+        lastFrom: m.r === 'a' ? 'developer' : 'user', closed: Boolean(m.bl),
+        mergedInto: FEEDBACK_KEY_RE.test(String(m.mg || '')) ? m.mg : null,
+        title: auditExcerpt(m.sg && m.st ? m.st : m.m, 100), message: String(m.m ?? ''),
+        ...(m.sg ? { votes: Number(votes) || 0 } : {}),
+        photos: thread.reduce((n, x) => n + pics(x), 0),
+        info, errors: m.el ? String(m.el) : null,
+        threadLength: thread.length,
+        thread: full ? entries : entries.slice(-REPORTS_LIST_REPLIES),
+    };
+}
+
+/** Lecture notée au journal d'audit (à côté de la réponse). */
+async function noteReportsRead(env, ctx, detail) {
+    const note = writeAudit(env, { who: 'REPORTS_KEY', from: 'key', what: 'reports.read', detail }).catch((e) => logCaught('audit', e));
+    if (ctx?.waitUntil) ctx.waitUntil(note); else await note;
+}
+
+async function handleAdminReports(request, env, ctx) {
+    const secret = String(env.REPORTS_KEY || '').trim();
+    // Fonction coupée (secret absent ou trop court) : comme une route inconnue.
+    if (secret.length < 32 || !env.DB) return new Response('Not Found', { status: 404, headers: RESPONSE_HEADERS });
+    // Pas d'en-têtes CORS : réservé à l'outil local, aucune page ne lit la réponse.
+    const headers = { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' };
+    const reply = (obj, status = 200, extra = {}) => new Response(JSON.stringify(obj), { status, headers: { ...headers, ...extra } });
+    if (request.method !== 'GET') return reply({ error: 'Method Not Allowed' }, 405);
+    const who = clientKey(request);
+    const fails = reportsFailHits.get(who);
+    if (fails && fails.until >= Date.now() && fails.n >= REPORTS_FAILS) {
+        return reply({ error: 'Trop d\x27essais, réessaie dans une heure' }, 429, { 'Retry-After': String(Math.max(1, Math.ceil((fails.until - Date.now()) / 1000))) });
+    }
+    const given = /^Bearer\s+(\S+)\s*$/i.exec(request.headers.get('Authorization') || '')?.[1] || '';
+    if (!(await sameSecret(given, secret))) {
+        overLimit(reportsFailHits, who, REPORTS_FAILS);
+        console.warn('[reports] clé refusée');
+        return reply({ error: 'Clé refusée' }, 401);
+    }
+
+    await ensureSchema(env);
+    const url = new URL(request.url);
+    const now = Date.now();
+    const select = (where) => `SELECT f.key AS key, f.value AS value, f.meta AS meta,
+        CASE WHEN json_extract(${SUGGEST_META_SQL}, '$.sg') = 1 THEN ${SUGGEST_VOTES_SQL} END AS votes
+        FROM kv f WHERE ${where}`;
+
+    const id = String(url.searchParams.get('id') || '').trim();
+    if (id) {
+        if (!FEEDBACK_KEY_RE.test(id)) return reply({ error: 'Clé de retour invalide' }, 400);
+        const row = await env.DB.prepare(select('f.key = ?2 AND (f.expires IS NULL OR f.expires > ?1)')).bind(now, id).first();
+        const m = parseMeta(row?.meta);
+        await noteReportsRead(env, ctx, m ? id : `${id} — not found`);
+        if (!m) return reply({ error: 'Retour introuvable' }, 404);
+        return reply({ generatedAt: isoDate(now), item: reportView(id, m, row.value, row.votes, true) });
+    }
+
+    const param = (k) => String(url.searchParams.get(k) || '').trim().toLowerCase();
+    const kind = param('kind') || 'all';
+    if (!['bug', 'idea', 'suggestion', 'other', 'all'].includes(kind)) return reply({ error: 'kind : bug, idea, suggestion, other ou all' }, 400);
+    const status = param('status') || 'open';
+    if (!['open', 'all', ...FEEDBACK_STATUSES].includes(status)) return reply({ error: `status : open, all, ${FEEDBACK_STATUSES.join(', ')}` }, 400);
+    const platform = param('platform') || 'all';
+    if (!['all', 'discord', ...PLATFORMS].includes(platform)) return reply({ error: `platform : all, discord, ${PLATFORMS.join(', ')}` }, 400);
+    const since = reportsSince(String(url.searchParams.get('since') || '').trim(), now);
+    if (Number.isNaN(since)) return reply({ error: 'since : date ISO (2026-10-13) ou durée (30m, 24h, 7d, 2w)' }, 400);
+    const asked = param('limit');
+    const limit = asked ? Number(asked) : REPORTS_LIST_DEFAULT;
+    if (!Number.isInteger(limit) || limit < 1) return reply({ error: `limit : 1 à ${REPORTS_LIST_MAX}` }, 400);
+    const n = Math.min(limit, REPORTS_LIST_MAX);
+
+    // Filtres dans la requête même : le parcours s'arrête aux `n` premiers
+    // retours qui y répondent (aucun index sur les métadonnées).
+    const meta = (path) => `json_extract(${SUGGEST_META_SQL}, '$.${path}')`;
+    const binds = [now];
+    const arg = (v) => { binds.push(v); return `?${binds.length}`; };
+    const where = [`f.key >= 'fb_' AND f.key < 'fb\`'`, '(f.expires IS NULL OR f.expires > ?1)'];
+    if (kind === 'bug' || kind === 'idea') where.push(`${meta('k')} = ${arg(kind)}`);
+    else if (kind === 'suggestion') where.push(`${meta('sg')} = 1`);
+    else if (kind === 'other') where.push(`COALESCE(${meta('k')}, 'other') NOT IN ('bug', 'idea')`);
+    if (status === 'open') where.push(`COALESCE(${meta('s')}, 'new') NOT IN ('done', 'refused') AND ${meta('mg')} IS NULL`);
+    else if (status !== 'all') where.push(`COALESCE(${meta('s')}, 'new') = ${arg(status)}`);
+    if (platform !== 'all') where.push(`COALESCE(${meta('p')}, 'web') = ${arg(platform)}`);
+    if (since !== null) where.push(`COALESCE(${meta('u')}, ${meta('at')}, 0) >= ${arg(since)}`);
+    const sql = `${select(where.join(' AND '))} ORDER BY f.key DESC LIMIT ${arg(n + 1)}`;
+    const { results } = await env.DB.prepare(sql).bind(...binds).all();
+    const rows = (results || []).filter((r) => FEEDBACK_KEY_RE.test(String(r.key)));
+    const items = rows.slice(0, n).map((r) => reportView(r.key, parseMeta(r.meta) || {}, r.value, r.votes, false));
+    await noteReportsRead(env, ctx, `${kind} · ${status}${platform !== 'all' ? ` · ${platform}` : ''}`
+        + `${since !== null ? ` · since ${isoDate(since) || 'start'}` : ''} — ${items.length} report(s)`);
+    return reply({
+        generatedAt: isoDate(now), filters: { kind, status, platform, since: since === null ? null : isoDate(since), limit: n },
+        count: items.length, more: rows.length > n, items,
+    });
+}
+
 // ── Réactions aux annonces ───────────────────────────────────────────────
 // Une réaction par appareil (identifiant aléatoire de l'app ou du site),
 // modifiable ou retirable. Clé `annr_<annonce>_<appareil>`, l'emoji en
@@ -4860,7 +5068,8 @@ async function opsBotTool(env, ctx, body) {
 // ── Journal d'audit ────────────────────────────────────────────────────────
 const AUDIT_PREFIX = 'audit_';
 const AUDIT_TTL = 90 * 86400;
-const AUDIT_FROM = ['stats', 'app', 'discord'];
+// key : lecture des retours par la clé REPORTS_KEY (handleAdminReports).
+const AUDIT_FROM = ['stats', 'app', 'discord', 'key'];
 const auditExcerpt = (v, max = 60) => {
     const s = cleanText(v, 400).replace(/\s+/g, ' ');
     return s.length > max ? `${s.slice(0, max - 1)}…` : s;

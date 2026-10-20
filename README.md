@@ -135,6 +135,7 @@ docker/relay.mjs     Video relay for your own server (same proxy as the Worker)
 docker/discord-bot.mjs  Discord bot (feedback, alerts, releases), run by the relay
 docker/healthcheck.mjs  Container health check (site or relay)
 relay/               Its docker-compose.yml and Caddyfile (HTTPS)
+tools/reports.mjs    Reads bug reports and suggestions from the owner's computer (read-only key)
 .github/workflows/   Docker image (docker.yml), daily database backup (d1-backup.yml)
 vercel.json          Website configuration on Vercel
 ```
@@ -173,7 +174,8 @@ ntfy.sh's free tier counts messages per IP address (250 a day). Every Cloudflare
 - Per-address limits only hold in one Worker instance's memory, and a free IPv6 `/48` holds 65,536 `/64`s, so whatever writes to D1 also has daily caps kept in D1, for the whole Worker and per network: feedback (300 new reports a day, 30 per network; 1,000 replies a day; no new report or reply once the database passes 400 MB), Discord suggestions (one every 10 minutes per person, 5 a day per person, 50 a day in all, within the 300 reports) and their votes (5,000 a day, 60 an hour per member), new anonymous installs counted (1,000 a day, 100 per network), votes and reactions (2,000 a day per poll or announcement, 40 new devices per network), followed channels for live notifications (only the difference is written: 2,000 changes a day per subscription, 3,000 per network, 10,000 in all, and 1,000 channels new to the server a day). Over a cap the answer is `429` (an install is just not counted), and a cap already reached refuses without writing anything.
 - The Discord bot's actions on the Worker all carry the shared secret (`FEEDBACK_BOT_SECRET`); `/live` and `/top` go through at most 120 Twitch lookups a minute, `/my-reports` and `/suggestions` 30 a minute per member — and as each of those two reads every report in D1, the bot keeps their answers 60 seconds (`/suggestions top` the same for everyone, `/my-reports` per member; read again once that member sends something or votes). `/api/open/live` (the **Open in the app** button) only takes a valid Twitch name and only redirects to `twitchunblock://live/<name>`.
 - The developer tools only accept Twitch tokens issued to the official website and apps (or to `TWITCH_CLIENT_ID`): a token of the owner's account issued to another Twitch app doesn't open them.
-- **Admin log**: every admin action — from `/stats`, the apps or Discord: deleting, closing or merging a report, replies and statuses, announcements, polls, erasing someone's data… — is kept 90 days (who, what, when, from where) and listed at the bottom of the developer tools on `/stats`.
+- **Admin log**: every admin action — from `/stats`, the apps or Discord: deleting, closing or merging a report, replies and statuses, announcements, polls, erasing someone's data… — and every read of the reports with the read key is kept 90 days (who, what, when, from where) and listed at the bottom of the developer tools on `/stats`.
+- **Reports on the developer's computer** (`GET /api/admin/reports`, `tools/reports.mjs`): read-only, opened only by the `REPORTS_KEY` secret (constant-time check, 10 wrong keys an hour per address), never returns contacts, install IDs, addresses, tokens or pictures — see [Reading reports from your computer](#reading-reports-from-your-computer-read-only).
 - **Erasing someone's data** (`/stats` → developer tools, or `/forget-user` on Discord): shows what will go first — with the Twitch account found, ID and current username —, then erases exactly that; the admin log only notes what kind of data went and how much, nothing that identifies the person — see [Discord bot](#discord-bot-feedback-alerts-releases), *Operations*.
 
 ---
@@ -232,6 +234,7 @@ Optional settings, in the Cloudflare dashboard under *Workers & Pages → your W
 |---|---|---|
 | `FEEDBACK_WEBHOOK` | Secret | Discord webhook address: each bug report, idea and reply is posted there, screenshots attached. In a **forum** channel, each report gets its own post, where its replies land too. `/stats` shows whether the last delivery worked and has a **Test Discord delivery** button. |
 | `FEEDBACK_BOT_SECRET` | Secret | Optional. Shared secret (32+ random characters) of the [Discord bot](#discord-bot-feedback-alerts-releases): the same value goes in the relay's `.env`. Without it, the bot's route is off. |
+| `REPORTS_KEY` | Secret | Optional. Read-only key (32+ characters: `openssl rand -hex 32`) for [reading reports from your computer](#reading-reports-from-your-computer-read-only) with `tools/reports.mjs`. Without it, `/api/admin/reports` doesn't exist (404). |
 | `ALERT_WEBHOOK` | Secret | Optional. Webhook of a private Discord channel: every 5 minutes the Worker checks the [video relay](#video-relay-on-your-own-server-vps) (`NTFY_RELAY`) and the Discord bot, and posts there when one goes down or comes back. |
 | `ADMIN_TWITCH_IDS` | Text | Twitch user ID(s) of the site owner, comma-separated, for the developer tools on `/stats`. Optional: without it, the Worker uses `OFFICIAL_ADMIN_TWITCH_IDS` from `wrangler.toml` (the official Worker's owner; a different name, so a dashboard variable or secret never clashes with it on deploy). For your own Worker, set this or change `OFFICIAL_ADMIN_TWITCH_IDS`. With neither, nobody gets the tools. |
 | `SITE_ORIGINS` | Text | Website address(es) whose usage pings are counted, comma-separated. |
@@ -709,6 +712,74 @@ Without *manage channels*, create the status tags by hand with those names
 and memory in the Worker's database, nothing on the server's disk, and takes
 no new dependency: Discord's gateway over Node's built-in WebSocket, its REST
 API, GitHub and the website over `fetch`.
+
+### Reading reports from your computer (read-only)
+
+`tools/reports.mjs` lists the bug reports and suggestions on the owner's
+computer, so the coding assistant reads them directly instead of having them
+copied by hand. It calls `GET /api/admin/reports` on the Worker with a
+dedicated key, `REPORTS_KEY`, which can only read them.
+
+Setup, once:
+
+1. Create a key, straight into its file so it never shows on screen (Git Bash
+   on Windows has `openssl`):
+   `mkdir -p ~/.twitchunblock && openssl rand -hex 32 > ~/.twitchunblock/reports-key`
+   — that is `%USERPROFILE%\.twitchunblock\reports-key`, one line. (Or run
+   `openssl rand -hex 32` and paste the result alone in that file, or in the
+   `TU_REPORTS_KEY` environment variable.)
+2. Cloudflare dashboard → *Workers & Pages* → the Worker → *Settings* →
+   *Variables and Secrets* → *Add* → type **Secret**, name `REPORTS_KEY`,
+   value: the same key (the content of that file).
+3. Run `node tools/reports.mjs`.
+
+The route only exists once the Worker is deployed from `main` with it; until
+then, or without the secret, it answers `404` like an unknown address (the
+Docker image doesn't set the secret: the route stays off there).
+
+```bash
+node tools/reports.mjs                 # open bug reports (newest first), then suggestions by votes
+node tools/reports.mjs --all           # finished ones too (done, declined, merged)
+node tools/reports.mjs --since=7d      # active in the last 7 days (30m, 24h, 2w, or a date: 2026-10-13)
+node tools/reports.mjs --kind=bug      # bug | idea | suggestion | other | all
+node tools/reports.mjs --platform=ios  # ios | web | tvos | android | discord
+node tools/reports.mjs --id fb_…       # one report with its whole conversation
+node tools/reports.mjs --json          # the Worker's answer as it is (JSON)
+```
+
+Also `--limit=N` (200 at most) and `--url=<Worker>` (or `TU_WORKER_URL`;
+default `https://test2.kurzmathis4.workers.dev`). Node 18 or later, no
+dependency. The key is never printed, not even partly (errors included), and
+only travels over HTTPS (plain `http://` only to this computer, for tests).
+
+The route itself, `GET /api/admin/reports` with `Authorization: Bearer <key>`:
+
+| Parameter | Values |
+|---|---|
+| `id` | One report (`fb_…`) with its whole conversation; the other parameters are ignored |
+| `kind` | `bug`, `idea` (Discord suggestions included), `suggestion`, `other`, `all` (default) |
+| `status` | `open` (default: not done, declined or merged), `all`, or one status: `new`, `seen`, `accepted`, `progress`, `done`, `refused` |
+| `platform` | `ios`, `web`, `tvos`, `android`, `discord`, `all` (default) |
+| `since` | ISO date or duration (`30m`, `24h`, `7d`, `2w`): reports created, answered or changed since then |
+| `limit` | 50 by default, 200 at most: newest reports first, `more: true` when others are left |
+
+Each report comes with its key, kind, platform, app version and build,
+creation and last-activity dates, status, title, message, conversation (who —
+user or developer —, text, date; in a list the last 5 messages, cut at 600
+characters, all of them with `id`), votes for a suggestion, the number of
+screenshots (never the pictures), the technical info shown before sending
+(device, system, browser, page without its query string…) and the attached
+error log. Never: the contact (e-mail, Discord account), install ID, IP
+address, token or its hash, Discord links.
+
+The key is checked in constant time; a wrong one gets `401`, and after 10
+wrong keys within an hour from one address (a `/64` in IPv6), that address
+gets `429` until the hour is over. It opens nothing else — no write, not the
+`/stats` tools — and neither a Twitch token nor the bot's secret opens this
+route. Every read goes to the admin log (`reports.read`, from *read key*:
+filters and number of reports, nothing personal). One D1 query per call,
+stopped at `limit`; votes are only counted for the suggestions returned. To
+revoke the key, delete or change the secret.
 
 ### Locally
 ```bash
