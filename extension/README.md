@@ -2,17 +2,18 @@
 
 > **English summary.** A small Manifest V3 browser extension (one code base for Chrome,
 > Edge, Brave and Firefox 128+) that lets the TwitchUnblock site use the Twitch session of
-> *this* browser — channel points, bonus chests, watch presence, predictions, polls and
-> raids — without the session ever leaving the extension. The site can only ask for a
-> closed list of actions (see [PROTOCOL.md](PROTOCOL.md)); spending points needs a real
-> click; nothing is sent anywhere but Twitch. Install it unpacked (Chrome/Edge/Brave) or
-> as a temporary add-on (Firefox, until it is signed on AMO).
+> *this* browser — channel points, bonus chests, watch presence, drops, channel rewards,
+> predictions, polls and raids — without the session ever leaving the extension. The
+> site can only ask for a closed list of actions (see [PROTOCOL.md](PROTOCOL.md));
+> spending points needs a real click; nothing is sent anywhere but Twitch. Install it
+> unpacked (Chrome/Edge/Brave) or as a temporary add-on (Firefox, until it is signed on
+> AMO).
 
 Extension de navigateur qui relie le site TwitchUnblock à la session Twitch de ce
 navigateur. Le site peut alors afficher le solde de points, réclamer les coffres, faire
-compter le visionnage (points passifs), parier sur les prédictions, voter aux sondages
-et rejoindre les raids, comme sur twitch.tv. La session Twitch ne quitte jamais
-l'extension.
+compter le visionnage (points passifs), faire avancer et réclamer les drops, échanger
+des récompenses de chaîne, parier sur les prédictions, voter aux sondages et rejoindre
+les raids, comme sur twitch.tv. La session Twitch ne quitte jamais l'extension.
 
 Le contrat entre le site et l'extension est dans [PROTOCOL.md](PROTOCOL.md) (copie du
 document commun aux deux côtés).
@@ -55,10 +56,10 @@ une signature de Mozilla (AMO), que fera plus tard le propriétaire du projet
 - **Réglages** (enregistrés dans le navigateur, sans secret), tous actifs par défaut :
   - *Connexion au site TwitchUnblock* : coupée, le site ne reçoit plus rien (il voit
     seulement que l'extension est là et coupée).
-  - *Coffres automatiques* : le coffre bonus est réclamé pendant le visionnage d'un direct
-    sur le site.
-  - *Paris et votes depuis le site* : toujours après un vrai clic sur le site et sa
-    confirmation.
+  - *Réclamer automatiquement (coffres et drops)* : le coffre bonus et les drops terminés
+    sont réclamés pendant le visionnage d'un direct sur le site.
+  - *Paris, votes et récompenses depuis le site* : toujours après un vrai clic sur le site
+    et sa confirmation.
 - **Diagnostic** : revalide la session et obtient un nouveau jeton d'intégrité. Les
   jetons n'apparaissent que masqués (4 premiers caractères et longueur).
 
@@ -75,15 +76,21 @@ une signature de Mozilla (AMO), que fera plus tard le propriétaire du projet
   arguments).
 - Liste fermée d'opérations, pas de requête GQL libre, pas de relais générique ; pas de
   `externally_connectable` ni de `web_accessible_resources`.
-- Dépenses de points (paris, votes) : réglage dédié + vrai clic
-  (`navigator.userActivation`) + confirmation affichée par le site.
+- Dépenses de points (paris, votes, récompenses) : réglage dédié + vrai clic
+  (`navigator.userActivation`) + confirmation affichée par le site. Avant un rachat, la
+  récompense est relue chez Twitch (active, pas en pause, en stock, pas en recharge, même
+  coût, même titre, solde suffisant).
+- Drops : l'adresse signée de la playlist (jeton de lecture du compte) et les segments
+  déjà vus restent dans `storage.session` ; la page ne reçoit que « actif ou non » et les
+  noms des drops réclamés.
 - Limites de débit dans l'arrière-plan (60 demandes par minute en tout, lectures mises en
   cache 3 s, etc. : voir PROTOCOL.md).
 - Rien n'est envoyé ailleurs que chez Twitch : aucun serveur à nous, aucune statistique.
 - Permissions : `cookies` (lire la session), `scripting` + `tabs` (obtenir le jeton
   d'intégrité dans une page twitch.tv), `storage` (réglages et état de session). Hôtes :
-  `*.twitch.tv` et `static.twitchcdn.net` (fichier de réglages de twitch.tv où se trouve
-  l'adresse des statistiques de visionnage).
+  `*.twitch.tv`, `static.twitchcdn.net` (fichier de réglages de twitch.tv où se trouve
+  l'adresse des statistiques de visionnage), `usher.ttvnw.net` (liste des qualités d'un
+  direct) et `*.hls.ttvnw.net` (playlist et segments, demandés en HEAD pour les drops).
 
 ## Notes de développement
 
@@ -104,7 +111,7 @@ JavaScript simple, sans dépendance ni étape de construction.
 
 ### Jeton d'intégrité
 
-Les mutations de Twitch (coffre, pari, vote, raid) exigent un en-tête
+Les mutations de Twitch (coffre, pari, vote, raid, drop, récompense) exigent un en-tête
 `Client-Integrity` produit par le script anti-robots de twitch.tv. Comme les apps,
 l'extension fait faire `POST https://gql.twitch.tv/integrity` par une vraie page
 www.twitch.tv (`scripting.executeScript`, `world: "MAIN"`), puis envoie elle-même les
@@ -118,8 +125,9 @@ Après un échec, pas de nouvel onglet avant 30 s (5 min pour le coffre automati
 ### Requêtes Twitch
 
 Reprises de l'app iOS (`Sources/Chat/ChannelPointsService.swift`,
-`LiveEventsService.swift`, `TwitchGQL.swift`, `TwitchWebGQL.swift`) : mêmes persisted
-queries, mêmes variables, mêmes en-têtes.
+`LiveEventsService.swift`, `TwitchGQL.swift`, `TwitchWebGQL.swift`,
+`Sources/Services/Drops.swift`, `TwitchAPI.swift`) : mêmes persisted queries, mêmes
+variables, mêmes en-têtes.
 
 | Opération | Requête | Origine |
 | --- | --- | --- |
@@ -134,13 +142,39 @@ queries, mêmes variables, mêmes en-têtes.
 | sondage, vote | `ChannelPollContext_GetViewablePoll`, `ChannelPollContext_VoteInPoll` | iOS `fetchPoll`, `vote` |
 | vote avec des points | même mutation, `tokens: { bits: 0, channelPoints: <coût> }` | **pas dans l'iOS** (vote gratuit seulement) |
 | raid | `JoinRaid` (hash non vérifié), repli en mutation brute | **pas dans l'iOS** |
+| drops de la chaîne | `user { id channel { viewerDropCampaigns { id } } }` | iOS `dropsChannelId` |
+| progression | `currentUser { inventory { dropCampaignsInProgress … } }` | iOS `refresh` |
+| campagnes pas commencées | `currentUser { dropCampaigns … }` (jeton d'intégrité gardé seulement) | iOS `refreshAvailable` |
+| drop en cours | `dropCurrentSession(channelID:)` | iOS `refreshSession` |
+| réclamer un drop | `DropsPage_ClaimDropRewards` | iOS `claim` |
+| pulsation | `streamPlaybackAccessToken` au nom du compte, usher, dernière variante, HEAD des nouveaux segments | iOS `accountPlaybackToken`, `lowestVariant`, `poll` |
+| récompenses | `communityPointsSettings { isEnabled customRewards … }` | iOS `fetchRewards` |
+| fin de recharge | `customRewards { id cooldownExpiresAt }` | requête brute, **pas dans l'iOS** |
+| rachat | `redeemCommunityPointsCustomReward` (mutation écrite en clair) | iOS `redeem` |
+
+### Drops
+
+Depuis octobre 2026, Twitch ne compte les minutes de drops que si la session du compte
+charge elle-même le flux. Comme l'app (`DropsHeartbeat`), chaque `drops.pulse` (toutes
+les 10 s, rythmé par le site) relit la playlist de la plus basse qualité, obtenue avec
+le jeton de lecture du compte, et demande chaque nouveau segment en HEAD : rien n'est
+téléchargé ni lu. Jeton refusé : un neuf au battement suivant (une minute d'attente
+après plusieurs refus) ; trois 404 de suite : direct fini, état oublié. Toutes les
+5 min, si le réglage est actif, les drops terminés de l'inventaire sont réclamés (pas
+ceux d'une campagne dont le compte de jeu n'est pas lié) ; une réclamation plus longue
+que 6 s est annoncée au battement suivant.
+
+`drops.get` ne fait jamais obtenir de jeton d'intégrité : si Twitch en demande un pour
+le tableau de bord (campagnes pas encore commencées) et qu'aucun n'est gardé, ces
+campagnes manquent jusqu'au prochain jeton (l'app, elle, en obtient un).
 
 ### Durée de vie de l'arrière-plan
 
 Chrome arrête le service worker après ~30 s sans événement (Firefox fait de même avec sa
 page d'événements). Aucune minuterie longue : le site rythme les battements, et ce qui
 doit survivre (limites de débit, jeton d'intégrité, dernière prédiction vue, votes
-faits d'ici, onglet temporaire à refermer) est dans `storage.session`.
+faits d'ici, état de la pulsation des drops, onglet temporaire à refermer) est dans
+`storage.session`.
 
 ### Essais
 
@@ -153,8 +187,9 @@ le refus des opérations inconnues et des mauvaises origines ou cadres, les born
 arguments (même table pour le content script et l'arrière-plan), le refus d'une dépense
 sans vrai clic ou avec le réglage coupé, les limites de débit (y compris après un
 redémarrage de l'arrière-plan), l'obtention du jeton d'intégrité (onglet ouvert,
-onglet temporaire, repli, un seul essai de plus) et l'absence de tout morceau de jeton
-dans les réponses, les journaux et `storage.local`.
+onglet temporaire, repli, un seul essai de plus), les drops (pulsation, segments en
+HEAD, réclamation), les vérifications avant un rachat et l'absence de tout morceau de
+jeton ou d'adresse signée dans les réponses, les journaux et `storage.local`.
 
 ### Paquet
 

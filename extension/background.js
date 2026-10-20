@@ -48,20 +48,40 @@ const HASH = {
   makePrediction: "b44682ecc88358817009f20e69d75081b1e58825bb40aa53d5dbadcc17c881d8",    // MakePrediction
   viewablePoll: "e83188a3836c636393df3191665e543a03733d7c51d3ade3d85e42aa46c2bf55",      // ChannelPollContext_GetViewablePoll
   voteInPoll: "1280e27b0f3c7ae60b5714bd569771ea50635778473182e6e959e2dcfcc16e3c",        // ChannelPollContext_VoteInPoll
+  dropsClaim: "a455deea71bdc9015b78eb49f4acfbce8baa7ccbedd28e549bb025bd0f751930",        // DropsPage_ClaimDropRewards (Drops.swift)
   joinRaid: "c6a332a86d1087fbbb1a8623aa01bd1313d2386e7c63be60fdb2d1901f01a4ae"           // JoinRaid (non vérifié)
 };
 
 // Requêtes GQL en clair. Celles de l'app iOS, avec le login en variable au
 // lieu d'être recopié dans le texte (même requête pour Twitch). N'existent
-// pas côté iOS : `pointsLook` (nom et icône des points) et `joinRaid` (repli
-// si Twitch ne connaît pas le hash de JoinRaid).
+// pas côté iOS : `pointsLook` (nom et icône des points), `rewardCooldowns`
+// (fin de recharge des récompenses) et `joinRaid` (repli si Twitch ne
+// connaît pas le hash de JoinRaid).
+const DROP_CAMPAIGN_FIELDS =
+  "id name status startAt endAt accountLinkURL self { isAccountConnected } " +
+  "game { displayName boxArtURL(width: 144, height: 192) }";
 const Q = {
   points: "query($l: String!) { channel(name: $l) { id self { communityPoints { balance availableClaim { id } } } } }",
   pointsLook: "query($l: String!) { channel(name: $l) { communityPointsSettings { name image { url2x } } } }",
   stream: "query($l: String!) { user(login: $l) { stream { id } } }",
   predictionSelf: "query($l: String!) { channel(name: $l) { activePredictionEvents { id self { prediction { points outcome { id } } } } lockedPredictionEvents { id self { prediction { points outcome { id } } } } } }",
   predictionResolved: "query($l: String!) { channel(name: $l) { resolvedPredictionEvents(first: 3) { edges { node { id winningOutcome { id } } } } } }",
-  joinRaid: "mutation JoinRaid($input: JoinRaidInput!) { joinRaid(input: $input) { raidID } }"
+  joinRaid: "mutation JoinRaid($input: JoinRaidInput!) { joinRaid(input: $input) { raidID } }",
+  // Drops.swift : dropsChannelId, refresh (inventaire), refreshAvailable
+  // (tableau de bord), refreshSession ; TwitchAPI.swift : accountPlaybackToken.
+  dropsChannel: "query($l: String!) { user(login: $l) { id channel { viewerDropCampaigns { id } } } }",
+  dropsInventory: "query { currentUser { inventory { dropCampaignsInProgress { " + DROP_CAMPAIGN_FIELDS +
+    " timeBasedDrops { id name requiredMinutesWatched benefitEdges { benefit { name imageAssetURL } }" +
+    " self { hasPreconditionsMet currentMinutesWatched isClaimed dropInstanceID } } } } } }",
+  dropsDashboard: "query { currentUser { dropCampaigns { " + DROP_CAMPAIGN_FIELDS +
+    " timeBasedDrops { id name requiredMinutesWatched benefitEdges { benefit { name imageAssetURL } } } } } }",
+  dropsSession: "query($c: ID!) { currentUser { dropCurrentSession(channelID: $c) { channel { displayName } currentMinutesWatched requiredMinutesWatched dropID } } }",
+  playbackToken: "query($l: String!) { streamPlaybackAccessToken(channelName: $l, params: {platform: \"web\", playerBackend: \"mediaplayer\", playerType: \"site\"}) { value signature } }",
+  // ChannelPointsService.fetchRewards.
+  rewards: "query($l: String!) { channel(name: $l) { communityPointsSettings { isEnabled customRewards { " +
+    "id title cost isEnabled isPaused isInStock isUserInputRequired prompt backgroundColor " +
+    "image { url2x } defaultImage { url2x } } } } }",
+  rewardCooldowns: "query($l: String!) { channel(name: $l) { communityPointsSettings { customRewards { id cooldownExpiresAt } } } }"
 };
 
 const LIMIT = {
@@ -71,6 +91,13 @@ const LIMIT = {
   spendMs: 3000,             // paris et votes : 1 par 3 s
   raidMs: 30000,             // raid.join : 1 par 30 s et par chaîne
   raidKeepMs: 3600000,       // réponse gardée par raid : 1 h
+  dropsClaimMs: 5000,        // drops.claim : 1 par 5 s
+  pulseMs: 8000,             // drops.pulse : 1 par 8 s et par chaîne
+  inventoryMs: 10000,        // inventaire des drops (un pour toutes les chaînes)
+  dropsChannelMs: 600000,    // campagnes de la chaîne relues toutes les 10 min, comme l'app
+  pulseInventoryMs: 300000,  // drops réclamables cherchés toutes les 5 min, comme l'app
+  pulseRetryMs: 60000,       // jeton de lecture refusé plusieurs fois : une minute d'attente
+  pulseClaimWaitMs: 6000,    // réclamation attendue au plus 6 s, sinon donnée au battement suivant
   perMinute: 60,             // tout confondu
   streakMs: 60000,           // séries de visionnage (une requête pour toutes les chaînes) : 1 min
   lookMs: 600000,            // nom et icône des points : 10 min
@@ -95,6 +122,7 @@ const DEFAULT_SETTINGS = { siteEnabled: true, autoClaim: true, allowSpend: true 
 const CHANNEL_RE = /^[a-z0-9_]{1,25}$/;
 const TWITCH_ID_RE = /^[A-Za-z0-9._:-]{1,64}$/;
 const RAID_ID_RE = /^[A-Za-z0-9-]{1,64}$/;
+const DROP_INSTANCE_RE = /^[A-Za-z0-9#._:-]{1,200}$/;
 const NUMERIC_ID_RE = /^[0-9]{1,20}$/;
 const AUTH_TOKEN_RE = /^[A-Za-z0-9._~-]{8,256}$/;
 const DEVICE_ID_RE = /^[A-Za-z0-9_-]{8,64}$/;
@@ -115,9 +143,21 @@ const OP_ARGS = {
   "predictions.bet": { channel: "channel", eventId: "id", outcomeId: "id", points: "points" },
   "polls.get": { channel: "channel" },
   "polls.vote": { channel: "channel", pollId: "id", choiceId: "id", withPoints: "bool" },
-  "raid.join": { channel: "channel", raidId: "raid" }
+  "raid.join": { channel: "channel", raidId: "raid" },
+  "drops.get": { channel: "channel" },
+  "drops.claim": { dropInstanceId: "dropInstance" },
+  "drops.pulse": { channel: "channel" },
+  "rewards.get": { channel: "channel" },
+  "rewards.redeem": { channel: "channel", rewardId: "id", cost: "cost", title: "title", prompt: "prompt", input: "input" }
 };
-const SPEND_OPS = ["predictions.bet", "polls.vote"];
+const SPEND_OPS = ["predictions.bet", "polls.vote", "rewards.redeem"];
+
+// Longueur en caractères (points de code), pas en unités UTF-16.
+function charCount(s) {
+  let n = 0;
+  for (const _ of s) n++;
+  return n;
+}
 
 // Rend { args } (copie des seuls champs attendus) ou { bad: "<champ fautif>" }.
 function checkArgs(op, raw) {
@@ -137,7 +177,12 @@ function checkArgs(op, raw) {
       kind === "channel" ? typeof v === "string" && CHANNEL_RE.test(v) :
       kind === "id" ? typeof v === "string" && TWITCH_ID_RE.test(v) :
       kind === "raid" ? typeof v === "string" && RAID_ID_RE.test(v) :
+      kind === "dropInstance" ? typeof v === "string" && DROP_INSTANCE_RE.test(v) :
       kind === "points" ? typeof v === "number" && Number.isInteger(v) && v >= 1 && v <= 250000 :
+      kind === "cost" ? typeof v === "number" && Number.isInteger(v) && v >= 1 && v <= 2147483647 :
+      kind === "title" ? typeof v === "string" && v.length >= 1 && v.length <= 200 :
+      kind === "prompt" ? v === null || (typeof v === "string" && v.length <= 1000) :
+      kind === "input" ? v === null || (typeof v === "string" && v.length <= 800 && charCount(v) >= 1 && charCount(v) <= 200) :
       kind === "bool" ? typeof v === "boolean" :
       false;
     if (!good) return { bad: k };
@@ -259,7 +304,9 @@ const mem = {
   predBets: {},                  // id de prédiction → { outcomeId, points, at } paris faits d'ici
   pollVotes: {},                 // id de sondage → { choiceIds, votes, at } votes faits d'ici
   claimFails: {},                // id de coffre → { n, at } échecs du coffre automatique
-  raidJoins: {}                  // id de raid → { res, at } réponse donnée pour ce raid
+  raidJoins: {},                 // id de raid → { res, at } réponse donnée pour ce raid
+  dropPulse: {}                  // chaîne → état de la pulsation des drops (adresse signée,
+                                 // segments vus…) : ne sort jamais vers la page
 };
 const MEM_KEYS = Object.keys(mem);
 let loading = null;
@@ -278,7 +325,7 @@ function loadState() {
       if (!mem.rl || typeof mem.rl !== "object") mem.rl = { global: [], slots: {} };
       if (!Array.isArray(mem.rl.global)) mem.rl.global = [];
       if (!mem.rl.slots || typeof mem.rl.slots !== "object") mem.rl.slots = {};
-      for (const k of ["predSeen", "predBets", "pollVotes", "claimFails", "raidJoins"]) {
+      for (const k of ["predSeen", "predBets", "pollVotes", "claimFails", "raidJoins", "dropPulse"]) {
         if (!mem[k] || typeof mem[k] !== "object" || Array.isArray(mem[k])) mem[k] = {};
       }
     })();
@@ -1347,6 +1394,488 @@ function rememberRaid(raidId, res) {
   return res;
 }
 
+// --- Drops (Drops.swift de l'app iOS) ----------------------------------------------------
+
+function httpsUrl(v) {
+  return typeof v === "string" && /^https:\/\/[^\s"'<>\\]{1,800}$/.test(v) ? v : null;
+}
+
+// Jeton d'intégrité déjà gardé pour cette session, sans en obtenir un.
+function cachedIntegrity(session) {
+  const cur = mem.integrity;
+  return cur && cur.fp === session.fp && cur.expiresAt - Date.now() > 60000 ? cur : null;
+}
+
+// Campagne de Drops.swift `campaign(_:)` : forme du protocole et, à part,
+// `needsLink` (compte de jeu à lier : pas de réclamation automatique).
+function normalizeCampaign(c) {
+  if (!c || typeof c.id !== "string" || !TWITCH_ID_RE.test(c.id)) return null;
+  const drops = arr(c.timeBasedDrops)
+    .filter((d) => d && typeof d.id === "string" && TWITCH_ID_RE.test(d.id))
+    .slice(0, 50)
+    .map((d) => {
+      const me = d.self && typeof d.self === "object" ? d.self : null;
+      const edge = arr(d.benefitEdges)[0];
+      const benefit = edge && edge.benefit && typeof edge.benefit === "object" ? edge.benefit : null;
+      const required = int(d.requiredMinutesWatched);
+      const current = me ? int(me.currentMinutesWatched) : null;
+      const claimed = !!me && me.isClaimed === true;
+      const instance = me && typeof me.dropInstanceID === "string" && DROP_INSTANCE_RE.test(me.dropInstanceID) ? me.dropInstanceID : null;
+      // Réclamable comme `canClaim` de l'app : pas réclamé, instance donnée, minutes atteintes.
+      const canClaim = !claimed && instance !== null && (current || 0) >= (required || 0);
+      return {
+        id: d.id,
+        name: str(benefit && benefit.name, 200) || str(d.name, 200),
+        imageUrl: httpsUrl(benefit && benefit.imageAssetURL),
+        requiredMinutes: required !== null ? required : 0,
+        currentMinutes: current !== null ? current : 0,
+        claimed,
+        dropInstanceId: canClaim ? instance : null
+      };
+    });
+  const link = typeof c.accountLinkURL === "string" ? c.accountLinkURL : "";
+  const connected = c.self && typeof c.self.isAccountConnected === "boolean" ? c.self.isAccountConnected : true;
+  return {
+    campaign: {
+      id: c.id,
+      name: str(c.name, 200),
+      gameName: c.game && typeof c.game === "object" ? str(c.game.displayName, 200) : null,
+      endsAt: str(c.endAt, 40),
+      drops
+    },
+    needsLink: !connected && !link.includes("twitch.tv")
+  };
+}
+
+// Campagnes de drops de la chaîne (dropsChannelId de l'app) : id de la chaîne
+// et ids des campagnes, gardés 10 min.
+function readDropsChannel(session, channel) {
+  return cachedRead("dropsch:" + channel, LIMIT.dropsChannelMs, async () => {
+    const json = await gql({ query: Q.dropsChannel, variables: { l: channel } }, session, { auth: false });
+    const data = json.data;
+    if (!data || typeof data !== "object") {
+      throwGqlErrors(json);
+      throw new TuError("twitch", "bad_response");
+    }
+    const user = data.user;
+    if (!user || typeof user.id !== "string" || !NUMERIC_ID_RE.test(user.id)) return { channelId: null, campaignIds: [] };
+    const list = user.channel && Array.isArray(user.channel.viewerDropCampaigns) ? user.channel.viewerDropCampaigns : [];
+    const campaignIds = list.map((c) => c && c.id).filter((id) => typeof id === "string" && TWITCH_ID_RE.test(id));
+    return { channelId: user.id, campaignIds };
+  });
+}
+
+// Inventaire du compte (refresh de l'app) : campagnes commencées, progression comprise.
+function readDropsInventory(session, fresh) {
+  return cachedRead(session.fp + ":dropsinv", LIMIT.inventoryMs, async () => {
+    const json = await gql({ query: Q.dropsInventory }, session);
+    const user = json.data && json.data.currentUser;
+    const inventory = user && user.inventory;
+    if (!user || typeof user !== "object") {
+      throwGqlErrors(json);
+      throw new TuError(json.data && json.data.currentUser === null ? "no_session" : "twitch", "bad_response");
+    }
+    return arr(inventory && inventory.dropCampaignsInProgress).map(normalizeCampaign).filter(Boolean);
+  }, fresh);
+}
+
+// Toutes les campagnes ouvertes (refreshAvailable de l'app), pour celles de la
+// chaîne pas encore commencées. Avec un jeton d'intégrité seulement s'il est
+// déjà gardé : une lecture n'ouvre jamais d'onglet (l'app, elle, en obtient un).
+function readDropsDashboard(session) {
+  const it = cachedIntegrity(session);
+  // Clé selon qu'un jeton est gardé : sans jeton, la réponse vide est gardée
+  // 10 min ; dès qu'un jeton existe, nouvelle lecture.
+  return cachedRead(session.fp + ":dropsdash:" + (it ? "it" : "none"), LIMIT.lookMs, async () => {
+    const body = { query: Q.dropsDashboard };
+    let json = await gql(body, session);
+    if (gqlErrors(json).some((m) => /integrity/i.test(m))) {
+      if (!it) return [];
+      json = await gql(body, session, { integrity: it });
+    }
+    const user = json.data && json.data.currentUser;
+    if (!user || !Array.isArray(user.dropCampaigns)) {
+      throwGqlErrors(json);
+      throw new TuError("twitch", "bad_response");
+    }
+    return user.dropCampaigns.map(normalizeCampaign).filter(Boolean);
+  });
+}
+
+// Drop crédité en ce moment sur la chaîne (refreshSession de l'app).
+function readDropSession(session, channelId) {
+  return cachedRead(session.fp + ":dropsess:" + channelId, LIMIT.readMs, async () => {
+    const json = await gql({ query: Q.dropsSession, variables: { c: channelId } }, session);
+    const s = json.data && json.data.currentUser && json.data.currentUser.dropCurrentSession;
+    if (!s || typeof s.dropID !== "string") return null;
+    return { dropId: s.dropID, currentMinutes: int(s.currentMinutesWatched) };
+  });
+}
+
+async function opDropsGet(args, session) {
+  const ch = await readDropsChannel(session, args.channel);
+  if (!ch.campaignIds.length) return { channelHasDrops: false, campaigns: [] };
+  const [inventory, current] = await Promise.all([
+    readDropsInventory(session),
+    ch.channelId ? readDropSession(session, ch.channelId).catch(() => null) : null
+  ]);
+  const wanted = ch.campaignIds;
+  const found = inventory.filter((c) => wanted.includes(c.campaign.id));
+  const missing = wanted.filter((id) => !found.some((c) => c.campaign.id === id));
+  let extra = [];
+  if (missing.length) {
+    const dashboard = await readDropsDashboard(session).catch(() => []);
+    extra = dashboard.filter((c) => missing.includes(c.campaign.id));
+  }
+  const campaigns = found.concat(extra).map((c) => {
+    const campaign = Object.assign({}, c.campaign);
+    // Minutes du drop en cours : celles de la session si l'inventaire est en retard.
+    if (current && current.currentMinutes !== null) {
+      campaign.drops = campaign.drops.map((d) => (d.id === current.dropId && current.currentMinutes > d.currentMinutes
+        ? Object.assign({}, d, { currentMinutes: current.currentMinutes })
+        : d));
+    }
+    return campaign;
+  });
+  campaigns.sort((a, b) => (Date.parse(a.endsAt || "") || Infinity) - (Date.parse(b.endsAt || "") || Infinity));
+  return { channelHasDrops: true, campaigns };
+}
+
+// Réclamation d'un drop (claim / sendClaim de l'app). true : accordé ou déjà fait.
+async function claimDrop(session, dropInstanceId, auto) {
+  const body = persisted("DropsPage_ClaimDropRewards", { input: { dropInstanceID: dropInstanceId } }, HASH.dropsClaim);
+  const res = await mutation(body, session, { auto });
+  if (gqlErrors(res).length) throwGqlErrors(res);
+  readCache.delete(session.fp + ":dropsinv");
+  const out = res.data && res.data.claimDropRewards;
+  const status = out && typeof out.status === "string" ? out.status : null;
+  // ELIGIBLE_FOR_ALL : accordé ; DROP_INSTANCE_ALREADY_CLAIMED : déjà fait.
+  if (status === "ELIGIBLE_FOR_ALL" || status === "DROP_INSTANCE_ALREADY_CLAIMED") return true;
+  if (status) throw new TuError("twitch", safeCode(status));
+  return false;
+}
+
+async function opDropsClaim(args, session) {
+  return { claimed: await claimDrop(session, args.dropInstanceId, false) };
+}
+
+// Jeton de lecture AU NOM DU COMPTE (accountPlaybackToken de l'app) : sans
+// jeton d'intégrité d'abord, puis avec si Twitch en demande un (le gardé,
+// puis un neuf). null s'il est refusé ou anonyme (il ne ferait rien avancer).
+async function accountPlaybackToken(session, channel) {
+  const body = { query: Q.playbackToken, variables: { l: channel } };
+  let json = await gql(body, session);
+  for (let tries = 0; tries < 2 && gqlErrors(json).some((m) => /integrity/i.test(m)); tries++) {
+    let it;
+    try {
+      it = await getIntegrity(session, { force: tries > 0, auto: true });
+    } catch (e) {
+      return null;
+    }
+    json = await gql(body, session, { integrity: it });
+  }
+  const pat = json.data && json.data.streamPlaybackAccessToken;
+  if (!pat || typeof pat.value !== "string" || typeof pat.signature !== "string") return null;
+  if (!/"user_id":\d/.test(pat.value)) return null;
+  return { value: pat.value, signature: pat.signature };
+}
+
+function hlsUrl(url) {
+  return hostMatches(url, ["hls.ttvnw.net"]);
+}
+
+// Plus petite qualité du direct (lowestVariant de l'app) : la dernière
+// variante de la liste maîtresse d'usher, lue avec le jeton du compte.
+async function lowestVariant(session, channel) {
+  const pat = await accountPlaybackToken(session, channel);
+  if (!pat) return null;
+  const params = new URLSearchParams({ allow_source: "true", allow_audio_only: "true", sig: pat.signature, token: pat.value });
+  const master = "https://usher.ttvnw.net/api/channel/hls/" + channel + ".m3u8?" + params.toString();
+  const { status, body } = await fetchWith(master, { method: "GET" }, (res) => res.text());
+  if (status !== 200 || typeof body !== "string") return null;
+  const lines = body.split("\n");
+  let last = null;
+  for (let i = 0; i + 1 < lines.length; i++) {
+    if (lines[i].startsWith("#EXT-X-STREAM-INF")) last = lines[i + 1].trim();
+  }
+  if (!last) return null;
+  let url;
+  try {
+    url = new URL(last, master).href;
+  } catch (e) {
+    return null;
+  }
+  return hlsUrl(url) ? url : null;
+}
+
+// Relit la playlist et demande chaque nouveau segment en HEAD (poll de l'app).
+async function pollVariant(st) {
+  let res;
+  try {
+    res = await fetchWith(st.variant, { method: "GET" }, (r) => r.text());
+  } catch (e) {
+    return "ok"; // pas de réponse : la même playlist au prochain coup, comme l'app
+  }
+  if (res.status === 404) return "offline";
+  if (res.status !== 200 || typeof res.body !== "string") return "expired";
+  const lines = res.body.split("\n");
+  const fresh = [];
+  for (let i = 0; i + 1 < lines.length; i++) {
+    if (!lines[i].startsWith("#EXTINF")) continue;
+    const uri = lines[i + 1].trim();
+    if (!uri || uri.startsWith("#") || st.seen.includes(uri)) continue;
+    st.seen.push(uri);
+    let url;
+    try {
+      url = new URL(uri, st.variant).href;
+    } catch (e) {
+      continue;
+    }
+    if (hlsUrl(url)) fresh.push(url);
+  }
+  if (st.seen.length > 64) st.seen.splice(0, st.seen.length - 64);
+  for (const url of fresh) {
+    let r;
+    try {
+      r = await fetchWith(url, { method: "HEAD" }, () => null);
+    } catch (e) {
+      continue;
+    }
+    if (r.status === 401 || r.status === 403) return "expired";
+  }
+  return "ok";
+}
+
+let dropsClaiming = null;
+
+// Drops réclamables de l'inventaire, réclamés (comme refresh(autoClaim:) de
+// l'app) ; leurs noms vont dans la pulsation de cette chaîne. Une seule à la fois.
+function autoClaimDrops(session, channel) {
+  if (dropsClaiming) return dropsClaiming;
+  dropsClaiming = (async () => {
+    const inventory = await readDropsInventory(session, true).catch(() => []);
+    const names = [];
+    all: for (const c of inventory) {
+      if (c.needsLink) continue;
+      for (const d of c.campaign.drops) {
+        if (!d.dropInstanceId) continue;
+        const fails = mem.claimFails[d.dropInstanceId];
+        if (fails && fails.n >= 3) continue;
+        try {
+          if (await claimDrop(session, d.dropInstanceId, true)) names.push(d.name || d.id);
+        } catch (e) {
+          // Session partie ou jeton d'intégrité impossible : les suivants échoueraient aussi.
+          if (e instanceof TuError && (e.code === "no_session" || e.code === "integrity")) break all;
+          mem.claimFails[d.dropInstanceId] = { n: ((fails && fails.n) || 0) + 1, at: Date.now() };
+          pruneMap(mem.claimFails, 20);
+          save("claimFails");
+        }
+      }
+    }
+    const st = mem.dropPulse[channel];
+    if (names.length && st) {
+      st.claimed = arr(st.claimed).concat(names).slice(-20);
+      save("dropPulse");
+    }
+  })().catch(() => {}).finally(() => {
+    dropsClaiming = null;
+  });
+  return dropsClaiming;
+}
+
+function pulseState(channel, fp) {
+  let st = mem.dropPulse[channel];
+  // Autre compte : rien de l'ancien (minutes et réclamations iraient à l'autre).
+  if (!st || st.fp !== fp) {
+    st = { fp, variant: null, seen: [], offlineHits: 0, failures: 0, refusals: 0, retryAt: 0, inventoryAt: 0, claimed: [] };
+    mem.dropPulse[channel] = st;
+  }
+  st.at = Date.now();
+  pruneMap(mem.dropPulse, 6);
+  return st;
+}
+
+function takeClaimedNames(st) {
+  const names = arr(st.claimed).filter((n) => typeof n === "string").map((n) => n.slice(0, 200));
+  st.claimed = [];
+  return names;
+}
+
+// Un battement de la pulsation de l'app (run), rythmé par le site.
+async function opDropsPulse(args, session, settings) {
+  const channel = args.channel;
+  const ch = await readDropsChannel(session, channel);
+  if (!ch.campaignIds.length) {
+    delete mem.dropPulse[channel];
+    save("dropPulse");
+    return { active: false, claimed: [] };
+  }
+  const st = pulseState(channel, session.fp);
+  const now = Date.now();
+  let active = false;
+  if (!st.variant && !(st.retryAt && now < st.retryAt)) {
+    const variant = await lowestVariant(session, channel).catch((e) => {
+      if (e instanceof TuError && e.code === "no_session") throw e;
+      return null;
+    });
+    if (!variant && st.offlineHits > 0) st.offlineHits++;   // fin du direct qui se confirme
+    else st.failures = variant ? 0 : st.failures + 1;
+    st.variant = variant;
+    st.retryAt = st.failures > 2 || st.refusals > 2 ? now + LIMIT.pulseRetryMs : 0;
+  }
+  if (st.variant) {
+    const r = await pollVariant(st);
+    if (r === "ok") {
+      st.offlineHits = 0;
+      st.refusals = 0;
+      active = true;
+    } else if (r === "expired") {
+      st.variant = null; // jeton de lecture expiré (~20 min) : un neuf au prochain coup
+      st.refusals++;
+    } else {
+      st.variant = null; // 404 : variante changée ou coupure ; trois de suite, direct fini
+      st.offlineHits++;
+    }
+  }
+  if (st.offlineHits >= 3) {
+    const names = takeClaimedNames(st);
+    delete mem.dropPulse[channel];
+    save("dropPulse");
+    return { active: false, claimed: names };
+  }
+  let claiming = null;
+  if (settings.autoClaim && now - (st.inventoryAt || 0) >= LIMIT.pulseInventoryMs) {
+    st.inventoryAt = now;
+    claiming = autoClaimDrops(session, channel);
+  } else if (dropsClaiming) {
+    claiming = dropsClaiming;
+  }
+  save("dropPulse");
+  if (claiming) await Promise.race([claiming, sleep(LIMIT.pulseClaimWaitMs)]);
+  const cur = mem.dropPulse[channel] || st;
+  const claimed = takeClaimedNames(cur);
+  save("dropPulse");
+  return { active, claimed };
+}
+
+// --- Récompenses de chaîne (ChannelPointsService.swift de l'app) -------------------------
+
+function normalizeReward(r) {
+  if (!r || typeof r.id !== "string" || !TWITCH_ID_RE.test(r.id) || typeof r.title !== "string" ||
+      typeof r.cost !== "number" || !Number.isInteger(r.cost)) return null;
+  const bg = typeof r.backgroundColor === "string" ? r.backgroundColor.replace(/^#/, "") : "";
+  return {
+    id: r.id,
+    title: r.title,
+    cost: r.cost,
+    prompt: typeof r.prompt === "string" && r.prompt !== "" ? r.prompt : null,
+    requiresInput: r.isUserInputRequired === true,
+    enabled: r.isEnabled === true,
+    paused: r.isPaused === true,
+    inStock: typeof r.isInStock === "boolean" ? r.isInStock : true,
+    cooldownEndsAt: null,
+    color: /^[0-9A-Fa-f]{3,8}$/.test(bg) ? "#" + bg.toUpperCase() : null,
+    imageUrl: httpsUrl(r.image && r.image.url2x) || httpsUrl(r.defaultImage && r.defaultImage.url2x)
+  };
+}
+
+// Récompenses personnalisées (fetchRewards de l'app), lecture publique.
+function readRewards(session, channel, fresh) {
+  return cachedRead("rewards:" + channel, LIMIT.readMs, async () => {
+    const json = await gql({ query: Q.rewards, variables: { l: channel } }, session, { auth: false });
+    const data = json.data;
+    if (data && data.channel === null) throw new TuError("twitch", "channel_not_found");
+    if (!data || !data.channel || typeof data.channel !== "object") {
+      throwGqlErrors(json);
+      throw new TuError("twitch", "bad_response");
+    }
+    const s = data.channel.communityPointsSettings;
+    if (!s || s.isEnabled !== true) return { enabled: false, rewards: [] };
+    return { enabled: true, rewards: arr(s.customRewards).slice(0, 100).map(normalizeReward).filter(Boolean) };
+  }, fresh);
+}
+
+// Fin de recharge de chaque récompense (requête brute, pas dans l'app iOS).
+// Un échec ne bloque rien : null.
+function readRewardCooldowns(session, channel, fresh) {
+  return cachedRead("cooldowns:" + channel, LIMIT.readMs, async () => {
+    try {
+      const json = await gql({ query: Q.rewardCooldowns, variables: { l: channel } }, session, { auth: false });
+      const s = json.data && json.data.channel && json.data.channel.communityPointsSettings;
+      if (!s || !Array.isArray(s.customRewards)) return null;
+      const out = {};
+      for (const r of s.customRewards) {
+        if (r && typeof r.id === "string") out[r.id] = str(r.cooldownExpiresAt, 40);
+      }
+      return out;
+    } catch (e) {
+      return null;
+    }
+  }, fresh);
+}
+
+async function opRewardsGet(args, session) {
+  const [pts, rw, cooldowns] = await Promise.all([
+    readPoints(session, args.channel),
+    readRewards(session, args.channel),
+    readRewardCooldowns(session, args.channel)
+  ]);
+  const rewards = rw.rewards
+    .map((r) => Object.assign({}, r, { cooldownEndsAt: cooldowns && has(cooldowns, r.id) ? cooldowns[r.id] : null }))
+    .sort((a, b) => a.cost - b.cost);
+  return { balance: pts.balance, rewards };
+}
+
+function gqlString(s) {
+  return JSON.stringify(String(s));
+}
+
+// Rachat (redeem de l'app) : même mutation écrite en clair, mêmes champs.
+// cost + title + prompt doivent être EXACTEMENT ceux de Twitch (sinon
+// PROPERTIES_MISMATCH) : ils viennent de la récompense relue.
+async function opRewardsRedeem(args, session) {
+  const channel = args.channel;
+  const [pts, rw, cooldowns] = await Promise.all([
+    readPoints(session, channel, true),
+    readRewards(session, channel, true),
+    readRewardCooldowns(session, channel, true)
+  ]);
+  if (!rw.enabled) throw new TuError("bad_args", "points_disabled");
+  const r = rw.rewards.find((x) => x.id === args.rewardId);
+  if (!r) throw new TuError("bad_args", "rewardId");
+  if (!r.enabled) throw new TuError("bad_args", "not_enabled");
+  if (r.paused) throw new TuError("bad_args", "paused");
+  if (!r.inStock) throw new TuError("bad_args", "out_of_stock");
+  const cooldown = cooldowns && cooldowns[r.id] ? Date.parse(cooldowns[r.id]) : NaN;
+  if (cooldown > Date.now()) throw new TuError("bad_args", "cooldown");
+  if (args.cost !== r.cost) throw new TuError("bad_args", "cost");
+  if (args.title !== r.title) throw new TuError("bad_args", "title");
+  if (r.cost > pts.balance) throw new TuError("bad_args", "points");
+  if (r.requiresInput) {
+    if (typeof args.input !== "string" || !args.input.trim()) throw new TuError("bad_args", "input");
+  } else if (args.input !== null) {
+    throw new TuError("bad_args", "input");
+  }
+
+  const promptText = r.requiresInput ? args.input : (r.prompt || "");
+  const promptField = promptText ? "prompt: " + gqlString(promptText) : "prompt: null";
+  const text = "mutation { redeemCommunityPointsCustomReward(input: { " +
+    "channelID: " + gqlString(pts.channelId) + ", cost: " + r.cost + ", " + promptField + ", " +
+    "rewardID: " + gqlString(r.id) + ", title: " + gqlString(r.title) + ", transactionID: " + gqlString(crypto.randomUUID()) +
+    " }) { redemption { id } error { code } } }";
+  const res = await mutation({ query: text }, session);
+  const result = res.data && res.data.redeemCommunityPointsCustomReward;
+  if (!result || typeof result !== "object") {
+    throwGqlErrors(res);
+    throw new TuError("twitch", "bad_response");
+  }
+  if (result.error && result.error.code) throw new TuError("twitch", safeCode(result.error.code));
+  invalidate(session, channel, ["points"]);
+  readCache.delete("rewards:" + channel);
+  readCache.delete("cooldowns:" + channel);
+  return { balance: Math.max(0, pts.balance - r.cost) };
+}
+
 const OPS = {
   "points.get": opPointsGet,
   "points.claim": opPointsClaim,
@@ -1355,7 +1884,12 @@ const OPS = {
   "predictions.bet": opPredictionsBet,
   "polls.get": opPollsGet,
   "polls.vote": opPollsVote,
-  "raid.join": opRaidJoin
+  "raid.join": opRaidJoin,
+  "drops.get": opDropsGet,
+  "drops.claim": opDropsClaim,
+  "drops.pulse": opDropsPulse,
+  "rewards.get": opRewardsGet,
+  "rewards.redeem": opRewardsRedeem
 };
 
 function asResponse(promise) {
@@ -1398,6 +1932,8 @@ async function handleSiteRequest(msg) {
   }
   if (op === "points.claim" && !takeSlot("claim", LIMIT.claimMs)) return fail("rate_limited");
   if (op === "watch.beat" && !takeSlot("beat:" + args.channel, LIMIT.beatMs)) return fail("rate_limited");
+  if (op === "drops.claim" && !takeSlot("dropsClaim", LIMIT.dropsClaimMs)) return fail("rate_limited");
+  if (op === "drops.pulse" && !takeSlot("pulse:" + args.channel, LIMIT.pulseMs)) return fail("rate_limited");
   if (spend && !takeSlot("spend", LIMIT.spendMs)) return fail("rate_limited");
 
   try {

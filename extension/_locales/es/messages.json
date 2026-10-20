@@ -3,7 +3,7 @@
     "message": "TwitchUnblock Connect"
   },
   "extDescription": {
-    "message": "Une el sitio TwitchUnblock a tu sesión de Twitch: puntos, cofres, predicciones, encuestas, raids. Tu sesión no sale de la extensión."
+    "message": "Une el sitio TwitchUnblock a tu sesión de Twitch: puntos, cofres, drops, recompensas, predicciones, encuestas. Tu sesión no sale."
   },
   "actionTitle": {
     "message": "TwitchUnblock Connect"
@@ -64,16 +64,16 @@
     "message": "Conexión con el sitio TwitchUnblock"
   },
   "setSiteHelp": {
-    "message": "El sitio puede leer tus puntos, predicciones y encuestas, y usar tu sesión para las acciones de abajo."
+    "message": "El sitio puede leer tus puntos, drops, recompensas, predicciones y encuestas, y usar tu sesión para las acciones de abajo."
   },
   "setClaim": {
-    "message": "Cofres automáticos"
+    "message": "Reclamar automáticamente (cofres y drops)"
   },
   "setClaimHelp": {
-    "message": "Reclama los cofres de bonificación mientras ves un directo en el sitio."
+    "message": "Reclama los cofres de bonificación y los drops terminados mientras ves un directo en el sitio."
   },
   "setSpend": {
-    "message": "Apuestas y votos desde el sitio"
+    "message": "Apuestas, votos y recompensas desde el sitio"
   },
   "setSpendHelp": {
     "message": "Siempre tras un clic real en el sitio y su confirmación."
@@ -192,7 +192,7 @@
     "message": "Seguridad"
   },
   "securityText": {
-    "message": "Tu sesión de Twitch y tus tokens nunca salen de la extensión. El sitio solo puede pedir una lista cerrada de acciones; las apuestas y los votos exigen un clic real. Solo se envía información a Twitch."
+    "message": "Tu sesión de Twitch y tus tokens nunca salen de la extensión. El sitio solo puede pedir una lista cerrada de acciones; las apuestas, los votos y las recompensas exigen un clic real. Solo se envía información a Twitch."
   },
   "versionLabel": {
     "message": "Versión $VERSION$",

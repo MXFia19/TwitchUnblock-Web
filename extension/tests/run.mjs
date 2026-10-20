@@ -36,7 +36,8 @@ const HASHES = {
   MakePrediction: "b44682ecc88358817009f20e69d75081b1e58825bb40aa53d5dbadcc17c881d8",
   ChannelPollContext_GetViewablePoll: "e83188a3836c636393df3191665e543a03733d7c51d3ade3d85e42aa46c2bf55",
   ChannelPollContext_VoteInPoll: "1280e27b0f3c7ae60b5714bd569771ea50635778473182e6e959e2dcfcc16e3c",
-  JoinRaid: "c6a332a86d1087fbbb1a8623aa01bd1313d2386e7c63be60fdb2d1901f01a4ae"
+  JoinRaid: "c6a332a86d1087fbbb1a8623aa01bd1313d2386e7c63be60fdb2d1901f01a4ae",
+  DropsPage_ClaimDropRewards: "a455deea71bdc9015b78eb49f4acfbce8baa7ccbedd28e549bb025bd0f751930"
 };
 
 const clone = (v) => (v === undefined ? undefined : JSON.parse(JSON.stringify(v)));
@@ -65,7 +66,61 @@ function makeTwitch() {
     minted: [],
     mintFailNext: 0,
     log: [],                // toutes les requêtes reçues
-    spadePosts: []
+    spadePosts: [],
+    // Drops
+    channelCampaigns: ["camp-1", "camp-2"],
+    inventory: [
+      {
+        id: "camp-1", name: "Season drops", status: "ACTIVE", startAt: "2026-10-01T00:00:00Z", endAt: "2026-10-30T00:00:00Z",
+        accountLinkURL: "https://www.twitch.tv/", self: { isAccountConnected: true },
+        game: { displayName: "Some Game", boxArtURL: "https://static-cdn.jtvnw.net/ttv-boxart/1-144x192.jpg" },
+        timeBasedDrops: [
+          { id: "drop-1a", name: "Hat", requiredMinutesWatched: 60,
+            benefitEdges: [{ benefit: { name: "Cool hat", imageAssetURL: "https://static-cdn.jtvnw.net/drops/hat.png" } }],
+            self: { hasPreconditionsMet: true, currentMinutesWatched: 40, isClaimed: false, dropInstanceID: null } },
+          { id: "drop-1b", name: "Cape", requiredMinutesWatched: 30,
+            benefitEdges: [{ benefit: { name: "Red cape", imageAssetURL: "https://static-cdn.jtvnw.net/drops/cape.png" } }],
+            self: { hasPreconditionsMet: true, currentMinutesWatched: 30, isClaimed: false, dropInstanceID: "inst#drop-1b" } }
+        ]
+      },
+      {
+        id: "camp-linked", name: "Needs a game account", status: "ACTIVE", endAt: "2026-10-25T00:00:00Z",
+        accountLinkURL: "https://game.example/link", self: { isAccountConnected: false }, game: { displayName: "Other Game" },
+        timeBasedDrops: [{ id: "drop-l1", name: "Skin", requiredMinutesWatched: 10, benefitEdges: [],
+          self: { currentMinutesWatched: 10, isClaimed: false, dropInstanceID: "inst#drop-l1" } }]
+      }
+    ],
+    dashboard: [{
+      id: "camp-2", name: "Later drops", status: "ACTIVE", endAt: "2026-11-30T00:00:00Z", game: { displayName: "Some Game" },
+      timeBasedDrops: [{ id: "drop-2a", name: "Mount", requiredMinutesWatched: 120,
+        benefitEdges: [{ benefit: { name: "Horse", imageAssetURL: "https://static-cdn.jtvnw.net/drops/horse.png" } }] }]
+    }],
+    dashboardNeedsIntegrity: true,
+    dropSession: { channel: { displayName: "Streamer_One" }, currentMinutesWatched: 42, requiredMinutesWatched: 60, dropID: "drop-1a" },
+    dropClaims: [],
+    dropClaimStatus: "ELIGIBLE_FOR_ALL",
+    patValue: '{"adblock":false,"authorization":{"forbidden":false},"channel":"streamer_one","user_id":99887766,"expires":1800000000}',
+    patSignature: "sig0123456789abcdefSECRETsignature",
+    patNeedsIntegrity: false,
+    usherCalls: 0,
+    segments: [1, 2, 3].map((n) => "https://video-edge-aa11.fra05.abs.hls.ttvnw.net/v1/segment/SEGsecret" + n + ".ts"),
+    variantStatus: 200,
+    heads: [],
+    // Récompenses
+    rewards: [
+      { id: "rw-hydrate", title: "Hydrate!", cost: 500, isEnabled: true, isPaused: false, isInStock: true, isUserInputRequired: false,
+        prompt: "Drink \"water\"\nnow", backgroundColor: "#9147ff", image: null,
+        defaultImage: { url2x: "https://static-cdn.jtvnw.net/custom-reward-images/default-2.png" } },
+      { id: "rw-song", title: "Song request", cost: 200, isEnabled: true, isPaused: false, isInStock: true, isUserInputRequired: true,
+        prompt: "Name a song", backgroundColor: "00C389", image: { url2x: "https://static-cdn.jtvnw.net/custom-reward-images/song-2.png" } },
+      { id: "rw-paused", title: "Paused", cost: 100, isEnabled: true, isPaused: true, isInStock: true, isUserInputRequired: false, prompt: null },
+      { id: "rw-off", title: "Off", cost: 50, isEnabled: false, isPaused: false, isInStock: true, isUserInputRequired: false, prompt: "" },
+      { id: "rw-stock", title: "Gone", cost: 60, isEnabled: true, isPaused: false, isInStock: false, isUserInputRequired: false, prompt: null },
+      { id: "rw-cool", title: "Cooling", cost: 70, isEnabled: true, isPaused: false, isInStock: true, isUserInputRequired: false, prompt: null }
+    ],
+    cooldowns: {},
+    redeemError: null,
+    lastRedeem: null
   };
 }
 
@@ -110,6 +165,34 @@ function twitchFetch(tw) {
       assert.equal(init.mode, "no-cors");
       tw.spadePosts.push(init.body);
       return response(0, "");
+    }
+
+    if (url.startsWith("https://usher.ttvnw.net/api/channel/hls/" + CHANNEL + ".m3u8?")) {
+      tw.usherCalls++;
+      const q = new URL(url).searchParams;
+      assert.equal(q.get("allow_source"), "true");
+      assert.equal(q.get("allow_audio_only"), "true");
+      assert.equal(q.get("sig"), tw.patSignature);
+      assert.equal(q.get("token"), tw.patValue);
+      return response(200, [
+        "#EXTM3U",
+        "#EXT-X-STREAM-INF:BANDWIDTH=6000000,RESOLUTION=1920x1080",
+        "https://video-weaver.fra05.hls.ttvnw.net/v1/playlist/SOURCEsecret.m3u8",
+        "#EXT-X-STREAM-INF:BANDWIDTH=160000,CODECS=\"mp4a.40.2\"",
+        "https://video-weaver.fra05.hls.ttvnw.net/v1/playlist/AUDIOsecret.m3u8",
+        ""
+      ].join("\n"));
+    }
+
+    if (url === "https://video-weaver.fra05.hls.ttvnw.net/v1/playlist/AUDIOsecret.m3u8") {
+      if (tw.variantStatus !== 200) return response(tw.variantStatus, "");
+      return response(200, "#EXTM3U\n#EXT-X-TARGETDURATION:2\n" + tw.segments.map((s) => "#EXTINF:2.000,live\n" + s).join("\n") + "\n");
+    }
+
+    if (url.startsWith("https://video-edge-aa11.fra05.abs.hls.ttvnw.net/v1/segment/")) {
+      assert.equal(init.method, "HEAD", "segments demandés en HEAD seulement");
+      tw.heads.push(url);
+      return response(200, "");
     }
 
     throw new TypeError("adresse inattendue (pas de réseau dans les essais) : " + url);
@@ -193,6 +276,18 @@ function persistedOp(tw, op, headers) {
       tw.lastRaid = { how: "persisted", input: v.input };
       return { data: { joinRaid: { raidID: v.input.raidID } } };
     }
+    case "DropsPage_ClaimDropRewards": {
+      const bad = needIntegrity(tw, headers);
+      if (bad) return bad[0];
+      assert.deepEqual(Object.keys(v.input), ["dropInstanceID"]);
+      tw.dropClaims.push(v.input.dropInstanceID);
+      for (const c of tw.inventory) {
+        for (const d of c.timeBasedDrops) {
+          if (d.self && d.self.dropInstanceID === v.input.dropInstanceID) d.self.isClaimed = true;
+        }
+      }
+      return { data: { claimDropRewards: { status: tw.dropClaimStatus } } };
+    }
     default:
       throw new Error("opération inconnue : " + name);
   }
@@ -209,7 +304,53 @@ function rawMutation(tw, op, headers) {
 
 function rawQuery(tw, body, headers) {
   const q = body.query;
+  // Sans variable de chaîne : inventaire, tableau de bord, drop en cours, rachat.
+  if (q.includes("dropCampaignsInProgress")) {
+    assert.equal(headers.Authorization, "OAuth " + AUTH_TOKEN, "inventaire lu avec la session");
+    assert.equal(headers["Client-Integrity"], undefined);
+    return { data: { currentUser: { inventory: { dropCampaignsInProgress: tw.inventory } } } };
+  }
+  if (q.includes("currentUser { dropCampaigns {")) {
+    assert.ok(headers.Authorization);
+    if (tw.dashboardNeedsIntegrity && !tw.validIntegrity.has(headers["Client-Integrity"])) {
+      return { errors: [{ message: "failed integrity check" }], data: null };
+    }
+    return { data: { currentUser: { dropCampaigns: tw.dashboard } } };
+  }
+  if (q.includes("dropCurrentSession")) {
+    assert.deepEqual(body.variables, { c: CHANNEL_ID });
+    return { data: { currentUser: { dropCurrentSession: tw.dropSession } } };
+  }
+  if (q.startsWith("mutation { redeemCommunityPointsCustomReward(")) {
+    const bad = needIntegrity(tw, headers);
+    if (bad) return bad[0];
+    tw.lastRedeem = q;
+    if (tw.redeemError) return { data: { redeemCommunityPointsCustomReward: { redemption: null, error: { code: tw.redeemError } } } };
+    const cost = Number(/cost: (\d+),/.exec(q)[1]);
+    tw.balance -= cost;
+    return { data: { redeemCommunityPointsCustomReward: { redemption: { id: "rd-1" }, error: null } } };
+  }
+  if (q.includes("viewerDropCampaigns")) {
+    assert.equal(headers.Authorization, undefined, "campagnes de la chaîne : lecture publique");
+    const list = body.variables.l === CHANNEL ? tw.channelCampaigns : [];
+    return { data: { user: { id: body.variables.l === CHANNEL ? CHANNEL_ID : "777", channel: { viewerDropCampaigns: list.map((id) => ({ id })) } } } };
+  }
   assert.equal(body.variables.l, CHANNEL);
+  if (q.includes("streamPlaybackAccessToken")) {
+    assert.equal(headers.Authorization, "OAuth " + AUTH_TOKEN, "jeton de lecture AU NOM DU COMPTE");
+    assert.ok(q.includes('params: {platform: "web", playerBackend: "mediaplayer", playerType: "site"}'));
+    if (tw.patNeedsIntegrity && !tw.validIntegrity.has(headers["Client-Integrity"])) {
+      return { errors: [{ message: "failed integrity check" }], data: null };
+    }
+    return { data: { streamPlaybackAccessToken: { value: tw.patValue, signature: tw.patSignature } } };
+  }
+  if (q.includes("cooldownExpiresAt")) {
+    return { data: { channel: { communityPointsSettings: { customRewards: tw.rewards.map((r) => ({ id: r.id, cooldownExpiresAt: tw.cooldowns[r.id] || null })) } } } };
+  }
+  if (q.includes("customRewards { id title cost")) {
+    assert.equal(headers.Authorization, undefined, "récompenses : lecture publique, comme l'app");
+    return { data: { channel: { communityPointsSettings: { isEnabled: true, customRewards: tw.rewards } } } };
+  }
   if (q.includes("communityPoints { balance")) {
     assert.ok(headers.Authorization, "solde lu avec la session");
     if (tw.gqlErrorText) return { errors: [{ message: tw.gqlErrorText }], data: null };
@@ -366,6 +507,7 @@ function loadBackground(opts = {}) {
     TextEncoder,
     btoa,
     URL,
+    URLSearchParams,
     AbortController,
     Date: FakeDate,
     console: quietConsole,
@@ -464,10 +606,22 @@ function assertNoSecret(value, label, tw) {
   }
 }
 
+// Ni jeton de lecture, ni adresse signée (usher, playlist, segments, spade).
+function assertNoSignedUrl(value, label, tw) {
+  const text = JSON.stringify(value) || "";
+  for (const piece of [tw.patSignature, "SOURCEsecret", "AUDIOsecret", "SEGsecret", "CuYEsecret", "ttvnw", "usher", "sig=", '"expires":1800000000']) {
+    assert.ok(!text.includes(piece), label + " contient « " + piece + " »");
+  }
+}
+
 function assertNoLeaks(h, label) {
-  h.responses.forEach((r, i) => assertNoSecret(r, label + " réponse " + i, h.tw));
+  h.responses.forEach((r, i) => {
+    assertNoSecret(r, label + " réponse " + i, h.tw);
+    assertNoSignedUrl(r, label + " réponse " + i, h.tw);
+  });
   assertNoSecret(h.consoleLines.join("\n"), label + " journal", h.tw);
   assertNoSecret(h.local, label + " storage.local", h.tw);
+  assertNoSignedUrl(h.local, label + " storage.local", h.tw);
 }
 
 function liveTab() {
@@ -544,8 +698,30 @@ const ARG_CASES = [
   ["polls.vote", { channel: CHANNEL, pollId: "p1", choiceId: "c1" }, "bad_args"],
   ["raid.join", { channel: CHANNEL, raidId: "raid_1" }, "bad_args"],
   ["raid.join", { channel: CHANNEL, raidId: "r".repeat(65) }, "bad_args"],
-  ["raid.join", { channel: CHANNEL }, "bad_args"]
+  ["raid.join", { channel: CHANNEL }, "bad_args"],
+  ["drops.get", { channel: CHANNEL }, "ok"],
+  ["drops.claim", { dropInstanceId: "inst#drop-1b.x:y_z-1" }, "ok"],
+  ["drops.claim", { dropInstanceId: "inst drop" }, "bad_args"],
+  ["drops.claim", { dropInstanceId: "x".repeat(201) }, "bad_args"],
+  ["drops.claim", { dropInstanceId: "" }, "bad_args"],
+  ["drops.claim", { channel: CHANNEL }, "bad_args"],
+  ["drops.pulse", { channel: "Streamer" }, "bad_args"],
+  ["rewards.get", { channel: CHANNEL, extra: true }, "bad_args"],
+  ["rewards.redeem", { channel: CHANNEL, rewardId: "rw-hydrate", cost: 500, title: "Hydrate!", prompt: "Drink \"water\"\nnow", input: null }, "ok"],
+  ["rewards.redeem", { channel: CHANNEL, rewardId: "rw-hydrate", cost: 0, title: "Hydrate!", prompt: null, input: null }, "bad_args"],
+  ["rewards.redeem", { channel: CHANNEL, rewardId: "rw-hydrate", cost: 2.5, title: "Hydrate!", prompt: null, input: null }, "bad_args"],
+  ["rewards.redeem", { channel: CHANNEL, rewardId: "rw-hydrate", cost: "500", title: "Hydrate!", prompt: null, input: null }, "bad_args"],
+  ["rewards.redeem", { channel: CHANNEL, rewardId: "rw-hydrate", cost: 500, title: "", prompt: null, input: null }, "bad_args"],
+  ["rewards.redeem", { channel: CHANNEL, rewardId: "rw-hydrate", cost: 500, title: "t".repeat(201), prompt: null, input: null }, "bad_args"],
+  ["rewards.redeem", { channel: CHANNEL, rewardId: "rw-hydrate", cost: 500, title: "Hydrate!", prompt: 5, input: null }, "bad_args"],
+  ["rewards.redeem", { channel: CHANNEL, rewardId: "rw-song", cost: 200, title: "Song request", prompt: null, input: "" }, "bad_args"],
+  ["rewards.redeem", { channel: CHANNEL, rewardId: "rw-song", cost: 200, title: "Song request", prompt: null, input: "x".repeat(201) }, "bad_args"],
+  ["rewards.redeem", { channel: CHANNEL, rewardId: "rw-song", cost: 200, title: "Song request", prompt: null, input: "\u{1F600}".repeat(200) }, "ok"],
+  ["rewards.redeem", { channel: CHANNEL, rewardId: "rw-song", cost: 200, title: "Song request", prompt: null, input: "\u{1F600}".repeat(201) }, "bad_args"],
+  ["rewards.redeem", { channel: CHANNEL, rewardId: "rw-hydrate", cost: 500, title: "Hydrate!", prompt: null }, "bad_args"]
 ];
+
+const REDEEM = { channel: CHANNEL, rewardId: "rw-hydrate", cost: 500, title: "Hydrate!", prompt: "Drink \"water\"\nnow", input: null };
 
 test("bornes des arguments : bad_args avant toute requête", async () => {
   const h = loadBackground({ local: { settings: { siteEnabled: true, autoClaim: true, allowSpend: true } } });
@@ -962,6 +1138,186 @@ test("fonction injectée : POST /integrity avec la session, rien hors de www.twi
   assert.equal(calls.length, 1);
 });
 
+// --- Drops -------------------------------------------------------------------------------------------------
+
+test("drops.get : campagnes de la chaîne, progression, drop en cours, tableau de bord", async () => {
+  const h = loadBackground({ tabs: [liveTab()] });
+  const res = await h.op("drops.get", { channel: CHANNEL });
+  assert.equal(code(res), "ok");
+  assert.equal(res.data.channelHasDrops, true);
+  assert.deepEqual(res.data.campaigns, [{
+    id: "camp-1", name: "Season drops", gameName: "Some Game", endsAt: "2026-10-30T00:00:00Z",
+    drops: [
+      { id: "drop-1a", name: "Cool hat", imageUrl: "https://static-cdn.jtvnw.net/drops/hat.png", requiredMinutes: 60, currentMinutes: 42, claimed: false, dropInstanceId: null },
+      { id: "drop-1b", name: "Red cape", imageUrl: "https://static-cdn.jtvnw.net/drops/cape.png", requiredMinutes: 30, currentMinutes: 30, claimed: false, dropInstanceId: "inst#drop-1b" }
+    ]
+  }], "camp-2 pas commencée : le tableau de bord demande un jeton d'intégrité, aucun n'est gardé");
+  assert.equal(h.tabLog.scripts.length + h.tabLog.created.length, 0, "une lecture n'obtient jamais de jeton");
+
+  // Jeton d'intégrité déjà gardé (après un coffre) : le tableau de bord donne camp-2.
+  await h.op("points.claim", { channel: CHANNEL });
+  h.clock.now += 600001;
+  const again = await h.op("drops.get", { channel: CHANNEL });
+  assert.deepEqual(again.data.campaigns.map((c) => c.id), ["camp-1", "camp-2"]);
+  assert.deepEqual(again.data.campaigns[1].drops, [{
+    id: "drop-2a", name: "Horse", imageUrl: "https://static-cdn.jtvnw.net/drops/horse.png", requiredMinutes: 120, currentMinutes: 0, claimed: false, dropInstanceId: null
+  }]);
+
+  h.tw.channelCampaigns = [];
+  h.clock.now += 600001;
+  assert.deepEqual((await h.op("drops.get", { channel: CHANNEL })).data, { channelHasDrops: false, campaigns: [] });
+  assertNoLeaks(h, "drops.get");
+});
+
+test("drops.claim : jeton d'intégrité, statuts de Twitch", async () => {
+  const h = loadBackground({ tabs: [liveTab()] });
+  assert.deepEqual(await h.op("drops.claim", { dropInstanceId: "inst#drop-1b" }), { ok: true, data: { claimed: true } });
+  assert.deepEqual(h.tw.dropClaims, ["inst#drop-1b"]);
+  h.tw.dropClaimStatus = "DROP_INSTANCE_ALREADY_CLAIMED";
+  h.clock.now += 5001;
+  assert.deepEqual((await h.op("drops.claim", { dropInstanceId: "inst#drop-1b" })).data, { claimed: true });
+  h.tw.dropClaimStatus = "UNKNOWN_FAILURE";
+  h.clock.now += 5001;
+  assert.deepEqual((await h.op("drops.claim", { dropInstanceId: "inst#x" })).error, { code: "twitch", message: "UNKNOWN_FAILURE" });
+});
+
+test("drops.claim : 1 par 5 s ; drops.pulse : 1 par 8 s et par chaîne", async () => {
+  const h = loadBackground({ tabs: [liveTab()] });
+  assert.equal(code(await h.op("drops.claim", { dropInstanceId: "inst#drop-1b" })), "ok");
+  assert.equal(code(await h.op("drops.claim", { dropInstanceId: "inst#drop-1b" })), "rate_limited");
+  h.clock.now += 5001;
+  assert.equal(code(await h.op("drops.claim", { dropInstanceId: "inst#drop-1b" })), "ok");
+  assert.equal(code(await h.op("drops.pulse", { channel: CHANNEL })), "ok");
+  assert.equal(code(await h.op("drops.pulse", { channel: CHANNEL })), "rate_limited");
+  assert.deepEqual(await h.op("drops.pulse", { channel: "other_channel" }), { ok: true, data: { active: false, claimed: [] } }, "autre chaîne, sans drops");
+  h.clock.now += 8001;
+  assert.equal(code(await h.op("drops.pulse", { channel: CHANNEL })), "ok");
+});
+
+test("drops.pulse : jeton de lecture du compte, plus basse qualité, HEAD des nouveaux segments", async () => {
+  const h = loadBackground({ tabs: [liveTab()] });
+  const first = await h.op("drops.pulse", { channel: CHANNEL });
+  assert.equal(code(first), "ok");
+  assert.equal(first.data.active, true);
+  assert.equal(h.tw.usherCalls, 1);
+  assert.deepEqual(h.tw.heads, h.tw.segments, "chaque segment demandé une fois, en HEAD");
+  assert.ok(!h.tw.log.some((r) => r.url.includes("SOURCEsecret")), "la plus basse qualité seulement");
+
+  h.tw.segments = h.tw.segments.slice(1).concat(["https://video-edge-aa11.fra05.abs.hls.ttvnw.net/v1/segment/SEGsecret4.ts"]);
+  h.clock.now += 8001;
+  const second = await h.op("drops.pulse", { channel: CHANNEL });
+  assert.equal(second.data.active, true);
+  assert.equal(h.tw.usherCalls, 1, "playlist gardée d'un battement à l'autre");
+  assert.equal(h.tw.heads.length, 4, "seulement le nouveau segment");
+  assert.ok(h.tw.heads[3].endsWith("SEGsecret4.ts"));
+
+  // Réclamation automatique : le drop réclamable, pas celui d'un compte de jeu à lier.
+  assert.deepEqual(first.data.claimed.concat(second.data.claimed), ["Red cape"]);
+  assert.deepEqual(h.tw.dropClaims, ["inst#drop-1b"]);
+  assert.ok(h.session.dropPulse[CHANNEL].variant.includes("AUDIOsecret"), "adresse signée gardée dans storage.session");
+  assertNoLeaks(h, "pulsation");
+});
+
+test("drops.pulse : jeton d'intégrité si Twitch en demande un, jeton anonyme refusé", async () => {
+  const h = loadBackground({ tabs: [liveTab()], local: { settings: { siteEnabled: true, autoClaim: false, allowSpend: true } } });
+  h.tw.patNeedsIntegrity = true;
+  const res = await h.op("drops.pulse", { channel: CHANNEL });
+  assert.deepEqual(res.data, { active: true, claimed: [] });
+  assert.equal(h.tabLog.scripts.length, 1);
+  assert.deepEqual(h.tw.dropClaims, [], "réclamation automatique coupée");
+
+  const anon = loadBackground({ tabs: [liveTab()] });
+  anon.tw.patValue = '{"channel":"streamer_one","user_id":null}';
+  assert.equal((await anon.op("drops.pulse", { channel: CHANNEL })).data.active, false);
+  assert.equal(anon.tw.usherCalls, 0, "jeton anonyme : rien demandé à usher");
+});
+
+test("drops.pulse : trois 404 de suite, le direct est fini", async () => {
+  const h = loadBackground({ tabs: [liveTab()], local: { settings: { siteEnabled: true, autoClaim: false, allowSpend: true } } });
+  assert.equal((await h.op("drops.pulse", { channel: CHANNEL })).data.active, true);
+  h.tw.variantStatus = 404;
+  for (let i = 0; i < 3; i++) {
+    h.clock.now += 8001;
+    assert.equal((await h.op("drops.pulse", { channel: CHANNEL })).data.active, false);
+  }
+  assert.equal(h.session.dropPulse[CHANNEL], undefined, "état de la pulsation oublié");
+});
+
+// --- Récompenses de chaîne -------------------------------------------------------------------------------
+
+test("rewards.get : récompenses, recharge, couleur, image, ordre par coût", async () => {
+  const h = loadBackground();
+  const until = new Date(h.clock.now + 60000).toISOString();
+  h.tw.cooldowns = { "rw-cool": until };
+  const res = await h.op("rewards.get", { channel: CHANNEL });
+  assert.equal(res.data.balance, 1000);
+  assert.deepEqual(res.data.rewards.map((r) => r.id), ["rw-off", "rw-stock", "rw-cool", "rw-paused", "rw-song", "rw-hydrate"]);
+  const byId = Object.fromEntries(res.data.rewards.map((r) => [r.id, r]));
+  assert.deepEqual(byId["rw-hydrate"], {
+    id: "rw-hydrate", title: "Hydrate!", cost: 500, prompt: "Drink \"water\"\nnow", requiresInput: false, enabled: true,
+    paused: false, inStock: true, cooldownEndsAt: null, color: "#9147FF",
+    imageUrl: "https://static-cdn.jtvnw.net/custom-reward-images/default-2.png"
+  });
+  assert.equal(byId["rw-cool"].cooldownEndsAt, until);
+  assert.equal(byId["rw-song"].color, "#00C389");
+  assert.equal(byId["rw-song"].requiresInput, true);
+  assert.equal(byId["rw-off"].enabled, false);
+  assert.equal(byId["rw-off"].prompt, null);
+  assert.equal(byId["rw-paused"].color, null);
+});
+
+test("rewards.redeem est une dépense : vrai clic et réglage", async () => {
+  const h = loadBackground();
+  assert.equal(code(await h.op("rewards.redeem", REDEEM)), "needs_activation");
+  const off = loadBackground({ local: { settings: { siteEnabled: true, autoClaim: true, allowSpend: false } } });
+  assert.equal(code(await off.spend("rewards.redeem", REDEEM)), "spend_disabled");
+  assert.equal(h.tw.log.length + off.tw.log.length, 0);
+  const page = loadContent({ sendMessage: async () => ({ ok: true, data: { claimed: true } }) });
+  await ticks(5);
+  const before = page.sent.length;
+  assert.equal((await page.reply(page.request("rewards.redeem", REDEEM))).error.code, "needs_activation");
+  assert.equal(page.sent.length, before, "rien transmis sans clic");
+  // Les drops ne sont pas des dépenses.
+  assert.equal((await page.reply(page.request("drops.claim", { dropInstanceId: "inst#1" }))).ok, true);
+});
+
+test("rewards.redeem : vérifications, mutation de l'app, solde", async () => {
+  const h = loadBackground({ tabs: [liveTab()] });
+  h.tw.cooldowns = { "rw-cool": new Date(h.clock.now + 600000).toISOString() };
+  const redeem = (over) => {
+    h.clock.now += 3001;
+    return h.spend("rewards.redeem", { ...REDEEM, ...over });
+  };
+  const why = (res) => res.error && res.error.code === "bad_args" ? res.error.message : code(res);
+  assert.equal(why(await redeem({ rewardId: "rw-nope" })), "rewardId");
+  assert.equal(why(await redeem({ rewardId: "rw-off", cost: 50, title: "Off", prompt: null })), "not_enabled");
+  assert.equal(why(await redeem({ rewardId: "rw-paused", cost: 100, title: "Paused", prompt: null })), "paused");
+  assert.equal(why(await redeem({ rewardId: "rw-stock", cost: 60, title: "Gone", prompt: null })), "out_of_stock");
+  assert.equal(why(await redeem({ rewardId: "rw-cool", cost: 70, title: "Cooling", prompt: null })), "cooldown");
+  assert.equal(why(await redeem({ cost: 499 })), "cost");
+  assert.equal(why(await redeem({ title: "Hydrate" })), "title");
+  assert.equal(why(await redeem({ input: "hello" })), "input", "saisie interdite sans requiresInput");
+  const song = { rewardId: "rw-song", cost: 200, title: "Song request", prompt: "Name a song" };
+  assert.equal(why(await redeem({ ...song, input: null })), "input", "saisie obligatoire");
+  assert.equal(why(await redeem({ ...song, input: "   " })), "input");
+  h.tw.balance = 400;
+  assert.equal(why(await redeem({})), "points");
+  h.tw.balance = 1000;
+  assert.equal(h.tw.lastRedeem, null, "rien envoyé à Twitch avant ces vérifications");
+
+  assert.deepEqual(await redeem({}), { ok: true, data: { balance: 500 } });
+  const expected = "mutation { redeemCommunityPointsCustomReward(input: { channelID: \"123456\", cost: 500, prompt: " +
+    JSON.stringify("Drink \"water\"\nnow") + ", rewardID: \"rw-hydrate\", title: \"Hydrate!\", transactionID: \"TX\" }) { redemption { id } error { code } } }";
+  assert.equal(h.tw.lastRedeem.replace(/transactionID: "[0-9a-f-]{36}"/, "transactionID: \"TX\""), expected);
+
+  assert.equal(code(await redeem({ ...song, input: "Never \"gonna\"" })), "ok");
+  assert.ok(h.tw.lastRedeem.includes("prompt: " + JSON.stringify("Never \"gonna\"")), "saisie du spectateur dans prompt, comme l'app");
+  h.tw.balance = 1000;
+  h.tw.redeemError = "NOT_ENOUGH_POINTS";
+  assert.deepEqual((await redeem({})).error, { code: "twitch", message: "NOT_ENOUGH_POINTS" });
+  assertNoLeaks(h, "récompenses");
+});
+
 // --- Content script --------------------------------------------------------------------------------------
 
 test("content script : annonce hello au chargement", async () => {
@@ -1072,7 +1428,9 @@ test("manifeste : origines, permissions et arrière-plan attendus", () => {
   assert.equal(MANIFEST.externally_connectable, undefined);
   assert.equal(MANIFEST.web_accessible_resources, undefined);
   assert.equal(MANIFEST.browser_specific_settings.gecko.id, "connect@twitchunblock.app");
-  for (const host of MANIFEST.host_permissions) assert.match(host, /^https:\/\/(\*\.twitch\.tv|static\.twitchcdn\.net)\/\*$/);
+  for (const host of MANIFEST.host_permissions) {
+    assert.match(host, /^https:\/\/(\*\.twitch\.tv|static\.twitchcdn\.net|usher\.ttvnw\.net|\*\.hls\.ttvnw\.net)\/\*$/);
+  }
   const en = JSON.parse(readFileSync(join(DIR, "_locales", "en", "messages.json"), "utf8"));
   for (const lang of ["fr", "es", "ru", "it", "ja"]) {
     const other = JSON.parse(readFileSync(join(DIR, "_locales", lang, "messages.json"), "utf8"));

@@ -3,7 +3,7 @@
     "message": "TwitchUnblock Connect"
   },
   "extDescription": {
-    "message": "Relie le site TwitchUnblock à ta session Twitch : points, coffres, prédictions, sondages, raids. Ta session reste dans l'extension."
+    "message": "Relie le site TwitchUnblock à ta session Twitch : points, coffres, drops, récompenses, prédictions, sondages. Ta session reste ici."
   },
   "actionTitle": {
     "message": "TwitchUnblock Connect"
@@ -64,16 +64,16 @@
     "message": "Connexion au site TwitchUnblock"
   },
   "setSiteHelp": {
-    "message": "Le site peut lire tes points, prédictions et sondages, et se servir de ta session pour les actions ci-dessous."
+    "message": "Le site peut lire tes points, drops, récompenses, prédictions et sondages, et se servir de ta session pour les actions ci-dessous."
   },
   "setClaim": {
-    "message": "Coffres automatiques"
+    "message": "Réclamer automatiquement (coffres et drops)"
   },
   "setClaimHelp": {
-    "message": "Réclame les coffres bonus pendant que tu regardes un direct sur le site."
+    "message": "Réclame les coffres bonus et les drops terminés pendant que tu regardes un direct sur le site."
   },
   "setSpend": {
-    "message": "Paris et votes depuis le site"
+    "message": "Paris, votes et récompenses depuis le site"
   },
   "setSpendHelp": {
     "message": "Toujours après un vrai clic sur le site et sa confirmation."
@@ -192,7 +192,7 @@
     "message": "Sécurité"
   },
   "securityText": {
-    "message": "Ta session Twitch et tes jetons ne sortent jamais de l'extension. Le site ne peut demander qu'une liste fermée d'actions ; paris et votes exigent un vrai clic. Rien n'est envoyé ailleurs que chez Twitch."
+    "message": "Ta session Twitch et tes jetons ne sortent jamais de l'extension. Le site ne peut demander qu'une liste fermée d'actions ; paris, votes et récompenses exigent un vrai clic. Rien n'est envoyé ailleurs que chez Twitch."
   },
   "versionLabel": {
     "message": "Version $VERSION$",

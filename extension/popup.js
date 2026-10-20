@@ -14,7 +14,12 @@ const api = globalThis.browser || globalThis.chrome;
 const BROWSER = api.runtime.getURL("").startsWith("moz-extension:") ? "firefox" : "chrome";
 // Accès d'hôte du manifeste ; sous Firefox, aussi les origines du content script
 // (accordables et retirables une à une dans about:addons).
-const HOST_ORIGINS = ["https://*.twitch.tv/*", "https://static.twitchcdn.net/*"];
+const HOST_ORIGINS = [
+  "https://*.twitch.tv/*",
+  "https://static.twitchcdn.net/*",
+  "https://usher.ttvnw.net/*",
+  "https://*.hls.ttvnw.net/*"
+];
 const SITE_ORIGINS = [
   "https://twitchunblock.vercel.app/*",
   "https://test2-git-test-17d298-mxfia19s-projects.vercel.app/*"

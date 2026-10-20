@@ -3,7 +3,7 @@
     "message": "TwitchUnblock Connect"
   },
   "extDescription": {
-    "message": "Links the TwitchUnblock site to your Twitch session: points, chests, predictions, polls, raids. Your session stays in the extension."
+    "message": "Links the TwitchUnblock site to your Twitch session: points, chests, drops, rewards, predictions, polls. Session stays here."
   },
   "actionTitle": {
     "message": "TwitchUnblock Connect"
@@ -64,16 +64,16 @@
     "message": "Connection to the TwitchUnblock site"
   },
   "setSiteHelp": {
-    "message": "Lets the site read your points, predictions and polls, and use your session for the actions below."
+    "message": "Lets the site read your points, drops, rewards, predictions and polls, and use your session for the actions below."
   },
   "setClaim": {
-    "message": "Automatic chests"
+    "message": "Claim automatically (chests and drops)"
   },
   "setClaimHelp": {
-    "message": "Claims bonus chests while you watch a live stream on the site."
+    "message": "Claims bonus chests and finished drops while you watch a live stream on the site."
   },
   "setSpend": {
-    "message": "Bets and votes from the site"
+    "message": "Bets, votes and rewards from the site"
   },
   "setSpendHelp": {
     "message": "Always after a real click on the site and its confirmation."
@@ -192,7 +192,7 @@
     "message": "Security"
   },
   "securityText": {
-    "message": "Your Twitch session and tokens never leave the extension. The site can only ask for a closed list of actions; bets and votes need a real click. Nothing is sent anywhere but Twitch."
+    "message": "Your Twitch session and tokens never leave the extension. The site can only ask for a closed list of actions; bets, votes and rewards need a real click. Nothing is sent anywhere but Twitch."
   },
   "versionLabel": {
     "message": "Version $VERSION$",

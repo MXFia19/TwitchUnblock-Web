@@ -28,6 +28,7 @@
   const CHANNEL_RE = /^[a-z0-9_]{1,25}$/;
   const TWITCH_ID_RE = /^[A-Za-z0-9._:-]{1,64}$/;
   const RAID_ID_RE = /^[A-Za-z0-9-]{1,64}$/;
+  const DROP_INSTANCE_RE = /^[A-Za-z0-9#._:-]{1,200}$/;
 
   const OP_ARGS = {
     "hello": {},
@@ -39,9 +40,21 @@
     "predictions.bet": { channel: "channel", eventId: "id", outcomeId: "id", points: "points" },
     "polls.get": { channel: "channel" },
     "polls.vote": { channel: "channel", pollId: "id", choiceId: "id", withPoints: "bool" },
-    "raid.join": { channel: "channel", raidId: "raid" }
+    "raid.join": { channel: "channel", raidId: "raid" },
+    "drops.get": { channel: "channel" },
+    "drops.claim": { dropInstanceId: "dropInstance" },
+    "drops.pulse": { channel: "channel" },
+    "rewards.get": { channel: "channel" },
+    "rewards.redeem": { channel: "channel", rewardId: "id", cost: "cost", title: "title", prompt: "prompt", input: "input" }
   };
-  const SPEND_OPS = ["predictions.bet", "polls.vote"];
+  const SPEND_OPS = ["predictions.bet", "polls.vote", "rewards.redeem"];
+
+  // Longueur en caractères (points de code), pas en unités UTF-16.
+  function charCount(s) {
+    let n = 0;
+    for (const _ of s) n++;
+    return n;
+  }
 
   // Rend { args } (copie des seuls champs attendus) ou { bad: "<champ fautif>" }.
   function checkArgs(op, raw) {
@@ -61,7 +74,12 @@
         kind === "channel" ? typeof v === "string" && CHANNEL_RE.test(v) :
         kind === "id" ? typeof v === "string" && TWITCH_ID_RE.test(v) :
         kind === "raid" ? typeof v === "string" && RAID_ID_RE.test(v) :
+        kind === "dropInstance" ? typeof v === "string" && DROP_INSTANCE_RE.test(v) :
         kind === "points" ? typeof v === "number" && Number.isInteger(v) && v >= 1 && v <= 250000 :
+        kind === "cost" ? typeof v === "number" && Number.isInteger(v) && v >= 1 && v <= 2147483647 :
+        kind === "title" ? typeof v === "string" && v.length >= 1 && v.length <= 200 :
+        kind === "prompt" ? v === null || (typeof v === "string" && v.length <= 1000) :
+        kind === "input" ? v === null || (typeof v === "string" && v.length <= 800 && charCount(v) >= 1 && charCount(v) <= 200) :
         kind === "bool" ? typeof v === "boolean" :
         false;
       if (!good) return { bad: k };

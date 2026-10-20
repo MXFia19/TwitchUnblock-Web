@@ -41,7 +41,9 @@
   ],
   "host_permissions": [
     "https://*.twitch.tv/*",
-    "https://static.twitchcdn.net/*"
+    "https://static.twitchcdn.net/*",
+    "https://usher.ttvnw.net/*",
+    "https://*.hls.ttvnw.net/*"
   ],
   "browser_specific_settings": {
     "gecko": {

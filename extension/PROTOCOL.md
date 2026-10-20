@@ -76,6 +76,7 @@ une opération qui peut devoir obtenir un jeton d'intégrité : `points.claim`,
    `{ poll: null | { id, title, status: "ACTIVE" | "COMPLETED" | "TERMINATED" | "ARCHIVED", startedAt, durationSeconds, totalVotes, choices: [ { id, title, votes } ], pointsVoting: { enabled, cost }, self: null | { choiceIds: [ … ], votes } } }`
 9. `polls.vote` `{ channel, pollId, choiceId, withPoints: bool }` (dépense si `withPoints`, et
    toujours soumis au vrai clic) → `{ poll: <même forme que polls.get> }`
+
 10. `raid.join` `{ channel, raidId }` → `{ joined: bool }`
    Rejoint le raid que lance la chaîne regardée (mutation `JoinRaid`, `input: { raidID }`),
    ce qui donne le bonus de points de raid, comme sur twitch.tv. Pas une dépense : pas de
@@ -83,6 +84,35 @@ une opération qui peut devoir obtenir un jeton d'intégrité : `points.claim`,
    `^[A-Za-z0-9-]{1,64}$`. Au plus une fois par raid (même `raidId` → réponse en cache),
    et 1 par 30 s et par chaîne. Le site l'appelle dès qu'il reçoit l'annonce du raid
    (`raid_update_v2`, champ `raid.id`) sur la chaîne regardée, avant de suivre le raid.
+
+11. `drops.get` `{ channel }` →
+   `{ channelHasDrops: bool, campaigns: [ { id, name, gameName: string | null, endsAt: string | null, drops: [ { id, name, imageUrl: string | null, requiredMinutes, currentMinutes, claimed: bool, dropInstanceId: string | null } ] } ] }`
+   Campagnes de drops actives sur cette chaîne avec la progression du compte (reprend
+   `Sources/Services/Drops.swift` de l'iOS : `refresh`, `refreshAvailable`,
+   `refreshSession`, `campaign(_:)`). `dropInstanceId` non nul = drop réclamable.
+12. `drops.claim` `{ dropInstanceId }` → `{ claimed: bool }`
+   Mutation `DropsPage_ClaimDropRewards` (hash `claimHash` de Drops.swift), avec le jeton
+   d'intégrité. Pas une dépense : pas de vrai clic exigé. `dropInstanceId` :
+   `^[A-Za-z0-9#._:-]{1,200}$`. 1 par 5 s.
+13. `drops.pulse` `{ channel }` → `{ active: bool, claimed: [ <noms des drops réclamés> ] }`
+   Fait avancer les drops comme la « pulsation » de l'iOS (Drops.swift : `start`, `run`,
+   `poll`, `lowestVariant`, `playbackToken`) : playlist de la plus basse qualité obtenue
+   AVEC la session du compte, puis requête HEAD de chaque nouveau segment (rien n'est
+   téléchargé ni lu). Le site l'appelle toutes les 10 s pendant la lecture d'un direct
+   dont la chaîne a des drops (`channelHasDrops`), lecteur principal seulement, pas en
+   pause. Au plus 1 par 8 s et par chaîne. Si « Réclamer automatiquement » est actif et
+   qu'un drop devient réclamable, il est réclamé et son nom figure dans `claimed`.
+   L'adresse signée de la playlist reste dans l'arrière-plan (`storage.session`).
+14. `rewards.get` `{ channel }` →
+   `{ balance, rewards: [ { id, title, cost, prompt: string | null, requiresInput: bool, enabled: bool, paused: bool, inStock: bool, cooldownEndsAt: string | null, color: string | null, imageUrl: string | null } ] }`
+   Récompenses personnalisées de la chaîne (iOS : `ChannelPointsService.fetchRewards`).
+15. `rewards.redeem` `{ channel, rewardId, cost, title, prompt: string | null, input: string | null }`
+   (DÉPENSE : vrai clic + réglage « Paris, votes et récompenses ») → `{ balance }`
+   Même mutation et mêmes champs que l'iOS (`ChannelPointsService.redeem`), avec le
+   jeton d'intégrité. Vérifications : récompense relue et existante, activée, pas en
+   pause, en stock, pas en recharge, coût identique à celui relu, ≤ solde ; `input`
+   obligatoire si `requiresInput` (1 à 200 caractères) et interdit sinon. Erreur de
+   Twitch → `twitch` avec son code.
 
 Champs inconnus de Twitch : `null`, jamais inventés.
 
@@ -105,5 +135,10 @@ confondu : 60 demandes par minute, au-delà
 ## Réglages (fenêtre de l'extension, stockage local, sans secret)
 
 - « Connexion au site TwitchUnblock » (actif par défaut)
-- « Coffres automatiques » (actif par défaut)
-- « Paris et votes depuis le site » (actif par défaut, toujours soumis au vrai clic)
+- « Réclamer automatiquement (coffres et drops) » (actif par défaut ; clé `autoClaim`)
+- « Paris, votes et récompenses depuis le site » (actif par défaut, toujours soumis au
+  vrai clic ; clé `allowSpend`)
+
+Dépenses soumises au vrai clic : `predictions.bet`, `polls.vote`, `rewards.redeem`.
+Délais d'attente côté site : 45 s aussi pour `drops.claim`, `rewards.redeem` et
+`raid.join` ; 15 s pour `drops.pulse`.
