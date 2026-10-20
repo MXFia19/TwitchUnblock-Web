@@ -1235,13 +1235,46 @@ const pingHits = new Map();   // adresse → { n, until } (mémoire de l'instanc
 // page rechargée en boucle ne vide pas le quota.
 // (Cache API inopérant sur workers.dev : cache en mémoire de l'instance.)
 let statsCache = null;   // { body, until }
+// Le calcul gardé aussi en D1, pour toutes les instances : celui d'une
+// instance ne servait guère (réglages de l'app et du site, /stats rafraîchi
+// toutes les 2 minutes, sur des instances différentes) et chaque calcul lit
+// toutes les entrées du comptage, les compteurs de 30 jours et les
+// abonnements. Au plus un calcul par STATS_SHARED_TTL ; « Actualiser » de
+// /stats (compte administrateur, `?fresh=1`) recalcule tout de suite.
+const STATS_CACHE_KEY = 'stats_cache';
+const STATS_SHARED_TTL = 10 * 60 * 1000;
 async function cachedStats(request, env, ctx) {
-    if (statsCache && statsCache.until > Date.now()) {
-        return new Response(statsCache.body, { headers: { ...RESPONSE_HEADERS, 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } });
+    const reply = (body) => new Response(body, { headers: { ...RESPONSE_HEADERS, 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } });
+    let fresh = false;
+    if (new URL(request.url).searchParams.get('fresh') === '1' && request.headers.get('Authorization')) {
+        fresh = await requireAdmin(request).then((r) => !r.denied, () => false);
+    }
+    if (!fresh && statsCache && statsCache.until > Date.now()) return reply(statsCache.body);
+    if (!fresh && env.DB) {
+        try {
+            await ensureSchema(env);
+            const row = await env.DB.prepare(`SELECT value, meta FROM kv WHERE key = ?1`).bind(STATS_CACHE_KEY).first();
+            const at = Number(parseMeta(row?.meta)?.at) || 0;
+            if (row?.value && Date.now() - at < STATS_SHARED_TTL) {
+                statsCache = { body: row.value, until: Math.min(Date.now() + 60 * 1000, at + STATS_SHARED_TTL) };
+                return reply(row.value);
+            }
+        } catch (e) { logCaught('stats/cache', e); }
     }
     const res = await handleStats(env);
-    if (res.ok) statsCache = { body: await res.clone().text(), until: Date.now() + 60 * 1000 };
+    if (res.ok) {
+        const body = await res.clone().text();
+        statsCache = { body, until: Date.now() + 60 * 1000 };
+        const save = store(env).putStatement(STATS_CACHE_KEY, body, { metadata: { at: Date.now() } }).run()
+            .catch((e) => logCaught('stats/cache', e));
+        if (ctx?.waitUntil) ctx.waitUntil(save); else await save;
+    }
     return res;
+}
+/** Calcul gardé oublié (comptage effacé) : le prochain est refait. */
+async function dropStatsCache(env) {
+    statsCache = null;
+    await store(env).delete(STATS_CACHE_KEY).catch((e) => logCaught('stats/cache', e));
 }
 
 // GET /api/stats — compteurs agrégés, au total et par plateforme.
@@ -1391,7 +1424,7 @@ async function handleStats(env) {
             const st = env.DB.prepare(sql);
             return (args.length ? st.bind(...args) : st).all().then((r) => r.results || []);
         };
-        const [subs, services, channels, follows, queue, pauseRow] = await Promise.all([
+        const [subs, services, snapRow, queueRows, pauseRow] = await Promise.all([
             rows(`SELECT kind, COUNT(*) AS n, SUM(created >= ?1) AS today, SUM(created >= ?2) AS week
                   FROM push_subs GROUP BY kind`, todayMs, todayMs - 6 * 86400000),
             // Service de push du navigateur, d'après l'adresse d'envoi.
@@ -1402,14 +1435,27 @@ async function handleStats(env) {
                     WHEN endpoint LIKE '%notify.windows.com/%' THEN 'microsoft'
                     ELSE 'other' END AS svc, COUNT(*) AS n
                   FROM push_subs WHERE kind IS NOT 'ntfy' GROUP BY svc`),
-            rows(`SELECT COUNT(*) AS n, SUM(stream IS NOT NULL AND stream != '?') AS live FROM push_live`),
-            rows(`SELECT COUNT(*) AS n FROM push_follow`),
-            rows(`SELECT s.kind, COUNT(*) AS n, MIN(q.at) AS oldest
-                  FROM push_queue q JOIN push_subs s ON s.id = q.sub GROUP BY s.kind`),
+            // Chaînes, en live, abonnements : notés par la tâche planifiée
+            // (pushCheckLives), au lieu de compter push_live et push_follow
+            // entiers à chaque calcul.
+            rows(`SELECT meta FROM kv WHERE key = ?1`, PUSH_CURSOR_KEY),
+            // Par l'index (kind, at) seul.
+            rows(`SELECT kind, COUNT(*) AS n, MIN(at) AS oldest FROM push_queue GROUP BY kind`),
             rows(`SELECT value FROM kv WHERE key = 'push_ntfy_pause'`),
         ]);
+        const snap = parseMeta(snapRow[0]?.meta) || {};
+        // Avant le premier passage de la tâche planifiée : comptés ici.
+        const channels = Number.isFinite(snap.n) ? [{ n: snap.n, live: snap.live }]
+            : await rows(`SELECT COUNT(*) AS n, SUM(stream IS NOT NULL AND stream != '?') AS live FROM push_live`);
+        const follows = Number.isFinite(snap.f) ? [{ n: snap.f }] : await rows(`SELECT COUNT(*) AS n FROM push_follow`);
         const side = (r) => (r.kind === 'ntfy' ? 'ntfy' : 'web');
         const kinds = Object.fromEntries(subs.map((r) => [side(r), r]));
+        const queue = {};
+        for (const r of queueRows) {
+            const q = queue[side(r)] ??= { n: 0, oldest: 0 };
+            q.n += Number(r.n) || 0;
+            if (Number(r.oldest) && (!q.oldest || Number(r.oldest) < q.oldest)) q.oldest = Number(r.oldest);
+        }
         const num = (v) => Number(v) || 0;
         let pause = null;
         try { pause = JSON.parse(pauseRow[0]?.value); } catch (e) {}
@@ -1422,7 +1468,7 @@ async function handleStats(env) {
             channels: num(channels[0]?.n),
             live: num(channels[0]?.live),
             follows: num(follows[0]?.n),
-            queue: Object.fromEntries(queue.map((r) => [side(r), { n: num(r.n), oldest: num(r.oldest) }])),
+            queue,
             ntfy: {
                 route,
                 // Quota de l'adresse qui publie (relais, ou serveur en
@@ -1599,7 +1645,7 @@ async function handleAdminUsageDelete(request, env) {
     // Chaque suppression compte comme une écriture KV : plafonnée par appel.
     const doomed = keys.filter(match).slice(0, 500);
     for (const k of doomed) await store(env).delete(k.name);
-    statsCache = null;
+    await dropStatsCache(env);
     return jsonResponse({ ok: true, deleted: doomed.length, remaining: keys.filter(match).length - doomed.length });
 }
 
@@ -2919,7 +2965,7 @@ async function feedbackBotTool(env, body) {
             return jsonResponse({ ok: true, ...(await pollAdminView(env)) });
         }
         case 'poll-state':
-            return jsonResponse({ ...(await pollAdminView(env)), previous: await previousPoll(env) });
+            return jsonResponse({ ...(await pollAdminView(env, false)), previous: await previousPoll(env) });
         // Modèles d'annonce (/announce template:), modifiés dans /stats.
         case 'announce-templates':
             return jsonResponse({ templates: await readAnnounceTemplates(env) });
@@ -3724,7 +3770,9 @@ const POLL_SHOW_AFTER = 24 * 3600 * 1000;   // résultats finaux affichés 24 h
 const POLL_DEVICE_RE = /^[0-9a-fA-F-]{36}$/;
 const pollHits = new Map();   // adresse → { n, until } (mémoire de l'instance)
 let pollCache = null;         // { value, until }
-let pollCountCache = null;    // { id, at, value }
+// Résultats d'un sondage : une ligne `pollc_<id>` ({"c":[par choix],"n":votants}),
+// changée dans le même lot que chaque vote (pollVoteCount).
+const POLL_COUNT_PREFIX = 'pollc_';
 
 async function readPoll(env) {
     if (pollCache && pollCache.until > Date.now()) return pollCache.value;
@@ -3735,51 +3783,67 @@ async function readPoll(env) {
     return value;
 }
 
-/** Votes d'un sondage : par choix, et nombre de votants. Gardés 30 s
- *  (corrigés à chaque vote reçu ici, adjustPollCount), sauf `fresh` (admin,
- *  bot). Recomptés après chaque vote, ils coûtaient N²/2 lignes lues par
- *  sondage. */
-async function countPoll(env, poll, fresh = false) {
-    const hit = pollCountCache;
-    if (!fresh && hit && hit.id === poll.id && Date.now() - hit.at < 30 * 1000) return hit.value;
-    const value = await tallyPoll(env, poll);
-    pollCountCache = { id: poll.id, at: Date.now(), value };
-    return value;
+/** Fin de vie des votes d'un sondage (leur TTL, handlePollVote), et de
+ *  ses compteurs. */
+const pollKeepUntil = (poll) => poll.until + POLL_SHOW_AFTER + 86400 * 1000;
+
+/** SQL : décompte complet des votes d'un sondage, en une passe sur la plage
+ *  de leurs clés (lue par l'index) → {"c":[…],"n":votants}. ?1, ?2 : la
+ *  plage ; ?3 : maintenant. */
+function pollTallySql(poll) {
+    const has = (i) => `EXISTS (SELECT 1 FROM json_each(m.o) WHERE value = ${i})`;
+    return `SELECT json_object('c', json_array(${poll.options.map((_, i) => `COALESCE(SUM(${has(i)}), 0)`).join(', ')}),
+            'n', COALESCE(SUM(json_array_length(m.o) > 0), 0))
+        FROM (SELECT CASE WHEN json_valid(meta) THEN json_extract(meta, '$.o') END AS o FROM kv
+              WHERE key >= ?1 AND key < ?2 AND (expires IS NULL OR expires > ?3)) AS m`;
 }
 
-/** Votes d'un sondage comptés par la base, sur la plage de ses clés : de
- *  « pollv_<id>_ » (compris) à « pollv_<id>` » (exclu, « ` » suit « _ »),
- *  lue par l'index. La liste des clés s'arrêtait à 5 000 : au-delà, les
- *  résultats étaient faux. */
-async function tallyPoll(env, poll) {
+/** Résultats d'un sondage : par choix, et nombre de votants, lus dans ses
+ *  compteurs (une ligne). Avant, chaque lecture recomptait tous les votes
+ *  (deux requêtes), gardée 30 s par une instance seulement. Compteurs
+ *  absents (sondage lancé avant eux, effacés par /forget-user) : comptés
+ *  une fois et enregistrés, dans la même requête (un vote arrivé entre-temps
+ *  n'est ni perdu ni compté deux fois). `repair` (vue admin) : recomptés et
+ *  réécrits quoi qu'il arrive. */
+async function pollResults(env, poll, repair = false) {
     await ensureSchema(env);
-    const from = `${POLL_VOTE_PREFIX}${poll.id}_`, to = `${POLL_VOTE_PREFIX}${poll.id}\``;
-    const live = alive(Date.now());
-    const [byChoice, total] = await env.DB.batch([
-        env.DB.prepare(`SELECT c.value AS i, COUNT(*) AS n FROM kv, json_each(kv.meta, '$.o') AS c
-            WHERE kv.key >= ?1 AND kv.key < ?2 AND ${live} GROUP BY c.value`).bind(from, to),
-        env.DB.prepare(`SELECT COUNT(*) AS n FROM kv WHERE key >= ?1 AND key < ?2 AND ${live}
-            AND json_array_length(meta, '$.o') > 0`).bind(from, to),
-    ]);
-    const counts = poll.options.map(() => 0);
-    for (const r of byChoice?.results || []) {
-        const i = Number(r.i);
-        if (Number.isInteger(i) && i >= 0 && i < counts.length) counts[i] = Number(r.n) || 0;
+    const db = env.DB;
+    const now = Date.now();
+    const key = `${POLL_COUNT_PREFIX}${poll.id}`;
+    const range = [`${POLL_VOTE_PREFIX}${poll.id}_`, `${POLL_VOTE_PREFIX}${poll.id}\``];
+    const read = db.prepare(`SELECT value FROM kv WHERE key = ?1 AND ${alive(now)}`).bind(key);
+    let raw = repair ? null : await read.first('value');
+    if (raw == null) {
+        // Absents ou périmés : posés ; `repair` : remplacés.
+        const [, got] = await db.batch([
+            db.prepare(`INSERT INTO kv (key, value, expires) SELECT ?4, (${pollTallySql(poll)}), ?5 WHERE true
+                ON CONFLICT(key) DO UPDATE SET value = excluded.value, expires = excluded.expires
+                ${repair ? '' : 'WHERE kv.expires IS NOT NULL AND kv.expires <= ?3'}`).bind(...range, now, key, pollKeepUntil(poll)),
+            read,
+        ]);
+        raw = got?.results?.[0]?.value;
     }
-    return { counts, voters: Number(total?.results?.[0]?.n) || 0 };
+    let v = null;
+    try { v = JSON.parse(raw); } catch (e) { /* illisible : zéros */ }
+    const c = Array.isArray(v?.c) ? v.c : [];
+    return { counts: poll.options.map((_, i) => Math.max(0, Number(c[i]) || 0)), voters: Math.max(0, Number(v?.n) || 0) };
 }
 
-/** Décompte gardé (countPoll) corrigé du vote d'un appareil : ses choix
- *  avant et après. Le votant voit son vote compté sans tout relire. */
-function adjustPollCount(poll, before, after) {
-    const hit = pollCountCache;
-    if (!hit || hit.id !== poll.id) return;
-    const counts = [...hit.value.counts];
-    const valid = (list) => list.filter((i) => Number.isInteger(i) && i >= 0 && i < counts.length);
-    for (const i of valid(before)) counts[i] = Math.max(0, counts[i] - 1);
-    for (const i of valid(after)) counts[i]++;
-    const voters = Math.max(0, hit.value.voters + (valid(after).length ? 1 : 0) - (valid(before).length ? 1 : 0));
-    pollCountCache = { ...hit, value: { counts, voters } };
+/** Compteurs d'un sondage corrigés du vote d'un appareil (`voteKey`) :
+ *  ses choix d'avant, relus dans la base, et les nouveaux (`picks`). À
+ *  mettre dans le même lot que l'écriture du vote, juste avant : le lot est
+ *  une transaction, deux votes simultanés ne se comptent pas l'un sur
+ *  l'autre. Sans compteurs (sondage d'avant eux) : rien, la lecture
+ *  suivante compte tout (pollResults). */
+function pollVoteCount(env, poll, voteKey, picks) {
+    const has = (i) => `EXISTS (SELECT 1 FROM json_each((SELECT o FROM old)) WHERE value = ${i})`;
+    const sets = poll.options.map((_, i) => `'$.c[${i}]', COALESCE(json_extract(value, '$.c[${i}]'), 0) + ${picks.includes(i) ? 1 : 0} - ${has(i)}`);
+    sets.push(`'$.n', COALESCE(json_extract(value, '$.n'), 0) + ${picks.length ? 1 : 0} - COALESCE((SELECT json_array_length(o) > 0 FROM old), 0)`);
+    return env.DB.prepare(`WITH old(o) AS (SELECT CASE WHEN json_valid(meta) THEN json_extract(meta, '$.o') END FROM kv
+            WHERE key = ?2 AND (expires IS NULL OR expires > ?3))
+        UPDATE kv SET value = json_set(value, ${sets.join(', ')})
+        WHERE key = ?1 AND json_valid(value) AND (expires IS NULL OR expires > ?3)`)
+        .bind(`${POLL_COUNT_PREFIX}${poll.id}`, voteKey, Date.now());
 }
 
 /** Le sondage précédent (POLL_PREV_KEY), fini, et ses résultats ; null sans lui. */
@@ -3787,7 +3851,7 @@ async function previousPoll(env) {
     let poll = null;
     try { poll = await store(env).get(POLL_PREV_KEY, 'json'); } catch (e) { logCaught('poll/prev', e); }
     if (!poll?.id || !Array.isArray(poll.options)) return null;
-    return { poll: { ...poll, ended: true }, results: await tallyPoll(env, poll) };
+    return { poll: { ...poll, ended: true }, results: await pollResults(env, poll) };
 }
 
 /** Ce qu'un appareil voit : le sondage, son vote, et les résultats s'il a
@@ -3803,7 +3867,7 @@ async function pollState(env, poll, device, fresh = false) {
     return {
         poll: { id: poll.id, question: poll.question, options: poll.options, multi: Boolean(poll.multi), until: poll.until, ended },
         mine,
-        results: ended || mine ? await countPoll(env, poll, fresh) : null,
+        results: ended || mine ? await pollResults(env, poll, fresh) : null,
     };
 }
 
@@ -3840,16 +3904,16 @@ async function handlePollVote(request, env) {
     const key = `${POLL_VOTE_PREFIX}${poll.id}_${device}`;
     // Vote d'avant : null pour un appareil nouveau, undefined si illisible.
     const before = await store(env).getWithMetadata(key).then((r) => r.metadata, (e) => { logCaught('poll/vote', e); return undefined; });
-    if (!picks.length) await store(env).delete(key);
+    let write;
+    if (!picks.length) write = env.DB.prepare(`DELETE FROM kv WHERE key = ?1`).bind(key);
     else if (!(await takeDeviceWrite(env, request, `p${poll.id}`, key, before !== null))) {
         return jsonError('Trop de votes depuis cette adresse', 429);
     } else {
         const ttl = Math.max(60, Math.round((poll.until + POLL_SHOW_AFTER - Date.now()) / 1000) + 86400);
-        await store(env).put(key, '', { expirationTtl: ttl, metadata: { o: picks } });
+        write = store(env).putStatement(key, '', { expirationTtl: ttl, metadata: { o: picks } });
     }
-    // Résultats : le décompte gardé, corrigé de ce vote (recompté s'il manque).
-    if (before === undefined) pollCountCache = null;
-    else adjustPollCount(poll, Array.isArray(before?.o) ? before.o : [], picks);
+    // Compteurs corrigés de ce vote dans la même transaction, puis le vote.
+    await env.DB.batch([pollVoteCount(env, poll, key, picks), write]);
     return jsonResponse({ ok: true, ...(await pollState(env, poll, device)) });
 }
 
@@ -3870,9 +3934,14 @@ async function createPoll(env, body) {
     try { prev = await store(env).get(POLL_KEY, 'json'); } catch (e) { logCaught('poll/prev', e); }
     if (prev?.id && now >= prev.until) await store(env).put(POLL_PREV_KEY, JSON.stringify(prev), { expirationTtl: 2 * 86400 });
     const poll = { id: now.toString(36), question, options, multi: body.multi === true, until: now + Math.round(hours * 3600) * 1000, createdAt: now };
-    await store(env).put(POLL_KEY, JSON.stringify(poll), { expirationTtl: Math.max(60, Math.round((poll.until + POLL_SHOW_AFTER - now) / 1000)) });
+    // Ses compteurs à zéro avec lui, en un lot : un vote ne peut pas arriver
+    // avant eux.
+    await env.DB.batch([
+        store(env).putStatement(`${POLL_COUNT_PREFIX}${poll.id}`, JSON.stringify({ c: options.map(() => 0), n: 0 }),
+            { expirationTtl: Math.max(60, Math.round((pollKeepUntil(poll) - now) / 1000)) }),
+        store(env).putStatement(POLL_KEY, JSON.stringify(poll), { expirationTtl: Math.max(60, Math.round((poll.until + POLL_SHOW_AFTER - now) / 1000)) }),
+    ]);
     pollCache = null;
-    pollCountCache = null;
     return { poll };
 }
 
@@ -3889,11 +3958,13 @@ async function endPoll(env) {
     return poll;
 }
 
-/** Sondage et tous ses résultats (admin, bot). */
-async function pollAdminView(env) {
+/** Sondage et tous ses résultats (admin, bot). `repair` : votes recomptés
+ *  et compteurs réécrits (vue de /stats, lancement, fin) ; le passage du bot
+ *  toutes les 10 minutes lit les compteurs. */
+async function pollAdminView(env, repair = true) {
     pollCache = null;
     const poll = await readPoll(env);
-    return { poll: poll ? { ...poll, ended: Date.now() >= poll.until } : null, results: poll ? await countPoll(env, poll, true) : null };
+    return { poll: poll ? { ...poll, ended: Date.now() >= poll.until } : null, results: poll ? await pollResults(env, poll, repair) : null };
 }
 
 // GET : sondage en cours et résultats. POST { question, options, multi, hours } :
@@ -4016,17 +4087,62 @@ const SCHEMA = [
         login  TEXT PRIMARY KEY,
         stream TEXT
     )`,
+    // `kind` : voie d'envoi (« web » ou « ntfy », celle de l'abonné), pour
+    // que chaque voie lise sa file par l'index (migrateSchema).
     `CREATE TABLE IF NOT EXISTS push_queue (
         id   INTEGER PRIMARY KEY AUTOINCREMENT,
         sub  TEXT NOT NULL,
         body TEXT NOT NULL,
-        at   INTEGER NOT NULL
+        at   INTEGER NOT NULL,
+        kind TEXT
     )`,
 ];
 let schemaReady = null;   // une fois par instance du Worker
 function ensureSchema(env) {
-    schemaReady ??= env.DB.batch(SCHEMA.map((q) => env.DB.prepare(q))).catch((e) => { schemaReady = null; throw e; });
+    schemaReady ??= (async () => {
+        await env.DB.batch(SCHEMA.map((q) => env.DB.prepare(q)));
+        await migrateSchema(env);
+    })().catch((e) => { schemaReady = null; throw e; });
     return schemaReady;
+}
+
+// Voie d'une notification en file d'après son abonné (lignes mises en file
+// avant la colonne `kind`, ou par une ancienne version pendant un
+// déploiement) : l'index la trouve, sans parcourir la file.
+const PUSH_QUEUE_KIND_FILL = `UPDATE push_queue SET kind = CASE WHEN
+    (SELECT s.kind FROM push_subs s WHERE s.id = push_queue.sub) = 'ntfy' THEN 'ntfy' ELSE 'web' END
+    WHERE kind IS NULL`;
+
+/** Changements de schéma d'une base existante (CREATE TABLE IF NOT EXISTS ne
+ *  touche pas une table déjà là). Rejouable : la colonne n'est ajoutée que
+ *  si elle manque, l'index s'il manque. Lignes lues D1 : la file des
+ *  notifications était parcourue en entier par chaque voie d'envoi (chaque
+ *  minute) et par son ménage (toutes les 2 minutes). */
+async function migrateSchema(env) {
+    await addColumn(env, 'push_queue', 'kind', 'TEXT');
+    await env.DB.batch([
+        env.DB.prepare(`CREATE INDEX IF NOT EXISTS push_queue_kind_at ON push_queue (kind, at)`),
+        env.DB.prepare(PUSH_QUEUE_KIND_FILL),
+    ]);
+}
+
+/** Ajoute une colonne si elle manque ; true si ajoutée. pragma_table_info
+ *  d'abord ; refusé (ou deux instances en même temps), l'erreur précise
+ *  « duplicate column name » dit qu'elle existe déjà. */
+async function addColumn(env, table, column, type) {
+    let has = null;
+    try {
+        has = (await env.DB.prepare(`SELECT COUNT(*) AS n FROM pragma_table_info(?1) WHERE name = ?2`)
+            .bind(table, column).first('n')) > 0;
+    } catch (e) { logCaught('schema/pragma', e); }
+    if (has) return false;
+    try {
+        await env.DB.prepare(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`).run();
+        return true;
+    } catch (e) {
+        if (/duplicate column name/i.test(String(e?.message || e))) return false;
+        throw e;
+    }
 }
 
 const parseMeta = (m) => { if (!m) return null; try { return JSON.parse(m); } catch (e) { return null; } };
@@ -4048,9 +4164,26 @@ async function bumpDaily(env, day, counts) {
 }
 const alive = (now) => `(expires IS NULL OR expires > ${Number(now)})`;
 
+/** Borne haute (exclue) des clés qui commencent par `prefix` : son dernier
+ *  caractère suivant (« fb_ » → « fb` »). null pour un préfixe vide ou hors
+ *  ASCII imprimable (le filtre substr reste seul). */
+function prefixEnd(prefix) {
+    if (!prefix || !/^[\x20-\x7e]+$/.test(prefix)) return null;
+    return prefix.slice(0, -1) + String.fromCharCode(prefix.charCodeAt(prefix.length - 1) + 1);
+}
+
 function store(env) {
     const db = env.DB;
     const api = {
+        /** L'écriture de put, à joindre à un lot (db.batch), sans le ménage. */
+        putStatement(key, value, opts = {}) {
+            const ttl = Number(opts.expirationTtl) || 0;
+            const expires = ttl > 0 ? Date.now() + ttl * 1000 : null;
+            const meta = opts.metadata == null ? null : JSON.stringify(opts.metadata);
+            return db.prepare(`INSERT INTO kv (key, value, meta, expires) VALUES (?1, ?2, ?3, ?4)
+                ON CONFLICT(key) DO UPDATE SET value = excluded.value, meta = excluded.meta, expires = excluded.expires`)
+                .bind(key, String(value ?? ''), meta, expires);
+        },
         async getWithMetadata(key, type) {
             await ensureSchema(env);
             const row = await db.prepare(`SELECT value, meta FROM kv WHERE key = ?1 AND ${alive(Date.now())}`).bind(key).first();
@@ -4068,12 +4201,7 @@ function store(env) {
         },
         async put(key, value, opts = {}) {
             await ensureSchema(env);
-            const ttl = Number(opts.expirationTtl) || 0;
-            const expires = ttl > 0 ? Date.now() + ttl * 1000 : null;
-            const meta = opts.metadata == null ? null : JSON.stringify(opts.metadata);
-            await db.prepare(`INSERT INTO kv (key, value, meta, expires) VALUES (?1, ?2, ?3, ?4)
-                ON CONFLICT(key) DO UPDATE SET value = excluded.value, meta = excluded.meta, expires = excluded.expires`)
-                .bind(key, String(value ?? ''), meta, expires).run();
+            await api.putStatement(key, value, opts).run();
             // De temps en temps, ménage des entrées expirées (le KV le faisait seul).
             if (Math.random() < 0.02) await db.prepare(`DELETE FROM kv WHERE expires IS NOT NULL AND expires <= ?1`).bind(Date.now()).run();
         },
@@ -4087,7 +4215,10 @@ function store(env) {
         async deletePrefix(prefix) {
             if (!prefix) return;
             await ensureSchema(env);
-            await db.prepare(`DELETE FROM kv WHERE substr(key, 1, ?1) = ?2`).bind(prefix.length, prefix).run();
+            // Plage de la clé primaire : substr seul parcourait toute la table.
+            const end = prefixEnd(prefix);
+            await db.prepare(`DELETE FROM kv WHERE key >= ?2${end ? ' AND key < ?3' : ''} AND substr(key, 1, ?1) = ?2`)
+                .bind(prefix.length, prefix, ...(end ? [end] : [])).run();
         },
         /** Écrit seulement si valeur et métadonnées sont encore celles lues
          *  (`prev` : rendu par getWithMetadata) ; false sinon. Deux réponses
@@ -4115,10 +4246,23 @@ function store(env) {
         async list({ prefix = '', limit = 1000, cursor } = {}) {
             await ensureSchema(env);
             const n = Math.min(1000, Math.max(1, Number(limit) || 1000));
+            // Lu sur la plage du préfixe dans l'index de la clé, depuis le
+            // curseur : `substr(key, …) = préfixe` seul ne s'en sert pas, et
+            // chaque page parcourait la table depuis son début, jusqu'au bout
+            // quand le préfixe a moins de 1 000 clés (toutes les lignes lues
+            // D1 de la table, à chaque liste des retours de /stats). Une seule
+            // borne basse : avec deux, SQLite n'en prend qu'une.
+            const binds = [];
+            const arg = (v) => { binds.push(v); return `?${binds.length}`; };
+            const after = cursor && String(cursor) >= prefix ? String(cursor) : null;
+            const where = [after !== null || !prefix ? `key > ${arg(after ?? '')}` : `key >= ${arg(prefix)}`];
+            const end = prefixEnd(prefix);
+            if (end) where.push(`key < ${arg(end)}`);
+            if (prefix) where.push(`substr(key, 1, ${arg(prefix.length)}) = ${arg(prefix)}`);
             const { results } = await db.prepare(
                 `SELECT key, meta, expires FROM kv
-                 WHERE substr(key, 1, ?1) = ?2 AND key > ?3 AND ${alive(Date.now())}
-                 ORDER BY key LIMIT ?4`).bind(prefix.length, prefix, cursor || '', n + 1).all();
+                 WHERE ${where.join(' AND ')} AND ${alive(Date.now())}
+                 ORDER BY key LIMIT ${arg(n + 1)}`).bind(...binds).all();
             const rows = results || [];
             const page = rows.slice(0, n);
             return {
@@ -4533,7 +4677,7 @@ async function ntfyPausedUntil(env) {
 
 /** Clé D1 d'un compteur du jour (UTC) des plafonds ntfy (et des nouvelles
  *  installations du comptage). */
-const ntfyLimitKey = (name) => `lim:${name}:${new Date().toISOString().slice(0, 10)}`;
+const ntfyLimitKey = (name, now = Date.now()) => `lim:${name}:${new Date(now).toISOString().slice(0, 10)}`;
 
 /** Ajoute à ces compteurs du jour ([nom, quantité]) et rend leurs nouvelles
  *  valeurs, d'un coup (RETURNING) : lus avant d'écrire, des requêtes
@@ -4562,17 +4706,63 @@ async function takeNtfyLimits(env, limits) {
     return false;
 }
 
+// Totaux du jour des notifications de live ntfy : `lim:ntl:<jour>` (tous
+// les sujets) et `lim:ntly:<jour>` (sujets récents, NTFY_YOUNG_AGE), hors
+// de la plage des parts `lim:ntl_<sujet>:<jour>` (« : » < « _ » < « y »).
+const NTFY_LIVES_ALL = 'ntl';
+const NTFY_LIVES_YOUNG = 'ntly';
+/** SQL : somme du jour (?1) des parts des sujets ; `young` : seulement
+ *  celles des sujets créés après ?2. */
+const ntfyPartsSum = (young) => `SELECT COALESCE(SUM(${young ? 'CASE WHEN s.created > ?2 THEN CAST(k.value AS INTEGER) ELSE 0 END' : 'CAST(k.value AS INTEGER)'}), 0) AS n
+    FROM kv k ${young ? 'LEFT JOIN push_subs s ON s.id = substr(k.key, 9, length(k.key) - 19)' : ''}
+    WHERE k.key >= 'lim:ntl_' AND k.key < 'lim:ntl\`' AND substr(k.key, -10) = ?1`;
+
 /** Notifications de live ntfy envoyées aujourd'hui (UTC), en tout et par
- *  les sujets récents (NTFY_YOUNG_AGE) : la somme des parts des sujets
- *  (`lim:ntl_<sujet>:<jour>`), en une lecture, sans compteur de plus à
- *  écrire à chaque envoi. */
+ *  les sujets récents : deux compteurs tenus à jour à chaque envoi
+ *  (countNtfyLives), lus par la clé. Avant, la somme des parts de tous les
+ *  sujets du jour était refaite à chaque passage qui avait des ntfy, et
+ *  toutes les 5 minutes pour le bot (une jointure par sujet). Sans total du
+ *  jour (aucun envoi encore, ou jour du déploiement) : cette somme. */
 async function ntfyDayTotals(env, now = Date.now()) {
+    const [all, young] = [ntfyLimitKey(NTFY_LIVES_ALL, now), ntfyLimitKey(NTFY_LIVES_YOUNG, now)];
+    const rows = (await env.DB.prepare(`SELECT key, value FROM kv WHERE key IN (?1, ?2)`).bind(all, young).all()).results || [];
+    const value = new Map(rows.map((r) => [r.key, Number(r.value) || 0]));
+    if (value.has(all)) return { total: value.get(all), young: value.get(young) || 0 };
     const row = await env.DB.prepare(`SELECT COALESCE(SUM(CAST(k.value AS INTEGER)), 0) AS total,
             COALESCE(SUM(CASE WHEN s.created > ?2 THEN CAST(k.value AS INTEGER) ELSE 0 END), 0) AS young
         FROM kv k LEFT JOIN push_subs s ON s.id = substr(k.key, 9, length(k.key) - 19)
         WHERE k.key >= 'lim:ntl_' AND k.key < 'lim:ntl\`' AND substr(k.key, -10) = ?1`)
         .bind(new Date(now).toISOString().slice(0, 10), now - NTFY_YOUNG_AGE).first();
     return { total: Number(row?.total) || 0, young: Number(row?.young) || 0 };
+}
+
+/** Notifications de live ntfy envoyées (`sent` : sujet → nombre ; `young` :
+ *  combien vers des sujets récents) : part de chaque sujet et totaux du
+ *  jour, en un lot. Un total absent est créé avec la somme des parts du
+ *  jour, celles de ce lot comprises (jour du déploiement : rien de perdu) ;
+ *  présent, il augmente de ce lot seulement. */
+async function countNtfyLives(env, sent, young, now = Date.now()) {
+    const db = env.DB;
+    const day = new Date(now).toISOString().slice(0, 10);
+    const expires = (Math.floor(now / 86400000) + 1) * 86400000;
+    const total = [...sent.values()].reduce((a, n) => a + n, 0);
+    const keyAll = ntfyLimitKey(NTFY_LIVES_ALL, now), keyYoung = ntfyLimitKey(NTFY_LIVES_YOUNG, now);
+    const ops = [
+        // Toutes les parts en une instruction (le lot compte pour les
+        // requêtes D1 de l'exécution, plafonnées).
+        db.prepare(`INSERT INTO kv (key, value, expires) SELECT 'lim:ntl_' || j.key || ':' || ?2, j.value, ?3 FROM json_each(?1) AS j WHERE true
+            ON CONFLICT(key) DO UPDATE SET value = CAST(kv.value AS INTEGER) + excluded.value`)
+            .bind(JSON.stringify(Object.fromEntries(sent)), day, expires),
+    ];
+    ops.push(
+        db.prepare(`UPDATE kv SET value = CAST(value AS INTEGER) + ?2 WHERE key = ?1`).bind(keyAll, total),
+        db.prepare(`INSERT INTO kv (key, value, expires) SELECT ?2, (${ntfyPartsSum(false)}), ?3
+            WHERE NOT EXISTS (SELECT 1 FROM kv WHERE key = ?2)`).bind(day, keyAll, expires),
+        db.prepare(`UPDATE kv SET value = CAST(value AS INTEGER) + ?2 WHERE key = ?1`).bind(keyYoung, young),
+        db.prepare(`INSERT INTO kv (key, value, expires) SELECT ?3, (${ntfyPartsSum(true)}), ?4
+            WHERE NOT EXISTS (SELECT 1 FROM kv WHERE key = ?3)`).bind(day, now - NTFY_YOUNG_AGE, keyYoung, expires),
+    );
+    await db.batch(ops);
 }
 
 /** Valeurs du jour de ces compteurs (nom → nombre). */
@@ -4767,25 +4957,45 @@ async function pushTick(env) {
     await pushStats(env, counts);
 }
 
+// Chaînes lues par vérification : PUSH_GQL_PER_RUN tranches de 100.
+const PUSH_CHECK_WINDOW = PUSH_GQL_PER_RUN * 100;
+// Curseur de la lecture de push_live (dernière chaîne lue), et ce que les
+// vérifications en tirent pour /stats (chaînes, en live, abonnements).
+const PUSH_CURSOR_KEY = 'push_live_cursor';
+// Ménage des notifications toutes les 180 vérifications (6 heures).
+const PUSH_TIDY_EVERY = 180;
+
 /** Lives démarrés parmi les chaînes suivies → notifications en file. */
 async function pushCheckLives(env, now, counts = {}) {
     const db = env.DB;
+    const W = PUSH_CHECK_WINDOW;
 
-    // Qui est en live, parmi les chaînes suivies (par tranches, à tour de
-    // rôle au-delà de PUSH_GQL_PER_RUN × 100 chaînes). La fenêtre avance
-    // de PUSH_GQL_PER_RUN tranches à chaque vérification, pas d'une seule :
-    // avec 20 tranches, une chaîne attendait jusqu'à 8 vérifications sans
-    // être lue (~18 min) ; c'est au plus une maintenant (~4 min), jusqu'à
-    // 2 × PUSH_GQL_PER_RUN tranches. Autant de requêtes qu'avant.
-    const rows = (await db.prepare('SELECT login, stream FROM push_live ORDER BY login').all()).results || [];
+    // Qui est en live, parmi les chaînes suivies : les W suivantes dans
+    // l'ordre des pseudos, depuis le curseur, puis reprise au début une fois
+    // au bout (la fenêtre est remplie : jusqu'à 2 × W chaînes, chacune est
+    // lue au moins une vérification sur deux, ~4 min ; au-delà, chacune à
+    // son tour). Avant, toute la table était relue à chaque vérification
+    // (720 par jour) pour n'en vérifier que W : autant de lignes lues D1 que
+    // de chaînes suivies, à chaque fois.
+    const [cur, head] = await db.batch([
+        db.prepare(`SELECT value, meta FROM kv WHERE key = ?1`).bind(PUSH_CURSOR_KEY),
+        db.prepare(`SELECT login, stream FROM push_live
+            WHERE login > COALESCE((SELECT value FROM kv WHERE key = ?1), '') ORDER BY login LIMIT ?2`).bind(PUSH_CURSOR_KEY, W),
+    ]);
+    const cursor = String(cur?.results?.[0]?.value || '');
+    const state = parseMeta(cur?.results?.[0]?.meta) || {};
+    const first = head?.results || [];
+    const more = first.length < W && cursor
+        ? (await db.prepare(`SELECT login, stream FROM push_live WHERE login <= ?1 ORDER BY login LIMIT ?2`)
+            .bind(cursor, W - first.length).all()).results || []
+        : [];
+    const rows = first.concat(more);
     const known = new Map(rows.map((r) => [r.login, r.stream]));
-    const logins = [...known.keys()];
-    const batches = Math.ceil(logins.length / 100);
-    const first = batches > PUSH_GQL_PER_RUN ? (Math.floor(now / 120000) * PUSH_GQL_PER_RUN) % batches : 0;
+    const logins = rows.map((r) => r.login);
     const changes = [];
     const started = [];
-    for (let k = 0; k < Math.min(batches, PUSH_GQL_PER_RUN); k++) {
-        const slice = logins.slice(((first + k) % batches) * 100, ((first + k) % batches) * 100 + 100);
+    for (let k = 0; k < logins.length; k += 100) {
+        const slice = logins.slice(k, k + 100);
         let users = [];
         try {
             const data = await twitchGQL(`query($logins: [String!]) { users(logins: $logins) {
@@ -4806,7 +5016,30 @@ async function pushCheckLives(env, now, counts = {}) {
             }
         }
     }
-    const writes = [];
+    // Curseur suivant, et pour /stats le nombre de chaînes et celles en live
+    // (état après cette vérification), sans compter la table à part :
+    // tout lu (au plus W chaînes), ou somme des fenêtres d'un tour entier.
+    const after = new Map(known);
+    for (const [login, stream] of changes) after.set(login, stream);
+    const liveIn = (list) => list.reduce((n, r) => n + (after.get(r.login) && after.get(r.login) !== '?' ? 1 : 0), 0);
+    const snap = { ...state };
+    let next = rows.length ? rows[rows.length - 1].login : '';
+    if (rows.length < W) {
+        next = '';
+        Object.assign(snap, { n: rows.length, live: liveIn(rows), at: now, rn: 0, rl: 0 });
+    } else if (first.length < W) {
+        Object.assign(snap, { n: (state.rn || 0) + first.length, live: (state.rl || 0) + liveIn(first), at: now,
+                              rn: more.length, rl: liveIn(more) });
+    } else {
+        Object.assign(snap, { rn: (state.rn || 0) + first.length, rl: (state.rl || 0) + liveIn(first) });
+    }
+    // Ménage toutes les 6 heures (et au premier passage) : sujets ntfy dont
+    // l'app ne donne plus de nouvelles, chaînes que plus personne ne suit, et
+    // le nombre d'abonnements à des chaînes (/stats). Avant : à 2 % des envois
+    // à file vide, jusqu'à ~30 fois par jour, NOT IN relisant tout push_follow.
+    const tidy = Math.floor(now / 120000) % PUSH_TIDY_EVERY === 0 || !Number.isFinite(state.f);
+
+    const writes = [db.prepare(PUSH_QUEUE_KIND_FILL)];
     if (changes.length) {
         writes.push(db.prepare(`INSERT INTO push_live (login, stream)
             SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?1) WHERE true
@@ -4814,11 +5047,33 @@ async function pushCheckLives(env, now, counts = {}) {
     }
     const queuedAt = writes.length;
     if (started.length) {
-        writes.push(db.prepare(`INSERT INTO push_queue (sub, body, at)
-            SELECT f.sub, j.value, ?2 FROM json_each(?1) j
-            JOIN push_follow f ON f.login = json_extract(j.value, '$.login')`).bind(JSON.stringify(started), now));
+        // Voie de l'abonné notée : chaque voie lit sa file par l'index (pushSend).
+        writes.push(db.prepare(`INSERT INTO push_queue (sub, body, at, kind)
+            SELECT f.sub, j.value, ?2, CASE WHEN s.kind = 'ntfy' THEN 'ntfy' ELSE 'web' END FROM json_each(?1) j
+            JOIN push_follow f ON f.login = json_extract(j.value, '$.login')
+            LEFT JOIN push_subs s ON s.id = f.sub`).bind(JSON.stringify(started), now));
     }
-    writes.push(db.prepare('DELETE FROM push_queue WHERE at < ?1').bind(now - PUSH_QUEUE_TTL));
+    // Par l'index (kind, at) : seulement les notifications périmées.
+    writes.push(db.prepare(`DELETE FROM push_queue WHERE kind IN ('web', 'ntfy') AND at < ?1`).bind(now - PUSH_QUEUE_TTL));
+    if (tidy) {
+        const idle = now - NTFY_IDLE;
+        const idleSubs = `SELECT id FROM push_subs WHERE kind = 'ntfy' AND updated < ?1`;
+        writes.push(
+            db.prepare(`DELETE FROM push_queue WHERE sub IN (${idleSubs})`).bind(idle),
+            db.prepare(`DELETE FROM push_follow WHERE sub IN (${idleSubs})`).bind(idle),
+            db.prepare(`DELETE FROM push_subs WHERE kind = 'ntfy' AND updated < ?1`).bind(idle),
+            db.prepare('DELETE FROM push_live WHERE NOT EXISTS (SELECT 1 FROM push_follow f WHERE f.login = push_live.login)'),
+        );
+    }
+    const same = next === cursor && ['n', 'live', 'rn', 'rl'].every((k) => snap[k] === state[k]);
+    if (!same || tidy) {
+        writes.push(db.prepare(`INSERT INTO kv (key, value, meta) VALUES (?1, ?2, ?3)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value, meta = excluded.meta`).bind(PUSH_CURSOR_KEY, next, JSON.stringify(snap)));
+    }
+    if (tidy) {
+        writes.push(db.prepare(`UPDATE kv SET meta = json_set(meta, '$.f', (SELECT COUNT(*) FROM push_follow), '$.fAt', ?2)
+            WHERE key = ?1`).bind(PUSH_CURSOR_KEY, now));
+    }
     const res = await db.batch(writes);
     if (started.length) {
         counts.pu_lives = started.length;
@@ -4835,25 +5090,18 @@ async function pushSend(env, room, counts = {}) {
     // Au plus `room` notifications web (chiffrées) ; les ntfy en plus. Une
     // lecture par voie : avec une seule fenêtre commune, une file web
     // chargée ne laissait passer aucun ntfy, et des ntfy en attente (relais
-    // en panne) bloquaient tout le web.
+    // en panne) bloquaient tout le web. Chacune par l'index (kind, at) : en
+    // filtrant sur la voie de l'abonné, chaque lecture parcourait la file
+    // jusqu'à trouver ses lignes (toute la file quand l'autre voie s'y
+    // entassait). Même ordre qu'avant : la plus ancienne d'abord.
     const pick = (kind, n) => db.prepare(`SELECT q.id, q.body, s.id AS sid, s.kind, s.endpoint, s.p256dh, s.auth, s.lang, s.created
-        FROM push_queue q JOIN push_subs s ON s.id = q.sub WHERE s.kind ${kind === 'ntfy' ? `= 'ntfy'` : `IS NOT 'ntfy'`}
-        ORDER BY q.id LIMIT ?1`).bind(n);
+        FROM push_queue q JOIN push_subs s ON s.id = q.sub WHERE q.kind = ?2
+        ORDER BY q.at, q.id LIMIT ?1`).bind(n, kind);
     const lanes = await db.batch([pick('web', room), ...(ntfyOn ? [pick('ntfy', PUSH_NTFY_PER_RUN)] : [])]);
     const queue = lanes.flatMap((r) => r?.results || []);
-    if (!queue.length) {
-        // De temps en temps : chaînes que plus personne ne suit, sujets ntfy
-        // dont l'app ne donne plus de nouvelles.
-        if (Math.random() < 0.02) {
-            const idle = Date.now() - NTFY_IDLE;
-            await db.batch([
-                db.prepare(`DELETE FROM push_follow WHERE sub IN (SELECT id FROM push_subs WHERE kind = 'ntfy' AND updated < ?1)`).bind(idle),
-                db.prepare(`DELETE FROM push_subs WHERE kind = 'ntfy' AND updated < ?1`).bind(idle),
-                db.prepare('DELETE FROM push_live WHERE login NOT IN (SELECT login FROM push_follow)'),
-            ]);
-        }
-        return;
-    }
+    // Ménage (sujets ntfy oubliés, chaînes que plus personne ne suit) :
+    // pushCheckLives, toutes les 6 heures.
+    if (!queue.length) return;
     const done = [];
     const gone = [];
     const notice = (q) => {
@@ -4875,7 +5123,8 @@ async function pushSend(env, room, counts = {}) {
         // récents ne prennent que NTFY_YOUNG_PER_DAY.
         const sids = [...new Set(ntfyRows.map((q) => q.sid))];
         const used = await readNtfyLimits(env, sids.map((sid) => `ntl_${sid}`)).catch(() => new Map());
-        const day = await ntfyDayTotals(env).catch(() => ({ total: 0, young: 0 }));
+        // Budget du jour sans objet avec NTFY_TOKEN : pas de lecture.
+        const day = env.NTFY_TOKEN ? { total: 0, young: 0 } : await ntfyDayTotals(env).catch(() => ({ total: 0, young: 0 }));
         const [budget, youngBudget] = env.NTFY_TOKEN ? [Infinity, Infinity] : [NTFY_LIVES_PER_DAY, NTFY_YOUNG_PER_DAY];
         const young = (q) => Date.now() - (Number(q.created) || 0) < NTFY_YOUNG_AGE;
         let all = day.total, recent = day.young;
@@ -4898,15 +5147,19 @@ async function pushSend(env, room, counts = {}) {
         // retentés à chaque passage, jusqu'à 30 minutes.
         if (results.length && results.every((r) => r.relay)) pushCount(counts, 'ntfy', results[0]);
         const sent = new Map();
+        let sentYoung = 0;
         results.forEach((r, i) => {
             if (!r.relay) pushCount(counts, 'ntfy', r);
             if (r.status !== 429 && r.status !== 503) done.push(ntfyRows[i].id);
-            if (r.status >= 200 && r.status < 300) sent.set(ntfyRows[i].sid, (sent.get(ntfyRows[i].sid) || 0) + 1);
+            if (r.status >= 200 && r.status < 300) {
+                sent.set(ntfyRows[i].sid, (sent.get(ntfyRows[i].sid) || 0) + 1);
+                if (young(ntfyRows[i])) sentYoung++;
+            }
         });
         // Comptés une fois envoyés : un message retenté n'use pas deux fois sa
-        // part. Le budget du jour en est la somme (ntfyDayTotals).
+        // part. Et dans les totaux du jour (ntfyDayTotals).
         if (sent.size) {
-            await bumpNtfyLimits(env, [...sent].map(([sid, n]) => [`ntl_${sid}`, n]))
+            await countNtfyLives(env, sent, sentYoung)
                 .catch((e) => console.warn('ntfy : part des sujets non comptée,', e.message));
         }
         const refused = results.find((r) => r.status === 429);
@@ -4998,7 +5251,8 @@ async function opsSnapshot(env) {
         // Votes et réactions : un compteur par sondage ou annonce (`ndw_<p|a><id>`).
         db.prepare(`SELECT key, value FROM kv WHERE key >= 'lim:ndw_' AND key < 'lim:ndw\`' AND substr(key, -10) = ?1`).bind(day),
         db.prepare(`SELECT metric, n FROM stats_day WHERE day = ?1 AND metric IN ('fb_photo_b64', 'pu_ok_ntfy')`).bind(day),
-        db.prepare(`SELECT s.kind, COUNT(*) AS n, MIN(q.at) AS oldest FROM push_queue q JOIN push_subs s ON s.id = q.sub GROUP BY s.kind`),
+        // Par l'index (kind, at) seul, sans une lecture de l'abonné par ligne.
+        db.prepare(`SELECT kind, COUNT(*) AS n, MIN(at) AS oldest FROM push_queue GROUP BY kind`),
         db.prepare(`SELECT value FROM kv WHERE key = 'push_ntfy_pause'`),
         db.prepare(`SELECT meta FROM kv WHERE key = ?1`).bind(OPS_CRON_KEY),
     ]);
@@ -5402,6 +5656,11 @@ async function forgetPerson(env, ctx, raw, { dry = true, actor = null } = {}) {
 
     if (!dry) {
         const ops = [];
+        // Compteurs des sondages où ses votes partent : oubliés, recomptés
+        // à la lecture suivante (pollResults).
+        for (const k of [...doomed]) {
+            if (k.startsWith(POLL_VOTE_PREFIX)) doomed.add(`${POLL_COUNT_PREFIX}${k.slice(POLL_VOTE_PREFIX.length, k.lastIndexOf('_'))}`);
+        }
         if (doomed.size) ops.push(db.prepare(`DELETE FROM kv WHERE key IN (SELECT value FROM json_each(?1))`).bind(JSON.stringify([...doomed])));
         if (reportKeys.size) {
             ops.push(db.prepare(`DELETE FROM kv WHERE ${FORGET_PHOTOS}`).bind(reportList));
@@ -5423,8 +5682,7 @@ async function forgetPerson(env, ctx, raw, { dry = true, actor = null } = {}) {
         // Posts Discord des retours et cartes des suggestions : supprimés par
         // le bot (corbeille).
         if (posts.size || cards.length) await trashDiscordPosts(env, ctx, [...posts], cards);
-        pollCountCache = null;
-        statsCache = null;
+        await dropStatsCache(env);
         await writeAudit(env, { ...(actor || { who: '?', from: 'stats' }), what: 'forget', detail: forgetCounts(found) });
     }
     return { ok: true, dry, targets, unknown, found, who: [...accounts.keys(), ...t.kept].join(' ') };

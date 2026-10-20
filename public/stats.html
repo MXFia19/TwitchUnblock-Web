@@ -1529,11 +1529,14 @@
     } catch (e) { table.innerHTML = `<tbody><tr><td>${esc(t('auditErr', { e: e.message }))}</td></tr></tbody>` }
   }
 
-  async function load() {
+  // Chiffres gardés 10 min par le Worker pour tout le monde ; « Actualiser »
+  // (compte administrateur) les fait recalculer tout de suite.
+  async function load(fresh = false) {
     const btn = $('#refresh')
     btn.disabled = true
     try {
-      const res = await fetch(API, { cache: 'no-store' })
+      const admin = fresh && token && !$('#dev').hidden
+      const res = await fetch(admin ? `${API}?fresh=1` : API, { cache: 'no-store', ...(admin ? { headers: { Authorization: `Bearer ${token}` } } : {}) })
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const s = await res.json()
       lastStats = s
@@ -1553,7 +1556,7 @@
     clearTimeout(resizeTimer)
     resizeTimer = setTimeout(() => { if (lastStats) { chartNew(lastStats.daily); chartActive(lastStats); chartPush(lastStats) } }, 150)
   })
-  $('#refresh').addEventListener('click', () => { load(); if (!$('#dev').hidden) { loadEntries(); loadAnnouncement(); loadPollAdmin(); loadFeedback(); loadAudit() } })
+  $('#refresh').addEventListener('click', () => { load(true); if (!$('#dev').hidden) { loadEntries(); loadAnnouncement(); loadPollAdmin(); loadFeedback(); loadAudit() } })
   load()
   checkAdmin()
   // Rafraîchi toutes les 2 minutes tant que la page est affichée.
