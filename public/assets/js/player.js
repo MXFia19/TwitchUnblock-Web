@@ -223,8 +223,9 @@ const MAX_SKIPPED_FRAGS = 30
 // type (démultiplexage, exception interne : c'était aussitôt « lecture
 // arrêtée »), l'instance de hls.js est détruite et une nouvelle repart de la
 // même adresse (rebuild). De même pour un direct calé depuis
-// STALL_REBUILD_MS sans aucune erreur. Au plus MAX_REBUILDS fois en
-// REBUILD_WINDOW_MS, puis l'erreur.
+// STALL_REBUILD_MS sans aucune erreur alors que sa playlist avance encore
+// (sinon, c'est la chaîne qui s'est arrêtée : voir LIVE_HALT_MS). Au plus
+// MAX_REBUILDS fois en REBUILD_WINDOW_MS, puis l'erreur.
 const MEDIA_FIX_MS = 30_000
 const STALL_REBUILD_MS = 30_000
 const MAX_REBUILDS = 3
@@ -250,6 +251,53 @@ export function recoverMedia(hls, video, at = -1) {
   if (at >= 0) hls.config.startPosition = at
   hls.recoverMediaError()
   if (playing) video.play().catch(() => {})
+}
+
+// ── Coupure côté chaîne ─────────────────────────────────────────────────
+// Encodeur du streamer figé ou en reconnexion : Twitch ne publie plus de
+// segments, sans annoncer la fin du direct, et hls.js relit toutes les 3 s
+// la même playlist. L'image cale au bout de ce qui est chargé ; une
+// nouvelle instance (rebuild) ne faisait que rejouer la même fin — trois
+// relances, puis l'erreur au bout de 2 min environ, là où le direct allait
+// reprendre. Le guet du calage regarde donc la playlist (noteLivePlaylist) :
+// relue il y a moins de LIVE_HALT_MS, mais sans rien de nouveau depuis au
+// moins autant, ou terminée (EXT-X-ENDLIST), c'est la chaîne qui s'est
+// arrêtée (liveHalted). Le lecteur attend sous la roue : la lecture repart
+// d'elle-même avec les prochains segments, et la fin du direct vient de
+// Twitch (liveEnded, main.js). Image figée sous une playlist qui avance
+// (un segment toutes les 2 s), ou playlist plus relue du tout (hls.js
+// bloqué) : c'est le lecteur, il repart.
+const LIVE_HALT_MS = 15_000
+
+/** Playlist d'un direct relue par hls.js (LEVEL_UPDATED) : retient dans
+ *  `state.livePlaylist` l'heure de cette lecture et celle où elle a avancé
+ *  pour la dernière fois — premier segment (EXT-X-MEDIA-SEQUENCE) changé,
+ *  segment de plus à la fin, ou autre qualité (« Auto »). `true` si elle a
+ *  avancé. */
+export function noteLivePlaylist(state, data, now = Date.now()) {
+  const d = data?.details
+  if (!d) return false
+  const prev = state.livePlaylist
+  const moved = !prev || data.level !== prev.level || d.startSN !== prev.startSN || d.endSN > prev.endSN
+  state.livePlaylist = {
+    level: data.level,
+    startSN: d.startSN,
+    // Le plus loin vu : des segments annoncés d'avance (withPrefetch) qui
+    // disparaissent puis reviennent ne sont pas nouveaux.
+    endSN: moved ? d.endSN : Math.max(prev.endSN, d.endSN),
+    readAt: now,
+    movedAt: moved ? now : prev.movedAt,
+    ended: d.live === false,
+  }
+  return moved
+}
+
+/** Direct calé : la chaîne a-t-elle cessé d'envoyer des segments (voir
+ *  LIVE_HALT_MS) ? */
+export function liveHalted(state, now = Date.now()) {
+  const p = state.livePlaylist
+  if (!p) return false
+  return p.ended || (now - p.readAt < LIVE_HALT_MS && now - p.movedAt >= LIVE_HALT_MS)
 }
 
 // ── Mémoire tampon de hls.js ────────────────────────────────────────────
@@ -777,6 +825,8 @@ export class Player {
     // réappliquée au nouvel objet hls.
     this.behindTarget = undefined
     this.stalledAt = 0
+    // Avancée de la playlist (noteLivePlaylist) : propre à chaque instance.
+    this.livePlaylist = null
     this.floorCheckAt = 0
     this.floorSeekAt = 0
     this.holdingBehind = false
@@ -872,11 +922,19 @@ export class Player {
         this.skippedFrags = 0
       })
       // Chaque playlist lue (niveau joué, « Auto » compris) : pauses pub
-      // annoncées d'un direct, passages « -unmuted.mp4 » d'une VOD.
+      // annoncées et avancée d'un direct, passages « -unmuted.mp4 » d'une VOD.
       hls.on(Hls.Events.LEVEL_UPDATED, (_e, d) => {
         if (token !== this.attachToken) return
-        if (this.kind === 'live') this.readAdBreaks(d.details)
-        else this.readSoundSpans(d.details)
+        if (this.kind !== 'live') { this.readSoundSpans(d.details); return }
+        this.readAdBreaks(d.details)
+        // Nouveaux segments après une coupure de la chaîne : le guet reprend,
+        // l'image a STALL_REBUILD_MS pour repartir avec eux (voir
+        // LIVE_HALT_MS).
+        if (noteLivePlaylist(this, d) && this.streamWait) {
+          console.info('[TwitchUnblock] Direct : la chaîne envoie de nouveau des segments.')
+          this.streamWait = false
+          if (this.stalledAt) this.watchStall()
+        }
       })
       // En « Auto » (playlist maître), hls.js choisit le débit : on affiche
       // lequel, sinon on ne sait jamais ce qu'on regarde vraiment.
@@ -1001,14 +1059,22 @@ export class Player {
   /** Direct calé (« waiting ») : toujours au même point STALL_REBUILD_MS
    *  plus tard, page affichée et appareil en ligne, il repart sur une
    *  nouvelle instance (rebuild) — sans erreur de hls.js, l'image restait
-   *  figée jusqu'au rechargement. */
+   *  figée jusqu'au rechargement. Sauf si la playlist n'avance plus : la
+   *  chaîne ne publie plus rien, le lecteur attend ses prochains segments,
+   *  sans minuteur (streamWait, voir LIVE_HALT_MS). */
   watchStall() {
     clearTimeout(this.stallTimer)
+    this.streamWait = false
     const token = this.attachToken
     this.stallTimer = setTimeout(() => {
       const v = this.video
       if (token !== this.attachToken || !this.hls || !this.stalledAt || v.paused || v.currentTime !== this.stallPos) return
       if (document.hidden || navigator.onLine === false) { this.watchStall(); return }
+      if (liveHalted(this)) {
+        console.info('[TwitchUnblock] Direct : plus aucun segment nouveau (coupure de la chaîne), attente.')
+        this.streamWait = true
+        return
+      }
       this.rebuild(token)
     }, STALL_REBUILD_MS)
   }
@@ -1130,6 +1196,9 @@ export class Player {
     clearTimeout(this.stallTimer)
     clearTimeout(this.rebuildTimer)
     this.rebuildTimer = null
+    // Attente d'une coupure de la chaîne abandonnée aussi : les prochains
+    // segments ne relancent plus le guet.
+    this.streamWait = false
   }
 
   destroyHls() {
