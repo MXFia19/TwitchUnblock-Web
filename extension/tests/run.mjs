@@ -412,6 +412,7 @@ function loadBackground(opts = {}) {
   const consoleLines = [];
   const tabs = new Map((opts.tabs || []).map((t) => [t.id, { status: "complete", active: false, discarded: false, incognito: false, ...t }]));
   const tabLog = { created: [], updated: [], removed: [], scripts: [] };
+  const windows = opts.windows || [{ id: 1, type: "normal", focused: true, incognito: false }];
   let nextTab = 500;
   const cookies = { "auth-token": AUTH_TOKEN, unique_id: UNIQUE_ID, ...(opts.cookies || {}) };
 
@@ -428,6 +429,12 @@ function loadBackground(opts = {}) {
       onInstalled: makeEvent()
     },
     storage: { session: makeArea(session), local: makeArea(local) },
+    windows: {
+      async getAll({ windowTypes }) {
+        assert.equal(JSON.stringify(windowTypes), '["normal"]');
+        return clone(windows);
+      }
+    },
     cookies: {
       async get({ url, name }) {
         assert.equal(url, "https://www.twitch.tv/");
@@ -911,11 +918,29 @@ test("une seule obtention à la fois", async () => {
 test("sans onglet twitch.tv : onglet inactif et coupé sur /directory, refermé", async () => {
   const h = loadBackground();
   assert.equal(code(await h.op("points.claim", { channel: CHANNEL })), "ok");
-  assert.deepEqual(h.tabLog.created, [{ url: "https://www.twitch.tv/directory", active: false }]);
+  assert.deepEqual(h.tabLog.created, [{ url: "https://www.twitch.tv/directory", active: false, windowId: 1 }]);
   assert.ok(h.tabLog.updated.some((u) => u.muted === true), "onglet coupé");
   assert.equal(h.tabLog.removed.length, 1, "onglet refermé");
   assert.equal(h.tabs.size, 0);
   assert.equal(h.session.mintTab, undefined, "plus d'onglet temporaire noté");
+});
+
+test("jamais de session injectée en navigation privée ni dans un autre conteneur", async () => {
+  // Dernière fenêtre active privée : l'onglet temporaire va dans la fenêtre normale.
+  const h = loadBackground({ windows: [
+    { id: 3, type: "normal", focused: true, incognito: true },
+    { id: 4, type: "normal", focused: false, incognito: false }
+  ] });
+  assert.equal(code(await h.op("points.claim", { channel: CHANNEL })), "ok");
+  assert.deepEqual(h.tabLog.created.map((c) => c.windowId), [4]);
+  // Que des fenêtres privées : aucun onglet, integrity.
+  const p = loadBackground({ windows: [{ id: 3, type: "normal", focused: true, incognito: true }] });
+  assert.equal(code(await p.op("points.claim", { channel: CHANNEL })), "integrity");
+  assert.equal(p.tabLog.created.length + p.tabLog.scripts.length, 0);
+  // Firefox : onglet twitch.tv d'un autre conteneur ignoré, celui par défaut pris.
+  const c = loadBackground({ tabs: [{ ...liveTab(), cookieStoreId: "firefox-container-1" }, { ...liveTab(), id: 8, cookieStoreId: "firefox-default" }] });
+  assert.equal(code(await c.op("points.claim", { channel: CHANNEL })), "ok");
+  assert.deepEqual(c.tabLog.scripts.map((s) => s.tabId), [8]);
 });
 
 test("repli sur l'accueil quand /directory ne donne pas de jeton", async () => {

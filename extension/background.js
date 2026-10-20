@@ -746,11 +746,29 @@ function waitForTab(tabId, ms) {
   });
 }
 
+// Fenêtre de l'onglet temporaire : normale, hors navigation privée. Sans
+// windowId, il irait dans la dernière fenêtre active, privée comprise quand
+// l'extension y est permise, et la session du profil y serait injectée.
+// undefined : pas d'API windows (fenêtre par défaut) ; null : aucune fenêtre sûre.
+async function mintWindowId() {
+  if (!api.windows || typeof api.windows.getAll !== "function") return undefined;
+  try {
+    const wins = arr(await api.windows.getAll({ windowTypes: ["normal"] }))
+      .filter((w) => w && typeof w.id === "number" && !w.incognito);
+    const w = wins.find((x) => x.focused) || wins[0];
+    return w ? w.id : null;
+  } catch (e) {
+    return null;
+  }
+}
+
 // Onglet temporaire : inactif, coupé, refermé après coup.
 async function mintInTempTab(url, token, did, deadline) {
   let tab = null;
   try {
-    tab = await api.tabs.create({ url, active: false });
+    const windowId = await mintWindowId();
+    if (windowId === null) throw new Error("no window");
+    tab = await api.tabs.create(windowId === undefined ? { url, active: false } : { url, active: false, windowId });
   } catch (e) {
     lastMintFail = "tab";
     return { token: "" };
@@ -794,7 +812,9 @@ async function mintIntegrity(session) {
   const did = await deviceId();
   lastMintFail = "";
 
-  // 1) Un onglet www.twitch.tv déjà ouvert (chargé, pas en navigation privée).
+  // 1) Un onglet www.twitch.tv déjà ouvert (chargé, pas en navigation privée ;
+  //    sous Firefox, du conteneur par défaut, celui du cookie lu : la session
+  //    n'est pas injectée dans la page d'un autre conteneur).
   let tabs = [];
   try {
     tabs = await api.tabs.query({ url: TWITCH_WWW + "/*" });
@@ -802,7 +822,8 @@ async function mintIntegrity(session) {
     tabs = [];
   }
   const open = arr(tabs).filter((t) => t && typeof t.id === "number" && t.status === "complete" &&
-    !t.discarded && !t.incognito && isTwitchPage(t.url));
+    !t.discarded && !t.incognito && (t.cookieStoreId === undefined || t.cookieStoreId === "firefox-default") &&
+    isTwitchPage(t.url));
   for (const t of open.slice(0, 2)) {
     const r = await runInTab(t.id, session.token, did);
     if (r.token) return keepIntegrity(r, session, "tab");
