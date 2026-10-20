@@ -1121,6 +1121,10 @@ export class ChatView {
     this.client = null
     this.mode = null
     cancelAnimationFrame(this.frame)
+    // Image annulée : la suivante doit pouvoir être redemandée (enqueue). Une
+    // fermeture avec une image en attente laissait le chat suivant sans
+    // affichage, jusqu'au rechargement de la page.
+    this.frame = 0
     this.queue = []
     this.messages = []
     this.el.list.replaceChildren()
@@ -1176,15 +1180,21 @@ export class ChatView {
           // dit, dans la langue du site.
           .map((m) => (m.notice === 'clear' ? { ...m, systemMsg: t('chat_cleared') } : m)))
         break
-      case 'moderate':
+      case 'moderate': {
         // Les messages encore en attente sont modérés aussi : sinon un
         // message supprimé apparaîtrait quelques secondes après sa suppression.
-        for (const d of this.delayed) {
-          if (payload.id ? d.msg.id === payload.id : d.msg.userName === payload.user) d.msg.isDeleted = true
+        // Ceux qui attendent l'image suivante (file) aussi : dans un onglet en
+        // arrière-plan, elle n'arrive qu'au retour sur l'onglet.
+        const hit = (m) => (payload.id ? m.id === payload.id : m.userName === payload.user)
+        for (const d of this.delayed) if (hit(d.msg)) d.msg.isDeleted = true
+        for (const m of this.queue) if (hit(m)) m.isDeleted = true
+        if (!this.o.prefs.keepDeleted) {
+          this.delayed = this.delayed.filter((d) => !d.msg.isDeleted)
+          this.queue = this.queue.filter((m) => !m.isDeleted)
         }
-        if (!this.o.prefs.keepDeleted) this.delayed = this.delayed.filter((d) => !d.msg.isDeleted)
         this.moderate(payload)
         break
+      }
       case 'clear':
         this.clearList()
         break
@@ -1319,15 +1329,19 @@ export class ChatView {
     const on = Boolean(this.o.prefs.chatSync)
     const target = syncTarget(player)
     const now = Date.now()
-    this.syncCur = smoothDelay(this.syncCur, on ? target : 0, (now - this.syncAt) / 1000)
+    // Plus de mesure le temps qu'une source se recharge (qualité, relais,
+    // Worker) : le retard reste où il était. Il retombait vers 0, et les
+    // messages en attente sortaient avant l'image qui les montre.
+    const want = !on ? 0 : player > 0 ? target : this.syncCur
+    this.syncCur = smoothDelay(this.syncCur, want, (now - this.syncAt) / 1000)
     this.syncAt = now
-    this.renderSync(player > 0, on, on ? this.syncCur : target)
+    this.renderSync(player > 0 || (on && this.syncCur >= 0.5), on, on ? this.syncCur : target)
     return this.syncCur
   }
 
   /** « ⏱ −6 s » : retard appliqué au chat ; barré, synchro coupée (avec le
-   *  retard qu'elle appliquerait). Caché sans mesure du lecteur (multi-live,
-   *  direct pas encore parti). */
+   *  retard qu'elle appliquerait). Caché sans mesure du lecteur ni retard
+   *  gardé (multi-live, direct pas encore parti). */
   renderSync(known, on, delay) {
     const s = Math.round(delay)
     const key = known ? `${lang()}:${on}:${s}` : ''
