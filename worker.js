@@ -4615,9 +4615,9 @@ function describeAdminAction(path, b, out) {
     switch (path) {
         case '/api/admin/usage/delete': {
             const key = String(b.key || '');
+            // Comme pour l'effacement : la sorte, jamais l'identifiant.
             const target = b.target !== 'key' ? cleanText(b.target, 12)
-                : key.startsWith(USAGE_ACCOUNT_PREFIX) ? `account #${key.slice(USAGE_ACCOUNT_PREFIX.length)}`
-                : `install ${key.slice(USAGE_PREFIX.length, USAGE_PREFIX.length + 8)}…`;
+                : key.startsWith(USAGE_ACCOUNT_PREFIX) ? 'one account' : 'one install';
             return { what: 'usage.delete', detail: `${target} — ${Number(out.deleted) || 0} deleted` };
         }
         // Ni pseudo ni identifiant de la personne : ce qui est parti, et combien.
