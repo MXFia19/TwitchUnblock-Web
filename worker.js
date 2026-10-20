@@ -4767,7 +4767,8 @@ async function countNtfyLives(env, sent, young, now = Date.now()) {
 
 /** Valeurs du jour de ces compteurs (nom → nombre). */
 async function readNtfyLimits(env, names) {
-    const keys = names.map(ntfyLimitKey);
+    // Pas `names.map(ntfyLimitKey)` : map passerait l'index comme `now`.
+    const keys = names.map((name) => ntfyLimitKey(name));
     const rows = (await env.DB.prepare(`SELECT key, value FROM kv WHERE key IN (SELECT value FROM json_each(?1))`)
         .bind(JSON.stringify(keys)).all()).results || [];
     const byKey = new Map(rows.map((r) => [r.key, Number(r.value) || 0]));
