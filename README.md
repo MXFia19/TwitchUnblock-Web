@@ -556,6 +556,37 @@ bot refuses a role managed by an integration, with permissions, or allowed
 into a channel. New test builds are posted in the test builds channel,
 mentioning its role.
 
+**For everyone** (answers only the person sees, in their Discord language
+when it's French, Spanish or Russian, English otherwise; what the bot posts
+in a channel stays in English):
+
+- `/roles`: a menu of the roles on offer, the person's own ticked; ticking or
+  unticking, then closing the menu, adds and removes them in one go, and the
+  bot confirms ("+A −B"). One change every 5 seconds per person. The
+  developer picks the roles with `/roles-config add role: [description]
+  [emoji]` (again to change them), `remove` and `list`; the release pings
+  role is always in the list. Only safe roles are taken, and they're checked
+  again each time one is given: not managed by an integration, without
+  permissions, not named in any channel's permissions, below the bot's own
+  role. A role that stops being safe is no longer shown nor given, and the
+  alerts channel is told (once a day). `/roles public:True` (developer only)
+  posts a permanent message in the channel — the list with its descriptions
+  and the same menu, where nothing is ticked: picking a role there gets it,
+  or drops it if you had it, with an answer only you see. Posting it again
+  replaces the previous one; it follows `/roles-config` and `/setup` changes.
+- `/download`: every way to install — iPhone and iPad (the source for
+  AltStore, SideStore or Feather, which also lists TU Test; the latest IPA),
+  Apple TV (ATVLoadly sources: test builds, and stable releases once their
+  source exists), Android (the APK releases, saying when there are only test
+  builds so far), the website. `public:True` (developer only) posts it in the
+  channel.
+- `/version`: latest versions — iPhone app and TU Test, Apple TV (test, and
+  stable once its source exists), Android, website — read from the raw
+  source files and the public releases API on GitHub (no token) and from the
+  website, kept 10 minutes; one that can't be read shows as unknown.
+- `/help`: the commands useful to the person (the developer's too, for the
+  developer).
+
 **To-do**: right-click a message (long-press on mobile) → *Apps* → **Add to
 to-do** sends a good suggestion to the to-do channel — author, text, a link to
 the message, with a **Done** / **Reopen** button — and adds 📝 to the original
@@ -573,9 +604,9 @@ Setting it up:
    `https://discord.com/oauth2/authorize?client_id=<application ID>&scope=bot%20applications.commands&permissions=292326280272`
    (view channels, send messages, send messages in threads, read message
    history, add reactions, manage threads — to set the tags — manage
-   channels — to create them — and manage roles — to give the release role;
-   the bot's role must sit above it), then allow it in your private channels
-   (*Edit channel → Permissions*). Already invited without
+   channels — to create them — and manage roles — to give the release role
+   and those of `/roles`; the bot's role must sit above them), then allow it
+   in your private channels (*Edit channel → Permissions*). Already invited without
    `applications.commands`? Open the link again: the slash commands need it.
 3. **Shared secret**: a random string (`openssl rand -hex 32`), in the
    Worker's `FEEDBACK_BOT_SECRET` secret **and** in the relay's `.env`.

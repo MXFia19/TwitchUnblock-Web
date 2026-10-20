@@ -1,6 +1,9 @@
 // ═══════════════════════════════════════════════════════════════════════════
-//  Bot Discord de TwitchUnblock, lancé par relay.mjs. Tout ce qu'il écrit est
-//  en anglais : la communauté l'est surtout.
+//  Bot Discord de TwitchUnblock, lancé par relay.mjs. Tout ce qu'il poste est
+//  en anglais : la communauté l'est surtout. Seules les réponses visibles de
+//  la personne seule de /roles, /roles-config, /download, /version et /help
+//  suivent la langue de son Discord (français, espagnol, russe ; anglais
+//  sinon).
 //
 //  Retours (bugs, idées) — le pont :
 //    - le Worker publie chaque retour dans un salon « Forum » (un post par
@@ -31,6 +34,12 @@
 //  testeurs ; /release-pings (ou le bouton posté par /setup, gardé tout en
 //  bas du salon des annonces) : chacun prend ou rend ce rôle (sans
 //  permission ni accès à un salon, vérifié).
+//  Rôles : /roles, un menu de ses rôles (les rôles choisis par
+//  /roles-config, et celui des sorties) ; public:true (développeur) : un
+//  message permanent dans le salon, le même menu pour tous. Seuls des rôles
+//  sûrs, revérifiés à chaque fois ; un changement toutes les 5 s par personne.
+//  Pour tous aussi : /download (toutes les façons d'installer), /version
+//  (dernières versions, lues sur GitHub et le site), /help.
 //  À faire : « Add to to-do » (menu Apps d'un message : une bonne idée lue
 //  sur le serveur) et /todo (texte libre) postent une carte dans le salon
 //  choisi par /setup, avec un bouton Done / Reopen.
@@ -54,7 +63,7 @@
 //  rangée par le Worker (D1), rien sur le disque du VPS.
 // ═══════════════════════════════════════════════════════════════════════════
 
-// GUILDS (salons, posts, étiquettes), GUILD_MESSAGES, DIRECT_MESSAGES (pour
+// GUILDS (salons, posts, étiquettes, rôles), GUILD_MESSAGES, DIRECT_MESSAGES (pour
 // renvoyer vers les boutons qui écrit au bot en privé), MESSAGE_CONTENT
 // (intention privilégiée, à activer dans le portail : le texte des messages).
 const INTENTS = (1 << 0) | (1 << 9) | (1 << 12) | (1 << 15)
@@ -138,6 +147,33 @@ const COMMANDS = [
     options: [{ type: 3, name: 'text', description: 'What to do', required: true, max_length: 1500 }],
   },
   { name: 'release-pings', description: 'Get pinged when a new version is out (run it again to stop)' },
+  // « public » : réservé au développeur (vérifié par le bot) ; Discord ne
+  // cache pas une option à une partie des membres.
+  {
+    name: 'roles', description: 'Pick your roles',
+    options: [{ type: 5, name: 'public', description: 'Developer only: post a roles menu in this channel for everyone', required: false }],
+  },
+  {
+    name: 'roles-config', description: 'Choose the roles members can pick with /roles', default_member_permissions: ADMIN,
+    options: [
+      {
+        type: 1, name: 'add', description: 'Offer a role in /roles (or change its description or emoji)',
+        options: [
+          { type: 8, name: 'role', description: 'A role without permissions, not used in channel permissions, below the bot’s', required: true },
+          { type: 3, name: 'description', description: 'Shown under the role in the menu', required: false, max_length: 100 },
+          { type: 3, name: 'emoji', description: 'A standard emoji or one of this server’s', required: false, max_length: 64 },
+        ],
+      },
+      { type: 1, name: 'remove', description: 'Stop offering a role in /roles', options: [{ type: 8, name: 'role', description: 'The role', required: true }] },
+      { type: 1, name: 'list', description: 'Show the roles offered in /roles' },
+    ],
+  },
+  {
+    name: 'download', description: 'All the ways to install TwitchUnblock',
+    options: [{ type: 5, name: 'public', description: 'Developer only: post it in this channel', required: false }],
+  },
+  { name: 'version', description: 'Latest versions of the apps and the website' },
+  { name: 'help', description: 'What the bot can do for you' },
   { name: 'status', description: 'Server status: Workers, database, notifications, versions, quotas', default_member_permissions: ADMIN },
   {
     name: 'forget-user', description: 'Erase a person’s data (shows what will go, then asks to confirm)', default_member_permissions: ADMIN,
@@ -166,6 +202,334 @@ const labelled = (label, component, description) => ({ type: 18, label, ...(desc
 const fileUpload = (custom_id) => ({ type: 19, custom_id, min_values: 1, max_values: MAX_PHOTOS, required: true })
 const plural = (n, word) => `${n} ${word}${n > 1 ? 's' : ''}`
 const bullets = (body) => String(body || '').split('\n').map((l) => l.trim()).filter((l) => /^[-*] /.test(l)).map((l) => `- ${l.slice(2).trim()}`)
+
+// /download et /version : adresses reprises des README (app iPhone et Apple
+// TV, Android). La source de l'iPhone liste aussi « TU Test », les builds de
+// test ; celle des versions stables de l'Apple TV n'existe qu'à partir de sa
+// prochaine sortie (lue avant d'être montrée).
+const IOS_SOURCE = 'https://raw.githubusercontent.com/MXFia19/TwitchUnblock/master/apps.json'
+const ADD_SOURCE = 'https://altdirect.app/?url=https://raw.githubusercontent.com/MXFia19/TwitchUnblock/master/apps.json'
+const IPA = 'https://github.com/MXFia19/TwitchUnblock/releases/latest/download/TwitchUnblock.ipa'
+const TV_TEST_SOURCE = 'https://raw.githubusercontent.com/MXFia19/TwitchUnblock/test-17d298/apps-tv.json'
+const TV_STABLE_SOURCE = 'https://raw.githubusercontent.com/MXFia19/TwitchUnblock/master/apps-tv-stable.json'
+const APK_RELEASES = 'https://github.com/MXFia19/TwitchUnblock-Android/releases'
+
+// Emoji d'un rôle de /roles : un emoji standard (une seule séquence), ou un
+// emoji du serveur écrit <:nom:id> (<a:nom:id> s'il est animé).
+const CUSTOM_EMOJI = /^<(a?):(\w{2,32}):(\d{5,25})>$/
+const UNICODE_EMOJI = /^(?:\p{Regional_Indicator}{2}|[#*0-9]️?⃣|\p{Extended_Pictographic}[️\p{Emoji_Modifier}\u{E0020}-\u{E007F}]*(?:‍\p{Extended_Pictographic}[️\p{Emoji_Modifier}]*)*)$/u
+const emojiOf = (s) => {
+  const m = String(s).match(CUSTOM_EMOJI)
+  return m ? { id: m[3], name: m[2], animated: Boolean(m[1]) } : { name: String(s) }
+}
+
+// Réponses visibles de la personne seule de /roles, /roles-config,
+// /download, /version et /help : dans la langue de son Discord (fr, es, ru),
+// l'anglais sinon et pour ce qui manque. Les messages postés dans un salon
+// restent en anglais ; les raisons « rp_* » servent aussi à /setup.
+const I18N = {
+  en: {
+    roles_intro: '🏷️ **Your roles** — ticked: the ones you have. Tick or untick, then close the menu to save.',
+    roles_pick: 'Pick your roles',
+    roles_none: 'No roles to pick yet.',
+    roles_none_admin: 'Add some with /roles-config add.',
+    roles_same: 'No change.',
+    roles_wait: '⏳ One change every few seconds — try again in a moment.',
+    roles_skipped: (n) => `⚠️ ${n === 1 ? 'One role' : `${n} roles`} can’t be given out right now — the developer was told.`,
+    roles_error: (m) => `❌ I couldn’t change your roles (${m}) — please tell the developer.`,
+    rp_desc: 'Get pinged when a new version is out',
+    public_admin_only: 'ℹ️ Only the developer can post this in the channel — here it is, just for you.',
+    posted: (c) => `✅ Posted in <#${c}>.`,
+    post_failed: (m) => `Not posted (${m}): I need to see this channel and to send messages with embeds in it.`,
+    rc_added: (r) => `✅ <@&${r}> is now offered in /roles.`,
+    rc_updated: (r) => `✅ <@&${r}> updated.`,
+    rc_full: '❌ 25 roles at most (a Discord menu limit), the release pings role included.',
+    rc_bad_emoji: '❌ Unknown emoji: use a standard emoji or one of this server’s.',
+    rc_removed: (r) => `🗑️ <@&${r}> is no longer offered.`,
+    rc_not_listed: (r) => `<@&${r}> wasn’t offered.`,
+    rc_release_stays: (r) => `<@&${r}> is the release pings role (set with /setup): it stays in /roles.`,
+    rc_empty: 'No roles offered yet: add one with /roles-config add.',
+    rc_head: '🏷️ **Roles offered in /roles**',
+    rc_release: 'release pings, /setup',
+    rc_message: (c) => `Roles message for everyone: <#${c}> (kept up to date).`,
+    rp_everyone: '@everyone can’t be used.',
+    rp_unreadable: 'I can’t read this role.',
+    rp_check: 'I can’t read the server’s roles and channels to check it — try again.',
+    rp_managed: (r) => `<@&${r}> is managed by an integration (bot, Boost…).`,
+    rp_perms: (r) => `<@&${r}> has permissions — use a role without any.`,
+    rp_access: (r, c) => `<@&${r}> is given access in <#${c}> — use a role that no channel’s permissions mention.`,
+    rp_above: (r) => `<@&${r}> is above my highest role — move mine above it (Server Settings → Roles).`,
+    dl_ios_title: '📱 iPhone and iPad',
+    dl_ios: (src) => 'Not on the App Store: it’s sideloaded. **Add source** opens the source in AltStore, SideStore or Feather (also LiveContainer, StikStore, TrollApps): install **TwitchUnblock**. The same source lists **TU Test**, the test builds (newest features, may be unstable), installed next to the normal app. **Download IPA**: the latest version, for Sideloadly or TrollStore.\n'
+      + `Source address, to add it by hand:\n\`\`\`\n${src}\n\`\`\``,
+    dl_tv_title: '📺 Apple TV',
+    dl_tv: 'AltStore, SideStore and Feather don’t handle tvOS: install it with **ATVLoadly** (or Xcode on a Mac). Add a source in ATVLoadly and the app updates on its own.',
+    dl_tv_test: 'Test builds:',
+    dl_tv_stable: 'Stable releases:',
+    dl_tv_no_stable: 'Stable releases get their source with the next Apple TV release.',
+    dl_android_title: '🤖 Android',
+    dl_android: 'One app for phones, tablets and Android TV: download the latest `TwitchUnblock-….apk` from **Releases**, open it, and allow installs from this source if Android asks. On a TV, install *Downloader* and enter the APK’s address.',
+    dl_android_test_only: (v) => `Only test builds (**TU Test**) so far — latest: **${v}**.`,
+    dl_android_none: 'No release yet.',
+    dl_web_title: '🌐 Website',
+    dl_web: 'Nothing to install: it runs in any browser. On iPhone, add it to your Home Screen: it opens like an app and gets live notifications (iOS 16.4+).',
+    dl_latest: (v) => `Latest version: **${v}**`,
+    b_add_source: 'Add source', b_ipa: 'Download IPA', b_tv_test: 'Test source', b_tv_stable: 'Stable source', b_apk: 'APK (Releases)', b_site: 'Open the website',
+    v_head: '🏷️ **Latest versions**',
+    v_ios: 'iPhone app:', v_tu_test: 'TU Test (test builds):', v_tv: 'Apple TV:', v_android: 'Android:', v_web: 'Website:',
+    v_test: 'test', v_stable: 'stable',
+    v_test_only: (v) => `test builds only (${v})`,
+    v_unknown: 'unknown', v_none: 'none yet', v_checked: 'Checked',
+    h_head: '📖 **What I can do**',
+    h_bug: 'report a bug in the app or the website (screenshot optional)',
+    h_idea: 'suggest an idea',
+    h_roles: 'pick your roles',
+    h_release_pings: 'get pinged when a new version is out (again to stop)',
+    h_download: 'all the ways to install TwitchUnblock',
+    h_version: 'latest versions of the apps and the website',
+    h_help: 'this list',
+    h_replies: 'Replies to your reports come in a direct message: answer with the buttons under them.',
+    h_admin: '**Developer only**',
+    h_setup: 'use this channel for alerts, release announcements, test builds or the to-do list',
+    h_announce: 'banner in the app and on the website, and remove it',
+    h_poll: 'poll in the app and on the website, and end it (results posted)',
+    h_todo: 'add to the to-do channel (or a message’s Apps menu → Add to to-do)',
+    h_summary: 'post the daily summary now',
+    h_status: 'server status in one message',
+    h_roles_config: 'roles offered in /roles: add, remove, list',
+    h_public: 'post them in this channel for everyone',
+    h_report: 'in a report’s post: delete it, close it, merge it into another',
+    h_forget: 'erase a person’s data, after a preview',
+  },
+  fr: {
+    roles_intro: '🏷️ **Tes rôles** — cochés : ceux que tu as. Coche ou décoche, puis ferme le menu pour enregistrer.',
+    roles_pick: 'Choisis tes rôles',
+    roles_none: 'Aucun rôle à choisir pour l’instant.',
+    roles_none_admin: 'Ajoutes-en avec /roles-config add.',
+    roles_same: 'Aucun changement.',
+    roles_wait: '⏳ Un changement toutes les quelques secondes — réessaie dans un instant.',
+    roles_skipped: (n) => `⚠️ ${n === 1 ? 'Un rôle ne peut' : `${n} rôles ne peuvent`} pas être donné${n === 1 ? '' : 's'} pour l’instant — le développeur est prévenu.`,
+    roles_error: (m) => `❌ Je n’ai pas pu changer tes rôles (${m}) — préviens le développeur.`,
+    rp_desc: 'Être notifié quand une nouvelle version sort',
+    public_admin_only: 'ℹ️ Seul le développeur peut le poster dans le salon — le voici, pour toi seul.',
+    posted: (c) => `✅ Posté dans <#${c}>.`,
+    post_failed: (m) => `Pas posté (${m}) : je dois voir ce salon et pouvoir y envoyer des messages avec des encadrés.`,
+    rc_added: (r) => `✅ <@&${r}> est maintenant proposé dans /roles.`,
+    rc_updated: (r) => `✅ <@&${r}> mis à jour.`,
+    rc_full: '❌ 25 rôles au plus (limite d’un menu de Discord), rôle des sorties compris.',
+    rc_bad_emoji: '❌ Emoji inconnu : prends un emoji standard ou un emoji de ce serveur.',
+    rc_removed: (r) => `🗑️ <@&${r}> n’est plus proposé.`,
+    rc_not_listed: (r) => `<@&${r}> n’était pas proposé.`,
+    rc_release_stays: (r) => `<@&${r}> est le rôle des sorties (choisi avec /setup) : il reste dans /roles.`,
+    rc_empty: 'Aucun rôle proposé pour l’instant : ajoutes-en un avec /roles-config add.',
+    rc_head: '🏷️ **Rôles proposés dans /roles**',
+    rc_release: 'sorties, /setup',
+    rc_message: (c) => `Message des rôles pour tous : <#${c}> (tenu à jour).`,
+    rp_everyone: '@everyone ne peut pas servir.',
+    rp_unreadable: 'Je n’arrive pas à lire ce rôle.',
+    rp_check: 'Je n’arrive pas à lire les rôles et les salons du serveur pour le vérifier — réessaie.',
+    rp_managed: (r) => `<@&${r}> est géré par une intégration (bot, Boost…).`,
+    rp_perms: (r) => `<@&${r}> a des permissions — prends un rôle qui n’en a aucune.`,
+    rp_access: (r, c) => `<@&${r}> a des droits dans <#${c}> — prends un rôle cité dans les permissions d’aucun salon.`,
+    rp_above: (r) => `<@&${r}> est au-dessus de mon rôle le plus haut — place le mien au-dessus (Paramètres du serveur → Rôles).`,
+    dl_ios_title: '📱 iPhone et iPad',
+    dl_ios: (src) => 'Pas sur l’App Store : elle s’installe autrement (sideload). **Ajouter la source** l’ouvre dans AltStore, SideStore ou Feather (aussi LiveContainer, StikStore, TrollApps) : installe **TwitchUnblock**. La même source propose **TU Test**, les builds de test (nouveautés en avance, parfois instables), installée à côté de l’app normale. **Télécharger l’IPA** : la dernière version, pour Sideloadly ou TrollStore.\n'
+      + `Adresse de la source, à ajouter à la main :\n\`\`\`\n${src}\n\`\`\``,
+    dl_tv: 'AltStore, SideStore et Feather ne gèrent pas tvOS : installe-la avec **ATVLoadly** (ou Xcode sur un Mac). Ajoute une source dans ATVLoadly et l’app se met à jour toute seule.',
+    dl_tv_test: 'Builds de test :',
+    dl_tv_stable: 'Versions stables :',
+    dl_tv_no_stable: 'Les versions stables auront leur source à la prochaine sortie de l’app Apple TV.',
+    dl_android: 'Une seule app pour téléphone, tablette et Android TV : télécharge le dernier `TwitchUnblock-….apk` dans **Releases**, ouvre-le, et autorise l’installation depuis cette source si Android le demande. Sur une TV : installe *Downloader* et entre l’adresse de l’APK.',
+    dl_android_test_only: (v) => `Seulement des builds de test (**TU Test**) pour l’instant — dernier : **${v}**.`,
+    dl_android_none: 'Pas encore de version publiée.',
+    dl_web_title: '🌐 Site web',
+    dl_web: 'Rien à installer : il marche dans n’importe quel navigateur. Sur iPhone, ajoute-le à l’écran d’accueil : il s’ouvre comme une app et reçoit les notifications de live (iOS 16.4+).',
+    dl_latest: (v) => `Dernière version : **${v}**`,
+    b_add_source: 'Ajouter la source', b_ipa: 'Télécharger l’IPA', b_tv_test: 'Source de test', b_tv_stable: 'Source stable', b_site: 'Ouvrir le site',
+    v_head: '🏷️ **Dernières versions**',
+    v_ios: 'App iPhone :', v_tu_test: 'TU Test (builds de test) :', v_tv: 'Apple TV :', v_android: 'Android :', v_web: 'Site :',
+    v_test: 'test', v_stable: 'stable',
+    v_test_only: (v) => `builds de test seulement (${v})`,
+    v_unknown: 'inconnue', v_none: 'aucune pour l’instant', v_checked: 'Vérifié',
+    h_head: '📖 **Ce que je sais faire**',
+    h_bug: 'signaler un bug dans l’app ou sur le site (capture facultative)',
+    h_idea: 'proposer une idée',
+    h_roles: 'choisir tes rôles',
+    h_release_pings: 'être notifié quand une nouvelle version sort (encore une fois pour arrêter)',
+    h_download: 'toutes les façons d’installer TwitchUnblock',
+    h_version: 'dernières versions des apps et du site',
+    h_help: 'cette liste',
+    h_replies: 'Les réponses à tes retours arrivent en message privé : réponds avec les boutons dessous.',
+    h_admin: '**Réservé au développeur**',
+    h_setup: 'ce salon pour les alertes, les annonces de version, les builds de test ou la liste à faire',
+    h_announce: 'bandeau dans l’app et sur le site, et le retirer',
+    h_poll: 'sondage dans l’app et sur le site, et le clore (résultats postés)',
+    h_todo: 'ajouter à la liste à faire (ou menu Apps d’un message → Add to to-do)',
+    h_summary: 'poster le résumé du jour maintenant',
+    h_status: 'état du serveur en un message',
+    h_roles_config: 'rôles proposés dans /roles : ajouter, retirer, lister',
+    h_public: 'les poster dans ce salon pour tout le monde',
+    h_report: 'dans le post d’un retour : le supprimer, le clore, le fusionner avec un autre',
+    h_forget: 'effacer les données d’une personne, après un aperçu',
+  },
+  es: {
+    roles_intro: '🏷️ **Tus roles** — marcados: los que tienes. Marca o desmarca y cierra el menú para guardar.',
+    roles_pick: 'Elige tus roles',
+    roles_none: 'Todavía no hay roles para elegir.',
+    roles_none_admin: 'Añade alguno con /roles-config add.',
+    roles_same: 'Sin cambios.',
+    roles_wait: '⏳ Un cambio cada pocos segundos: vuelve a intentarlo en un momento.',
+    roles_skipped: (n) => `⚠️ ${n === 1 ? 'Un rol no se puede' : `${n} roles no se pueden`} dar por ahora; ya se avisó al desarrollador.`,
+    roles_error: (m) => `❌ No pude cambiar tus roles (${m}); avisa al desarrollador.`,
+    rp_desc: 'Recibir un aviso cuando salga una nueva versión',
+    public_admin_only: 'ℹ️ Solo el desarrollador puede publicarlo en el canal; aquí lo tienes, solo para ti.',
+    posted: (c) => `✅ Publicado en <#${c}>.`,
+    post_failed: (m) => `No publicado (${m}): necesito ver este canal y poder enviar en él mensajes con insertos.`,
+    rc_added: (r) => `✅ <@&${r}> ya se ofrece en /roles.`,
+    rc_updated: (r) => `✅ <@&${r}> actualizado.`,
+    rc_full: '❌ 25 roles como máximo (límite de un menú de Discord), incluido el rol de las versiones.',
+    rc_bad_emoji: '❌ Emoji desconocido: usa un emoji estándar o uno de este servidor.',
+    rc_removed: (r) => `🗑️ <@&${r}> ya no se ofrece.`,
+    rc_not_listed: (r) => `<@&${r}> no se ofrecía.`,
+    rc_release_stays: (r) => `<@&${r}> es el rol de las versiones (elegido con /setup): sigue en /roles.`,
+    rc_empty: 'Todavía no se ofrece ningún rol: añade uno con /roles-config add.',
+    rc_head: '🏷️ **Roles ofrecidos en /roles**',
+    rc_release: 'versiones, /setup',
+    rc_message: (c) => `Mensaje de roles para todos: <#${c}> (se mantiene al día).`,
+    rp_everyone: '@everyone no se puede usar.',
+    rp_unreadable: 'No puedo leer este rol.',
+    rp_check: 'No puedo leer los roles y canales del servidor para comprobarlo; inténtalo de nuevo.',
+    rp_managed: (r) => `<@&${r}> lo gestiona una integración (bot, Boost…).`,
+    rp_perms: (r) => `<@&${r}> tiene permisos; usa un rol sin ninguno.`,
+    rp_access: (r, c) => `<@&${r}> tiene acceso en <#${c}>; usa un rol que no aparezca en los permisos de ningún canal.`,
+    rp_above: (r) => `<@&${r}> está por encima de mi rol más alto; sube el mío por encima (Ajustes del servidor → Roles).`,
+    dl_ios_title: '📱 iPhone y iPad',
+    dl_ios: (src) => 'No está en la App Store: se instala por otra vía (sideload). **Añadir fuente** la abre en AltStore, SideStore o Feather (también LiveContainer, StikStore, TrollApps): instala **TwitchUnblock**. La misma fuente incluye **TU Test**, las versiones de prueba (novedades antes, pueden ser inestables), que se instala junto a la app normal. **Descargar IPA**: la última versión, para Sideloadly o TrollStore.\n'
+      + `Dirección de la fuente, para añadirla a mano:\n\`\`\`\n${src}\n\`\`\``,
+    dl_tv: 'AltStore, SideStore y Feather no admiten tvOS: instálala con **ATVLoadly** (o Xcode en un Mac). Añade una fuente en ATVLoadly y la app se actualiza sola.',
+    dl_tv_test: 'Versiones de prueba:',
+    dl_tv_stable: 'Versiones estables:',
+    dl_tv_no_stable: 'Las versiones estables tendrán su fuente con la próxima versión de la app de Apple TV.',
+    dl_android: 'Una sola app para móvil, tableta y Android TV: descarga el último `TwitchUnblock-….apk` en **Releases**, ábrelo y permite instalar desde esta fuente si Android lo pide. En una TV: instala *Downloader* e introduce la dirección del APK.',
+    dl_android_test_only: (v) => `Por ahora solo hay versiones de prueba (**TU Test**); la última: **${v}**.`,
+    dl_android_none: 'Todavía no hay ninguna versión.',
+    dl_web_title: '🌐 Sitio web',
+    dl_web: 'Nada que instalar: funciona en cualquier navegador. En iPhone, añádelo a la pantalla de inicio: se abre como una app y recibe avisos de directos (iOS 16.4+).',
+    dl_latest: (v) => `Última versión: **${v}**`,
+    b_add_source: 'Añadir fuente', b_ipa: 'Descargar IPA', b_tv_test: 'Fuente de prueba', b_tv_stable: 'Fuente estable', b_site: 'Abrir el sitio',
+    v_head: '🏷️ **Últimas versiones**',
+    v_ios: 'App de iPhone:', v_tu_test: 'TU Test (versiones de prueba):', v_web: 'Sitio web:',
+    v_test: 'prueba', v_stable: 'estable',
+    v_test_only: (v) => `solo versiones de prueba (${v})`,
+    v_unknown: 'desconocida', v_none: 'ninguna todavía', v_checked: 'Comprobado',
+    h_head: '📖 **Lo que puedo hacer**',
+    h_bug: 'informar de un error en la app o el sitio web (captura opcional)',
+    h_idea: 'proponer una idea',
+    h_roles: 'elegir tus roles',
+    h_release_pings: 'recibir un aviso cuando salga una nueva versión (otra vez para dejarlo)',
+    h_download: 'todas las formas de instalar TwitchUnblock',
+    h_version: 'últimas versiones de las apps y del sitio web',
+    h_help: 'esta lista',
+    h_replies: 'Las respuestas a tus informes llegan por mensaje directo: contesta con los botones de debajo.',
+    h_admin: '**Solo para el desarrollador**',
+    h_setup: 'usar este canal para alertas, anuncios de versiones, versiones de prueba o la lista de tareas',
+    h_announce: 'aviso en la app y el sitio web, y quitarlo',
+    h_poll: 'encuesta en la app y el sitio web, y cerrarla (resultados publicados)',
+    h_todo: 'añadir a la lista de tareas (o menú Apps de un mensaje → Add to to-do)',
+    h_summary: 'publicar ahora el resumen del día',
+    h_status: 'estado del servidor en un mensaje',
+    h_roles_config: 'roles ofrecidos en /roles: añadir, quitar, listar',
+    h_public: 'publicarlos en este canal para todos',
+    h_report: 'en el hilo de un informe: borrarlo, cerrarlo, fusionarlo con otro',
+    h_forget: 'borrar los datos de una persona, tras una vista previa',
+  },
+  ru: {
+    roles_intro: '🏷️ **Твои роли** — отмечены те, что у тебя есть. Отметь или сними отметки и закрой меню, чтобы сохранить.',
+    roles_pick: 'Выбери роли',
+    roles_none: 'Пока нет ролей на выбор.',
+    roles_none_admin: 'Добавь их через /roles-config add.',
+    roles_same: 'Ничего не изменилось.',
+    roles_wait: '⏳ Не больше одного изменения в несколько секунд — попробуй чуть позже.',
+    roles_skipped: (n) => `⚠️ Сейчас нельзя выдать ролей: ${n} — разработчик предупреждён.`,
+    roles_error: (m) => `❌ Не удалось изменить твои роли (${m}) — сообщи разработчику.`,
+    rp_desc: 'Уведомление о выходе новой версии',
+    public_admin_only: 'ℹ️ Публиковать это в канале может только разработчик — вот ответ только для тебя.',
+    posted: (c) => `✅ Опубликовано в <#${c}>.`,
+    post_failed: (m) => `Не опубликовано (${m}): мне нужно видеть этот канал и отправлять в него сообщения со вставками.`,
+    rc_added: (r) => `✅ <@&${r}> теперь предлагается в /roles.`,
+    rc_updated: (r) => `✅ <@&${r}> обновлена.`,
+    rc_full: '❌ Не больше 25 ролей (ограничение меню Discord), включая роль уведомлений о версиях.',
+    rc_bad_emoji: '❌ Неизвестный эмодзи: используй стандартный эмодзи или эмодзи этого сервера.',
+    rc_removed: (r) => `🗑️ <@&${r}> больше не предлагается.`,
+    rc_not_listed: (r) => `<@&${r}> и так не предлагалась.`,
+    rc_release_stays: (r) => `<@&${r}> — роль уведомлений о версиях (задана через /setup): она остаётся в /roles.`,
+    rc_empty: 'Пока не предлагается ни одной роли: добавь через /roles-config add.',
+    rc_head: '🏷️ **Роли в /roles**',
+    rc_release: 'версии, /setup',
+    rc_message: (c) => `Сообщение с ролями для всех: <#${c}> (обновляется).`,
+    rp_everyone: '@everyone использовать нельзя.',
+    rp_unreadable: 'Не могу прочитать эту роль.',
+    rp_check: 'Не могу прочитать роли и каналы сервера, чтобы её проверить — попробуй ещё раз.',
+    rp_managed: (r) => `<@&${r}> управляется интеграцией (бот, буст…).`,
+    rp_perms: (r) => `У <@&${r}> есть права — выбери роль без прав.`,
+    rp_access: (r, c) => `<@&${r}> даёт доступ в <#${c}> — выбери роль, которой нет в правах ни одного канала.`,
+    rp_above: (r) => `<@&${r}> выше моей самой высокой роли — подними мою роль выше (Настройки сервера → Роли).`,
+    dl_ios_title: '📱 iPhone и iPad',
+    dl_ios: (src) => 'Приложения нет в App Store — его ставят в обход (sideload). **Добавить источник** открывает его в AltStore, SideStore или Feather (а также LiveContainer, StikStore, TrollApps): установи **TwitchUnblock**. В том же источнике есть **TU Test** — тестовые сборки (новинки раньше всех, бывают нестабильны), ставятся рядом с обычным приложением. **Скачать IPA** — последняя версия, для Sideloadly или TrollStore.\n'
+      + `Адрес источника, чтобы добавить вручную:\n\`\`\`\n${src}\n\`\`\``,
+    dl_tv: 'AltStore, SideStore и Feather не поддерживают tvOS: установи через **ATVLoadly** (или Xcode на Mac). Добавь источник в ATVLoadly — и приложение будет обновляться само.',
+    dl_tv_test: 'Тестовые сборки:',
+    dl_tv_stable: 'Стабильные версии:',
+    dl_tv_no_stable: 'Источник стабильных версий появится со следующим выпуском приложения для Apple TV.',
+    dl_android: 'Одно приложение для телефона, планшета и Android TV: скачай последний `TwitchUnblock-….apk` в **Releases**, открой его и разреши установку из этого источника, если Android спросит. На телевизоре установи *Downloader* и введи адрес APK.',
+    dl_android_test_only: (v) => `Пока есть только тестовые сборки (**TU Test**), последняя: **${v}**.`,
+    dl_android_none: 'Версий пока нет.',
+    dl_web_title: '🌐 Сайт',
+    dl_web: 'Ничего не нужно устанавливать: работает в любом браузере. На iPhone добавь его на экран «Домой» — он откроется как приложение и будет присылать уведомления о трансляциях (iOS 16.4+).',
+    dl_latest: (v) => `Последняя версия: **${v}**`,
+    b_add_source: 'Добавить источник', b_ipa: 'Скачать IPA', b_tv_test: 'Тестовый источник', b_tv_stable: 'Стабильный источник', b_site: 'Открыть сайт',
+    v_head: '🏷️ **Последние версии**',
+    v_ios: 'Приложение для iPhone:', v_tu_test: 'TU Test (тестовые сборки):', v_web: 'Сайт:',
+    v_test: 'тест', v_stable: 'стабильная',
+    v_test_only: (v) => `только тестовые сборки (${v})`,
+    v_unknown: 'неизвестна', v_none: 'пока нет', v_checked: 'Проверено',
+    h_head: '📖 **Что я умею**',
+    h_bug: 'сообщить об ошибке в приложении или на сайте (скриншот по желанию)',
+    h_idea: 'предложить идею',
+    h_roles: 'выбрать роли',
+    h_release_pings: 'получать уведомление о новой версии (ещё раз — отключить)',
+    h_download: 'все способы установить TwitchUnblock',
+    h_version: 'последние версии приложений и сайта',
+    h_help: 'этот список',
+    h_replies: 'Ответы на твои сообщения приходят в личку: отвечай кнопками под ними.',
+    h_admin: '**Только для разработчика**',
+    h_setup: 'этот канал для оповещений, анонсов версий, тестовых сборок или списка задач',
+    h_announce: 'баннер в приложении и на сайте, и убрать его',
+    h_poll: 'опрос в приложении и на сайте, и завершить его (итоги публикуются)',
+    h_todo: 'добавить в список задач (или меню «Приложения» у сообщения → Add to to-do)',
+    h_summary: 'опубликовать сводку дня сейчас',
+    h_status: 'состояние сервера одним сообщением',
+    h_roles_config: 'роли в /roles: добавить, убрать, список',
+    h_public: 'опубликовать их в этом канале для всех',
+    h_report: 'в посте отчёта: удалить, закрыть, объединить с другим',
+    h_forget: 'стереть данные человека после предпросмотра',
+  },
+}
+/** Textes de I18N pour `locale` (« fr », « es-ES », « es-419 », « ru »…). */
+function lang(locale) {
+  const own = I18N[String(locale || '').slice(0, 2).toLowerCase()] || I18N.en
+  return (key, ...args) => {
+    const v = own[key] ?? I18N.en[key]
+    return typeof v === 'function' ? v(...args) : v ?? key
+  }
+}
+const EN = lang('en')
+// /help : commandes du développeur, montrées à lui seul.
+const ADMIN_HELP = [
+  ['/setup', 'h_setup'], ['/announce · /announce-clear', 'h_announce'], ['/poll · /poll-end', 'h_poll'],
+  ['/todo', 'h_todo'], ['/summary', 'h_summary'], ['/status', 'h_status'], ['/roles-config', 'h_roles_config'],
+  ['/roles public:True · /download public:True', 'h_public'], ['/delete · /block · /merge', 'h_report'], ['/forget-user', 'h_forget'],
+]
 
 /** Entrées anglaises d'une version dans changelog.js du site (chaînes entre
  *  apostrophes droites, lues sans exécuter le fichier). */
@@ -821,15 +1185,23 @@ export function startDiscordBridge({
    *  pièces jointes, décrites dans `resolved`. */
   const uploads = (i, id) => (inputs(i).find((c) => c.custom_id === id)?.values || [])
     .map((v) => i.data?.resolved?.attachments?.[v]).filter(Boolean)
-  /** Réponse différée (le Worker peut prendre plus de 3 s), visible de soi seul. */
+  /** Réponse différée (le Worker peut prendre plus de 3 s), visible de soi
+   *  seul : un texte, ou un message entier (encadrés, menu) ; refusé par
+   *  Discord pour un emoji (supprimé, inconnu…), il repart tel que `plain`. */
   async function deferred(i, fn) {
     await respond(i, 5, { flags: 64 })
     try {
-      await editOriginal(i, { content: String(await fn()).slice(0, 1900) })
+      const r = await fn()
+      const { plain, ...data } = r && typeof r === 'object' ? r : { content: String(r).slice(0, 1900) }
+      const edit = (d) => rest('PATCH', `/webhooks/${st.app}/${i.token}/messages/@original`, { allowed_mentions: { parse: [] }, ...d })
+      await edit(data).catch((e) => (e.code === 50035 && plain ? edit(plain) : Promise.reject(e)))
     } catch (e) {
       await editOriginal(i, { content: `❌ ${e.message}` })
     }
   }
+  /** Message à emojis (`send(true)`) refait sans (`send(false)`) quand
+   *  Discord en refuse un : emoji d'un rôle supprimé depuis, inconnu… */
+  const withEmojiFallback = (send) => send(true).catch((e) => (e.code === 50035 ? send(false) : Promise.reject(e)))
   const adminOnly = (i) => respond(i, 4, { flags: 64, content: 'Only the developer can use this.' })
 
   const reportModal = (kind, shot) => ({
@@ -920,8 +1292,14 @@ export function startDiscordBridge({
     const name = i.data?.name
     if (name === 'bug' || name === 'idea') return respond(i, 9, reportModal(name, keepShot(i, user)))
     if (name === 'release-pings') return deferred(i, () => toggleReleaseRole(i, user))
+    // Pour tous, dans la langue de la personne (« public » : le développeur seul).
+    if (name === 'roles') return rolesCommand(i, user)
+    if (name === 'download') return downloadCommand(i, user)
+    if (name === 'version') return deferred(i, () => versionText(lang(i.locale)))
+    if (name === 'help') return respond(i, 4, { flags: 64, content: helpText(i, user), allowed_mentions: { parse: [] } })
     if (!isAdmin(user.id)) return adminOnly(i)
     switch (name) {
+      case 'roles-config': return deferred(i, () => rolesConfig(i, user))
       case 'Add to to-do':
       case 'todo':
         return deferred(i, () => addTodo(i, user))
@@ -991,7 +1369,7 @@ export function startDiscordBridge({
     const use = String(opt(i, 'use') || '')
     const role = opt(i, 'role') || null
     if (use === 'announcements' && role) {
-      const problem = await releaseRoleProblem(i.guild_id || st.guild, role, i.data?.resolved?.roles?.[role])
+      const problem = await releaseRoleProblem(i.guild_id || st.guild, role, i.data?.resolved?.roles?.[role], true)
       if (problem) return `❌ Not set: ${problem}`
     }
     const settings = { ...((await kvGet('settings').catch(() => null)) || st.settings) }
@@ -1006,6 +1384,8 @@ export function startDiscordBridge({
     call({ action: 'audit', what: 'bot.setup', detail: `${use} → #${i.channel_id}${role ? ` (role ${role})` : ''}`, by: byOf(i.member?.user || i.user) }).catch(() => {})
     // Rôle des sorties : un bouton dans le salon, pour le prendre ou le rendre.
     if (use === 'announcements' && role) await postReleasePing(i.channel_id)
+    // Le rôle des sorties fait partie de la liste de /roles.
+    if (use === 'announcements') refreshRolesMessage().catch((e) => log.warn(`Discord bridge: roles message not updated (${e.message})`))
     return {
       alerts: 'This channel now gets the alerts, the daily summary and the release-notes drafts. Keep it private.',
       announcements: role
@@ -1061,21 +1441,50 @@ export function startDiscordBridge({
     st.settings = settings
   }
 
-  /** Pourquoi `role` ne peut pas servir de rôle des sorties, que n'importe
-   *  quel membre se donne lui-même ; null s'il convient. Un rôle géré (bot,
-   *  Boost…), avec des permissions, ou qui ouvre un salon (droits accordés
-   *  au rôle dans les permissions d'un salon) en faisait cadeau à tout le
-   *  monde. `known` : le rôle décrit par l'interaction (/setup), sinon relu. */
-  async function releaseRoleProblem(guild, role, known = null) {
-    if (role === guild) return '@everyone can’t be used.'
-    const info = known || (await rest('GET', `/guilds/${guild}/roles`).catch(() => null))?.find?.((r) => r.id === role)
-    if (!info) return 'I can’t read this role.'
-    if (info.managed) return `<@&${role}> is managed by an integration (bot, Boost…).`
-    if (BigInt(info.permissions || 0) !== 0n) return `<@&${role}> has permissions — use a role without any, only for pings.`
-    const channels = await rest('GET', `/guilds/${guild}/channels`).catch(() => null)
-    if (!Array.isArray(channels)) return 'I can’t read the channels to check this role.'
-    const opens = channels.find((c) => (c.permission_overwrites || []).some((o) => o.id === role && BigInt(o.allow || 0) !== 0n))
-    return opens ? `<@&${role}> is given access in <#${opens.id}> — use a role only for pings.` : null
+  /** Rôles et salons du serveur, et rôles du bot : de quoi vérifier un rôle
+   *  avant de le donner. Gardés 30 s au plus et oubliés à tout changement de
+   *  rôle ou de salon (passerelle) : une rafale de choix dans /roles ne les
+   *  relit pas à chaque fois. Une lecture ratée n'est pas gardée ; `fresh` :
+   *  relus quoi qu'il arrive (réglages du développeur). */
+  let facts = null   // { guild, at, value }
+  function guildFacts(guild, fresh = false) {
+    if (!fresh && facts?.guild === guild && Date.now() - facts.at < 30_000) return facts.value
+    const memo = { guild, at: Date.now() }
+    memo.value = Promise.all([
+      rest('GET', `/guilds/${guild}/roles`).catch(() => null),
+      rest('GET', `/guilds/${guild}/channels`).catch(() => null),
+      st.me ? rest('GET', `/guilds/${guild}/members/${st.me}`).catch(() => null) : null,
+    ]).then(([roles, channels, me]) => {
+      const f = { roles: Array.isArray(roles) ? roles : null, channels: Array.isArray(channels) ? channels : null, mine: Array.isArray(me?.roles) ? me.roles : null }
+      if ((!f.roles || !f.channels || !f.mine) && facts === memo) facts = null
+      return f
+    })
+    facts = memo
+    return memo.value
+  }
+  const forgetFacts = () => { facts = null }
+
+  /** Pourquoi `role` ne peut pas être donné à qui le demande (rôle des
+   *  sorties, /roles) ; null s'il convient. Un rôle géré (bot, Boost…), avec
+   *  des permissions, ou qui ouvre un salon (droits accordés au rôle dans les
+   *  permissions d'un salon) en faisait cadeau à tout le monde ; au-dessus du
+   *  rôle le plus haut du bot, Discord refuse de le donner. `f` : guildFacts ;
+   *  `known` : le rôle décrit par l'interaction (/setup, /roles-config). */
+  function roleProblem(f, guild, role, known = null, t = EN) {
+    if (role === guild) return t('rp_everyone')
+    const info = known || f.roles?.find((r) => r.id === role)
+    if (!info) return t(f.roles ? 'rp_unreadable' : 'rp_check')
+    if (info.managed) return t('rp_managed', role)
+    if (BigInt(info.permissions || 0) !== 0n) return t('rp_perms', role)
+    if (!f.roles || !f.channels || !f.mine) return t('rp_check')
+    const opens = f.channels.find((c) => (c.permission_overwrites || []).some((o) => o.id === role && BigInt(o.allow || 0) !== 0n))
+    if (opens) return t('rp_access', role, opens.id)
+    const position = (id) => f.roles.find((r) => r.id === id)?.position
+    const top = Math.max(-1, ...f.mine.map((id) => position(id) ?? -1))
+    return Number(position(role) ?? info.position) < top ? null : t('rp_above', role)
+  }
+  async function releaseRoleProblem(guild, role, known = null, fresh = false) {
+    return roleProblem(await guildFacts(guild, fresh), guild, role, known)
   }
 
   /** /release-pings et le bouton du salon des sorties : le rôle mentionné à
@@ -1099,6 +1508,417 @@ export function startDiscordBridge({
       return `❌ I couldn’t change your roles (${e.message}). The bot needs “Manage Roles”, and its role must be above <@&${role}>.`
     }
     return has ? '🔕 You won’t be pinged for new versions anymore.' : '🔔 You’ll be pinged when a new version is out.'
+  }
+
+  // ── /roles et /roles-config ─────────────────────────────────────────────
+  // Rôles proposés : réglage selfRoles ([{ id, description, emoji }], écrit
+  // par /roles-config) et le rôle des sorties de /setup. Le message pour tous
+  // de /roles public:true est retenu (rolesMsg) et suit la liste.
+  const ROLE_COOLDOWN = 5000      // un changement par personne, au plus
+  const roleChanges = new Map()   // personne → dernier changement
+
+  /** Rôles proposés par /roles : ceux de /roles-config, et le rôle des
+   *  sorties (/setup) s'il y en a un — 25 au plus (un menu de Discord). */
+  function offeredRoles(settings = st.settings) {
+    const list = (Array.isArray(settings.selfRoles) ? settings.selfRoles : []).filter((r) => r?.id)
+    const rp = settings.announcementsRole
+    return (rp && !list.some((r) => r.id === rp) ? [{ id: rp, release: true }, ...list] : list).slice(0, 25)
+  }
+
+  /** Rôle proposé qui n'est plus sûr : ni montré ni donné, et le développeur
+   *  le sait (salon d'alertes, une fois par jour). */
+  const flagRole = (role, problem) => alertOncePerDay(`role:${role}`,
+    `⚠️ **A role offered in /roles isn’t given out**: ${problem} Fix it, or remove it with /roles-config remove.`)
+    .catch((e) => log.warn(`Discord bridge: ${e.message}`))
+
+  /** Les rôles proposés qui existent et restent sûrs, prêts pour le menu
+   *  (nom, description, emoji). Un rôle supprimé du serveur est passé. */
+  function roleOptions(f, t) {
+    if (!f.roles || !f.channels || !f.mine) throw new Error(t('rp_check'))
+    const out = []
+    for (const r of offeredRoles()) {
+      const info = f.roles.find((x) => x.id === r.id)
+      if (!info) continue
+      const problem = roleProblem(f, st.guild, r.id)
+      if (problem) { flagRole(r.id, problem); continue }
+      out.push({ id: r.id, name: info.name, description: r.description || (r.release ? t('rp_desc') : ''), emoji: r.emoji || (r.release ? '🔔' : '') })
+    }
+    return out
+  }
+
+  /** Menu des rôles ; `have` (rôles de la personne) coche les siens — sans,
+   *  rien n'est coché (message pour tous). */
+  const rolesMenu = (custom_id, options, placeholder, { have = null, emojis = true } = {}) => ({
+    type: 3, custom_id, placeholder, min_values: have ? 0 : 1, max_values: options.length,
+    options: options.map((o) => ({
+      label: String(o.name || o.id).slice(0, 100), value: o.id,
+      ...(o.description ? { description: String(o.description).slice(0, 100) } : {}),
+      ...(emojis && o.emoji ? { emoji: emojiOf(o.emoji) } : {}),
+      ...(have ? { default: have.has(o.id) } : {}),
+    })),
+  })
+  const menuValues = (components) => (components || []).flatMap((r) => r.components || [])
+    .filter((c) => c.type === 3).flatMap((c) => (c.options || []).map((o) => o.value))
+  /** Composants d'un message, son menu recoché d'après `have`. */
+  const recheck = (components, have) => (components || []).map((r) => ({
+    ...r, components: (r.components || []).map((c) => (c.type === 3 ? { ...c, options: (c.options || []).map((o) => ({ ...o, default: have.has(o.value) })) } : c)),
+  }))
+
+  /** Message permanent de /roles public:true, en anglais : la liste avec les
+   *  descriptions, et le même menu, où rien n'est coché — chaque rôle choisi
+   *  y est pris, ou rendu si on l'avait. */
+  function rolesPublicMessage(options, emojis = true) {
+    const lines = options.map((o) => `${emojis && o.emoji ? `${o.emoji} ` : ''}<@&${o.id}>${o.description ? ` — ${o.description}` : ''}`)
+    return {
+      embeds: [{
+        title: '🏷️ Roles', color: 0x9146ff,
+        description: (options.length
+          ? `Pick a role in the menu to get it — pick it again to drop it. Only you see the answer.\n\n${lines.join('\n')}`
+          : 'No roles to pick right now.').slice(0, 4000),
+      }],
+      components: options.length ? [row(rolesMenu('roles:pub', options, 'Pick a role to get it or drop it', { emojis }))] : [],
+      allowed_mentions: { parse: [] },
+    }
+  }
+
+  /** Réglages relus, changés (`patch`) et rangés dans le Worker. */
+  async function saveSettings(patch) {
+    const settings = { ...((await kvGet('settings').catch(() => null)) || st.settings), ...patch }
+    await kvSet('settings', settings)
+    st.settings = settings
+    return settings
+  }
+
+  /** Message pour tous (le dernier posté) remis à jour quand la liste
+   *  change ; supprimé entre-temps, il est oublié. */
+  async function refreshRolesMessage() {
+    const m = st.settings.rolesMsg
+    if (!m?.id || !st.guild) return
+    const options = roleOptions(await guildFacts(st.guild), EN)
+    try {
+      await withEmojiFallback((emojis) => rest('PATCH', `/channels/${m.channel}/messages/${m.id}`, rolesPublicMessage(options, emojis)))
+    } catch (e) {
+      if (e.code !== 10008 && e.code !== 10003) throw e
+      await saveSettings({ rolesMsg: null })
+    }
+  }
+
+  /** /roles : un menu pour soi seul, ses rôles cochés ; public:true
+   *  (développeur) : le message pour tous, posté dans ce salon (le précédent
+   *  est supprimé). */
+  function rolesCommand(i, user) {
+    const t = lang(i.locale)
+    const asked = opt(i, 'public') === true
+    const pub = asked && isAdmin(user.id)
+    return deferred(i, async () => {
+      if (!st.guild || i.guild_id !== st.guild) return t('roles_none')
+      const options = roleOptions(await guildFacts(st.guild), pub ? EN : t)
+      if (!options.length) return `${t('roles_none')}${isAdmin(user.id) ? ` ${t('roles_none_admin')}` : ''}`
+      if (pub) {
+        const m = await withEmojiFallback((emojis) => rest('POST', `/channels/${i.channel_id}/messages`, rolesPublicMessage(options, emojis)))
+          .catch((e) => { throw new Error(t('post_failed', e.message)) })
+        const old = st.settings.rolesMsg
+        await saveSettings({ rolesMsg: { channel: i.channel_id, id: m?.id } })
+        if (old?.id && old.id !== m?.id) rest('DELETE', `/channels/${old.channel}/messages/${old.id}`).catch(() => {})
+        call({ action: 'audit', what: 'bot.roles', detail: `menu for everyone → #${i.channel_id}`, by: byOf(user) }).catch(() => {})
+        return t('posted', i.channel_id)
+      }
+      const have = new Set(i.member?.roles || [])
+      const content = `${t('roles_intro')}${asked ? `\n${t('public_admin_only')}` : ''}`
+      const menu = (emojis) => [row(rolesMenu('roles:me', options, t('roles_pick'), { have, emojis }))]
+      return { content, components: menu(true), plain: { content, components: menu(false) } }
+    })
+  }
+
+  /** Menus de /roles. `roles:me` (sa réponse à soi seul) : les rôles cochés
+   *  sont voulus, les décochés rendus, puis le menu revient à jour.
+   *  `roles:pub` (message pour tous, rien n'y est coché) : chaque rôle choisi
+   *  est pris, ou rendu si on l'avait ; réponse visible de soi seul. Un
+   *  changement toutes les 5 s au plus par personne. */
+  async function onRolesMenu(i, user, which) {
+    const t = lang(i.locale)
+    const now = Date.now()
+    const wait = now - (roleChanges.get(user.id) || 0) < ROLE_COOLDOWN
+    if (!wait) {
+      if (roleChanges.size > 5000) for (const [id, at] of roleChanges) if (now - at >= ROLE_COOLDOWN) roleChanges.delete(id)
+      roleChanges.set(user.id, now)
+    }
+    if (which === 'pub') {
+      // Le menu remis à zéro chez la personne (même message, rien ne change
+      // pour les autres) : ses choix y restaient cochés, et repartaient au
+      // choix suivant. Refusé (emoji supprimé…) : réponse différée.
+      const reset = await respond(i, 7, { components: i.message?.components || [] }).then(() => true, () => false)
+      if (!reset) await respond(i, 5, { flags: 64 })
+      const data = { content: wait ? t('roles_wait') : (await changeRoles(i, user, t, true)).text, allowed_mentions: { parse: [] } }
+      await (reset ? rest('POST', `/webhooks/${st.app}/${i.token}`, { ...data, flags: 64 }) : rest('PATCH', `/webhooks/${st.app}/${i.token}/messages/@original`, data))
+        .catch((e) => log.warn(`Discord bridge: roles answer not sent (${e.message})`))
+      return
+    }
+    // Trop tôt : rien ne change, le menu revient aux rôles actuels.
+    if (wait) {
+      return respond(i, 7, { content: t('roles_wait'), components: recheck(i.message?.components, new Set(i.member?.roles || [])), allowed_mentions: { parse: [] } })
+    }
+    await respond(i, 6)
+    const r = await changeRoles(i, user, t, false)
+    const content = `${t('roles_intro')}\n${r.text}`
+    // Options illisibles (erreur) : le menu d'avant, recoché.
+    const menu = (emojis) => (!r.options ? recheck(i.message?.components, r.have)
+      : r.options.length ? [row(rolesMenu('roles:me', r.options, t('roles_pick'), { have: r.have, emojis }))] : [])
+    await withEmojiFallback((emojis) => rest('PATCH', `/webhooks/${st.app}/${i.token}/messages/@original`, { content, components: menu(emojis), allowed_mentions: { parse: [] } }))
+      .catch((e) => log.warn(`Discord bridge: roles menu not updated (${e.message})`))
+  }
+
+  /** Rôles choisis dans un menu de /roles, appliqués en un seul appel (toute
+   *  la liste des rôles de la personne). Seuls ceux encore proposés, et sûrs
+   *  à cet instant, sont touchés ; `toggle` (message pour tous) : chaque rôle
+   *  choisi est pris ou rendu. Rend le texte de la réponse, les rôles de la
+   *  personne après coup et les options du menu (null : illisibles). */
+  async function changeRoles(i, user, t, toggle) {
+    let have = new Set(i.member?.roles || [])
+    try {
+      if (!st.guild || i.guild_id !== st.guild) return { text: t('roles_none'), have, options: null }
+      const options = roleOptions(await guildFacts(st.guild), t)
+      const safe = new Set(options.map((o) => o.id))
+      const offered = new Set(offeredRoles().map((r) => r.id))
+      const picked = new Set(i.data?.values || [])
+      // Menu pour soi : seuls les rôles qu'il montrait (un rôle ajouté à la
+      // liste depuis, la personne ne l'a pas vu : il n'est pas rendu).
+      const asked = new Set((toggle ? [...picked] : menuValues(i.message?.components)).filter((id) => offered.has(id)))
+      const add = []
+      const drop = []
+      for (const id of asked) {
+        const want = toggle ? !have.has(id) : picked.has(id)
+        if (want !== have.has(id)) (want ? add : drop).push(id)
+      }
+      // Revérifiés à l'instant : un rôle qui n'est plus sûr n'est pas touché.
+      const adds = add.filter((id) => safe.has(id))
+      const drops = drop.filter((id) => safe.has(id))
+      const skipped = add.length + drop.length - adds.length - drops.length
+      if (adds.length || drops.length) {
+        const next = [...have].filter((id) => !drops.includes(id)).concat(adds)
+        try {
+          await rest('PATCH', `/guilds/${st.guild}/members/${user.id}`, { roles: next })
+        } catch (e) {
+          log.warn(`Discord bridge: roles of a member not changed (${e.message})`)
+          return { text: t('roles_error', e.message), have, options }
+        }
+        have = new Set(next)
+      }
+      const changes = [...adds.map((id) => `+<@&${id}>`), ...drops.map((id) => `−<@&${id}>`)].join(' ')
+      return { text: `${changes ? `✅ ${changes}` : t('roles_same')}${skipped ? `\n${t('roles_skipped', skipped)}` : ''}`, have, options }
+    } catch (e) {
+      return { text: `❌ ${e.message}`, have, options: null }
+    }
+  }
+
+  /** Emoji standard, ou emoji de ce serveur : avec un autre, Discord
+   *  refuserait le menu. */
+  async function emojiOk(s) {
+    const m = s.match(CUSTOM_EMOJI)
+    if (!m) return UNICODE_EMOJI.test(s)
+    return Boolean(await rest('GET', `/guilds/${st.guild}/emojis/${m[3]}`).catch(() => null))
+  }
+
+  /** /roles-config add|remove|list : les rôles que propose /roles. Un rôle
+   *  n'est accepté que sûr ; les rôles supprimés du serveur sortent de la
+   *  liste au passage. */
+  async function rolesConfig(i, user) {
+    const t = lang(i.locale)
+    const sub = i.data?.options?.[0]
+    const arg = (name) => sub?.options?.find((o) => o.name === name)?.value
+    const role = String(arg('role') || '')
+    const f = await guildFacts(st.guild, true)
+    const settings = { ...((await kvGet('settings').catch(() => null)) || st.settings) }
+    const before = (Array.isArray(settings.selfRoles) ? settings.selfRoles : []).filter((r) => r?.id)
+    const list = before.filter((r) => !f.roles || f.roles.some((x) => x.id === r.id))
+    const save = async (next, detail = '') => {
+      settings.selfRoles = next
+      await kvSet('settings', settings)
+      st.settings = settings
+      if (detail) call({ action: 'audit', what: 'bot.roles', detail, by: byOf(user) }).catch(() => {})
+      refreshRolesMessage().catch((e) => log.warn(`Discord bridge: roles message not updated (${e.message})`))
+    }
+    if (sub?.name === 'add') {
+      const problem = roleProblem(f, st.guild, role, i.data?.resolved?.roles?.[role], t)
+      if (problem) return `❌ ${problem}`
+      const emoji = String(arg('emoji') || '').trim()
+      if (emoji && !(await emojiOk(emoji))) return t('rc_bad_emoji')
+      const description = String(arg('description') || '').trim().slice(0, 100)
+      const at = list.findIndex((r) => r.id === role)
+      // Déjà proposé : description et emoji remplacés s'ils sont donnés.
+      const entry = { ...list[at], id: role, ...(description ? { description } : {}), ...(emoji ? { emoji } : {}) }
+      const next = at >= 0 ? list.map((r, n) => (n === at ? entry : r)) : [...list, entry]
+      const release = settings.announcementsRole
+      if (next.length + (release && !next.some((r) => r.id === release) ? 1 : 0) > 25) return t('rc_full')
+      await save(next, `${at >= 0 ? 'update' : 'add'} ${role}`)
+      return t(at >= 0 ? 'rc_updated' : 'rc_added', role)
+    }
+    if (sub?.name === 'remove') {
+      const next = list.filter((r) => r.id !== role)
+      if (next.length !== before.length) await save(next, next.length !== list.length ? `remove ${role}` : '')
+      if (role === settings.announcementsRole) return t('rc_release_stays', role)
+      return t(next.length !== list.length ? 'rc_removed' : 'rc_not_listed', role)
+    }
+    if (list.length !== before.length) await save(list)
+    const entries = offeredRoles({ ...settings, selfRoles: list })
+    if (!entries.length) return t('rc_empty')
+    const lines = entries.map((r) => {
+      const problem = roleProblem(f, st.guild, r.id, null, t)
+      const emoji = r.emoji || (r.release ? '🔔' : '')
+      const description = r.description || (r.release ? t('rp_desc') : '')
+      return `- ${emoji ? `${emoji} ` : ''}<@&${r.id}>${description ? ` — ${description}` : ''}${r.release ? ` (${t('rc_release')})` : ''}${problem ? `\n  ⚠️ ${problem}` : ''}`
+    })
+    const m = settings.rolesMsg?.id ? `\n${t('rc_message', settings.rolesMsg.channel)}` : ''
+    return `${t('rc_head')}\n${lines.join('\n')}${m}`.slice(0, 1900)
+  }
+
+  // ── /download, /version, /help ──────────────────────────────────────────
+  /** JSON d'une adresse : l'objet, false si elle n'existe pas (404), null si
+   *  la lecture a raté. */
+  async function readJson(url) {
+    try {
+      const r = await fetch(url, { headers: { 'User-Agent': 'TwitchUnblock-relay' }, signal: AbortSignal.timeout(15_000) })
+      if (!r.ok) {
+        await r.body?.cancel().catch(() => {})
+        return r.status === 404 ? false : null
+      }
+      return await r.json()
+    } catch {
+      return null
+    }
+  }
+
+  /** Version d'une source AltStore (de l'app `name`, ou de la première) :
+   *  false si la source n'existe pas, null si elle est illisible. */
+  function sourceVersion(src, name = null) {
+    if (!src) return src === false ? false : null
+    const apps = Array.isArray(src.apps) ? src.apps : []
+    const app = name ? apps.find((a) => a?.name === name) : apps[0]
+    const v = app?.versions?.[0]?.version || app?.version
+    return v ? String(v).slice(0, 40) : null
+  }
+
+  /** Android : la dernière version stable (« TwitchUnblock X.Y.N ») et le
+   *  dernier build de test (« TU Test … ») s'il est plus récent — null pour
+   *  celle qui n'existe pas ; null tout court si la liste est illisible. */
+  function androidVersions(list) {
+    if (list === false) return { stable: null, test: null }
+    if (!Array.isArray(list)) return null
+    const when = (r) => Date.parse(r.published_at || r.created_at || 0) || 0
+    const newest = (keep) => list.filter((r) => r && !r.draft && keep(r)).sort((a, b) => when(b) - when(a))[0] || null
+    const stable = newest((r) => !r.prerelease && /^TwitchUnblock \d/.test(r.name || ''))
+    const test = newest((r) => r.prerelease)
+    const name = (r, prefix) => String(r.name || r.tag_name || '').replace(prefix, '').trim().slice(0, 40) || null
+    return {
+      stable: stable ? name(stable, /^TwitchUnblock\s+/) : null,
+      test: test && (!stable || when(test) > when(stable)) ? name(test, /^TU Test\s+/) : null,
+    }
+  }
+
+  /** Dernières versions, lues sur GitHub (sources brutes ; releases
+   *  d'Android par l'API publique, sans jeton) et sur le site, gardées
+   *  10 min — 1 min quand une lecture a raté. Une version illisible vaut
+   *  null (« inconnue ») ; une source ou une sortie qui n'existe pas, false. */
+  let versionsMemo = null   // { at, ttl, value }
+  function latestVersions() {
+    if (versionsMemo && Date.now() - versionsMemo.at < versionsMemo.ttl) return versionsMemo.value
+    const memo = { at: Date.now(), ttl: 10 * 60_000 }
+    memo.value = Promise.all([
+      readJson(IOS_SOURCE), readJson(testSource), readJson(TV_TEST_SOURCE), readJson(TV_STABLE_SOURCE),
+      repos.android ? readJson(`${github}/repos/${repos.android}/releases?per_page=30`) : false,
+      siteVersion().catch(() => null),
+    ]).then(([main, test, tv, tvStable, apks, web]) => {
+      const v = {
+        at: memo.at,
+        ios: sourceVersion(main, 'TwitchUnblock'),
+        iosTest: sourceVersion(test) || sourceVersion(main, 'TU Test'),
+        tvTest: sourceVersion(tv),
+        tvStable: sourceVersion(tvStable),
+        android: androidVersions(apks),
+        web: web || null,
+      }
+      if (Object.values(v).includes(null)) memo.ttl = 60_000
+      return v
+    })
+    versionsMemo = memo
+    return memo.value
+  }
+
+  /** /version, dans la langue de la personne. */
+  async function versionText(t) {
+    const v = await latestVersions()
+    const b = (x) => (x ? `**${x}**` : t(x === false ? 'v_none' : 'v_unknown'))
+    const a = v.android
+    const android = !a ? t('v_unknown')
+      : a.stable ? `${b(a.stable)}${a.test ? ` · ${t('v_test')} ${b(a.test)}` : ''}`
+        : a.test ? t('v_test_only', b(a.test)) : t('v_none')
+    return [
+      t('v_head'),
+      `📱 ${t('v_ios')} ${b(v.ios)} · ${t('v_tu_test')} ${b(v.iosTest)}`,
+      `📺 ${t('v_tv')} ${t('v_test')} ${b(v.tvTest)}${v.tvStable ? ` · ${t('v_stable')} ${b(v.tvStable)}` : ''}`,
+      `🤖 ${t('v_android')} ${android}`,
+      `🌐 ${t('v_web')} ${b(v.web)}`,
+      `-# ${t('v_checked')} <t:${Math.floor(v.at / 1000)}:R>`,
+    ].join('\n')
+  }
+
+  /** /download : un encadré par plateforme et, dessous, une rangée de
+   *  boutons (liens) par plateforme, dans le même ordre. */
+  function downloadMessage(t, v) {
+    const link = (emoji, label, url) => ({ type: 2, style: 5, label, url, emoji: { name: emoji } })
+    const code = (url) => `\`\`\`\n${url}\n\`\`\`\n`
+    const embed = (title, description) => ({ title, description: description.trim().slice(0, 4000), color: 0x9146ff })
+    const a = v?.android
+    const android = !a ? '' : `\n${a.stable ? t('dl_latest', a.stable) : a.test ? t('dl_android_test_only', a.test) : t('dl_android_none')}`
+    // Source des versions stables de l'Apple TV : montrée, sauf quand on sait
+    // qu'elle n'existe pas encore.
+    const tvStable = v?.tvStable !== false
+    return {
+      embeds: [
+        embed(t('dl_ios_title'), `${t('dl_ios', IOS_SOURCE)}${v?.ios ? `\n${t('dl_latest', v.ios)}${v.iosTest ? ` · TU Test **${v.iosTest}**` : ''}` : ''}`),
+        embed(t('dl_tv_title'), `${t('dl_tv')}\n${t('dl_tv_test')}\n${code(TV_TEST_SOURCE)}${tvStable ? `${t('dl_tv_stable')}\n${code(TV_STABLE_SOURCE)}` : t('dl_tv_no_stable')}`),
+        embed(t('dl_android_title'), `${t('dl_android')}${android}`),
+        embed(t('dl_web_title'), t('dl_web')),
+      ],
+      components: [
+        row(link('📱', t('b_add_source'), ADD_SOURCE), link('📱', t('b_ipa'), IPA)),
+        row(link('📺', t('b_tv_test'), TV_TEST_SOURCE), ...(tvStable ? [link('📺', t('b_tv_stable'), TV_STABLE_SOURCE)] : [])),
+        row(link('🤖', t('b_apk'), APK_RELEASES)),
+        row(link('🌐', t('b_site'), site)),
+      ],
+    }
+  }
+
+  /** /download : pour soi, dans sa langue ; public:true (développeur) :
+   *  posté dans ce salon, en anglais. */
+  function downloadCommand(i, user) {
+    const t = lang(i.locale)
+    const asked = opt(i, 'public') === true
+    const pub = asked && isAdmin(user.id)
+    return deferred(i, async () => {
+      const v = await latestVersions()
+      if (!pub) return { ...downloadMessage(t, v), content: asked ? t('public_admin_only') : '' }
+      await rest('POST', `/channels/${i.channel_id}/messages`, { ...downloadMessage(EN, v), allowed_mentions: { parse: [] } })
+        .catch((e) => { throw new Error(t('post_failed', e.message)) })
+      return t('posted', i.channel_id)
+    })
+  }
+
+  /** /help : les commandes utiles à la personne (celles du développeur, à
+   *  lui seul). */
+  function helpText(i, user) {
+    const t = lang(i.locale)
+    const admin = isAdmin(user.id)
+    const cmd = (c) => c.split(' · ').map((x) => `\`${x}\``).join(' · ')
+    const mine = [
+      ['/bug', 'h_bug'], ['/idea', 'h_idea'],
+      ...(admin || offeredRoles().length ? [['/roles', 'h_roles']] : []),
+      ...(admin || st.settings.announcementsRole ? [['/release-pings', 'h_release_pings']] : []),
+      ['/download', 'h_download'], ['/version', 'h_version'], ['/help', 'h_help'],
+    ]
+    const lines = [t('h_head'), ...mine.map(([c, k]) => `${cmd(c)} — ${t(k)}`), `-# ${t('h_replies')}`]
+    if (admin) lines.push('', t('h_admin'), ...ADMIN_HELP.map(([c, k]) => `${cmd(c)} — ${t(k)}`))
+    return lines.join('\n').slice(0, 1900)
   }
 
   /** « Add to to-do » (menu d'un message) et /todo : une carte dans le salon
@@ -1178,6 +1998,7 @@ export function startDiscordBridge({
       })
     }
     if (kind === 'rp') return deferred(i, () => toggleReleaseRole(i, user))
+    if (kind === 'roles') return onRolesMenu(i, user, a)
     if (!isAdmin(user.id)) return adminOnly(i)
     const thread = i.channel_id
     switch (kind) {
@@ -2044,6 +2865,16 @@ export function startDiscordBridge({
         break
       case 'CHANNEL_UPDATE':
         if (d.id === st.forum) readTags(d)
+        if (d.guild_id === st.guild) forgetFacts()
+        break
+      // Rôles ou droits des salons changés : la vérification des rôles à
+      // donner les relit (guildFacts).
+      case 'CHANNEL_CREATE':
+      case 'CHANNEL_DELETE':
+      case 'GUILD_ROLE_CREATE':
+      case 'GUILD_ROLE_UPDATE':
+      case 'GUILD_ROLE_DELETE':
+        if (d.guild_id === st.guild) forgetFacts()
         break
       case 'THREAD_CREATE':
         if (d.parent_id === st.forum) st.threads.set(d.id, d.applied_tags || [])
