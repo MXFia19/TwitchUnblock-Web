@@ -1,0 +1,24 @@
+{
+  "manifest_version": 3,
+  "name": "TwitchUnblock Connect (essai)",
+  "version": "0.0.1",
+  "description": "Essai : lire la session Twitch locale et parler a l'API de Twitch, sans jamais faire sortir la session de l'extension.",
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "TwitchUnblock Connect"
+  },
+  "permissions": [
+    "cookies",
+    "scripting",
+    "tabs"
+  ],
+  "host_permissions": [
+    "*://*.twitch.tv/*"
+  ],
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "connect@twitchunblock.app",
+      "strict_min_version": "128.0"
+    }
+  }
+}

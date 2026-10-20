@@ -1,0 +1,106 @@
+<!doctype html>
+<!--
+  Fenetre (popup) de l'essai « TwitchUnblock Connect ».
+  Un champ « chaine » + quatre boutons. Chaque bouton ecrit son resultat
+  dans sa propre ligne (OK vert / echec rouge). Aucun jeton n'est jamais
+  affiche en clair : au plus ses 4 premiers caracteres et sa longueur.
+  Tout le code est dans popup.js (pas de script en ligne : la CSP MV3 l'interdit).
+-->
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TwitchUnblock Connect</title>
+  <style>
+    :root {
+      --bg: #0e0e10;
+      --card: #18181b;
+      --line: #2a2a2d;
+      --fg: #efeff1;
+      --muted: #adadb8;
+      --accent: #9147ff;
+      --ok: #00c389;
+      --err: #ff5b5b;
+    }
+    * { box-sizing: border-box; }
+    body {
+      width: 360px;
+      margin: 0;
+      padding: 14px;
+      background: var(--bg);
+      color: var(--fg);
+      font: 13px/1.45 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+    h1 { font-size: 14px; margin: 0 0 2px; }
+    .sub { color: var(--muted); font-size: 11px; margin: 0 0 12px; }
+    label { display: block; color: var(--muted); font-size: 11px; margin: 0 0 4px; }
+    input[type=text] {
+      width: 100%;
+      padding: 8px 10px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--card);
+      color: var(--fg);
+      font-size: 13px;
+      margin-bottom: 12px;
+    }
+    .step { border: 1px solid var(--line); border-radius: 10px; padding: 10px; margin-bottom: 10px; background: var(--card); }
+    button {
+      width: 100%;
+      padding: 9px 10px;
+      border: 0;
+      border-radius: 8px;
+      background: var(--accent);
+      color: #fff;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    button:hover { filter: brightness(1.08); }
+    button:disabled { opacity: .45; cursor: not-allowed; }
+    .result {
+      margin-top: 8px;
+      font-size: 12px;
+      white-space: pre-wrap;
+      word-break: break-word;
+      color: var(--muted);
+      min-height: 16px;
+    }
+    .result.ok { color: var(--ok); }
+    .result.err { color: var(--err); }
+    .result.busy { color: var(--muted); font-style: italic; }
+    footer { color: var(--muted); font-size: 10px; margin-top: 4px; }
+  </style>
+</head>
+<body>
+  <h1>TwitchUnblock Connect</h1>
+  <p class="sub">Essai local. Rien n'est envoye ailleurs que chez Twitch.</p>
+
+  <label for="channel">Chaine (ex. le pseudo d'un direct)</label>
+  <input type="text" id="channel" placeholder="nom_de_la_chaine" autocomplete="off" spellcheck="false">
+
+  <div class="step">
+    <button id="btn-session">1 · Session</button>
+    <div class="result" id="res-session"></div>
+  </div>
+
+  <div class="step">
+    <button id="btn-integrity">2 · Jeton d'integrite</button>
+    <div class="result" id="res-integrity"></div>
+  </div>
+
+  <div class="step">
+    <button id="btn-balance">3 · Solde des points</button>
+    <div class="result" id="res-balance"></div>
+  </div>
+
+  <div class="step">
+    <button id="btn-claim" disabled>4 · Reclamer le coffre</button>
+    <div class="result" id="res-claim"></div>
+  </div>
+
+  <footer>Les jetons restent dans cette fenetre. Ne recopie jamais un jeton entier.</footer>
+
+  <script src="popup.js"></script>
+</body>
+</html>
