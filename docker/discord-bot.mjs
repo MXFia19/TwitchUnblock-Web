@@ -2533,8 +2533,9 @@ export function startDiscordBridge({
       ...(base.timestamp ? { timestamp: base.timestamp } : {}),
     } : {
       title: `💡 ${s.title}`.slice(0, 256),
-      // Écrit par un membre : ni lien masqué ni mention.
-      description: String(s.text || '').replace(/[[\]<>]/g, '\\$&').slice(0, 4000),
+      // Écrit par un membre : ni lien masqué ni mention. La barre oblique
+      // inverse aussi : « \[x\](adresse) » redevenait un lien masqué.
+      description: String(s.text || '').replace(/[\\[\]<>]/g, '\\$&').slice(0, 4000),
       author: { name: `Suggestion from ${s.author}`.slice(0, 256), ...(s.avatar ? { icon_url: s.avatar } : {}) },
       timestamp: new Date().toISOString(),
     }
@@ -2588,8 +2589,13 @@ export function startDiscordBridge({
     const now = Date.now()
     if (suggested.size > 5000) for (const [id, at] of suggested) if (now - at >= SUGGEST_COOLDOWN) suggested.delete(id)
     suggested.set(user.id, now)
-    const channel = st.settings.suggestions || i.channel_id
-    const card = await rest('POST', `/channels/${channel}/messages`, suggestionCard(r.key, {
+    // Salon des suggestions (/setup) ; à défaut, celui de la commande, si la
+    // personne peut y écrire (droits du salon, donnés par l'interaction) :
+    // sinon le bot postait sa carte dans un salon en lecture seule (règles,
+    // annonces).
+    const own = BigInt(i.member?.permissions || 0) & ([10, 11, 12].includes(i.channel?.type) ? 1n << 38n : 1n << 11n)
+    const channel = st.settings.suggestions || (own ? i.channel_id : null)
+    const card = !channel ? null : await rest('POST', `/channels/${channel}/messages`, suggestionCard(r.key, {
       title, text, author: user.global_name || user.username || 'a member',
       avatar: user.avatar ? `https://cdn.discordapp.com/avatars/${user.id}/${user.avatar}.png?size=64` : null, votes: 0,
     })).catch((e) => { log.warn(`Discord bridge: suggestion card not posted in ${channel} (${e.message})`); return null })
@@ -2694,7 +2700,8 @@ export function startDiscordBridge({
   // La même action que /announce et /stats (Worker : mêmes champs, durée de
   // 1 min à 30 jours, mêmes limites, journal d'audit) ; rien ne part sans
   // « Publish ». Aperçus gardés 15 min, en mémoire.
-  const previews = new Map()   // identifiant → { title, message, link, hours, at }
+  const previews = new Map()   // identifiant → { title, message, link, hours, at, by }
+  const PREVIEW_TTL = 15 * 60_000
   const DURATIONS = ['1h', '6h', '24h', '3d', '7d', '30d']
 
   /** « 30m », « 6h », « 3d » (« 2 j », « 1.5h »…) en heures — 24 sans rien ;
@@ -2724,9 +2731,9 @@ export function startDiscordBridge({
     if (hours === null) return respond(i, 4, quiet(t('aa_bad_duration')))
     if (link && !/^https:\/\/[^\s]+$/i.test(link)) return respond(i, 4, quiet(t('aa_bad_link')))
     const now = Date.now()
-    for (const [id, p] of previews) if (now - p.at > 15 * 60_000) previews.delete(id)
+    for (const [id, p] of previews) if (now - p.at > PREVIEW_TTL) previews.delete(id)
     const id = `${now.toString(36)}${Math.random().toString(36).slice(2, 6)}`
-    previews.set(id, { title, message, link, hours, at: now })
+    previews.set(id, { title, message, link, hours, at: now, by: user.id })
     return deferred(i, async () => {
       // L'annonce en cours (route publique des apps), qu'elle remplacerait.
       const cur = (await readJson(`${worker}/api/announcement`))?.announcement
@@ -2748,7 +2755,11 @@ export function startDiscordBridge({
       previews.delete(id)
       return respond(i, 7, { content: t('aa_cancelled'), embeds: [], components: [], allowed_mentions: none })
     }
-    if (!p) return respond(i, 7, { content: t('aa_expired'), embeds: [], components: [], allowed_mentions: none })
+    // Plus vieux que 15 min (il restait en mémoire jusqu'au /app-announce
+    // suivant, et se publiait encore des heures après) ou d'un autre : expiré.
+    if (!p || Date.now() - p.at > PREVIEW_TTL || p.by !== user.id) {
+      return respond(i, 7, { content: t('aa_expired'), embeds: [], components: [], allowed_mentions: none })
+    }
     previews.delete(id)   // un seul envoi, même sur un double appui
     await respond(i, 6)
     try {

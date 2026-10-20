@@ -619,7 +619,8 @@ in a channel stays in English):
 - `/suggest`: a form (title, description). The suggestion becomes a report
   (in the forum, `/stats` and `/my-reports`; the developer's replies come in
   a direct message, as for `/bug`) and a public card in the suggestions
-  channel (`/setup`; without one, the channel where `/suggest` was used):
+  channel (`/setup`; without one, the channel where `/suggest` was used, if
+  the person can write there — no card in a read-only channel):
   **👍 N** to vote — one vote per member, tapping again takes it back, counted
   by the Worker — and **Planned**, **Done**, **Declined** for the developer
   (the report's status — Accepted, Done, Declined —, so the post's tag, the
