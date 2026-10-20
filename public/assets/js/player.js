@@ -272,8 +272,9 @@ const LIVE_HALT_MS = 15_000
 /** Playlist d'un direct relue par hls.js (LEVEL_UPDATED) : retient dans
  *  `state.livePlaylist` l'heure de cette lecture et celle où elle a avancé
  *  pour la dernière fois — premier segment (EXT-X-MEDIA-SEQUENCE) changé,
- *  segment de plus à la fin, ou autre qualité (« Auto »). `true` si elle a
- *  avancé. */
+ *  segment de plus à la fin, ou autre qualité (« Auto ») —, et la dernière
+ *  coupure de la chaîne finie (`halt`, voir liveStallWait). `true` si elle
+ *  a avancé. */
 export function noteLivePlaylist(state, data, now = Date.now()) {
   const d = data?.details
   if (!d) return false
@@ -287,6 +288,9 @@ export function noteLivePlaylist(state, data, now = Date.now()) {
     endSN: moved ? d.endSN : Math.max(prev.endSN, d.endSN),
     readAt: now,
     movedAt: moved ? now : prev.movedAt,
+    // Avancée qui met fin à une coupure (liveHalted, lu avant cette mise à
+    // jour) : la chaîne s'était arrêtée à sa dernière avancée.
+    halt: moved && liveHalted(state, now) ? { from: prev.movedAt, to: now } : prev?.halt,
     ended: d.live === false,
   }
   return moved
@@ -298,6 +302,20 @@ export function liveHalted(state, now = Date.now()) {
   const p = state.livePlaylist
   if (!p) return false
   return p.ended || (now - p.readAt < LIVE_HALT_MS && now - p.movedAt >= LIVE_HALT_MS)
+}
+
+/** Direct calé depuis `state.stalledAt` : temps pendant lequel la chaîne,
+ *  elle, a continué d'avancer (ms) — l'attente, moins la coupure en cours
+ *  (liveHalted, comptée depuis la dernière avancée) et la dernière finie
+ *  (`livePlaylist.halt`). Pendant une coupure, plus rien n'est filmé : le
+ *  retard sur le direct ne grandit pas (chatDelay). */
+export function liveStallWait(state, now = Date.now()) {
+  const since = state.stalledAt
+  const p = state.livePlaylist
+  let wait = now - since
+  if (p?.halt) wait -= Math.max(0, p.halt.to - Math.max(since, p.halt.from))
+  if (liveHalted(state, now)) wait -= now - Math.max(since, p.movedAt)
+  return Math.max(0, wait)
 }
 
 // ── Mémoire tampon de hls.js ────────────────────────────────────────────
@@ -1391,8 +1409,11 @@ export class Player {
     let behind = this.hls ? this.hls.latency - (this.prefetchAhead || 0) : NaN
     // Calage en cours : l'image est figée, le direct avance. hls.js ne refait
     // sa mesure qu'à la reprise de la lecture : le temps d'attente s'y ajoute
-    // d'ici là (le chat synchronisé suit ainsi le calage).
-    if (behind > 0 && this.stalledAt) behind += (Date.now() - this.stalledAt) / 1000
+    // d'ici là (le chat synchronisé suit ainsi le calage). Sauf pendant une
+    // coupure de la chaîne (liveStallWait) : le direct n'avance pas non plus,
+    // le retard reste celui d'avant. Les messages, qui arrivent toujours,
+    // s'empilaient jusqu'au plafond de 60 s et sortaient d'un coup à la reprise.
+    if (behind > 0 && this.stalledAt) behind += liveStallWait(this) / 1000
     // Position encore à 0 : le premier saut vers le direct n'a pas eu lieu,
     // pas de mesure (le chat aurait attendu 60 s).
     if (!(behind > 0) && v.seekable.length && v.currentTime > 0) behind = v.seekable.end(v.seekable.length - 1) - (this.prefetchAhead || 0) - v.currentTime
