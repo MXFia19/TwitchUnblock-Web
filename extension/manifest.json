@@ -43,7 +43,9 @@
     "https://*.twitch.tv/*",
     "https://static.twitchcdn.net/*",
     "https://usher.ttvnw.net/*",
-    "https://*.hls.ttvnw.net/*"
+    "https://*.hls.ttvnw.net/*",
+    "https://twitchunblock.vercel.app/*",
+    "https://test2-git-test-17d298-mxfia19s-projects.vercel.app/*"
   ],
   "browser_specific_settings": {
     "gecko": {

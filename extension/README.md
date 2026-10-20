@@ -90,7 +90,10 @@ une signature de Mozilla (AMO), que fera plus tard le propriétaire du projet
   d'intégrité dans une page twitch.tv), `storage` (réglages et état de session). Hôtes :
   `*.twitch.tv`, `static.twitchcdn.net` (fichier de réglages de twitch.tv où se trouve
   l'adresse des statistiques de visionnage), `usher.ttvnw.net` (liste des qualités d'un
-  direct) et `*.hls.ttvnw.net` (playlist et segments, demandés en HEAD pour les drops).
+  direct), `*.hls.ttvnw.net` (playlist et segments, demandés en HEAD pour les drops) et
+  les deux adresses du site (content script, réinjecté dans les onglets déjà ouverts
+  après une installation ou une mise à jour : sous Chrome, l'ancien reste orphelin et
+  se tait). Un réglage changé dans la fenêtre est annoncé tout de suite à ces onglets.
 
 ## Notes de développement
 

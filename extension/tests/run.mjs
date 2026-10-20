@@ -27,6 +27,7 @@ const CHANNEL = "streamer_one";
 const CHANNEL_ID = "123456";
 const SPADE = "https://video-edge-abc123.fra05.abs.hls.ttvnw.net/v1/segment/CuYEsecret.ts";
 const CLIENT_ID = "kimne78kx3ncx6brgo4mv6wki5h1ko";
+const TWITCH_TABS = "https://www.twitch.tv/*";
 
 // Hashes attendus (ceux de l'app iOS ; JoinRaid : celui fourni, non vérifié).
 const HASHES = {
@@ -411,7 +412,7 @@ function loadBackground(opts = {}) {
   const local = opts.local || {};
   const consoleLines = [];
   const tabs = new Map((opts.tabs || []).map((t) => [t.id, { status: "complete", active: false, discarded: false, incognito: false, ...t }]));
-  const tabLog = { created: [], updated: [], removed: [], scripts: [] };
+  const tabLog = { created: [], updated: [], removed: [], scripts: [], injected: [], messages: [] };
   const windows = opts.windows || [{ id: 1, type: "normal", focused: true, incognito: false }];
   let nextTab = 500;
   const cookies = { "auth-token": AUTH_TOKEN, unique_id: UNIQUE_ID, ...(opts.cookies || {}) };
@@ -428,7 +429,7 @@ function loadBackground(opts = {}) {
       onMessage,
       onInstalled: makeEvent()
     },
-    storage: { session: makeArea(session), local: makeArea(local) },
+    storage: { session: makeArea(session), local: makeArea(local), onChanged: makeEvent() },
     windows: {
       async getAll({ windowTypes }) {
         assert.equal(JSON.stringify(windowTypes), '["normal"]');
@@ -445,8 +446,13 @@ function loadBackground(opts = {}) {
       onUpdated,
       onRemoved,
       async query({ url }) {
-        assert.equal(url, "https://www.twitch.tv/*");
-        return [...tabs.values()].filter((t) => (t.url || "").startsWith("https://www.twitch.tv/")).map(clone);
+        const patterns = [].concat(url);
+        for (const p of patterns) assert.ok([TWITCH_TABS, SITE + "/*", PREVIEW + "/*"].includes(p), "onglets demandés : " + p);
+        return [...tabs.values()].filter((t) => patterns.some((p) => (t.url || "").startsWith(p.slice(0, -1)))).map(clone);
+      },
+      async sendMessage(tabId, msg, options) {
+        tabLog.messages.push({ tabId, msg: clone(msg), options: clone(options) });
+        return undefined;
       },
       async create(props) {
         if (tw.tabCreateFails) throw new Error("No current window");
@@ -477,8 +483,15 @@ function loadBackground(opts = {}) {
       }
     },
     scripting: {
-      async executeScript({ target, world, func, args }) {
+      async executeScript({ target, world, func, args, files }) {
         const tab = tabs.get(target.tabId);
+        if (files) {
+          assert.deepEqual([...files], ["content.js"]);
+          assert.equal(world, undefined, "content script dans son monde isolé");
+          assert.ok(tab && (tab.url.startsWith(SITE + "/") || tab.url.startsWith(PREVIEW + "/")), "content script seulement dans le site");
+          tabLog.injected.push(target.tabId);
+          return [{ result: undefined }];
+        }
         assert.ok(tab && tab.url.startsWith("https://www.twitch.tv/"), "injection seulement dans www.twitch.tv");
         assert.equal(world, "MAIN");
         assert.equal(func.name, "pageMintIntegrity");
@@ -560,29 +573,40 @@ function loadContent(opts = {}) {
   const nav = { userActivation: { isActive: false } };
   const win = {
     addEventListener: (type, fn) => { if (type === "message") listeners.push(fn); },
+    removeEventListener: (type, fn) => { const i = listeners.indexOf(fn); if (type === "message" && i >= 0) listeners.splice(i, 1); },
     postMessage: (msg, targetOrigin) => {
       posted.push({ data: clone(msg), targetOrigin });
       // Comme dans un navigateur : le content script reçoit aussi ses propres messages.
-      setImmediate(() => listeners.forEach((fn) => fn({ source: win, origin, data: clone(msg) })));
+      setImmediate(() => [...listeners].forEach((fn) => fn({ source: win, origin, data: clone(msg) })));
     }
   };
   const documentTrap = new Proxy({}, { get(_, key) { throw new Error("le content script a touché au DOM : " + String(key)); } });
-  const chrome = {
+  const makeChrome = () => ({
     runtime: {
+      id: EXT_ID,
       getManifest: () => clone(MANIFEST),
+      onMessage: makeEvent(),
       sendMessage: (m) => { sent.push(clone(m)); return opts.sendMessage ? opts.sendMessage(clone(m)) : Promise.resolve(undefined); }
     }
-  };
-  const ctx = vm.createContext({ window: win, navigator: nav, location: { origin }, document: documentTrap, chrome, console });
-  vm.runInContext(CONTENT, ctx, { filename: "content.js" });
+  });
+  const ctx = vm.createContext({ window: win, navigator: nav, location: { origin }, document: documentTrap, chrome: makeChrome(), console });
+  const inject = () => vm.runInContext(CONTENT, ctx, { filename: "content.js" });
+  inject();
   let n = 0;
   return {
-    posted, sent, nav, win,
+    posted, sent, nav, win, listeners,
+    // Nouvelle injection dans le même monde isolé (runtime.onInstalled).
+    inject,
+    // Mise à jour sous Chrome : le script en place devient orphelin, le
+    // suivant reçoit une API neuve.
+    orphan: () => { ctx.chrome.runtime.id = undefined; ctx.chrome = makeChrome(); },
+    // Message de l'extension (tabs.sendMessage) aux scripts reliés à l'API actuelle.
+    runtimeMessage: (msg, sender) => ctx.chrome.runtime.onMessage.listeners.forEach((fn) => fn(clone(msg), sender, () => {})),
     // La page envoie un message (par défaut : depuis elle-même, sa propre origine).
-    dispatch: (data, over = {}) => listeners.forEach((fn) => fn({ source: win, origin, data: clone(data), ...over })),
+    dispatch: (data, over = {}) => [...listeners].forEach((fn) => fn({ source: win, origin, data: clone(data), ...over })),
     request(op, args, over = {}) {
       const id = "q" + (++n);
-      listeners.forEach((fn) => fn({ source: win, origin, data: clone({ tuConnect: 1, dir: "req", id, op, args }), ...over }));
+      [...listeners].forEach((fn) => fn({ source: win, origin, data: clone({ tuConnect: 1, dir: "req", id, op, args }), ...over }));
       return id;
     },
     async reply(id, max = 400) {
@@ -1473,6 +1497,57 @@ test("content script + arrière-plan : de bout en bout, sans jeton dans la page"
   }
 });
 
+test("content script : orphelin silencieux, réinjection sans doublon", async () => {
+  const hello = { ok: true, data: { protocol: 1, version: MANIFEST.version, enabled: true, browser: "chrome" } };
+  const page = loadContent({ sendMessage: async () => hello });
+  await ticks(5);
+  // Réinjecté alors qu'il est encore valide (Firefox l'injecte déjà, mise à jour du navigateur) : rien de plus.
+  page.inject();
+  await ticks(5);
+  const once = (id) => page.posted.filter((p) => p.data.dir === "res" && p.data.id === id).length;
+  const a = page.request("hello", {});
+  assert.equal((await page.reply(a)).ok, true);
+  await ticks(5);
+  assert.equal(once(a), 1, "une seule réponse");
+  assert.equal(page.sent.filter((m) => m.id === a).length, 1, "une seule demande transmise");
+  // Mise à jour sous Chrome : l'ancien, orphelin, se tait ; le réinjecté répond seul.
+  page.orphan();
+  page.inject();
+  await ticks(5);
+  const b = page.request("hello", {});
+  assert.equal((await page.reply(b)).ok, true);
+  await ticks(5);
+  assert.equal(once(b), 1, "pas de réponse `internal` de l'orphelin");
+  assert.equal(page.listeners.length, 1, "l'orphelin a retiré son écouteur");
+});
+
+test("réglage changé : nouvelle annonce ; installation ou mise à jour : content script réinjecté", async () => {
+  const h = loadBackground({ tabs: [
+    liveTab(),
+    { id: 21, url: SITE + "/live/" + CHANNEL },
+    { id: 22, url: PREVIEW + "/", incognito: true },
+    { id: 23, url: "https://example.com/" }
+  ] });
+  h.local.settings = { siteEnabled: false, autoClaim: true, allowSpend: true };
+  h.chrome.storage.onChanged.listeners[0]({ settings: { newValue: h.local.settings } }, "local");
+  h.chrome.storage.onChanged.listeners[0]({ deviceId: { newValue: "x" } }, "local");
+  await ticks(5);
+  assert.deepEqual(h.tabLog.messages, [{ tabId: 21, msg: { tuConnect: 1, kind: "announce", enabled: false }, options: { frameId: 0 } }],
+    "onglets du site seulement, hors navigation privée, et seulement pour les réglages");
+  h.chrome.runtime.onInstalled.listeners[0]({ reason: "update" });
+  await ticks(5);
+  assert.deepEqual(h.tabLog.injected, [21]);
+  // Le content script relaie l'annonce de l'extension à la page, rien d'autre.
+  const page = loadContent();
+  await ticks(5);
+  page.runtimeMessage({ tuConnect: 1, kind: "announce", enabled: false }, { id: EXT_ID });
+  page.runtimeMessage({ tuConnect: 1, kind: "announce", enabled: true }, { id: EXT_ID, tab: { id: 5 } });
+  page.runtimeMessage({ tuConnect: 1, kind: "announce", enabled: true }, { id: "autre" });
+  page.runtimeMessage({ tuConnect: 1, kind: "announce", enabled: "oui" }, { id: EXT_ID });
+  assert.deepEqual(page.posted.filter((p) => p.data.dir === "hello").map((p) => p.data),
+    [{ tuConnect: 1, dir: "hello", protocol: 1, version: MANIFEST.version, enabled: false }]);
+});
+
 // --- Manifeste ---------------------------------------------------------------------------------------------
 
 test("manifeste : origines, permissions et arrière-plan attendus", () => {
@@ -1483,9 +1558,10 @@ test("manifeste : origines, permissions et arrière-plan attendus", () => {
   assert.equal(MANIFEST.externally_connectable, undefined);
   assert.equal(MANIFEST.web_accessible_resources, undefined);
   assert.equal(MANIFEST.browser_specific_settings.gecko.id, "connect@twitchunblock.app");
-  for (const host of MANIFEST.host_permissions) {
-    assert.match(host, /^https:\/\/(\*\.twitch\.tv|static\.twitchcdn\.net|usher\.ttvnw\.net|\*\.hls\.ttvnw\.net)\/\*$/);
-  }
+  assert.deepEqual(MANIFEST.host_permissions, [
+    "https://*.twitch.tv/*", "https://static.twitchcdn.net/*", "https://usher.ttvnw.net/*", "https://*.hls.ttvnw.net/*",
+    SITE + "/*", PREVIEW + "/*"
+  ], "Twitch, et les deux origines du site (réinjection du content script)");
   const en = JSON.parse(readFileSync(join(DIR, "_locales", "en", "messages.json"), "utf8"));
   for (const lang of ["fr", "es", "ru", "it", "ja"]) {
     const other = JSON.parse(readFileSync(join(DIR, "_locales", lang, "messages.json"), "utf8"));

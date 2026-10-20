@@ -2070,10 +2070,56 @@ api.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   return false;
 });
 
+// --- Onglets du site déjà ouverts ----------------------------------------------------------
+
+// Onglets du site, hors navigation privée (refusée par fromSite).
+async function siteTabs() {
+  let tabs = [];
+  try {
+    tabs = await api.tabs.query({ url: SITE_ORIGINS.map((o) => o + "/*") });
+  } catch (e) {
+    tabs = [];
+  }
+  return arr(tabs).filter((t) => t && typeof t.id === "number" && !t.incognito && !t.discarded &&
+    SITE_ORIGINS.includes(originOf(t.url)));
+}
+
+// Réglage changé dans la fenêtre : nouvelle annonce `hello` dans les onglets
+// du site, qui suit tout de suite (sinon il relit l'état toutes les 5 min).
+async function announceToSite() {
+  const settings = await getSettings();
+  for (const t of await siteTabs()) {
+    try {
+      const p = api.tabs.sendMessage(t.id, { tuConnect: 1, kind: "announce", enabled: settings.siteEnabled }, { frameId: 0 });
+      if (p && typeof p.catch === "function") p.catch(() => {});
+    } catch (e) {
+      // pas de content script dans cet onglet
+    }
+  }
+}
+
+// Installation ou mise à jour : Chrome n'injecte pas le content script dans
+// les onglets déjà ouverts, et l'ancien, orphelin, se tait. content.js ne fait
+// rien si un script valide y tourne déjà (Firefox l'injecte lui-même).
+async function injectIntoSiteTabs() {
+  for (const t of await siteTabs()) {
+    try {
+      await api.scripting.executeScript({ target: { tabId: t.id }, files: ["content.js"] });
+    } catch (e) {
+      // page pas chargée, page d'erreur, accès retiré
+    }
+  }
+}
+
 api.runtime.onInstalled.addListener(() => {
   getSettings()
     .then((s) => api.storage.local.set({ settings: s }))
     .catch(() => {});
+  injectIntoSiteTabs().catch(() => {});
+});
+
+api.storage.onChanged.addListener((changes, area) => {
+  if (area === "local" && changes && changes.settings) announceToSite().catch(() => {});
 });
 
 // storage.session reste fermé aux content scripts (valeur par défaut sous

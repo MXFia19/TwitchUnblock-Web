@@ -4,15 +4,34 @@
 // TwitchUnblock Connect — pont entre le site et l'extension (PROTOCOL.md)
 //
 // Injecté seulement sur les deux origines du site, cadre principal, au tout
-// début du chargement. Il ne fait QUE relayer : il filtre les messages de la
-// page, vérifie la forme et la taille des arguments, exige un vrai clic pour
-// les dépenses, transmet à l'arrière-plan et renvoie sa réponse. Il ne touche
-// pas au DOM, ne lit aucun stockage et ne voit jamais la session Twitch.
+// début du chargement (et réinjecté par l'arrière-plan dans les onglets déjà
+// ouverts après une installation ou une mise à jour). Il ne fait QUE relayer :
+// il filtre les messages de la page, vérifie la forme et la taille des
+// arguments, exige un vrai clic pour les dépenses, transmet à l'arrière-plan
+// et renvoie sa réponse, et redonne l'annonce quand l'extension la renvoie. Il
+// ne touche pas au DOM, ne lit aucun stockage et ne voit jamais la session Twitch.
 // ---------------------------------------------------------------------------
 
 (() => {
   const api = globalThis.browser || globalThis.chrome;
   if (!api || !api.runtime || typeof api.runtime.sendMessage !== "function") return;
+
+  // Script encore relié à l'extension ? Après une mise à jour ou un
+  // rechargement sous Chrome, l'ancien reste dans la page, orphelin :
+  // runtime.id devient indéfini.
+  const alive = () => {
+    try {
+      return !!api.runtime.id;
+    } catch (e) {
+      return false;
+    }
+  };
+  // L'arrière-plan réinjecte ce script dans les onglets déjà ouverts
+  // (runtime.onInstalled) : rien si un script valide tourne déjà ici, sinon
+  // chaque demande partirait deux fois. (Monde isolé : la page n'y voit rien.)
+  const running = globalThis.__tuConnectAlive;
+  if (typeof running === "function" && running() === true) return;
+  globalThis.__tuConnectAlive = alive;
 
   const ORIGIN = location.origin;
   const PROTOCOL = 1;
@@ -129,7 +148,13 @@
 
   let inFlight = 0;
 
-  window.addEventListener("message", (event) => {
+  function onPageMessage(event) {
+    if (!alive()) {
+      // Orphelin : il se tait (il ne répondrait plus que `internal`) et laisse
+      // répondre le script réinjecté.
+      window.removeEventListener("message", onPageMessage);
+      return;
+    }
     if (event.source !== window || event.origin !== ORIGIN) return;
     const m = event.data;
     if (!m || typeof m !== "object" || m.tuConnect !== 1 || m.dir !== "req") return;
@@ -163,19 +188,36 @@
     toBackground({ tuConnect: 1, kind: "op", id, op, args: checked.args, activation })
       .then((res) => reply(id, res), () => reply(id, failure("internal")))
       .finally(() => { inFlight--; });
-  });
+  }
 
-  // --- Annonce au chargement --------------------------------------------------
+  window.addEventListener("message", onPageMessage);
 
+  // --- Annonce ------------------------------------------------------------------
+
+  function announce(enabled, version) {
+    post({
+      tuConnect: 1,
+      dir: "hello",
+      protocol: PROTOCOL,
+      version: String(version || api.runtime.getManifest().version),
+      enabled: enabled === true
+    });
+  }
+
+  // Au chargement.
   toBackground({ tuConnect: 1, kind: "op", id: "announce", op: "hello", args: {}, activation: false })
     .then((res) => {
       if (!res || res.ok !== true || !res.data) return;
-      post({
-        tuConnect: 1,
-        dir: "hello",
-        protocol: PROTOCOL,
-        version: String(res.data.version || api.runtime.getManifest().version),
-        enabled: res.data.enabled === true
-      });
+      announce(res.data.enabled, res.data.version);
     }, () => {});
+
+  // Réglage changé dans la fenêtre de l'extension : l'arrière-plan redonne
+  // l'annonce (tabs.sendMessage), et le site suit tout de suite.
+  if (api.runtime.onMessage && typeof api.runtime.onMessage.addListener === "function") {
+    api.runtime.onMessage.addListener((msg, sender) => {
+      if (!sender || sender.id !== api.runtime.id || sender.tab) return;
+      if (!msg || msg.tuConnect !== 1 || msg.kind !== "announce" || typeof msg.enabled !== "boolean") return;
+      announce(msg.enabled);
+    });
+  }
 })();
