@@ -115,7 +115,7 @@ const STRINGS = {
     emote_type_global: 'Emote globale Twitch', emote_type_sub: 'Emote d’abonné · niveau {n}', emote_type_points: 'Emote débloquée avec les points de chaîne', emote_sub_count: 'Emotes d’abonné de {c} : {n}',
     // Réglages
     settings: 'Réglages', language: 'Langue', lang_auto: 'Appareil', lang_auto_sub: 'Suit la langue de ton appareil ({l}).', account: 'Compte', playback: 'Lecture',
-    chat_settings: 'Chat', chat_sync: 'Synchroniser le chat avec la vidéo', chat_sync_sub: 'Retarde les messages du direct du retard de l’image : on lit les réactions au moment où l’on voit ce qui les provoque.', timestamps: 'Afficher l’heure', keep_deleted: 'Garder les messages supprimés (barrés)',
+    chat_settings: 'Chat', chat_sync: 'Chat synchronisé avec la vidéo', chat_sync_sub: 'Retarde les messages du direct du retard de l’image : on lit les réactions au moment où l’on voit ce qui les provoque. Le ⏱ au-dessus du chat montre ce retard ; un clic le coupe ou le rallume.', timestamps: 'Afficher l’heure', keep_deleted: 'Garder les messages supprimés (barrés)',
     load_history: 'Charger les messages précédents', chat_size: 'Taille du texte',
     connected_as: 'Connecté en tant que {u}', not_connected: 'Non connecté',
     source_site: 'Code source du site', source_app: 'Code source de l’app iOS', credits: 'Crédits', made_by: 'Créé par', thanks: 'Merci à', not_affiliated: 'Projet indépendant, sans lien avec Twitch.',
@@ -136,6 +136,7 @@ const STRINGS = {
     hidden_title: 'Chaînes et catégories masquées', hidden_sub: 'Elles n’apparaissent plus dans le top ni dans les catégories. La recherche les trouve toujours, et ce que tu suis n’est jamais masqué.',
     hidden_channels_n: 'Chaînes ({n})', hidden_categories_n: 'Catégories ({n})', hidden_empty: 'Rien de masqué. Clique sur l’œil barré d’une carte du top ou d’une catégorie.', hidden_footer: '{n} masqué(s) ici · Gérer',
     hidden_channel_done: '{u} n’apparaîtra plus dans le top ni les catégories', hidden_category_done: '« {c} » n’apparaîtra plus dans le top ni la grille',
+    chat_sync_on: 'Chat retardé de {s} s pour suivre la vidéo. Cliquer pour couper.', chat_sync_off: 'Chat synchronisé avec la vidéo : coupé. Cliquer pour le rallumer.', pinned_by_viewers: 'Épinglées triées par spectateurs', pinned_by_viewers_sub: 'Les directs des chaînes épinglées restent en tête des suivies, du plus regardé au moins regardé. Désactivé : dans l’ordre où tu les as épinglées.',
   },
   en: {
     nav_discover: 'Discover', nav_channel: 'Streamer', nav_link: 'Link / ID',
@@ -244,7 +245,7 @@ const STRINGS = {
     emote_scope_global: 'Global emote', emote_scope_channel: 'Channel emote', emote_by: 'By {u}', emote_original: 'Original name: {n}', emote_zero_width: 'Overlays the previous emote', emote_modifier: 'Modifier: changes how another emote looks', emote_view_on: 'View on {p}',
     emote_type_global: 'Twitch global emote', emote_type_sub: 'Tier {n} sub emote', emote_type_points: 'Unlocked with channel points', emote_sub_count: '{c} sub emotes: {n}',
     settings: 'Settings', language: 'Language', lang_auto: 'Device', lang_auto_sub: 'Follows your device language ({l}).', account: 'Account', playback: 'Playback',
-    chat_settings: 'Chat', chat_sync: 'Sync chat with the video', chat_sync_sub: 'Holds live messages back by the video delay, so reactions show up when you see what caused them.', timestamps: 'Show timestamps', keep_deleted: 'Keep deleted messages (struck through)',
+    chat_settings: 'Chat', chat_sync: 'Chat synced with the video', chat_sync_sub: 'Holds live messages back by the video delay, so reactions show up when you see what caused them. The ⏱ above the chat shows that delay; click it to turn syncing off or back on.', timestamps: 'Show timestamps', keep_deleted: 'Keep deleted messages (struck through)',
     load_history: 'Load earlier messages', chat_size: 'Text size',
     connected_as: 'Logged in as {u}', not_connected: 'Not logged in',
     source_site: 'Website source code', source_app: 'iOS app source code', credits: 'Credits', made_by: 'Made by', thanks: 'Thanks to', not_affiliated: 'Independent project, not affiliated with Twitch.',
@@ -265,6 +266,7 @@ const STRINGS = {
     hidden_title: 'Hidden channels and categories', hidden_sub: 'They no longer show up in Top or in categories. Search still finds them, and what you follow is never hidden.',
     hidden_channels_n: 'Channels ({n})', hidden_categories_n: 'Categories ({n})', hidden_empty: 'Nothing hidden. Click the crossed-out eye on a Top or category card.', hidden_footer: '{n} hidden here · Manage',
     hidden_channel_done: '{u} won’t show up in Top or categories anymore', hidden_category_done: '“{c}” won’t show up in Top or the grid anymore',
+    chat_sync_on: 'Chat held back {s} s to match the video. Click to turn off.', chat_sync_off: 'Chat synced with the video: off. Click to turn it back on.', pinned_by_viewers: 'Pinned sorted by viewers', pinned_by_viewers_sub: 'Live pinned channels stay at the top of Following, most watched first. Off: in the order you pinned them.',
   },
   es: {
     nav_discover: 'Descubrir', nav_channel: 'Streamer', nav_link: 'Enlace / ID',
@@ -373,7 +375,7 @@ const STRINGS = {
     emote_scope_global: 'Emote global', emote_scope_channel: 'Emote del canal', emote_by: 'Por {u}', emote_original: 'Nombre original: {n}', emote_zero_width: 'Se superpone al emote anterior', emote_modifier: 'Modificador: cambia el aspecto de otro emote', emote_view_on: 'Ver en {p}',
     emote_type_global: 'Emote global de Twitch', emote_type_sub: 'Emote de suscriptor · nivel {n}', emote_type_points: 'Emote desbloqueado con puntos del canal', emote_sub_count: 'Emotes de suscriptor de {c}: {n}',
     settings: 'Ajustes', language: 'Idioma', lang_auto: 'Dispositivo', lang_auto_sub: 'Sigue el idioma de tu dispositivo ({l}).', account: 'Cuenta', playback: 'Reproducción',
-    chat_settings: 'Chat', chat_sync: 'Sincronizar el chat con el vídeo', chat_sync_sub: 'Retrasa los mensajes del directo lo que tarda la imagen: las reacciones llegan cuando ves lo que las provoca.', timestamps: 'Mostrar la hora', keep_deleted: 'Mantener mensajes eliminados (tachados)',
+    chat_settings: 'Chat', chat_sync: 'Chat sincronizado con el vídeo', chat_sync_sub: 'Retrasa los mensajes del directo lo que tarda la imagen: las reacciones llegan cuando ves lo que las provoca. El ⏱ encima del chat muestra ese retraso; un clic lo desactiva o lo reactiva.', timestamps: 'Mostrar la hora', keep_deleted: 'Mantener mensajes eliminados (tachados)',
     load_history: 'Cargar mensajes anteriores', chat_size: 'Tamaño del texto',
     connected_as: 'Conectado como {u}', not_connected: 'Sin conectar',
     source_site: 'Código fuente del sitio', source_app: 'Código fuente de la app iOS', credits: 'Créditos', made_by: 'Creado por', thanks: 'Gracias a', not_affiliated: 'Proyecto independiente, sin relación con Twitch.',
@@ -394,6 +396,7 @@ const STRINGS = {
     hidden_title: 'Canales y categorías ocultos', hidden_sub: 'Ya no aparecen en el top ni en las categorías. La búsqueda los sigue encontrando, y lo que sigues nunca se oculta.',
     hidden_channels_n: 'Canales ({n})', hidden_categories_n: 'Categorías ({n})', hidden_empty: 'Nada oculto. Haz clic en el ojo tachado de una tarjeta del top o de una categoría.', hidden_footer: '{n} oculto(s) aquí · Gestionar',
     hidden_channel_done: '{u} ya no aparecerá en el top ni en las categorías', hidden_category_done: '«{c}» ya no aparecerá en el top ni en la cuadrícula',
+    chat_sync_on: 'Chat retrasado {s} s para seguir el vídeo. Haz clic para desactivarlo.', chat_sync_off: 'Chat sincronizado con el vídeo: desactivado. Haz clic para reactivarlo.', pinned_by_viewers: 'Fijados ordenados por espectadores', pinned_by_viewers_sub: 'Los directos de los canales fijados siguen arriba en Seguidos, del más visto al menos visto. Desactivado: en el orden en que los fijaste.',
   },
 }
 

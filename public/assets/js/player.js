@@ -518,8 +518,16 @@ export class Player {
 
     // ── Vidéo ────────────────────────────────────────────────────────────
     v.addEventListener('play', () => this.syncPlay())
-    v.addEventListener('pause', () => { this.syncPlay(); this.showUI(); this.o.onPause?.() })
-    v.addEventListener('waiting', () => { this.el.spinner.hidden = false; this.passHole() })
+    v.addEventListener('pause', () => { this.stalledAt = 0; this.syncPlay(); this.showUI(); this.o.onPause?.() })
+    v.addEventListener('waiting', () => {
+      this.el.spinner.hidden = false
+      this.passHole()
+      // Direct qui cale : l'image s'arrête, pas le direct (voir chatDelay).
+      if (this.kind === 'live' && !v.paused && !v.seeking && !this.stalledAt) {
+        this.stalledAt = Date.now()
+        this.stallPos = v.currentTime
+      }
+    })
     // Premier placement (départ demandé, ou saut fait pendant le chargement)
     // ou lecture partie : la position de la vidéo fait foi dès lors (resumeAt).
     v.addEventListener('seeking', () => { this.startPos = 0; this.passHole() })
@@ -700,6 +708,7 @@ export class Player {
     // la cible d'une chaîne débordait sur la suivante, et n'était pas
     // réappliquée au nouvel objet hls.
     this.behindTarget = undefined
+    this.stalledAt = 0
     this.floorCheckAt = 0
     this.floorSeekAt = 0
     this.holdingBehind = false
@@ -1188,7 +1197,13 @@ export class Player {
     // Distance au bord de la playlist, sans les segments annoncés d'avance
     // (pas encore finis : les autres spectateurs ne les voient pas encore).
     let behind = this.hls ? this.hls.latency - (this.prefetchAhead || 0) : NaN
-    if (!(behind > 0) && v.seekable.length) behind = v.seekable.end(v.seekable.length - 1) - (this.prefetchAhead || 0) - v.currentTime
+    // Calage en cours : l'image est figée, le direct avance. hls.js ne refait
+    // sa mesure qu'à la reprise de la lecture : le temps d'attente s'y ajoute
+    // d'ici là (le chat synchronisé suit ainsi le calage).
+    if (behind > 0 && this.stalledAt) behind += (Date.now() - this.stalledAt) / 1000
+    // Position encore à 0 : le premier saut vers le direct n'a pas eu lieu,
+    // pas de mesure (le chat aurait attendu 60 s).
+    if (!(behind > 0) && v.seekable.length && v.currentTime > 0) behind = v.seekable.end(v.seekable.length - 1) - (this.prefetchAhead || 0) - v.currentTime
     if (!Number.isFinite(behind) || behind < 0) return 0
     return Math.min(behind, 60)
   }
@@ -1345,6 +1360,8 @@ export class Player {
   onTime() {
     const v = this.video
     const cur = v.currentTime
+    // La lecture a repris après un calage : la mesure de hls.js le compte.
+    if (this.stalledAt && cur !== this.stallPos) this.stalledAt = 0
     if (this.kind === 'vod') {
       const d = v.duration
       // Pendant un glissement, la barre et le compteur suivent le doigt

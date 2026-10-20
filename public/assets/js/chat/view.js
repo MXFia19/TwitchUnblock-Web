@@ -145,6 +145,29 @@ function acceptRules(channel, rules) {
 
 const MAX_NODES = 300
 
+// Chat synchronisé avec la vidéo : les messages d'un direct attendent le
+// retard de l'image sur le direct (lecteur : chatDelay), moins SYNC_MARGIN —
+// les spectateurs qui écrivent regardent eux-mêmes un peu derrière le bord
+// (environ 2 s sur Twitch) —, plafonné à SYNC_MAX. Ce retard est lissé : une
+// hausse (calage, recul) est suivie en une demi-seconde (SYNC_RISE), une
+// baisse (Direct, +10 s, synchro coupée) en quelques secondes (SYNC_FALL),
+// pour que les messages en attente sortent dans l'ordre sans déferler d'un coup.
+const SYNC_MARGIN = 2
+const SYNC_MAX = 60
+const SYNC_RISE = 0.5
+const SYNC_FALL = 1.5
+
+/** Retard lissé (s) : `cur` rapproché de `want` après `dt` secondes. */
+function smoothDelay(cur, want, dt) {
+  const k = 1 - Math.exp(-Math.max(0, dt) / (want > cur ? SYNC_RISE : SYNC_FALL))
+  return cur + (want - cur) * k
+}
+
+/** Retard voulu pour le chat (s), d'après celui du lecteur. */
+function syncTarget(playerDelay) {
+  return playerDelay > 0 ? Math.min(SYNC_MAX, Math.max(0, playerDelay - SYNC_MARGIN)) : 0
+}
+
 /** Bots courants : masquables d'un réglage. */
 const KNOWN_BOTS = new Set(['nightbot', 'streamelements', 'moobot', 'fossabot', 'streamlabs', 'wizebot', 'soundalerts',
   'sery_bot', 'botisimo', 'own3d', 'kofistreambot', 'pokemoncommunitygame', 'deepbot', 'coebot', 'phantombot', 'creatisbot', 'blerp'])
@@ -229,9 +252,13 @@ export class ChatView {
     this.suggestions = []
     /** Suggestion choisie aux flèches : Entrée la prend (onKey). */
     this.suggestPicked = false
-    /** Messages du direct mis en attente pour coller à l'image. */
+    /** Messages du direct mis en attente pour coller à l'image :
+     *  { msg, at (arrivée, ms) }, dans l'ordre d'arrivée. */
     this.delayed = []
     this.delayTimer = null
+    /** Retard lissé du chat synchronisé (s), et l'heure de son calcul. */
+    this.syncCur = 0
+    this.syncAt = 0
     /** Fiche d'emote affichée : protège des réponses tardives. */
     this.infoSeq = 0
     /** Hype train : génération de la boucle de lecture (une par chaîne ouverte). */
@@ -246,6 +273,7 @@ export class ChatView {
       <header class="chat-head">
         <span class="chat-title">${icon('chat', 16)}<span class="chat-title-text"></span></span>
         <span class="chat-status"></span>
+        <button class="chat-sync" type="button" hidden></button>
         <button class="pin-chip" type="button" hidden>${icon('pin', 13)}<span data-i18n="pinned_short">${esc(t('pinned_short'))}</span></button>
         <button class="icon-btn sm chat-cmds-btn" type="button" data-i18n-title="bot_commands" title="${esc(t('bot_commands'))}">${icon('terminal', 17)}</button>
         <button class="icon-btn sm chat-hide" type="button" data-i18n-title="close">${icon('x', 18)}</button>
@@ -302,6 +330,7 @@ export class ChatView {
       rules: $('.chat-rules', this.root),
       pinned: $('.chat-pinned', this.root),
       pinBtn: $('.pin-chip', this.root),
+      sync: $('.chat-sync', this.root),
       drops: $('.chat-drops', this.root),
       info: $('.chat-info', this.root),
       events: $('.chat-events', this.root),
@@ -353,6 +382,12 @@ export class ChatView {
       this.renderDrops(null)
     })
     $('.chat-hide', this.root).addEventListener('click', () => this.o.onHide?.())
+    // « ⏱ −6 s » : coupe ou rallume le chat synchronisé (le réglage du chat).
+    this.el.sync.addEventListener('click', () => {
+      this.o.prefs.chatSync = !this.o.prefs.chatSync
+      this.o.onPrefsChange?.()
+      this.syncDelay()
+    })
     // Masqué, le message épinglé reste à portée : une punaise dans l'en-tête.
     this.el.pinBtn.addEventListener('click', () => {
       this.dismissedPin = null
@@ -443,6 +478,8 @@ export class ChatView {
     const p = this.o.prefs
     this.root.style.setProperty('--chat-size', `${p.chatSize}px`)
     this.root.classList.toggle('show-time', Boolean(p.timestamps))
+    // Synchro coupée ou rallumée dans les réglages : l'indicateur suit.
+    if (this.mode === 'live') this.syncDelay()
   }
 
   // ── Ouverture / fermeture ──────────────────────────────────────────────
@@ -546,15 +583,12 @@ export class ChatView {
     this.pinTimer = setInterval(load, 20_000)
   }
 
-  /** Message épinglé relu (relecture régulière ou signal Hermes). Un nouvel
-   *  épinglage attend le retard du chat synchronisé : il ne doit pas
-   *  apparaître avant l'image qui le montre — le signal Hermes l'affichait
-   *  tout de suite. */
+  /** Message épinglé relu (relecture régulière ou signal Hermes) : affiché
+   *  tout de suite. Un bandeau n'attend pas le chat synchronisé (comme dans
+   *  l'app iPhone) : seuls les messages du direct le suivent. */
   applyPin(pin, channel) {
     if (this.mode !== 'live' || this.channel !== channel) return
-    const delay = pin && pin.id !== this.pin?.id && this.pin !== undefined ? this.o.getDelay?.() ?? 0 : 0
-    if (delay >= 0.5) setTimeout(() => { if (this.channel === channel && this.mode === 'live') this.renderPinned(pin) }, delay * 1000)
-    else this.renderPinned(pin)
+    this.renderPinned(pin)
   }
 
   // ── Drops de la chaîne ─────────────────────────────────────────────────
@@ -1039,9 +1073,11 @@ export class ChatView {
     this.client.start(startAt || 0)
   }
 
-  /** Temps de lecture, pour le chat des VODs. */
+  /** Temps de lecture : le chat des VODs le suit ; pour un direct, le retard
+   *  du chat synchronisé et son indicateur (sans minuteur à soi). */
   tick(seconds) {
     if (this.mode === 'vod') this.client?.tick(seconds)
+    else if (this.mode === 'live') this.syncDelay()
   }
 
   close() {
@@ -1072,6 +1108,11 @@ export class ChatView {
     clearInterval(this.delayTimer)
     this.delayTimer = null
     this.delayed = []
+    // Chaîne suivante : son retard se prend tel quel, sans lissage.
+    this.syncCur = 0
+    this.syncAt = 0
+    this.syncKey = null
+    this.el.sync.hidden = true
     this.pin = null
     this.dismissedPin = null
     this.el.pinned.hidden = true
@@ -1150,12 +1191,13 @@ export class ChatView {
       case 'modclear':
         // /clear d'un modérateur : une ligne le dit (le panneau se vidait sans
         // explication). Avec « garder les messages supprimés », rien ne
-        // disparaît : tout est barré, messages retenus pour la synchro compris,
-        // et la ligne vient après eux.
+        // disparaît : tout est barré, messages retenus pour la synchro compris
+        // — ils sortent tout de suite, la ligne (qui n'attend pas) après eux.
         if (this.o.prefs.keepDeleted) {
           for (const m of [...this.messages, ...this.queue, ...this.delayed.map((d) => d.msg)]) m.isDeleted = true
           for (const n of this.el.list.querySelectorAll('.msg:not(.sys)')) n.classList.add('deleted')
-          this.deliver(systemMessage(t('chat_cleared')))
+          for (const d of this.delayed.splice(0)) this.enqueue(d.msg)
+          this.enqueue(systemMessage(t('chat_cleared')))
         } else {
           this.clearList()
           this.enqueue(systemMessage(t('chat_cleared')))
@@ -1245,23 +1287,61 @@ export class ChatView {
   /**
    * Synchronisation avec l'image. Le chat arrive en temps réel, la vidéo avec
    * plusieurs secondes de retard : sans compensation, on lit la réaction
-   * avant de voir ce qui la provoque. Chaque message est retenu le temps du
-   * retard mesuré à son arrivée, puis affiché. Nos propres messages, eux,
-   * s'affichent tout de suite.
+   * avant de voir ce qui la provoque. Un message s'affiche une fois passé
+   * son arrivée + le retard du moment (syncDelay) : s'il baisse, ceux en
+   * attente sortent dans l'ordre. Tout de suite, eux : nos propres messages
+   * et les avis (serveur, site). Abonnements, raids et annonces (`notice`)
+   * suivent l'image, comme dans l'app iPhone : leur alerte s'y voit.
    */
   deliver(msg) {
-    const delay = this.mode === 'live' && !msg.isSelf ? (this.o.getDelay?.() ?? 0) : 0
-    if (delay < 0.5) { this.enqueue(msg); return }
-    this.delayed.push({ msg, at: Date.now() + delay * 1000 })
+    if (this.mode !== 'live' || msg.isSelf || (msg.systemMsg && !msg.notice)) { this.enqueue(msg); return }
+    // Retard négligeable et personne en attente : tout de suite. Sinon
+    // derrière ceux qui attendent, pour garder l'ordre.
+    if (this.syncDelay() < 0.5 && !this.delayed.length) { this.enqueue(msg); return }
+    this.delayed.push({ msg, at: Date.now() })
     if (!this.delayTimer) this.delayTimer = setInterval(() => this.releaseDelayed(), 100)
   }
 
+  /** Messages en attente dont l'heure est venue ; le minuteur s'arrête avec
+   *  la file. */
   releaseDelayed() {
-    const now = Date.now()
+    const due = Date.now() - this.syncDelay() * 1000
     let n = 0
-    while (n < this.delayed.length && this.delayed[n].at <= now) n++
+    while (n < this.delayed.length && this.delayed[n].at <= due) n++
     if (n) for (const d of this.delayed.splice(0, n)) this.enqueue(d.msg)
     if (!this.delayed.length) { clearInterval(this.delayTimer); this.delayTimer = null }
+  }
+
+  /** Retard du chat synchronisé (s), lissé (voir SYNC_MARGIN) ; 0 hors
+   *  direct ou synchro coupée. L'indicateur de l'en-tête suit. */
+  syncDelay() {
+    const player = this.mode === 'live' ? Number(this.o.getDelay?.()) || 0 : 0
+    const on = Boolean(this.o.prefs.chatSync)
+    const target = syncTarget(player)
+    const now = Date.now()
+    this.syncCur = smoothDelay(this.syncCur, on ? target : 0, (now - this.syncAt) / 1000)
+    this.syncAt = now
+    this.renderSync(player > 0, on, on ? this.syncCur : target)
+    return this.syncCur
+  }
+
+  /** « ⏱ −6 s » : retard appliqué au chat ; barré, synchro coupée (avec le
+   *  retard qu'elle appliquerait). Caché sans mesure du lecteur (multi-live,
+   *  direct pas encore parti). */
+  renderSync(known, on, delay) {
+    const s = Math.round(delay)
+    const key = known ? `${lang()}:${on}:${s}` : ''
+    if (key === this.syncKey) return
+    this.syncKey = key
+    const b = this.el.sync
+    b.hidden = !known
+    if (!known) return
+    // ⏱ en caractère de texte (U+FE0E), pas en émoji de couleur.
+    b.textContent = `⏱\uFE0E ${s > 0 ? `−${s}` : '0'} s`
+    b.classList.toggle('off', !on)
+    b.setAttribute('aria-pressed', String(on))
+    b.title = on ? t('chat_sync_on', { s }) : t('chat_sync_off')
+    b.setAttribute('aria-label', b.title)
   }
 
   /** Les chats très actifs envoient des dizaines de messages par seconde :

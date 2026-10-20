@@ -29,6 +29,7 @@ export const DEFAULT_PREFS = {
   homeList: false,   // accueil en liste (façon Twitch) plutôt qu'en grille
   localFollows: [],  // chaînes suivies sans compte Twitch (sur cet appareil)
   pinned: [],        // streamers épinglés en tête des suivis (logins en minuscules)     // langue du top des lives ; null = celle de l'appareil
+  pinnedByViewers: true, // leurs directs triés entre eux par spectateurs (sinon : ordre d'épinglage)
   timestamps: false,
   timeFormat: 'auto', // heure du chat : 'auto' (celle de l'appareil), '12' ou '24'
   keepDeleted: true,

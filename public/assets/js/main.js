@@ -644,7 +644,7 @@ window.addEventListener('pagehide', () => { flushSync({ force: true }); flushPre
 //   homeList     accueil en liste ou en grille (taille de l'écran) ;
 //   et ce que l'app n'a pas sous le même nom : notifications, thème,
 //   volume, taille du chat, sources du direct, Worker personnel, chat du
-//   multi-live, mode théâtre…
+//   multi-live, mode théâtre, tri des épinglées par spectateurs…
 // Un changement se voit à l'empreinte de chaque section, recalculée après
 // chaque enregistrement des réglages : la section prend la date du moment et
 // part quelques secondes après le dernier changement, après une relecture.
@@ -978,7 +978,9 @@ function flushPrefs() {
 }
 
 // ── Navigation ─────────────────────────────────────────────────────────────
-function setTab(tab, { url = true } = {}) {
+/** `smooth` : onglet déjà ouvert cliqué de nouveau — la page remonte en
+ *  douceur (d'un coup si l'appareil demande moins d'animations). */
+function setTab(tab, { url = true, smooth = false } = {}) {
   state.tab = tab
   if (url) go(pagePath(tab))
   for (const b of $$('[data-tab]')) b.classList.toggle('active', b.dataset.tab === tab)
@@ -991,7 +993,8 @@ function setTab(tab, { url = true } = {}) {
   }
   if (tab === 'channel') renderRecentChannels()
   if (tab === 'categories' && !cat.current && (cat.tab === 'followed' || Date.now() - cat.loaded > 120_000)) loadCategories()
-  window.scrollTo({ top: 0 })
+  const soft = smooth && !matchMedia('(prefers-reduced-motion: reduce)').matches
+  window.scrollTo({ top: 0, behavior: soft ? 'smooth' : 'auto' })
 }
 
 function bindGlobal() {
@@ -1007,7 +1010,8 @@ function bindGlobal() {
     if (link?.matches('[data-live], [data-vod], [data-clip], [data-cat], [data-channel], [data-tab]')) e.preventDefault()
 
     const tab = e.target.closest('[data-tab]')
-    if (tab) return setTab(tab.dataset.tab)
+    // Onglet déjà actif (ou le logo sur Découvrir) : retour en haut, en douceur.
+    if (tab) return setTab(tab.dataset.tab, { smooth: tab.dataset.tab === state.tab })
 
     const del = e.target.closest('[data-del]')
     if (del) {
@@ -1945,12 +1949,21 @@ function togglePin(login) {
 }
 
 /** Suivies (lives et hors ligne) depuis les listes gardées par loadFollowed :
- *  épinglées d'abord, puis par audience. */
+ *  épinglées d'abord, puis par audience. Les directs épinglés sont triés
+ *  entre eux par spectateurs aussi (réglage « Épinglées triées par
+ *  spectateurs », sur cet appareil) ; coupé, dans l'ordre d'épinglage. */
 function paintFollowed() {
   const v = state.followedView
   const grid = $('#followed-grid')
   if (!v || !grid) return
-  const live = v.live.slice().sort((a, b) => pinOrder(a.login, b.login) ?? (b.viewers - a.viewers))
+  const byViewers = store.prefs.pinnedByViewers !== false
+  const live = v.live.slice().sort((a, b) => {
+    const pin = pinOrder(a.login, b.login)
+    if (pin === null) return b.viewers - a.viewers
+    // Deux épinglées : à égalité de spectateurs, l'ordre d'épinglage.
+    if (byViewers && isPinned(a.login) && isPinned(b.login)) return (b.viewers - a.viewers) || pin
+    return pin
+  })
   grid.innerHTML = (live.length ? live.map((s) => streamCard(s, { pinnable: true })).join('') : noLiveFollowed(v.offline?.length ?? 0)) + (v.after ?? '')
   if (v.offline) renderOffline(v.offline, live.length > 0)
 }
@@ -3578,8 +3591,9 @@ function setupPlayer() {
   })
   chat = new ChatView($('#chat'), {
     prefs: store.prefs,
-    // Retard de l'image à compenser dans le chat, si le réglage est actif.
-    getDelay: () => (store.prefs.chatSync ? player.chatDelay() : 0),
+    // Retard de l'image sur le direct, pour le chat synchronisé (le chat lit
+    // lui-même le réglage : son indicateur le coupe ou le rallume).
+    getDelay: () => player.chatDelay(),
     onOpenChannel: (login) => openLive(login),
     onOpenClip: (slug) => openClip(slug),
     onPrefsChange: () => store.savePrefs(),
@@ -4266,6 +4280,8 @@ function onPlaybackTime(cur, duration) {
   const w = state.watch
   // Clip : le chat de la VOD d'origine suit, décalé de la position du clip.
   if (w?.kind === 'clip') { if (w.offset != null) chat.tick(w.offset + cur); return }
+  // Direct : le retard du chat synchronisé suit l'image, file vide comprise.
+  if (w?.kind === 'live') { chat.tick(cur); return }
   if (!w || w.kind !== 'vod') return
   chat.tick(cur)
   if (cur > 0 && Math.abs(cur - lastSave) > 5) {
@@ -4929,6 +4945,7 @@ function openSettings() {
       </label>
       ${toggle('set-homelist', t('home_list'), p.homeList, t('home_list_sub'))}
       ${toggle('set-recent', t('show_recent'), p.showRecent !== false, t('show_recent_sub'))}
+      ${toggle('set-pinsort', t('pinned_by_viewers'), p.pinnedByViewers !== false, t('pinned_by_viewers_sub'))}
     </div>
     <div class="sheet-section" id="set-hidden">${hiddenSectionInner()}</div>
     <div class="sheet-section">
@@ -5126,6 +5143,7 @@ function openSettings() {
     }
     if (id === 'set-homelist') { p.homeList = e.target.checked; store.savePrefs(); applyLayout(); return }
     if (id === 'set-recent') { p.showRecent = e.target.checked; store.savePrefs(); renderRecentChannels(); return }
+    if (id === 'set-pinsort') { p.pinnedByViewers = e.target.checked; store.savePrefs(); paintFollowed(); return }
     if (id === 'set-toplang') {
       p.topLang = e.target.value === 'auto' ? null : e.target.value
       store.savePrefs()
@@ -5180,6 +5198,7 @@ const BACKUP_SETTINGS = {
   homeTab: (v) => (HOME_TABS.includes(v) ? v : undefined),
   showRecent: okBool,
   pinned: okLogins(300),
+  pinnedByViewers: okBool,
   themeBg: (v) => (THEME_BGS.includes(v) ? v : undefined),
   themeAccent: (v) => (THEME_ACCENTS.some(([id]) => id === v) ? v : undefined),
   timestamps: okBool,

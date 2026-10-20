@@ -6,6 +6,31 @@
 
 export const CHANGELOG = [
   {
+    version: '2026.10.20c',
+    items: {
+      fr: [
+        'Chat synchronisé avec la vidéo, comme dans l’app iPhone : pendant un direct, chaque message attend le retard de l’image sur le direct (moins 2 s, 60 s au plus). Ce retard suit aussitôt un calage, et quand tu reviens vers le direct, les messages en attente sortent dans l’ordre en quelques secondes. Tes messages, les avis du chat et les bandeaux (message épinglé compris) s’affichent tout de suite. En haut du chat, « ⏱ −6 s » montre le retard : un clic coupe ou rallume la synchro (aussi dans Réglages → Chat, activée par défaut).',
+        'Chaînes épinglées : leurs directs restent en tête des suivies, et sont maintenant triés entre eux par spectateurs. Pour garder l’ordre d’épinglage, coupe « Épinglées triées par spectateurs » dans les réglages (propre à cet appareil).',
+        'Un clic sur l’onglet déjà ouvert (ou sur le logo, depuis Découvrir) ramène la page en haut, en douceur.',
+      ],
+      en: [
+        'Chat synced with the video, like in the iPhone app: during a live, each message waits for the video’s delay behind the live edge (minus 2 s, 60 s at most). The delay follows a stall right away, and when you move back toward live, waiting messages come out in order within a few seconds. Your own messages, chat notices and banners (the pinned message included) show up immediately. At the top of the chat, “⏱ −6 s” shows the delay: click it to turn syncing off or back on (also in Settings → Chat, on by default).',
+        'Pinned channels: their lives stay at the top of Following, and are now sorted among themselves by viewers. To keep the order you pinned them in, turn off “Pinned sorted by viewers” in the settings (per device).',
+        'Clicking the tab you’re already on (or the logo, from Discover) smoothly scrolls the page back to the top.',
+      ],
+      es: [
+        'Chat sincronizado con el vídeo, como en la app de iPhone: durante un directo, cada mensaje espera el retraso de la imagen respecto al directo (menos 2 s, 60 s como máximo). El retraso sigue enseguida un parón, y cuando vuelves hacia el directo, los mensajes en espera salen en orden en pocos segundos. Tus mensajes, los avisos del chat y los banners (el mensaje fijado incluido) aparecen de inmediato. Arriba del chat, «⏱ −6 s» muestra el retraso: un clic desactiva o reactiva la sincronización (también en Ajustes → Chat, activada por defecto).',
+        'Canales fijados: sus directos siguen arriba en Seguidos y ahora se ordenan entre sí por espectadores. Para mantener el orden en que los fijaste, desactiva «Fijados ordenados por espectadores» en los ajustes (propio de este dispositivo).',
+        'Un clic en la pestaña que ya está abierta (o en el logo, desde Descubrir) vuelve suavemente al principio de la página.',
+      ],
+      ru: [
+        'Чат синхронизирован с видео, как в приложении для iPhone: во время эфира каждое сообщение ждёт, пока изображение догонит его (задержка видео относительно эфира минус 2 с, не больше 60 с). Задержка сразу учитывает подвисание, а когда вы возвращаетесь ближе к эфиру, ожидающие сообщения выходят по порядку за несколько секунд. Ваши сообщения, уведомления чата и баннеры (включая закреплённое сообщение) появляются сразу. Вверху чата «⏱ −6 с» показывает задержку: нажатие выключает или снова включает синхронизацию (также в Настройки → Чат, включено по умолчанию).',
+        'Закреплённые каналы: их эфиры остаются вверху отслеживаемых и теперь сортируются между собой по числу зрителей. Чтобы сохранить порядок закрепления, выключите «Закреплённые по числу зрителей» в настройках (только для этого устройства).',
+        'Нажатие на уже открытую вкладку (или на логотип со страницы «Обзор») плавно возвращает страницу наверх.',
+      ],
+    },
+  },
+  {
     version: '2026.10.20b',
     items: {
       fr: [
