@@ -5041,18 +5041,24 @@ async function pushCheckLives(env, now, counts = {}) {
     const tidy = Math.floor(now / 120000) % PUSH_TIDY_EVERY === 0 || !Number.isFinite(state.f);
 
     const writes = [db.prepare(PUSH_QUEUE_KIND_FILL)];
+    const queuedAt = writes.length;
+    if (started.length) {
+        // Voie de l'abonné notée : chaque voie lit sa file par l'index (pushSend).
+        // Avant l'écriture de push_live, et seulement pour un live qu'elle n'a
+        // pas encore (le lot est une transaction) : deux vérifications en même
+        // temps lisent la même fenêtre (même curseur), et mettaient en file
+        // deux fois chaque live qui commence.
+        writes.push(db.prepare(`INSERT INTO push_queue (sub, body, at, kind)
+            SELECT f.sub, j.value, ?2, CASE WHEN s.kind = 'ntfy' THEN 'ntfy' ELSE 'web' END FROM json_each(?1) j
+            JOIN push_live l ON l.login = json_extract(j.value, '$.login')
+                AND l.stream IS NOT json_extract(j.value, '$.stream') AND l.stream IS NOT '?'
+            JOIN push_follow f ON f.login = l.login
+            LEFT JOIN push_subs s ON s.id = f.sub`).bind(JSON.stringify(started), now));
+    }
     if (changes.length) {
         writes.push(db.prepare(`INSERT INTO push_live (login, stream)
             SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?1) WHERE true
             ON CONFLICT(login) DO UPDATE SET stream = excluded.stream`).bind(JSON.stringify(changes)));
-    }
-    const queuedAt = writes.length;
-    if (started.length) {
-        // Voie de l'abonné notée : chaque voie lit sa file par l'index (pushSend).
-        writes.push(db.prepare(`INSERT INTO push_queue (sub, body, at, kind)
-            SELECT f.sub, j.value, ?2, CASE WHEN s.kind = 'ntfy' THEN 'ntfy' ELSE 'web' END FROM json_each(?1) j
-            JOIN push_follow f ON f.login = json_extract(j.value, '$.login')
-            LEFT JOIN push_subs s ON s.id = f.sub`).bind(JSON.stringify(started), now));
     }
     // Par l'index (kind, at) : seulement les notifications périmées.
     writes.push(db.prepare(`DELETE FROM push_queue WHERE kind IN ('web', 'ntfy') AND at < ?1`).bind(now - PUSH_QUEUE_TTL));
