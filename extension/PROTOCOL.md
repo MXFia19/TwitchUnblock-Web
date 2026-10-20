@@ -22,11 +22,13 @@ vit dans `extension/PROTOCOL.md`.
 - L'arrière-plan revérifie tout : `sender.id === runtime.id`, origine de
   `sender.url` dans la liste ci-dessus, `sender.frameId === 0`, types et bornes de
   chaque argument.
-- Opérations qui dépensent des points (`predictions.bet`, `polls.vote`) : refusées si
-  le réglage « Paris et votes depuis le site » est coupé, ou si
-  `navigator.userActivation.isActive` est faux au moment où le content script reçoit
-  la demande (elle doit suivre un vrai clic de l'utilisateur). Le site affiche en plus
-  sa propre confirmation (montant, choix) avant d'envoyer.
+- Opérations qui dépensent des points (`predictions.bet`, `polls.vote`,
+  `rewards.redeem`) : refusées si le réglage « Paris, votes et récompenses depuis le
+  site » est coupé, ou si `navigator.userActivation.isActive` est faux au moment où le
+  content script reçoit la demande (elle doit suivre un vrai clic de l'utilisateur). Le
+  site affiche en plus sa propre confirmation (montant, choix) avant d'envoyer. Une
+  dépense n'est jamais envoyée à Twitch plus de 30 s après la demande (au-delà :
+  `timeout`), pour que la réponse arrive avant les 45 s du site.
 - Les réglages ne se changent que dans la fenêtre de l'extension, jamais par la page.
 
 ## Transport
@@ -40,13 +42,19 @@ tout message dont `event.source !== window`, `event.origin !== location.origin`,
 - Réponse (extension → page) :
   `{ tuConnect: 1, dir: "res", id, ok: true, data: { … } }`
   ou `{ tuConnect: 1, dir: "res", id, ok: false, error: { code: "<code>", message: "<texte court, facultatif>" } }`
-- Annonce (extension → page), envoyée par le content script à son chargement :
+- Annonce (extension → page), envoyée par le content script à son chargement, et de
+  nouveau quand un réglage change dans la fenêtre de l'extension :
   `{ tuConnect: 1, dir: "hello", protocol: 1, version: "<version de l'extension>", enabled: <bool> }`
 
 Détection côté site : écouter les annonces, et envoyer `hello` à 0 s, 0,5 s, 1,5 s et
 3 s tant qu'aucune réponse n'est arrivée. Délai d'attente par demande : 15 s (45 s pour
 une opération qui peut devoir obtenir un jeton d'intégrité : `points.claim`,
-`watch.beat`, `predictions.bet`, `polls.vote`).
+`watch.beat`, `predictions.bet`, `polls.vote`, `raid.join`, `drops.claim`,
+`drops.pulse`, `rewards.redeem`).
+
+Après une installation ou une mise à jour de l'extension, le content script est
+réinjecté dans les onglets du site déjà ouverts ; l'ancien (orphelin sous Chrome) ne
+répond plus.
 
 ## Opérations (liste fermée)
 
@@ -75,7 +83,7 @@ une opération qui peut devoir obtenir un jeton d'intégrité : `points.claim`,
 8. `polls.get` `{ channel }` →
    `{ poll: null | { id, title, status: "ACTIVE" | "COMPLETED" | "TERMINATED" | "ARCHIVED", startedAt, durationSeconds, totalVotes, choices: [ { id, title, votes } ], pointsVoting: { enabled, cost }, self: null | { choiceIds: [ … ], votes } } }`
 9. `polls.vote` `{ channel, pollId, choiceId, withPoints: bool }` (dépense si `withPoints`, et
-   toujours soumis au vrai clic) → `{ poll: <même forme que polls.get> }`
+   toujours soumis au vrai clic et au réglage) → `{ poll: <même forme que polls.get> }`
 
 10. `raid.join` `{ channel, raidId }` → `{ joined: bool }`
    Rejoint le raid que lance la chaîne regardée (mutation `JoinRaid`, `input: { raidID }`),
@@ -124,13 +132,34 @@ twitch.tv dans ce navigateur), `needs_activation` (dépense sans vrai clic),
 d'intégrité impossible à obtenir), `twitch` (`message` = code d'erreur de Twitch),
 `offline` (chaîne pas en direct), `no_claim`, `timeout`, `internal`.
 
+`message` de `bad_args` (valeurs stables, que le site peut traduire) :
+
+- forme de la demande, refusée par le content script ou l'arrière-plan : `id`, `args`
+  (pas un objet, ou plus de 8 champs), ou le nom du champ inconnu ou mal formé
+  (`channel`, `eventId`, `outcomeId`, `points`, `pollId`, `choiceId`, `withPoints`,
+  `raidId`, `dropInstanceId`, `rewardId`, `cost`, `title`, `prompt`, `input`) ;
+- `predictions.bet` : `eventId` (pas la prédiction en cours), `not_active` (pas
+  ACTIVE), `outcomeId` (issue inconnue), `points` (plus que le solde), `other_outcome`
+  (mise déjà faite sur une autre issue) ;
+- `polls.vote` : `pollId` (pas le sondage en cours), `not_active`, `choiceId` (choix
+  inconnu), `withPoints` (vote en points pas ouvert sur ce sondage), `points` (coût plus
+  grand que le solde) ;
+- `rewards.redeem` : `points_disabled` (points coupés sur la chaîne), `rewardId`
+  (récompense inconnue), `not_enabled`, `paused`, `out_of_stock`, `cooldown`, `cost`
+  (coût différent de celui relu), `title` (titre différent), `points` (coût plus grand
+  que le solde), `input` (saisie manquante, vide, ou donnée sans être demandée).
+
+`message` de `twitch` : le code de Twitch (`NOT_ENOUGH_POINTS`…, `UNKNOWN` s'il est
+illisible), sinon `channel_not_found`, `network`, `bad_response`, `http_<statut>`,
+`validate`, `validate_<statut>`, ou un message de Twitch nettoyé (80 caractères au plus).
+
 ## Limites de débit (arrière-plan)
 
 Lectures (`*.get`, `status`) : au plus une requête Twitch par 3 s et par chaîne (sinon
 réponse en cache) ; `points.claim` : 1 par 10 s ; `watch.beat` : 1 par 50 s et par
-chaîne ; `raid.join` : 1 par 30 s et par chaîne ; dépenses : 1 par 3 s ; tout
-confondu : 60 demandes par minute, au-delà
-`rate_limited`.
+chaîne ; `raid.join` : 1 par 30 s et par chaîne ; `drops.claim` : 1 par 5 s ;
+`drops.pulse` : 1 par 8 s et par chaîne ; dépenses : 1 par 3 s ; tout confondu :
+60 demandes par minute, au-delà `rate_limited`.
 
 ## Réglages (fenêtre de l'extension, stockage local, sans secret)
 
@@ -140,5 +169,6 @@ confondu : 60 demandes par minute, au-delà
   vrai clic ; clé `allowSpend`)
 
 Dépenses soumises au vrai clic : `predictions.bet`, `polls.vote`, `rewards.redeem`.
-Délais d'attente côté site : 45 s aussi pour `drops.claim`, `rewards.redeem` et
-`raid.join` ; 15 s pour `drops.pulse`.
+Délais d'attente côté site (voir Transport) : 45 s aussi pour `raid.join`,
+`drops.claim`, `drops.pulse` (qui peut obtenir un jeton d'intégrité pour le jeton de
+lecture du compte) et `rewards.redeem`.
