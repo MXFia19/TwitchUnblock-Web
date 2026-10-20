@@ -1,0 +1,79 @@
+# Extension de navigateur TwitchUnblock Connect (dossier extension/) :
+# vérifie les JSON et la syntaxe des JS, lance le banc d'essai (API chrome et
+# Twitch simulés, sans réseau), puis produit le zip à charger dans le
+# navigateur, gardé en artefact de ce workflow. Pas de publication : la
+# signature Firefox (AMO) et une éventuelle mise en ligne restent manuelles.
+name: Extension
+
+on:
+  push:
+    branches:
+      - main
+      - test-17d298
+    paths:
+      - 'extension/**'
+      - '.github/workflows/extension.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: extension-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  build:
+    name: Check and package
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Valid JSON
+        run: |
+          find extension -name '*.json' -print0 | while IFS= read -r -d '' f; do
+            node -e 'JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"))' "$f" || { echo "::error file=$f::JSON invalide"; exit 1; }
+          done
+
+      - name: JavaScript syntax
+        run: |
+          find extension \( -name '*.js' -o -name '*.mjs' \) -print0 | while IFS= read -r -d '' f; do
+            node --check "$f" || { echo "::error file=$f::syntaxe invalide"; exit 1; }
+          done
+
+      - name: Test bench
+        run: node extension/tests/run.mjs
+
+      # Le dossier préparé est envoyé tel quel : GitHub en fait l'archive, que l'on
+      # télécharge sous le nom twitchunblock-connect-<version>.zip, manifest.json à
+      # la racine (prête pour « Charger l'extension non empaquetée » une fois
+      # décompressée, ou pour AMO). Envoyer un .zip donnerait un zip dans un zip.
+      - name: Package
+        id: package
+        run: |
+          version=$(node -p 'require("./extension/manifest.json").version')
+          name="twitchunblock-connect-$version"
+          mkdir -p "dist/$name"
+          tar -C extension --exclude=./tests --exclude=./dev -cf - . | tar -C "dist/$name" -xf -
+          (cd "dist/$name" && find . -type f | sort)
+          test -f "dist/$name/manifest.json"
+          if [ -e "dist/$name/tests" ] || [ -e "dist/$name/dev" ]; then
+            echo "::error::fichiers de dev dans le paquet"; exit 1
+          fi
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+
+      - name: Upload package
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.package.outputs.name }}
+          path: dist/${{ steps.package.outputs.name }}/
+          if-no-files-found: error

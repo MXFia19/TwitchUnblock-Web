@@ -1,0 +1,205 @@
+{
+  "extName": {
+    "message": "TwitchUnblock Connect"
+  },
+  "extDescription": {
+    "message": "Une el sitio TwitchUnblock a tu sesión de Twitch: puntos, cofres, drops, recompensas, predicciones, encuestas. Tu sesión no sale."
+  },
+  "actionTitle": {
+    "message": "TwitchUnblock Connect"
+  },
+  "subtitle": {
+    "message": "Tu sesión de Twitch para el sitio TwitchUnblock"
+  },
+  "stateTitle": {
+    "message": "Estado"
+  },
+  "sessionChecking": {
+    "message": "Comprobando la sesión de Twitch…"
+  },
+  "sessionConnected": {
+    "message": "Conectado como @$LOGIN$",
+    "placeholders": {
+      "login": {
+        "content": "$1"
+      }
+    }
+  },
+  "sessionNone": {
+    "message": "Inicia sesión en twitch.tv en este navegador."
+  },
+  "sessionInvalid": {
+    "message": "Twitch rechazó la sesión: vuelve a iniciar sesión en twitch.tv."
+  },
+  "sessionError": {
+    "message": "No se pudo comprobar la sesión de Twitch (¿red?)."
+  },
+  "openTwitch": {
+    "message": "Abrir twitch.tv"
+  },
+  "integrityUntil": {
+    "message": "Token de integridad válido hasta el $DATE$",
+    "placeholders": {
+      "date": {
+        "content": "$1"
+      }
+    }
+  },
+  "integrityNone": {
+    "message": "Aún no hay token de integridad: se obtiene con la primera acción que lo necesite."
+  },
+  "permsMissing": {
+    "message": "El navegador no ha concedido todos los accesos que necesita la extensión (twitch.tv y el sitio TwitchUnblock)."
+  },
+  "permsGrant": {
+    "message": "Permitir el acceso"
+  },
+  "permsHint": {
+    "message": "Si no pasa nada: abre el administrador de complementos, elige TwitchUnblock Connect, luego Permisos, y permite todos los sitios."
+  },
+  "settingsTitle": {
+    "message": "Ajustes"
+  },
+  "setSite": {
+    "message": "Conexión con el sitio TwitchUnblock"
+  },
+  "setSiteHelp": {
+    "message": "El sitio puede leer tus puntos, drops, recompensas, predicciones y encuestas, y usar tu sesión para las acciones de abajo."
+  },
+  "setClaim": {
+    "message": "Reclamar automáticamente (cofres y drops)"
+  },
+  "setClaimHelp": {
+    "message": "Reclama los cofres de bonificación y los drops terminados mientras ves un directo en el sitio."
+  },
+  "setSpend": {
+    "message": "Apuestas, votos y recompensas desde el sitio"
+  },
+  "setSpendHelp": {
+    "message": "Siempre tras un clic real en el sitio y su confirmación."
+  },
+  "diagTitle": {
+    "message": "Diagnóstico"
+  },
+  "diagButton": {
+    "message": "Ejecutar el diagnóstico"
+  },
+  "diagRunning": {
+    "message": "Comprobando la sesión y obteniendo un nuevo token de integridad… (unos segundos)"
+  },
+  "diagFailed": {
+    "message": "El segundo plano de la extensión no respondió."
+  },
+  "diagSessionOk": {
+    "message": "Sesión OK — @$LOGIN$ (id $ID$)",
+    "placeholders": {
+      "login": {
+        "content": "$1"
+      },
+      "id": {
+        "content": "$2"
+      }
+    }
+  },
+  "diagSessionNone": {
+    "message": "No hay sesión de Twitch: falta la cookie auth-token. Inicia sesión en twitch.tv."
+  },
+  "diagSessionInvalid": {
+    "message": "Twitch rechazó la sesión (caducada o no válida)."
+  },
+  "diagSessionError": {
+    "message": "No se pudo comprobar la sesión: $CODE$",
+    "placeholders": {
+      "code": {
+        "content": "$1"
+      }
+    }
+  },
+  "diagClientId": {
+    "message": "Client-ID del token: $ID$",
+    "placeholders": {
+      "id": {
+        "content": "$1"
+      }
+    }
+  },
+  "diagAuthToken": {
+    "message": "auth-token: $MASK$",
+    "placeholders": {
+      "mask": {
+        "content": "$1"
+      }
+    }
+  },
+  "diagIntegrityOk": {
+    "message": "Token de integridad OK: $MASK$",
+    "placeholders": {
+      "mask": {
+        "content": "$1"
+      }
+    }
+  },
+  "diagIntegrityUntil": {
+    "message": "Caduca: $DATE$",
+    "placeholders": {
+      "date": {
+        "content": "$1"
+      }
+    }
+  },
+  "diagDevice": {
+    "message": "Dispositivo: $MASK$",
+    "placeholders": {
+      "mask": {
+        "content": "$1"
+      }
+    }
+  },
+  "diagVia": {
+    "message": "Obtenido mediante $VIA$",
+    "placeholders": {
+      "via": {
+        "content": "$1"
+      }
+    }
+  },
+  "viaTab": {
+    "message": "una pestaña de twitch.tv ya abierta"
+  },
+  "viaTemp": {
+    "message": "una pestaña temporal de twitch.tv (cerrada después)"
+  },
+  "diagIntegrityFail": {
+    "message": "No se pudo obtener el token de integridad ($DETAIL$).",
+    "placeholders": {
+      "detail": {
+        "content": "$1"
+      }
+    }
+  },
+  "maskFormat": {
+    "message": "$HEAD$… ($LEN$ caract.)",
+    "placeholders": {
+      "head": {
+        "content": "$1"
+      },
+      "len": {
+        "content": "$2"
+      }
+    }
+  },
+  "securityTitle": {
+    "message": "Seguridad"
+  },
+  "securityText": {
+    "message": "Tu sesión de Twitch y tus tokens nunca salen de la extensión. El sitio solo puede pedir una lista cerrada de acciones; las apuestas, los votos y las recompensas exigen un clic real. Solo se envía información a Twitch."
+  },
+  "versionLabel": {
+    "message": "Versión $VERSION$",
+    "placeholders": {
+      "version": {
+        "content": "$1"
+      }
+    }
+  }
+}

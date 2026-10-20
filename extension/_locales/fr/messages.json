@@ -1,0 +1,205 @@
+{
+  "extName": {
+    "message": "TwitchUnblock Connect"
+  },
+  "extDescription": {
+    "message": "Relie le site TwitchUnblock à ta session Twitch : points, coffres, drops, récompenses, prédictions, sondages. Ta session reste ici."
+  },
+  "actionTitle": {
+    "message": "TwitchUnblock Connect"
+  },
+  "subtitle": {
+    "message": "Ta session Twitch pour le site TwitchUnblock"
+  },
+  "stateTitle": {
+    "message": "État"
+  },
+  "sessionChecking": {
+    "message": "Vérification de la session Twitch…"
+  },
+  "sessionConnected": {
+    "message": "Connecté en tant que @$LOGIN$",
+    "placeholders": {
+      "login": {
+        "content": "$1"
+      }
+    }
+  },
+  "sessionNone": {
+    "message": "Connecte-toi à twitch.tv dans ce navigateur."
+  },
+  "sessionInvalid": {
+    "message": "Session refusée par Twitch : reconnecte-toi à twitch.tv."
+  },
+  "sessionError": {
+    "message": "Impossible de vérifier la session Twitch (réseau ?)."
+  },
+  "openTwitch": {
+    "message": "Ouvrir twitch.tv"
+  },
+  "integrityUntil": {
+    "message": "Jeton d'intégrité valable jusqu'au $DATE$",
+    "placeholders": {
+      "date": {
+        "content": "$1"
+      }
+    }
+  },
+  "integrityNone": {
+    "message": "Pas encore de jeton d'intégrité : il est obtenu à la première action qui en a besoin."
+  },
+  "permsMissing": {
+    "message": "Le navigateur n'a pas accordé tous les accès dont l'extension a besoin (twitch.tv et le site TwitchUnblock)."
+  },
+  "permsGrant": {
+    "message": "Autoriser l'accès"
+  },
+  "permsHint": {
+    "message": "Si rien ne se passe : ouvre le gestionnaire de modules, choisis TwitchUnblock Connect, puis Permissions, et autorise tous les sites."
+  },
+  "settingsTitle": {
+    "message": "Réglages"
+  },
+  "setSite": {
+    "message": "Connexion au site TwitchUnblock"
+  },
+  "setSiteHelp": {
+    "message": "Le site peut lire tes points, drops, récompenses, prédictions et sondages, et se servir de ta session pour les actions ci-dessous."
+  },
+  "setClaim": {
+    "message": "Réclamer automatiquement (coffres et drops)"
+  },
+  "setClaimHelp": {
+    "message": "Réclame les coffres bonus et les drops terminés pendant que tu regardes un direct sur le site."
+  },
+  "setSpend": {
+    "message": "Paris, votes et récompenses depuis le site"
+  },
+  "setSpendHelp": {
+    "message": "Toujours après un vrai clic sur le site et sa confirmation."
+  },
+  "diagTitle": {
+    "message": "Diagnostic"
+  },
+  "diagButton": {
+    "message": "Lancer le diagnostic"
+  },
+  "diagRunning": {
+    "message": "Vérification de la session et nouveau jeton d'intégrité… (quelques secondes)"
+  },
+  "diagFailed": {
+    "message": "L'arrière-plan de l'extension n'a pas répondu."
+  },
+  "diagSessionOk": {
+    "message": "Session OK — @$LOGIN$ (id $ID$)",
+    "placeholders": {
+      "login": {
+        "content": "$1"
+      },
+      "id": {
+        "content": "$2"
+      }
+    }
+  },
+  "diagSessionNone": {
+    "message": "Pas de session Twitch : le cookie auth-token est absent. Connecte-toi à twitch.tv."
+  },
+  "diagSessionInvalid": {
+    "message": "Session refusée par Twitch (expirée ou invalide)."
+  },
+  "diagSessionError": {
+    "message": "Vérification de la session impossible : $CODE$",
+    "placeholders": {
+      "code": {
+        "content": "$1"
+      }
+    }
+  },
+  "diagClientId": {
+    "message": "Client-ID du jeton : $ID$",
+    "placeholders": {
+      "id": {
+        "content": "$1"
+      }
+    }
+  },
+  "diagAuthToken": {
+    "message": "auth-token : $MASK$",
+    "placeholders": {
+      "mask": {
+        "content": "$1"
+      }
+    }
+  },
+  "diagIntegrityOk": {
+    "message": "Jeton d'intégrité OK : $MASK$",
+    "placeholders": {
+      "mask": {
+        "content": "$1"
+      }
+    }
+  },
+  "diagIntegrityUntil": {
+    "message": "Expiration : $DATE$",
+    "placeholders": {
+      "date": {
+        "content": "$1"
+      }
+    }
+  },
+  "diagDevice": {
+    "message": "Appareil : $MASK$",
+    "placeholders": {
+      "mask": {
+        "content": "$1"
+      }
+    }
+  },
+  "diagVia": {
+    "message": "Obtenu par $VIA$",
+    "placeholders": {
+      "via": {
+        "content": "$1"
+      }
+    }
+  },
+  "viaTab": {
+    "message": "un onglet twitch.tv déjà ouvert"
+  },
+  "viaTemp": {
+    "message": "un onglet twitch.tv temporaire (refermé ensuite)"
+  },
+  "diagIntegrityFail": {
+    "message": "Jeton d'intégrité impossible à obtenir ($DETAIL$).",
+    "placeholders": {
+      "detail": {
+        "content": "$1"
+      }
+    }
+  },
+  "maskFormat": {
+    "message": "$HEAD$… ($LEN$ car.)",
+    "placeholders": {
+      "head": {
+        "content": "$1"
+      },
+      "len": {
+        "content": "$2"
+      }
+    }
+  },
+  "securityTitle": {
+    "message": "Sécurité"
+  },
+  "securityText": {
+    "message": "Ta session Twitch et tes jetons ne sortent jamais de l'extension. Le site ne peut demander qu'une liste fermée d'actions ; paris, votes et récompenses exigent un vrai clic. Rien n'est envoyé ailleurs que chez Twitch."
+  },
+  "versionLabel": {
+    "message": "Version $VERSION$",
+    "placeholders": {
+      "version": {
+        "content": "$1"
+      }
+    }
+  }
+}

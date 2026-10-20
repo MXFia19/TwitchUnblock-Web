@@ -1,0 +1,205 @@
+{
+  "extName": {
+    "message": "TwitchUnblock Connect"
+  },
+  "extDescription": {
+    "message": "Связывает сайт TwitchUnblock с вашей сессией Twitch: баллы, сундуки, дропы, награды, прогнозы, опросы. Сессия остаётся здесь."
+  },
+  "actionTitle": {
+    "message": "TwitchUnblock Connect"
+  },
+  "subtitle": {
+    "message": "Ваша сессия Twitch для сайта TwitchUnblock"
+  },
+  "stateTitle": {
+    "message": "Состояние"
+  },
+  "sessionChecking": {
+    "message": "Проверка сессии Twitch…"
+  },
+  "sessionConnected": {
+    "message": "Вход выполнен: @$LOGIN$",
+    "placeholders": {
+      "login": {
+        "content": "$1"
+      }
+    }
+  },
+  "sessionNone": {
+    "message": "Войдите в twitch.tv в этом браузере."
+  },
+  "sessionInvalid": {
+    "message": "Twitch отклонил сессию: войдите в twitch.tv заново."
+  },
+  "sessionError": {
+    "message": "Не удалось проверить сессию Twitch (сеть?)."
+  },
+  "openTwitch": {
+    "message": "Открыть twitch.tv"
+  },
+  "integrityUntil": {
+    "message": "Токен целостности действителен до $DATE$",
+    "placeholders": {
+      "date": {
+        "content": "$1"
+      }
+    }
+  },
+  "integrityNone": {
+    "message": "Токена целостности пока нет: он будет получен при первом действии, которому он нужен."
+  },
+  "permsMissing": {
+    "message": "Браузер выдал расширению не все нужные доступы (twitch.tv и сайт TwitchUnblock)."
+  },
+  "permsGrant": {
+    "message": "Разрешить доступ"
+  },
+  "permsHint": {
+    "message": "Если ничего не происходит: откройте управление дополнениями, выберите TwitchUnblock Connect, затем «Разрешения», и разрешите все сайты."
+  },
+  "settingsTitle": {
+    "message": "Настройки"
+  },
+  "setSite": {
+    "message": "Подключение к сайту TwitchUnblock"
+  },
+  "setSiteHelp": {
+    "message": "Сайт может читать ваши баллы, дропы, награды, прогнозы и опросы и использовать вашу сессию для действий ниже."
+  },
+  "setClaim": {
+    "message": "Забирать автоматически (сундуки и дропы)"
+  },
+  "setClaimHelp": {
+    "message": "Забирает бонусные сундуки и завершённые дропы, пока вы смотрите трансляцию на сайте."
+  },
+  "setSpend": {
+    "message": "Ставки, голоса и награды с сайта"
+  },
+  "setSpendHelp": {
+    "message": "Только после настоящего клика на сайте и его подтверждения."
+  },
+  "diagTitle": {
+    "message": "Диагностика"
+  },
+  "diagButton": {
+    "message": "Запустить диагностику"
+  },
+  "diagRunning": {
+    "message": "Проверка сессии и получение нового токена целостности… (несколько секунд)"
+  },
+  "diagFailed": {
+    "message": "Фоновая часть расширения не ответила."
+  },
+  "diagSessionOk": {
+    "message": "Сессия в порядке — @$LOGIN$ (id $ID$)",
+    "placeholders": {
+      "login": {
+        "content": "$1"
+      },
+      "id": {
+        "content": "$2"
+      }
+    }
+  },
+  "diagSessionNone": {
+    "message": "Нет сессии Twitch: отсутствует cookie auth-token. Войдите в twitch.tv."
+  },
+  "diagSessionInvalid": {
+    "message": "Twitch отклонил сессию (истекла или недействительна)."
+  },
+  "diagSessionError": {
+    "message": "Не удалось проверить сессию: $CODE$",
+    "placeholders": {
+      "code": {
+        "content": "$1"
+      }
+    }
+  },
+  "diagClientId": {
+    "message": "Client-ID токена: $ID$",
+    "placeholders": {
+      "id": {
+        "content": "$1"
+      }
+    }
+  },
+  "diagAuthToken": {
+    "message": "auth-token: $MASK$",
+    "placeholders": {
+      "mask": {
+        "content": "$1"
+      }
+    }
+  },
+  "diagIntegrityOk": {
+    "message": "Токен целостности получен: $MASK$",
+    "placeholders": {
+      "mask": {
+        "content": "$1"
+      }
+    }
+  },
+  "diagIntegrityUntil": {
+    "message": "Истекает: $DATE$",
+    "placeholders": {
+      "date": {
+        "content": "$1"
+      }
+    }
+  },
+  "diagDevice": {
+    "message": "Устройство: $MASK$",
+    "placeholders": {
+      "mask": {
+        "content": "$1"
+      }
+    }
+  },
+  "diagVia": {
+    "message": "Получен через $VIA$",
+    "placeholders": {
+      "via": {
+        "content": "$1"
+      }
+    }
+  },
+  "viaTab": {
+    "message": "уже открытую вкладку twitch.tv"
+  },
+  "viaTemp": {
+    "message": "временную вкладку twitch.tv (затем закрыта)"
+  },
+  "diagIntegrityFail": {
+    "message": "Не удалось получить токен целостности ($DETAIL$).",
+    "placeholders": {
+      "detail": {
+        "content": "$1"
+      }
+    }
+  },
+  "maskFormat": {
+    "message": "$HEAD$… ($LEN$ симв.)",
+    "placeholders": {
+      "head": {
+        "content": "$1"
+      },
+      "len": {
+        "content": "$2"
+      }
+    }
+  },
+  "securityTitle": {
+    "message": "Безопасность"
+  },
+  "securityText": {
+    "message": "Ваша сессия Twitch и токены никогда не покидают расширение. Сайт может запрашивать только закрытый список действий; ставки, голоса и награды требуют настоящего клика. Данные отправляются только в Twitch."
+  },
+  "versionLabel": {
+    "message": "Версия $VERSION$",
+    "placeholders": {
+      "version": {
+        "content": "$1"
+      }
+    }
+  }
+}

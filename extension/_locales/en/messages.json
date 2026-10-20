@@ -1,0 +1,205 @@
+{
+  "extName": {
+    "message": "TwitchUnblock Connect"
+  },
+  "extDescription": {
+    "message": "Links the TwitchUnblock site to your Twitch session: points, chests, drops, rewards, predictions, polls. Session stays here."
+  },
+  "actionTitle": {
+    "message": "TwitchUnblock Connect"
+  },
+  "subtitle": {
+    "message": "Your Twitch session for the TwitchUnblock site"
+  },
+  "stateTitle": {
+    "message": "Status"
+  },
+  "sessionChecking": {
+    "message": "Checking the Twitch session…"
+  },
+  "sessionConnected": {
+    "message": "Connected as @$LOGIN$",
+    "placeholders": {
+      "login": {
+        "content": "$1"
+      }
+    }
+  },
+  "sessionNone": {
+    "message": "Log in to twitch.tv in this browser."
+  },
+  "sessionInvalid": {
+    "message": "Twitch refused the session: log in to twitch.tv again."
+  },
+  "sessionError": {
+    "message": "Could not check the Twitch session (network?)."
+  },
+  "openTwitch": {
+    "message": "Open twitch.tv"
+  },
+  "integrityUntil": {
+    "message": "Integrity token valid until $DATE$",
+    "placeholders": {
+      "date": {
+        "content": "$1"
+      }
+    }
+  },
+  "integrityNone": {
+    "message": "No integrity token yet: it is obtained at the first action that needs one."
+  },
+  "permsMissing": {
+    "message": "The browser has not granted all the access the extension needs (twitch.tv and the TwitchUnblock site)."
+  },
+  "permsGrant": {
+    "message": "Allow access"
+  },
+  "permsHint": {
+    "message": "If nothing happens: open the add-ons manager, choose TwitchUnblock Connect, then Permissions, and allow every site."
+  },
+  "settingsTitle": {
+    "message": "Settings"
+  },
+  "setSite": {
+    "message": "Connection to the TwitchUnblock site"
+  },
+  "setSiteHelp": {
+    "message": "Lets the site read your points, drops, rewards, predictions and polls, and use your session for the actions below."
+  },
+  "setClaim": {
+    "message": "Claim automatically (chests and drops)"
+  },
+  "setClaimHelp": {
+    "message": "Claims bonus chests and finished drops while you watch a live stream on the site."
+  },
+  "setSpend": {
+    "message": "Bets, votes and rewards from the site"
+  },
+  "setSpendHelp": {
+    "message": "Always after a real click on the site and its confirmation."
+  },
+  "diagTitle": {
+    "message": "Diagnostic"
+  },
+  "diagButton": {
+    "message": "Run the diagnostic"
+  },
+  "diagRunning": {
+    "message": "Checking the session and getting a new integrity token… (a few seconds)"
+  },
+  "diagFailed": {
+    "message": "The extension's background did not answer."
+  },
+  "diagSessionOk": {
+    "message": "Session OK — @$LOGIN$ (id $ID$)",
+    "placeholders": {
+      "login": {
+        "content": "$1"
+      },
+      "id": {
+        "content": "$2"
+      }
+    }
+  },
+  "diagSessionNone": {
+    "message": "No Twitch session: the auth-token cookie is missing. Log in to twitch.tv."
+  },
+  "diagSessionInvalid": {
+    "message": "Session refused by Twitch (expired or invalid)."
+  },
+  "diagSessionError": {
+    "message": "Session check failed: $CODE$",
+    "placeholders": {
+      "code": {
+        "content": "$1"
+      }
+    }
+  },
+  "diagClientId": {
+    "message": "Token Client-ID: $ID$",
+    "placeholders": {
+      "id": {
+        "content": "$1"
+      }
+    }
+  },
+  "diagAuthToken": {
+    "message": "auth-token: $MASK$",
+    "placeholders": {
+      "mask": {
+        "content": "$1"
+      }
+    }
+  },
+  "diagIntegrityOk": {
+    "message": "Integrity token OK: $MASK$",
+    "placeholders": {
+      "mask": {
+        "content": "$1"
+      }
+    }
+  },
+  "diagIntegrityUntil": {
+    "message": "Expires: $DATE$",
+    "placeholders": {
+      "date": {
+        "content": "$1"
+      }
+    }
+  },
+  "diagDevice": {
+    "message": "Device: $MASK$",
+    "placeholders": {
+      "mask": {
+        "content": "$1"
+      }
+    }
+  },
+  "diagVia": {
+    "message": "Obtained via $VIA$",
+    "placeholders": {
+      "via": {
+        "content": "$1"
+      }
+    }
+  },
+  "viaTab": {
+    "message": "an open twitch.tv tab"
+  },
+  "viaTemp": {
+    "message": "a temporary twitch.tv tab (closed afterwards)"
+  },
+  "diagIntegrityFail": {
+    "message": "Integrity token unavailable ($DETAIL$).",
+    "placeholders": {
+      "detail": {
+        "content": "$1"
+      }
+    }
+  },
+  "maskFormat": {
+    "message": "$HEAD$… ($LEN$ chars)",
+    "placeholders": {
+      "head": {
+        "content": "$1"
+      },
+      "len": {
+        "content": "$2"
+      }
+    }
+  },
+  "securityTitle": {
+    "message": "Security"
+  },
+  "securityText": {
+    "message": "Your Twitch session and tokens never leave the extension. The site can only ask for a closed list of actions; bets, votes and rewards need a real click. Nothing is sent anywhere but Twitch."
+  },
+  "versionLabel": {
+    "message": "Version $VERSION$",
+    "placeholders": {
+      "version": {
+        "content": "$1"
+      }
+    }
+  }
+}

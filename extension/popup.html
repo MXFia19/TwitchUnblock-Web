@@ -1,0 +1,150 @@
+<!doctype html>
+<!--
+  Fenêtre de TwitchUnblock Connect : état de la session, jeton d'intégrité,
+  les trois réglages, un diagnostic et une courte note de sécurité.
+  Textes dans _locales (remplis par popup.js). Aucun jeton n'est affiché en
+  clair : au plus ses 4 premiers caractères et sa longueur.
+  Pas de script en ligne (interdit par la CSP des extensions MV3).
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TwitchUnblock Connect</title>
+  <style>
+    :root {
+      --bg: #0e0e10;
+      --card: #18181b;
+      --line: #2f2f35;
+      --fg: #efeff1;
+      --muted: #adadb8;
+      --accent: #9147ff;
+      --ok: #00c389;
+      --warn: #ffb31a;
+      --err: #ff5b5b;
+    }
+    @media (prefers-color-scheme: light) {
+      :root {
+        --bg: #f7f7f8;
+        --card: #ffffff;
+        --line: #dedee3;
+        --fg: #0e0e10;
+        --muted: #53535f;
+        --accent: #772ce8;
+        --ok: #00805a;
+        --warn: #a66b00;
+        --err: #d42c2c;
+      }
+    }
+    * { box-sizing: border-box; }
+    body {
+      width: 360px;
+      margin: 0;
+      padding: 12px;
+      background: var(--bg);
+      color: var(--fg);
+      font: 13px/1.45 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+    header { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+    header img { width: 28px; height: 28px; border-radius: 6px; }
+    h1 { font-size: 14px; margin: 0; }
+    h2 { font-size: 12px; margin: 0 0 8px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
+    .sub { color: var(--muted); font-size: 11px; margin: 0; }
+    .card { border: 1px solid var(--line); border-radius: 10px; padding: 10px; margin-bottom: 10px; background: var(--card); }
+    .card.warn { border-color: var(--warn); }
+    .row { display: flex; align-items: flex-start; gap: 8px; }
+    .row + .row { margin-top: 6px; }
+    .dot { flex: none; width: 9px; height: 9px; border-radius: 50%; margin-top: 5px; background: var(--muted); }
+    .dot.ok { background: var(--ok); }
+    .dot.err { background: var(--err); }
+    .dot.warn { background: var(--warn); }
+    .muted { color: var(--muted); }
+    .small { font-size: 12px; }
+    button {
+      width: 100%;
+      padding: 8px 10px;
+      border: 0;
+      border-radius: 8px;
+      background: var(--accent);
+      color: #fff;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    button:hover { filter: brightness(1.08); }
+    button:disabled { opacity: .5; cursor: progress; }
+    button.secondary { background: transparent; color: var(--accent); border: 1px solid var(--line); margin-top: 8px; }
+    label.toggle { display: flex; gap: 10px; align-items: flex-start; cursor: pointer; }
+    label.toggle + label.toggle { margin-top: 10px; }
+    label.toggle input { margin: 2px 0 0; width: 16px; height: 16px; accent-color: var(--accent); flex: none; }
+    label.toggle b { display: block; font-weight: 600; }
+    label.toggle small { display: block; color: var(--muted); font-size: 11px; }
+    .result {
+      margin: 8px 0 0;
+      font: 12px/1.45 ui-monospace, Consolas, "SFMono-Regular", Menlo, monospace;
+      white-space: pre-wrap;
+      word-break: break-word;
+      color: var(--muted);
+    }
+    .result:empty { display: none; }
+    .result.ok { color: var(--ok); }
+    .result.err { color: var(--err); }
+    footer { color: var(--muted); font-size: 11px; text-align: center; }
+    [hidden] { display: none !important; }
+  </style>
+</head>
+<body>
+  <header>
+    <img src="icons/icon-48.png" alt="">
+    <div>
+      <h1 data-i18n="extName">TwitchUnblock Connect</h1>
+      <p class="sub" data-i18n="subtitle"></p>
+    </div>
+  </header>
+
+  <section class="card" aria-live="polite">
+    <h2 data-i18n="stateTitle"></h2>
+    <div class="row"><span class="dot" id="session-dot"></span><span id="session-text"></span></div>
+    <div class="row"><span class="dot" id="integrity-dot"></span><span id="integrity-text" class="small"></span></div>
+    <button type="button" class="secondary" id="open-twitch" data-i18n="openTwitch" hidden></button>
+  </section>
+
+  <section class="card warn" id="perms" hidden>
+    <p class="small" data-i18n="permsMissing"></p>
+    <button type="button" id="grant" data-i18n="permsGrant"></button>
+    <p class="small muted" id="perms-hint" data-i18n="permsHint" hidden></p>
+  </section>
+
+  <section class="card">
+    <h2 data-i18n="settingsTitle"></h2>
+    <label class="toggle">
+      <input type="checkbox" id="set-siteEnabled">
+      <span><b data-i18n="setSite"></b><small data-i18n="setSiteHelp"></small></span>
+    </label>
+    <label class="toggle">
+      <input type="checkbox" id="set-autoClaim">
+      <span><b data-i18n="setClaim"></b><small data-i18n="setClaimHelp"></small></span>
+    </label>
+    <label class="toggle">
+      <input type="checkbox" id="set-allowSpend">
+      <span><b data-i18n="setSpend"></b><small data-i18n="setSpendHelp"></small></span>
+    </label>
+  </section>
+
+  <section class="card">
+    <h2 data-i18n="diagTitle"></h2>
+    <button type="button" id="diag" data-i18n="diagButton"></button>
+    <pre class="result" id="diag-session"></pre>
+    <pre class="result" id="diag-integrity"></pre>
+  </section>
+
+  <section class="card">
+    <h2 data-i18n="securityTitle"></h2>
+    <p class="small muted" data-i18n="securityText"></p>
+  </section>
+
+  <footer id="version"></footer>
+
+  <script src="popup.js"></script>
+</body>
+</html>
