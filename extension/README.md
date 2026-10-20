@@ -32,8 +32,15 @@ document commun aux deux côtés).
 
 ### Firefox 128 et plus (module temporaire)
 
+Le dossier `extension/` est la version Chrome (Chrome, Edge et Brave refusent
+l'arrière-plan sous forme de script, que Firefox exige). La version Firefox se prépare à
+part : le zip `twitchunblock-connect-<version>-firefox` du workflow « Extension »
+(décompressé), ou `node extension/dev/build-firefox.mjs` depuis le dépôt cloné, qui
+l'écrit dans `extension-firefox/`.
+
 1. Ouvrir `about:debugging#/runtime/this-firefox`.
-2. **Charger un module complémentaire temporaire…** et choisir `manifest.json`.
+2. **Charger un module complémentaire temporaire…** et choisir le `manifest.json` de la
+   version Firefox.
 3. Ouvrir la fenêtre de l'extension : si un cadre orange signale des accès manquants,
    cliquer **Autoriser l'accès** (ou `about:addons` → TwitchUnblock Connect →
    Permissions → autoriser twitch.tv et les deux adresses du site).
@@ -101,7 +108,7 @@ une signature de Mozilla (AMO), que fera plus tard le propriétaire du projet
 
 | Fichier | Rôle |
 | --- | --- |
-| `manifest.json` | MV3, un seul fichier pour Chrome (`service_worker`) et Firefox (`scripts`) |
+| `manifest.json` | MV3, version Chrome (`service_worker`) ; `dev/build-firefox.mjs` en tire la version Firefox (`scripts`, identifiant gecko) |
 | `background.js` | opérations du protocole, session, jeton d'intégrité, limites, cache |
 | `content.js` | pont page ↔ arrière-plan, rien d'autre |
 | `popup.html`, `popup.js` | fenêtre : état, réglages, diagnostic |

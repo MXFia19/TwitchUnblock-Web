@@ -56,7 +56,9 @@ jobs:
       # Le dossier préparé est envoyé tel quel : GitHub en fait l'archive, que l'on
       # télécharge sous le nom twitchunblock-connect-<version>.zip, manifest.json à
       # la racine (prête pour « Charger l'extension non empaquetée » une fois
-      # décompressée, ou pour AMO). Envoyer un .zip donnerait un zip dans un zip.
+      # décompressée). Envoyer un .zip donnerait un zip dans un zip. La version
+      # Firefox (manifeste adapté, dev/build-firefox.mjs) part à côté, en
+      # twitchunblock-connect-<version>-firefox (module temporaire, ou AMO).
       - name: Package
         id: package
         run: |
@@ -69,6 +71,12 @@ jobs:
           if [ -e "dist/$name/tests" ] || [ -e "dist/$name/dev" ]; then
             echo "::error::fichiers de dev dans le paquet"; exit 1
           fi
+          node extension/dev/build-firefox.mjs
+          mv extension-firefox "dist/$name-firefox"
+          node -e 'const m = require(process.argv[1]); if (!m.background.scripts || !m.browser_specific_settings) process.exit(1)' "./dist/$name-firefox/manifest.json"
+          if [ -e "dist/$name-firefox/tests" ] || [ -e "dist/$name-firefox/dev" ]; then
+            echo "::error::fichiers de dev dans le paquet Firefox"; exit 1
+          fi
           echo "name=$name" >> "$GITHUB_OUTPUT"
 
       - name: Upload package
@@ -76,4 +84,11 @@ jobs:
         with:
           name: ${{ steps.package.outputs.name }}
           path: dist/${{ steps.package.outputs.name }}/
+          if-no-files-found: error
+
+      - name: Upload Firefox package
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.package.outputs.name }}-firefox
+          path: dist/${{ steps.package.outputs.name }}-firefox/
           if-no-files-found: error

@@ -8,6 +8,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import vm from "node:vm";
+import { firefoxManifest } from "../dev/build-firefox.mjs";
 
 const DIR = join(dirname(fileURLToPath(import.meta.url)), "..");
 const BACKGROUND = readFileSync(join(DIR, "background.js"), "utf8");
@@ -1552,12 +1553,19 @@ test("réglage changé : nouvelle annonce ; installation ou mise à jour : conte
 
 test("manifeste : origines, permissions et arrière-plan attendus", () => {
   assert.equal(MANIFEST.manifest_version, 3);
-  assert.deepEqual(MANIFEST.background, { service_worker: "background.js", scripts: ["background.js"] });
+  // Version Chrome : rien que Chrome, Edge ou Brave signaleraient en avertissement.
+  assert.deepEqual(MANIFEST.background, { service_worker: "background.js" });
+  assert.equal(MANIFEST.browser_specific_settings, undefined);
   assert.deepEqual(MANIFEST.content_scripts, [{ matches: [SITE + "/*", PREVIEW + "/*"], js: ["content.js"], run_at: "document_start", all_frames: false }]);
   assert.deepEqual([...MANIFEST.permissions].sort(), ["cookies", "scripting", "storage", "tabs"]);
   assert.equal(MANIFEST.externally_connectable, undefined);
   assert.equal(MANIFEST.web_accessible_resources, undefined);
-  assert.equal(MANIFEST.browser_specific_settings.gecko.id, "connect@twitchunblock.app");
+  // Version Firefox (dev/build-firefox.mjs) : script d'arrière-plan et identifiant.
+  const firefox = firefoxManifest(MANIFEST);
+  assert.deepEqual(firefox.background, { scripts: ["background.js"] });
+  assert.equal(firefox.browser_specific_settings.gecko.id, "connect@twitchunblock.app");
+  assert.deepEqual(firefox.content_scripts, MANIFEST.content_scripts);
+  assert.deepEqual(firefox.host_permissions, MANIFEST.host_permissions);
   assert.deepEqual(MANIFEST.host_permissions, [
     "https://*.twitch.tv/*", "https://static.twitchcdn.net/*", "https://usher.ttvnw.net/*", "https://*.hls.ttvnw.net/*",
     SITE + "/*", PREVIEW + "/*"
