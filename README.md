@@ -71,7 +71,7 @@ Watch Twitch lives and VODs in your browser, no subscription needed, with the re
 - Recent messages loaded on arrival: you never land in an empty chat
 - The chat connects within a few seconds even when an emote or badge source is slow (filtered network, VPN): emotes that arrive later show up in the next messages and in the pinned message. A source that failed (network, server error) is asked again the next time a chat opens
 - **Pinned message**: compact banner with badges, emotes, who pinned it and a countdown — collapse it to a chip in the chat's header
-- **Drops card**: when the channel runs a drops campaign, a card under the pinned message shows the reward, the watch time, the end date and a link to the details; dismissed, it stays away for that campaign
+- **Drops card**: when the channel runs a drops campaign, a card under the pinned message shows the reward, the watch time, the end date and a link to the details; dismissed, it stays away for that campaign. With the [TwitchUnblock Connect](#twitchunblock-connect-browser-extension) extension, it also shows your progress for each drop and a **Claim** button
 - **Predictions** live (read-only — bets with the [TwitchUnblock Connect](#twitchunblock-connect-browser-extension) extension), incoming **raids** and **announcements** highlighted
 - **Hype train**, without an account: the “Incoming” card when a channel is one or two supports away from a Hype Train (dots and countdown), the departure, the current level with its real progress bar and time left, a line when a level is completed, and the end of a completed train — in real time in the main chat, every few seconds in the multi-live chat
 - Your name and **chosen words highlighted**; **filters**: hide bots, `!commands`, muted words, hide someone
@@ -113,7 +113,9 @@ Watch Twitch lives and VODs in your browser, no subscription needed, with the re
 The website can't use your Twitch web session: twitch.tv's login cookie is out of any other site's reach, and the site never asks for it. **TwitchUnblock Connect** is a small extension for desktop browsers (Chrome and other Chromium browsers, Firefox) that keeps that session on its side and does a short, closed list of things for the site — in the main player, during a live only (not the multi-live tiles, not VODs):
 
 - **Channel points while you watch**: a “minute watched” every 60 s while the live plays (a hidden tab counts, a paused player doesn't), like the iPhone app. Your balance — with the channel's own points name and icon — and your watch streak show at the top of the chat
-- **Bonus chests**: claimed on their own (“+50” in place of the balance for a moment), or with a click on the gift when *Automatic chests* is off in the extension
+- **Bonus chests**: claimed on their own (“+50” in place of the balance for a moment), or with a click on the gift when *Claim automatically* is off in the extension
+- **Channel rewards**: a click on the balance lists the channel's custom rewards (cost, color or image), greyed out when you're short on points or when one is paused, out of stock or on cooldown (with the time left). Picking one asks for a confirmation (title, cost, the streamer's prompt, and your message when the reward needs one, 200 characters at most) before anything is spent
+- **Drops**: the drops card shows your progress for each drop of the campaign (bar, minutes watched), what's claimed and a **Claim** button. While a live with drops plays, the extension moves them forward every 10 s the way the iPhone app does (reading the stream's playlist, without downloading the video), claims them itself when *Claim automatically* is on, and the site says “Drop claimed: …”
 - **Predictions**: the prediction card gets an amount box with quick amounts (10, 100, 1,000, max), the outcome buttons, then a confirmation (amount and outcome) before anything is sent; your bet shows on the card, then whether it won. One outcome per prediction, as on Twitch
 - **Twitch polls**: a card with the choices, their share and a vote button; extra votes paid with channel points (cost shown, confirmed first) when the channel allows them
 - **Raids**: joined as soon as the channel announces one, for the raid bonus (“Raid bonus” in the raid banner); following the raid works as before, and an error never stops it
@@ -126,8 +128,8 @@ Without the extension, with its connection to the site turned off, or on a phone
 - The Twitch session cookie and the integrity token never leave the extension's background: not to the page, not to its content script, not to TwitchUnblock's servers. The site sends nothing about it to the Worker or the relay, and counts nothing more in the usage statistics.
 - The page and the extension only talk through `window.postMessage` to the page's own origin; each side drops anything from another window, another origin or another protocol. The content script only runs on the official website and the test branch's preview, top frame only.
 - A closed list of operations, every argument checked on both sides (channel login, amounts from 1 to 250,000…): no free GQL request, no generic relay. Every answer is checked again by the site before use; a malformed one is an error, never a guess.
-- Spending points (bets, paid poll votes) and voting need a real click: the site sends the request inside the click on **Confirm** (or **Vote**), and the extension refuses it otherwise, or when *Bets and votes from the site* is off. Its settings are only changed in its own window, never by the page.
-- The extension limits the pace itself (reads at most once per 3 s per channel, one minute watched per 50 s, 60 requests a minute in all).
+- Spending points (bets, paid poll votes, rewards) and voting need a real click: the site sends the request inside the click on **Confirm**, **Vote** or **Redeem**, and the extension refuses it otherwise, or when *Bets, votes and rewards from the site* is off. Its settings are only changed in its own window, never by the page.
+- The extension limits the pace itself (reads at most once per 3 s per channel, one minute watched per 50 s, one drops pulse per 8 s, 60 requests a minute in all).
 
 Messages, operations, error codes and limits: [`extension/PROTOCOL.md`](extension/PROTOCOL.md). On the site's side, `public/assets/js/connect.js` is the bridge (detection, requests, time limits, answers checked) and `public/assets/js/chat/connect-live.js` the player and chat part; `node tools/connect-check.mjs` checks the bridge with a fake window and a fake extension (no browser, no network).
 
@@ -158,7 +160,7 @@ public/              The website, served as-is by Vercel (no build step)
       util.js        Escaping, formatting, icons
       connect.js     TwitchUnblock Connect: bridge to the browser extension
       chat/          Chat: IRC, emotes, badges, pinned message, hype train, VOD replay,
-                     the extension's points, bets, polls and raids (connect-live.js)
+                     the extension's points, rewards, bets, polls, raids and drops (connect-live.js)
 extension/           TwitchUnblock Connect, the browser extension (README.md, PROTOCOL.md)
 worker.js            Backend: Cloudflare Worker
 wrangler.toml        Worker configuration

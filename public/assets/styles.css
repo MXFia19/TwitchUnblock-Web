@@ -1380,6 +1380,38 @@ html.multi-open { overflow: hidden; }
 .cx-note a:hover { text-decoration: underline; }
 .cx-note .icon-btn { color: var(--muted); }
 .raid-bonus { display: inline-flex; align-items: center; gap: 3px; color: var(--success); font-weight: 700; }
+/* Le solde ouvre les récompenses de la chaîne (panneau des commandes). */
+button.cx-bal { cursor: pointer; }
+button.cx-bal:hover { border-color: var(--purple); background: var(--card); }
+.cx-rw-bal { display: inline-flex; align-items: center; gap: 4px; color: var(--muted); font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.bot-cmds-list.cx-rw-list { gap: 6px; }
+.cx-reward {
+  display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px; border-radius: 10px;
+  background: var(--surface); color: var(--text); text-align: left; transition: background 0.15s;
+}
+.cx-reward:hover:not(:disabled) { background: var(--surface-hi); }
+.cx-reward:disabled { opacity: 0.5; }
+.cx-reward.static { padding: 0; background: none; }
+.cx-reward-ic {
+  flex: none; display: grid; place-items: center; width: 36px; height: 36px; border-radius: 8px; overflow: hidden;
+  background: var(--rc, rgba(var(--primary-rgb), 0.22)); color: #fff;
+}
+.cx-reward-ic img { width: 28px; height: 28px; object-fit: contain; }
+.cx-reward-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.cx-reward-text b { font-size: 13px; overflow-wrap: anywhere; }
+.cx-reward-text small { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; color: var(--muted); font-size: 11.5px; overflow-wrap: anywhere; }
+.cx-reward-cost { flex: none; display: inline-flex; align-items: center; gap: 3px; color: var(--purple); font-size: 12px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.cx-rw-confirm { display: flex; flex-direction: column; gap: 8px; }
+.text-input.cx-rw-input { height: auto; min-height: 64px; padding: 8px 10px; line-height: 1.4; resize: vertical; }
+.cx-rw-count { align-self: flex-end; margin-top: -4px; font-size: 11px; font-variant-numeric: tabular-nums; }
+/* Drops : progression du compte dans la carte de la campagne. */
+.drops-cx { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
+.drops-cx[hidden] { display: none; }
+.drop-line { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 22px; font-size: 12px; }
+.drop-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.drop-min { flex: none; color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.drop-ok { flex: none; display: inline-flex; align-items: center; gap: 3px; color: var(--success); font-size: 11px; font-weight: 700; }
+.cx-chip.drop-claim { height: 22px; padding: 0 8px; font-size: 11px; }
 /* Réglages → TwitchUnblock Connect */
 .cx-state { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-size: 14px; font-weight: 600; }
 .cx-state i { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
@@ -1388,7 +1420,7 @@ html.multi-open { overflow: hidden; }
 .cx-state[data-tone='wait'] i { animation: cx-wait 0.8s ease-in-out infinite alternate; }
 @keyframes cx-wait { to { opacity: 0.3; } }
 .cx-about { margin-top: 6px; line-height: 1.45; }
-:root[data-bg="light"] :is(.cx-bal.gain, .cx-line.ok, .raid-bonus) { color: #0b7a4c; }
+:root[data-bg="light"] :is(.cx-bal.gain, .cx-line.ok, .raid-bonus, .drop-ok) { color: #0b7a4c; }
 @media (prefers-reduced-motion: reduce) { .cx-claim, .cx-state i { animation: none; } }
 /* Hype train : approche (pastilles), départ, niveau en cours (barre), fin */
 .chat-hype { padding: 7px 10px 8px; background: var(--card-hi); border-bottom: 1px solid var(--line); cursor: pointer; }

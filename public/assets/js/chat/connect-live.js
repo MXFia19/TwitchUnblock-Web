@@ -1,20 +1,24 @@
 // ═══════════════════════════════════════════════════════════════════════════
 //  TwitchUnblock Connect dans le chat du lecteur principal, pendant un
 //  direct : minutes regardées (points de chaîne et coffres), solde et série
-//  de visionnage, mises sur les prédictions (carte existante de view.js,
-//  complétée), votes aux sondages Twitch et bonus de raid (bandeau existant
-//  du raid). Tout passe par l'extension (connect.js). Sans elle, ou
+//  de visionnage, récompenses de la chaîne (en touchant le solde), mises
+//  sur les prédictions (carte existante de view.js, complétée), votes aux
+//  sondages Twitch, bonus de raid (bandeau existant du raid) et drops
+//  (carte existante : progression, réclamation, et la « pulsation » qui les
+//  fait avancer). Tout passe par l'extension (connect.js). Sans elle, ou
 //  connexion coupée dans l'extension, rien de plus dans le lecteur ; sans
 //  session Twitch, une ligne dit de se connecter à twitch.tv. Le chat du
 //  multi-live et les VODs ne s'en servent pas (seul le chat principal reçoit
 //  `connect`, et openLive est réservé aux directs).
 // ═══════════════════════════════════════════════════════════════════════════
-import { MAX_BET } from '../connect.js'
+import { MAX_BET, MAX_REWARD_INPUT } from '../connect.js'
 import { lang, t } from '../i18n.js'
-import { $, esc, icon, toast } from '../util.js'
+import { $, esc, formatClock, icon, toast } from '../util.js'
 
 const TICK = 5000               // une boucle : ce qui est « dû » part
 const BEAT_EVERY = 60_000       // watch.beat, pendant la lecture seulement
+const PULSE_EVERY = 10_000      // drops.pulse, pendant la lecture d'une chaîne à drops
+const DROPS_EVERY = 60_000      // drops.get : campagnes et progression
 const POINTS_EVERY = 60_000     // points.get : solde, coffre disponible
 const READ_VISIBLE = 15_000     // prédictions et sondages, onglet visible
 const READ_HIDDEN = 60_000      // … onglet caché
@@ -45,12 +49,18 @@ function keepKeys(e) {
 }
 
 /** Erreur d'une demande → phrase pour l'utilisateur. Pour `twitch`, le
- *  code de Twitch est lu au mieux (il n'est pas documenté). */
-function errorText(e) {
+ *  code de Twitch est lu au mieux (il n'est pas documenté) ; `ctx` :
+ *  « reward » pour l'échange d'une récompense, dont les refus sont à part. */
+function errorText(e, ctx = '') {
   const code = e?.code || 'internal'
   if (code === 'twitch') {
     const c = String(e.detail || '').toUpperCase()
     if (/NOT_ENOUGH|INSUFFICIENT/.test(c)) return t('connect_err_points')
+    if (ctx === 'reward') {
+      if (/MISMATCH/.test(c)) return t('reward_err_changed')
+      if (/NOT_LIVE|OFFLINE/.test(c)) return t('connect_err_offline')
+      if (/COOLDOWN|STOCK|MAX|LIMIT|DISABLED|PAUSED|NOT_FOUND|ALREADY/.test(c)) return t('reward_err_unavailable')
+    }
     if (/MULTI|OTHER_OUTCOME|DIFFERENT_OUTCOME/.test(c)) return t('pred_one_outcome')
     if (/MAX|PER_EVENT/.test(c)) return t('connect_err_max')
     if (/NOT_ACTIVE|INACTIVE|LOCKED|CLOSED|ENDED|EXPIRED|NOT_FOUND/.test(c)) return t('connect_err_closed')
@@ -76,6 +86,8 @@ function predFromConnect(e) {
 
 const freshBet = (id = null) => ({ id, self: null, amount: '', amountN: 0, pick: null, step: 'idle', error: '', note: '' })
 const freshPollUi = (open = false) => ({ pick: null, step: 'idle', error: '', note: '', open })
+/** Panneau des récompenses : liste, puis confirmation et envoi. */
+const freshRw = () => ({ step: 'list', pick: null, input: '', error: '', loading: false })
 
 export class ConnectLive {
   /**
@@ -99,16 +111,40 @@ export class ConnectLive {
       if (Date.now() - this.at.status >= STATUS_ON_RETURN) this.refreshStatus()
       this.tick()
     }
-    view.el.points.addEventListener('click', (e) => { if (e.target.closest('[data-cx-claim]')) this.claim() })
+    view.el.points.addEventListener('click', (e) => {
+      if (e.target.closest('[data-cx-claim]')) this.claim()
+      else if (e.target.closest('[data-cx-rewards]')) this.toggleRewards()
+    })
+    // Carte drops (view.js) : « Réclamer » sur un drop terminé.
+    view.el.drops.addEventListener('click', (e) => {
+      const b = e.target.closest('[data-cx-drop]')
+      if (b) this.claimDrop(b.dataset.cxDrop)
+    })
+    const rw = view.el.rewards
+    rw.addEventListener('click', (e) => this.onRewardsClick(e))
+    rw.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') { e.stopPropagation(); this.closeRewards(); return }
+      keepKeys(e)
+    })
+    rw.addEventListener('input', (e) => {
+      if (!e.target.matches('[data-cx-input]')) return
+      this.rw.input = e.target.value
+      const n = $('.cx-rw-count', rw)
+      if (n) n.textContent = `${e.target.value.length}/${MAX_REWARD_INPUT}`
+      if (this.rw.error) { this.rw.error = ''; $('.cx-err', rw)?.remove() }
+    })
   }
 
   reset() {
-    this.at = { beat: 0, points: 0, pred: 0, poll: 0, status: 0 }
+    this.at = { beat: 0, pulse: 0, drops: 0, points: 0, pred: 0, poll: 0, status: 0 }
     // Un objet par chaîne : la demande en cours d'une chaîne quittée ne
     // bloque pas la suivante.
     this.busy = {}
     this.points = null       // { balance, claimAvailable, name, icon, streak }
     this.raidJoined = null   // raid rejoint : « Bonus de raid » dans son bandeau
+    this.drops = null        // drops.get : { channelHasDrops, campaigns }
+    this.rewards = null      // rewards.get : récompenses de la chaîne
+    this.rw = freshRw()
     this.bet = freshBet()
     this.seenPred = null     // dernier événement lu par l'extension
     this.gonePreds = new Set()
@@ -142,6 +178,7 @@ export class ConnectLive {
     this.unsub?.()
     this.unsub = null
     document.removeEventListener('visibilitychange', this.onVisible)
+    this.closeRewards()
     this.channel = null
     this.reset()
     this.gain = null
@@ -150,6 +187,7 @@ export class ConnectLive {
     el.innerHTML = ''
     $('.cx-note', this.view.el.events)?.remove()
     $('.chat-tpoll', this.view.el.events)?.remove()
+    this.dropsChanged()
     // La carte de prédiction (si elle reste, fin du direct) redevient
     // en lecture seule.
     this.renderAct()
@@ -182,8 +220,11 @@ export class ConnectLive {
     this.renderPoints()
     this.renderAct()
     this.view.paintPredHead()
+    this.dropsChanged()
     if (this.ready() && this.tpoll) this.renderPoll()
     else $('.chat-tpoll', this.view.el.events)?.remove()
+    if (!this.ready()) this.closeRewards()
+    else this.renderRewards()
   }
 
   // ── Boucle ──────────────────────────────────────────────────────────────
@@ -192,8 +233,11 @@ export class ConnectLive {
     const now = Date.now()
     const every = document.hidden ? READ_HIDDEN : READ_VISIBLE
     if (now - this.at.status >= STATUS_EVERY) this.refreshStatus()
-    // Présence : seulement pendant la lecture (onglet caché compris).
-    if (this.isPlaying() && now - this.at.beat >= BEAT_EVERY - 1000) this.beat()
+    // Présence et drops : seulement pendant la lecture (onglet caché compris).
+    const playing = this.isPlaying()
+    if (playing && now - this.at.beat >= BEAT_EVERY - 1000) this.beat()
+    if (playing && this.drops?.channelHasDrops && now - this.at.pulse >= PULSE_EVERY - 1000) this.pulse()
+    if (now - this.at.drops >= DROPS_EVERY) this.readDrops()
     if (now - this.at.points >= POINTS_EVERY) this.readPoints()
     if (now - this.at.pred >= every) this.readPred()
     if (now - this.at.poll >= every) this.readPoll()
@@ -246,6 +290,8 @@ export class ConnectLive {
     else this.points = { balance: n, claimAvailable: false, name: null, icon: null, streak: null }
     this.renderPoints()
     this.updateActBalance()
+    const rwBal = $('.cx-rw-bal span', this.view.el.rewards)
+    if (rwBal) rwBal.textContent = fmt(n)
   }
 
   /** « +N » quelques secondes à la place du solde (et dit au lecteur
@@ -268,7 +314,8 @@ export class ConnectLive {
     const p = this.points
     if (!this.ready() || !p) { el.hidden = true; return }
     if (!el.firstChild) {
-      el.innerHTML = `<span class="cx-bal"><span class="cx-bal-ic"></span><span class="cx-bal-n"></span></span>
+      // Le solde est un bouton : il ouvre les récompenses de la chaîne.
+      el.innerHTML = `<button class="cx-bal" type="button" data-cx-rewards aria-haspopup="dialog"><span class="cx-bal-ic"></span><span class="cx-bal-n"></span></button>
         <span class="cx-streak" hidden>${icon('flame', 11)}<span></span></span>
         <button class="cx-claim" type="button" data-cx-claim hidden>${icon('gift', 14)}</button>
         <span class="cx-live" aria-live="polite"></span>`
@@ -280,7 +327,7 @@ export class ConnectLive {
       streak.title = t('pts_streak', { n: fmt(p.streak) })
       streak.setAttribute('aria-label', streak.title)
     }
-    const label = p.name ? t('pts_named', { name: p.name, n: fmt(p.balance) }) : t('pts_default', { n: fmt(p.balance) })
+    const label = `${p.name ? t('pts_named', { name: p.name, n: fmt(p.balance) }) : t('pts_default', { n: fmt(p.balance) })} · ${t('rewards_show')}`
     const bal = $('.cx-bal', el)
     bal.title = label
     bal.setAttribute('aria-label', label)
@@ -334,6 +381,278 @@ export class ConnectLive {
       <button class="icon-btn xs" type="button" aria-label="${esc(t('close'))}" title="${esc(t('close'))}">${icon('x', 14)}</button>`
     $('button', note).addEventListener('click', () => { loginNoteClosed = true; note.remove() })
     events.prepend(note)
+  }
+
+  // ── Récompenses de la chaîne ────────────────────────────────────────────
+  /** Le solde touché : la liste des récompenses, sous l'en-tête du chat
+   *  (même panneau que les commandes des bots). */
+  toggleRewards() {
+    const box = this.view.el.rewards
+    if (!box.hidden) { this.closeRewards(); return }
+    if (!this.ready()) return
+    // Un panneau à la fois.
+    const bots = $('.bot-cmds:not(.cx-rewards)', this.view.root)
+    if (bots) bots.hidden = true
+    this.rw = freshRw()
+    box.hidden = false
+    this.loadRewards()
+    $('[data-cx-close]', box)?.focus()
+  }
+
+  closeRewards() {
+    const box = this.view.el.rewards
+    clearInterval(this.rwTimer)
+    this.rwTimer = null
+    this.rw = freshRw()
+    if (box.hidden) return
+    box.hidden = true
+    box.innerHTML = ''
+  }
+
+  async loadRewards() {
+    const rw = this.rw
+    const gen = this.gen
+    rw.loading = true
+    this.renderRewards()
+    try {
+      const d = await this.connect.request('rewards.get', { channel: this.channel })
+      if (gen !== this.gen || this.rw !== rw) return
+      this.rewards = d.rewards
+      if (d.balance != null) this.setBalance(d.balance)
+      rw.error = ''
+    } catch (e) {
+      if (gen !== this.gen || this.rw !== rw) return
+      rw.error = errorText(e, 'reward')
+    }
+    rw.loading = false
+    this.renderRewards()
+  }
+
+  rewardPick() {
+    return (this.rewards ?? []).find((r) => r.id === this.rw.pick) ?? null
+  }
+
+  /** Pourquoi une récompense est grisée (en pause, épuisée, en recharge avec
+   *  le temps restant, points qui manquent), ou '' si elle est échangeable. */
+  rewardBlock(r, now = Date.now()) {
+    const bal = this.points?.balance
+    if (r.paused) return t('reward_paused')
+    if (!r.inStock) return t('reward_out')
+    if (r.cooldownEndsAt && r.cooldownEndsAt > now) return t('reward_cooldown', { t: formatClock((r.cooldownEndsAt - now) / 1000) })
+    if (bal != null && bal < r.cost) return t('reward_need', { n: fmt(r.cost - bal) })
+    return ''
+  }
+
+  rewardIcon(r) {
+    return `<span class="cx-reward-ic"${r.color ? ` style="--rc:${r.color}"` : ''}>${r.imageUrl
+      ? `<img src="${esc(r.imageUrl)}" alt="" width="28" height="28" loading="lazy">`
+      : icon('gift', 16)}</span>`
+  }
+
+  renderRewards() {
+    const box = this.view.el.rewards
+    if (box.hidden) return
+    const rw = this.rw
+    const r = rw.step !== 'list' ? this.rewardPick() : null
+    const bal = this.points?.balance
+    let body
+    if (r) {
+      // Confirmation : récompense, coût, consigne, texte demandé, puis envoi.
+      const sending = rw.step === 'sending'
+      body = `<div class="cx-rw-confirm">
+        <div class="cx-reward static">${this.rewardIcon(r)}<span class="cx-reward-text"><b>${esc(r.title)}</b></span>
+          <span class="cx-reward-cost">${icon('points', 12)}${esc(fmt(r.cost))}</span></div>
+        ${r.prompt ? `<p class="cx-line">${esc(r.prompt)}</p>` : ''}
+        ${r.requiresInput ? `<textarea class="text-input cx-rw-input" data-cx-input rows="3" maxlength="${MAX_REWARD_INPUT}"
+          placeholder="${esc(t('reward_input_ph'))}" aria-label="${esc(t('reward_input_ph'))}"${sending ? ' disabled' : ''}>${esc(rw.input)}</textarea>
+          <small class="muted cx-rw-count">${rw.input.length}/${MAX_REWARD_INPUT}</small>` : ''}
+        <div class="cx-confirm">
+          <span>${esc(t('reward_confirm', { r: r.title, n: fmt(r.cost) }))}</span>
+          <button class="btn ghost sm" type="button" data-cx-cancel${sending ? ' disabled' : ''}>${esc(t('cancel'))}</button>
+          <button class="btn primary sm" type="button" data-cx-confirm${sending ? ' disabled' : ''}>${esc(t(sending ? 'connect_sending' : 'reward_redeem'))}</button>
+        </div>
+        ${rw.error ? `<p class="cx-err" role="alert">${esc(rw.error)}</p>` : ''}
+      </div>`
+    } else if (!this.rewards) {
+      body = rw.error ? `<p class="cx-err" role="alert">${esc(rw.error)}</p>` : `<p class="muted small">${esc(t('loading'))}</p>`
+    } else {
+      const list = this.rewards.filter((x) => x.enabled).sort((a, b) => a.cost - b.cost)
+      const spendOff = !this.canSpend()
+      const now = Date.now()
+      body = (spendOff ? `<p class="cx-line muted">${esc(t('connect_err_spend_disabled'))}</p>` : '')
+        + (rw.error ? `<p class="cx-err" role="alert">${esc(rw.error)}</p>` : '')
+        + (list.length ? list.map((x) => {
+          const why = this.rewardBlock(x, now)
+          // En recharge : seul ce texte suit la seconde (rewardTick).
+          const cd = !x.paused && x.inStock && x.cooldownEndsAt > now ? ` data-cx-cd="${x.cooldownEndsAt}"` : ''
+          return `<button class="cx-reward" type="button" data-cx-reward="${esc(x.id)}"${why || spendOff ? ' disabled' : ''}>
+            ${this.rewardIcon(x)}
+            <span class="cx-reward-text"><b>${esc(x.title)}</b>${why ? `<small${cd}>${esc(why)}</small>` : x.prompt ? `<small>${esc(x.prompt)}</small>` : ''}</span>
+            <span class="cx-reward-cost">${icon('points', 12)}${esc(compact(x.cost))}</span>
+          </button>`
+        }).join('') : `<p class="muted small">${esc(t('rewards_empty'))}</p>`)
+    }
+    box.innerHTML = `<div class="bot-cmds-head">${icon('gift', 16)}<b>${esc(t('rewards_title'))}</b>
+        ${bal != null ? `<span class="cx-rw-bal">${icon('points', 12)}<span>${esc(fmt(bal))}</span></span>` : ''}
+        <button class="icon-btn xs" type="button" data-cx-close aria-label="${esc(t('close'))}" title="${esc(t('close'))}">${icon('x', 16)}</button></div>
+      <div class="bot-cmds-list cx-rw-list">${body}</div>`
+    // Recharges : le temps restant suit, tant que la liste est affichée.
+    clearInterval(this.rwTimer)
+    this.rwTimer = null
+    if (!r && this.rewards?.some((x) => x.cooldownEndsAt > Date.now())) this.rwTimer = setInterval(() => this.rewardTick(), 1000)
+  }
+
+  /** Chaque seconde : le texte des recharges seulement — refaire la liste
+   *  avalerait un clic en cours et le focus du clavier. Une recharge finie
+   *  la refait une fois (bouton réactivé). */
+  rewardTick() {
+    if (this.rw.step !== 'list') return
+    const now = Date.now()
+    let ended = false
+    for (const el of this.view.el.rewards.querySelectorAll('[data-cx-cd]')) {
+      const end = Number(el.dataset.cxCd)
+      if (end <= now) ended = true
+      else el.textContent = t('reward_cooldown', { t: formatClock((end - now) / 1000) })
+    }
+    if (ended) this.renderRewards()
+  }
+
+  onRewardsClick(e) {
+    const box = this.view.el.rewards
+    if (e.target.closest('[data-cx-close]')) { this.closeRewards(); return }
+    const rw = this.rw
+    const pick = e.target.closest('[data-cx-reward]')
+    if (pick && rw.step === 'list') {
+      Object.assign(rw, { step: 'confirm', pick: pick.dataset.cxReward, input: '', error: '' })
+      this.renderRewards()
+      ;($('[data-cx-input]', box) ?? $('[data-cx-confirm]', box))?.focus()
+      return
+    }
+    if (e.target.closest('[data-cx-cancel]')) {
+      Object.assign(rw, { step: 'list', pick: null, error: '' })
+      this.renderRewards()
+      return
+    }
+    if (e.target.closest('[data-cx-confirm]')) this.redeem()
+  }
+
+  /** Clic sur « Échanger » : la demande part dans ce clic même — l'extension
+   *  refuse une dépense sans geste réel de l'utilisateur. */
+  redeem() {
+    const rw = this.rw
+    const r = this.rewardPick()
+    if (!r || rw.step !== 'confirm' || !this.ready()) return
+    let input = null
+    if (r.requiresInput) {
+      // Une ligne, comme sur Twitch : 1 à 200 caractères.
+      input = rw.input.replace(/\s+/g, ' ').trim().slice(0, MAX_REWARD_INPUT)
+      if (!input) {
+        rw.error = t('reward_input_needed')
+        this.renderRewards()
+        $('[data-cx-input]', this.view.el.rewards)?.focus()
+        return
+      }
+    }
+    const gen = this.gen
+    const req = this.connect.request('rewards.redeem', {
+      channel: this.channel, rewardId: r.id, cost: r.cost, title: r.title, prompt: r.prompt, input,
+    })
+    Object.assign(rw, { step: 'sending', error: '' })
+    this.renderRewards()
+    req.then((d) => {
+      if (gen !== this.gen || this.rw !== rw) return
+      if (d.balance != null) this.setBalance(d.balance)
+      this.at.points = 0
+      this.closeRewards()
+      toast(t('reward_done', { r: r.title }), 'success')
+    }, (e) => {
+      if (gen !== this.gen || this.rw !== rw) return
+      Object.assign(rw, { step: 'confirm', error: errorText(e, 'reward') })
+      this.renderRewards()
+    })
+  }
+
+  // ── Drops ───────────────────────────────────────────────────────────────
+  async readDrops() {
+    const d = await this.run('drops', 'drops.get')
+    if (!d) return
+    this.drops = d
+    this.view.connectDrops()
+  }
+
+  /** Fait avancer les drops (toutes les 10 s pendant la lecture) ; un drop
+   *  réclamé par l'extension (« Réclamer automatiquement ») est annoncé. */
+  async pulse() {
+    const d = await this.run('pulse', 'drops.pulse')
+    if (!d?.claimed.length) return
+    toast(d.claimed.map((n) => t('drops_claimed_toast', { n })).join(' · '), 'success')
+    this.at.drops = 0   // progression relue au prochain tour
+  }
+
+  /** Campagne de l'extension pour la carte, quand le GQL public n'en montre
+   *  pas : la première en cours, pas fermée par l'utilisateur (`gone`). */
+  dropsFallback(gone) {
+    if (!this.ready() || !this.drops) return null
+    for (const c of this.drops.campaigns) {
+      if (gone.has(c.id) || !c.drops.length || (c.endsAt && c.endsAt < Date.now())) continue
+      const drops = c.drops.slice().sort((a, b) => a.requiredMinutes - b.requiredMinutes)
+      // En titre, le prochain drop à obtenir (le premier s'ils le sont tous).
+      const next = drops.find((x) => !x.claimed) ?? drops[0]
+      return {
+        id: c.id, name: c.name, game: c.gameName ?? '', endsAt: c.endsAt, details: '',
+        reward: next.name, image: next.imageUrl ?? '', minutes: next.requiredMinutes, more: drops.length - 1,
+      }
+    }
+    return null
+  }
+
+  /** Progression du compte dans la carte drops (view.js) : une ligne par
+   *  drop (barre, minutes), réclamé, ou « Réclamer ». */
+  dropsChanged() {
+    const slot = $('.drops-cx', this.view.el.drops)
+    if (!slot) return
+    const card = this.view.dropsCard
+    const list = this.ready() && card && this.drops ? this.drops.campaigns : []
+    const camp = list.find((c) => c.id === card.id)
+      ?? list.find((c) => c.name && card.name && c.name.toLowerCase() === card.name.toLowerCase())
+    if (!camp?.drops.length) { slot.hidden = true; slot.innerHTML = ''; return }
+    slot.innerHTML = camp.drops.slice().sort((a, b) => a.requiredMinutes - b.requiredMinutes).map((x) => {
+      const cur = Math.min(x.currentMinutes, x.requiredMinutes)
+      const pct = x.claimed || !x.requiredMinutes ? 100 : Math.round((cur / x.requiredMinutes) * 100)
+      const state = x.claimed
+        ? `<span class="drop-ok">${icon('check', 11)}${esc(t('drops_claimed_state'))}</span>`
+        : x.dropInstanceId
+          ? `<button class="cx-chip drop-claim" type="button" data-cx-drop="${esc(x.dropInstanceId)}"${this.busy.dropClaim ? ' disabled' : ''}>${esc(t('drops_claim'))}</button>`
+          : `<span class="drop-min">${esc(t('drops_progress', { c: fmt(cur), r: fmt(x.requiredMinutes) }))}</span>`
+      return `<div class="drop-row">
+        <div class="drop-line"><span class="drop-name">${esc(x.name)}</span>${state}</div>
+        <div class="pred-bar"><i style="width:${pct}%;background:var(--purple)"></i></div>
+      </div>`
+    }).join('')
+    slot.hidden = false
+  }
+
+  /** « Réclamer » sur un drop terminé (pas une dépense : pas de confirmation). */
+  claimDrop(id) {
+    if (!this.ready() || this.busy.dropClaim || !id) return
+    const busy = this.busy
+    const gen = this.gen
+    const drop = this.drops?.campaigns.flatMap((c) => c.drops).find((x) => x.dropInstanceId === id)
+    busy.dropClaim = true
+    this.dropsChanged()
+    this.connect.request('drops.claim', { dropInstanceId: id }).then((d) => {
+      if (gen !== this.gen) return
+      if (d.claimed) {
+        if (drop) Object.assign(drop, { claimed: true, dropInstanceId: null })
+        toast(t('drops_claimed_toast', { n: drop?.name || '?' }), 'success')
+      } else toast(t('drops_not_claimed'))
+      this.at.drops = 0
+    }, (e) => {
+      if (gen === this.gen) toast(errorText(e), 'error')
+    }).finally(() => {
+      busy.dropClaim = false
+      if (gen === this.gen) this.dropsChanged()
+    })
   }
 
   // ── Raid ────────────────────────────────────────────────────────────────

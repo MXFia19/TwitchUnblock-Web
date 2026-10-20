@@ -3,8 +3,8 @@
 //  Le site ne peut pas se servir de la session web Twitch (cookie de
 //  twitch.tv) ; l'extension la garde chez elle et fait pour le site une
 //  liste fermée d'opérations : points gagnés en regardant, coffres,
-//  prédictions, sondages, bonus de raid. Protocole commun :
-//  extension/PROTOCOL.md (v1).
+//  prédictions, sondages, bonus de raid, drops, récompenses de la chaîne.
+//  Protocole commun : extension/PROTOCOL.md (v1).
 //  Tout passe par window.postMessage vers la page elle-même (sa propre
 //  origine), que le content script de l'extension écoute : rien ne part
 //  vers le Worker ni le relais, et rien n'est compté (usage.js).
@@ -17,9 +17,11 @@ export const INSTALL_URL = 'https://github.com/MXFia19/TwitchUnblock-Web/tree/ma
 
 /** Liste fermée du protocole : rien d'autre ne part. */
 export const OPS = Object.freeze(['hello', 'status', 'points.get', 'points.claim', 'watch.beat',
-  'predictions.get', 'predictions.bet', 'polls.get', 'polls.vote', 'raid.join'])
+  'predictions.get', 'predictions.bet', 'polls.get', 'polls.vote', 'raid.join',
+  'drops.get', 'drops.claim', 'drops.pulse', 'rewards.get', 'rewards.redeem'])
 /** Peuvent devoir obtenir un jeton d'intégrité Twitch : 45 s au lieu de 15. */
-const SLOW_OPS = new Set(['points.claim', 'watch.beat', 'predictions.bet', 'polls.vote'])
+const SLOW_OPS = new Set(['points.claim', 'watch.beat', 'predictions.bet', 'polls.vote',
+  'raid.join', 'drops.claim', 'rewards.redeem'])
 export const timeoutFor = (op) => (SLOW_OPS.has(op) ? 45_000 : 15_000)
 
 /** Détection : `hello` à 0 ; 0,5 ; 1,5 et 3 s, tant que rien n'a répondu. */
@@ -32,6 +34,9 @@ export const ABSENT_AFTER = 4500
 export const MAX_BET = 250_000
 const LOGIN_RE = /^[a-z0-9_]{1,25}$/
 const RAID_ID_RE = /^[A-Za-z0-9-]{1,64}$/
+const DROP_INSTANCE_RE = /^[A-Za-z0-9#._:-]{1,200}$/
+/** Texte d'une récompense qui en demande un : 1 à 200 caractères. */
+export const MAX_REWARD_INPUT = 200
 
 /** Erreur d'une demande : `code` du protocole (disabled, no_session,
  *  needs_activation, spend_disabled, bad_args, unknown_op, rate_limited,
@@ -208,6 +213,76 @@ function normRaid(d) {
   return typeof d.joined === 'boolean' ? { joined: d.joined } : null
 }
 
+/** Drop réclamable : identifiant de son instance, ou null. */
+const dropInstance = (v) => (isStr(v) && DROP_INSTANCE_RE.test(v) ? v : null)
+
+function normDrops(d) {
+  if (typeof d.channelHasDrops !== 'boolean' || !Array.isArray(d.campaigns)) return null
+  const campaigns = []
+  for (const c of d.campaigns.slice(0, 20)) {
+    if (!isObj(c) || !ident(c.id) || !Array.isArray(c.drops)) return null
+    const drops = []
+    for (const x of c.drops.slice(0, 50)) {
+      if (!isObj(x) || !ident(x.id) || typeof x.claimed !== 'boolean') return null
+      const requiredMinutes = count(x.requiredMinutes)
+      const currentMinutes = count(x.currentMinutes)
+      if (requiredMinutes === null || currentMinutes === null) return null
+      drops.push({
+        id: x.id,
+        name: text(x.name, 200) ?? '',
+        imageUrl: httpsUrl(x.imageUrl),
+        requiredMinutes,
+        currentMinutes,
+        claimed: x.claimed,
+        dropInstanceId: dropInstance(x.dropInstanceId),
+      })
+    }
+    campaigns.push({ id: c.id, name: text(c.name, 200) ?? '', gameName: text(c.gameName, 200) || null, endsAt: time(c.endsAt), drops })
+  }
+  return { channelHasDrops: d.channelHasDrops, campaigns }
+}
+
+function normDropClaim(d) {
+  return typeof d.claimed === 'boolean' ? { claimed: d.claimed } : null
+}
+
+function normPulse(d) {
+  if (typeof d.active !== 'boolean' || !Array.isArray(d.claimed)) return null
+  return { active: d.active, claimed: d.claimed.filter(isStr).slice(0, 20).map((n) => n.slice(0, 200)) }
+}
+
+/** Couleur d'une récompense (elle finit dans un style) : #rgb à #rrggbbaa. */
+const color = (v) => (isStr(v) && /^#[0-9a-f]{3,8}$/i.test(v) ? v : null)
+
+function normRewards(d) {
+  const balance = countOrNull(d.balance)
+  if (balance === undefined || !Array.isArray(d.rewards)) return null
+  const rewards = []
+  for (const r of d.rewards.slice(0, 100)) {
+    if (!isObj(r) || !ident(r.id) || count(r.cost) === null) return null
+    if (['requiresInput', 'enabled', 'paused', 'inStock'].some((k) => typeof r[k] !== 'boolean')) return null
+    rewards.push({
+      id: r.id,
+      title: text(r.title, 200) ?? '',
+      cost: count(r.cost),
+      prompt: text(r.prompt, 1000) || null,
+      requiresInput: r.requiresInput,
+      enabled: r.enabled,
+      paused: r.paused,
+      inStock: r.inStock,
+      cooldownEndsAt: time(r.cooldownEndsAt),
+      color: color(r.color),
+      imageUrl: httpsUrl(r.imageUrl),
+    })
+  }
+  return { balance, rewards }
+}
+
+function normRedeem(d) {
+  const balance = countOrNull(d.balance)
+  return balance === undefined ? null : { balance }
+}
+
 const NORMALIZE = {
   hello: normHello,
   status: normStatus,
@@ -219,6 +294,11 @@ const NORMALIZE = {
   'polls.get': normPoll,
   'polls.vote': normPoll,
   'raid.join': normRaid,
+  'drops.get': normDrops,
+  'drops.claim': normDropClaim,
+  'drops.pulse': normPulse,
+  'rewards.get': normRewards,
+  'rewards.redeem': normRedeem,
 }
 
 /** Relit une réponse `data` d'une opération : sa forme propre, ou null. */
@@ -231,6 +311,8 @@ export function normalize(op, data) {
 export function cleanArgs(op, a) {
   if (op === 'hello' || op === 'status') return {}
   if (!isObj(a)) return null
+  // Le seul sans chaîne : un drop se réclame par son instance.
+  if (op === 'drops.claim') return dropInstance(a.dropInstanceId) ? { dropInstanceId: a.dropInstanceId } : null
   const channel = isStr(a.channel) ? a.channel.trim().toLowerCase() : ''
   if (!LOGIN_RE.test(channel)) return null
   if (op === 'predictions.bet') {
@@ -246,6 +328,14 @@ export function cleanArgs(op, a) {
   if (op === 'raid.join') {
     if (!isStr(a.raidId) || !RAID_ID_RE.test(a.raidId)) return null
     return { channel, raidId: a.raidId }
+  }
+  if (op === 'rewards.redeem') {
+    const { rewardId, cost, title, prompt = null, input = null } = a
+    if (!ident(rewardId) || !Number.isInteger(cost) || cost < 1 || cost > 1e9 || !isStr(title) || title.length > 200) return null
+    if (prompt !== null && (!isStr(prompt) || prompt.length > 1000)) return null
+    // Texte demandé par la récompense : 1 à 200 caractères (rien sinon).
+    if (input !== null && (!isStr(input) || !input.trim() || input.length > MAX_REWARD_INPUT)) return null
+    return { channel, rewardId, cost, title, prompt, input }
   }
   return { channel }
 }

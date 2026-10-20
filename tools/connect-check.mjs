@@ -5,7 +5,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  ABSENT_AFTER, ConnectError, HELLO_AT, MAX_BET, OPS, cleanArgs, connect, createConnect, normalize, timeoutFor,
+  ABSENT_AFTER, ConnectError, HELLO_AT, MAX_BET, MAX_REWARD_INPUT, OPS, cleanArgs, connect, createConnect, normalize, timeoutFor,
 } from '../public/assets/js/connect.js'
 
 const ORIGIN = 'https://twitchunblock.vercel.app'
@@ -67,6 +67,26 @@ const GOOD = {
   }),
   'polls.vote': () => ({ poll: null }),
   'raid.join': () => ({ joined: true }),
+  'drops.get': () => ({
+    channelHasDrops: true,
+    campaigns: [{
+      id: 'camp1', name: 'Rust drops', gameName: 'Rust', endsAt: '2026-10-30T00:00:00Z',
+      drops: [
+        { id: 'd1', name: 'Hoodie', imageUrl: 'https://static-cdn.jtvnw.net/d1.png', requiredMinutes: 60, currentMinutes: 60, claimed: false, dropInstanceId: '123#camp1#d1' },
+        { id: 'd2', name: 'Door', imageUrl: null, requiredMinutes: 120, currentMinutes: 75, claimed: false, dropInstanceId: null },
+      ],
+    }],
+  }),
+  'drops.claim': () => ({ claimed: true }),
+  'drops.pulse': () => ({ active: true, claimed: [] }),
+  'rewards.get': () => ({
+    balance: 1300,
+    rewards: [{
+      id: 'r1', title: 'Hydrate', cost: 500, prompt: null, requiresInput: false, enabled: true, paused: false, inStock: true,
+      cooldownEndsAt: null, color: '#00C7AC', imageUrl: null,
+    }],
+  }),
+  'rewards.redeem': (a) => ({ balance: 1300 - a.cost }),
 }
 
 /**
@@ -254,14 +274,17 @@ test('identifiants de demande uniques', () => {
 })
 
 test('délais d’attente : 15 s, et 45 s pour ce qui peut demander un jeton d’intégrité', async () => {
-  const slow = ['points.claim', 'watch.beat', 'predictions.bet', 'polls.vote']
+  const slow = ['points.claim', 'watch.beat', 'predictions.bet', 'polls.vote', 'raid.join', 'drops.claim', 'rewards.redeem']
   for (const op of OPS) assert.equal(timeoutFor(op), slow.includes(op) ? 45_000 : 15_000, op)
+  assert.equal(timeoutFor('drops.pulse'), 15_000)
   const args = {
     'points.get': { channel: 'a' }, 'points.claim': { channel: 'a' }, 'watch.beat': { channel: 'a' },
     'predictions.get': { channel: 'a' }, 'polls.get': { channel: 'a' }, status: {}, hello: {},
     'predictions.bet': { channel: 'a', eventId: 'e', outcomeId: 'o', points: 1 },
     'polls.vote': { channel: 'a', pollId: 'p', choiceId: 'c', withPoints: false },
     'raid.join': { channel: 'a', raidId: 'abc-123' },
+    'drops.get': { channel: 'a' }, 'drops.pulse': { channel: 'a' }, 'drops.claim': { dropInstanceId: '1#2#3' },
+    'rewards.get': { channel: 'a' }, 'rewards.redeem': { channel: 'a', rewardId: 'r', cost: 10, title: 'T', prompt: null, input: null },
   }
   for (const op of OPS) {
     const { client, clock } = setup({ ext: null })
@@ -289,6 +312,16 @@ test('arguments vérifiés avant tout envoi', async () => {
     ['polls.vote', { channel: 'a', pollId: 'p', choiceId: 'c' }],
     ['polls.vote', { channel: 'a', pollId: 'p', choiceId: 'c', withPoints: 'yes' }],
     ['raid.join', { channel: 'a', raidId: 'a b' }], ['raid.join', { channel: 'a', raidId: 'x'.repeat(65) }], ['raid.join', { channel: 'a' }],
+    ['drops.claim', {}], ['drops.claim', { dropInstanceId: 'a b' }], ['drops.claim', { dropInstanceId: 'x'.repeat(201) }],
+    ['drops.claim', { dropInstanceId: 42 }], ['drops.get', { channel: 'A B' }], ['drops.pulse', {}],
+    ['rewards.redeem', { channel: 'a', rewardId: 'r', cost: 0, title: 'T' }],
+    ['rewards.redeem', { channel: 'a', rewardId: 'r', cost: 1.5, title: 'T' }],
+    ['rewards.redeem', { channel: 'a', rewardId: '', cost: 10, title: 'T' }],
+    ['rewards.redeem', { channel: 'a', rewardId: 'r', cost: 10 }],
+    ['rewards.redeem', { channel: 'a', rewardId: 'r', cost: 10, title: 'T', input: '' }],
+    ['rewards.redeem', { channel: 'a', rewardId: 'r', cost: 10, title: 'T', input: '   ' }],
+    ['rewards.redeem', { channel: 'a', rewardId: 'r', cost: 10, title: 'T', input: 'x'.repeat(MAX_REWARD_INPUT + 1) }],
+    ['rewards.redeem', { channel: 'a', rewardId: 'r', cost: 10, title: 'T', prompt: 5 }],
   ]
   for (const [op, a] of bad) {
     await assert.rejects(client.request(op, a), (e) => e instanceof ConnectError && e.code === 'bad_args', `${op} ${JSON.stringify(a)}`)
@@ -299,7 +332,58 @@ test('arguments vérifiés avant tout envoi', async () => {
   assert.deepEqual(cleanArgs('predictions.bet', { channel: 'A', eventId: 'e', outcomeId: 'o', points: MAX_BET, extra: 1 }),
     { channel: 'a', eventId: 'e', outcomeId: 'o', points: MAX_BET })
   assert.deepEqual(cleanArgs('status', { anything: 1 }), {})
+  // drops.claim : seulement l'instance du drop (pas de chaîne).
+  assert.deepEqual(cleanArgs('drops.claim', { dropInstanceId: '1#c:2.d-3_x', channel: 'a' }), { dropInstanceId: '1#c:2.d-3_x' })
+  assert.deepEqual(cleanArgs('rewards.redeem', { channel: 'A', rewardId: 'r', cost: 10, title: 'T', input: 'x'.repeat(MAX_REWARD_INPUT) }),
+    { channel: 'a', rewardId: 'r', cost: 10, title: 'T', prompt: null, input: 'x'.repeat(MAX_REWARD_INPUT) })
   client.destroy()
+})
+
+test('drops et récompenses : demandes et réponses relues', async () => {
+  const { client, clock, posted } = setup()
+  const drops = track(client.request('drops.get', { channel: 'Rust_Streamer' }))
+  const claim = track(client.request('drops.claim', { dropInstanceId: '123#camp1#d1' }))
+  const pulse = track(client.request('drops.pulse', { channel: 'rust_streamer' }))
+  const rewards = track(client.request('rewards.get', { channel: 'rust_streamer' }))
+  // Récompense : la demande part dans l'appel même (clic de confirmation).
+  const before = posted.length
+  const redeem = track(client.request('rewards.redeem', { channel: 'rust_streamer', rewardId: 'r1', cost: 500, title: 'Hydrate', prompt: null, input: null }))
+  assert.equal(posted.length, before + 1)
+  assert.deepEqual(posted.at(-1).data.args, { channel: 'rust_streamer', rewardId: 'r1', cost: 500, title: 'Hydrate', prompt: null, input: null })
+  assert.deepEqual(posted.find((p) => p.data.op === 'drops.claim').data.args, { dropInstanceId: '123#camp1#d1' })
+  await clock.advance(10)
+  const camp = drops.value.campaigns[0]
+  assert.equal(drops.value.channelHasDrops, true)
+  assert.equal(camp.endsAt, Date.parse('2026-10-30T00:00:00Z'))
+  assert.deepEqual(camp.drops.map((d) => d.dropInstanceId), ['123#camp1#d1', null])
+  assert.deepEqual(claim.value, { claimed: true })
+  assert.deepEqual(pulse.value, { active: true, claimed: [] })
+  assert.equal(rewards.value.rewards[0].color, '#00C7AC')
+  assert.deepEqual(redeem.value, { balance: 800 })
+  client.destroy()
+})
+
+test('drops et récompenses : valeurs douteuses écartées, formes invalides refusées', () => {
+  // Couleur et image finissent dans la page : seulement #hex et https.
+  const r = normalize('rewards.get', { balance: 1, rewards: [{ id: 'r', title: 'T', cost: 1, requiresInput: true, enabled: true, paused: false, inStock: true, color: 'red;background:url(x)', imageUrl: 'data:image/png;base64,AA', cooldownEndsAt: 'bientôt' }] }).rewards[0]
+  assert.equal(r.color, null)
+  assert.equal(r.imageUrl, null)
+  assert.equal(r.cooldownEndsAt, null)
+  assert.equal(r.prompt, null)
+  const d = normalize('drops.get', { channelHasDrops: false, campaigns: [{ id: 'c', name: 'C', drops: [{ id: 'x', name: 'X', requiredMinutes: 10, currentMinutes: 3, claimed: false, dropInstanceId: 'bad id', imageUrl: 'http://x/y.png' }] }] })
+  assert.equal(d.campaigns[0].drops[0].dropInstanceId, null)
+  assert.equal(d.campaigns[0].drops[0].imageUrl, null)
+  assert.equal(d.campaigns[0].gameName, null)
+  assert.deepEqual(normalize('drops.pulse', { active: false, claimed: ['A', 3, null, 'B'] }), { active: false, claimed: ['A', 'B'] })
+  for (const bad of [
+    ['drops.get', { campaigns: [] }], ['drops.get', { channelHasDrops: true }],
+    ['drops.get', { channelHasDrops: true, campaigns: [{ id: 'c', drops: [{ id: 'x', claimed: false, requiredMinutes: 'dix', currentMinutes: 0 }] }] }],
+    ['drops.get', { channelHasDrops: true, campaigns: [{ id: 'c', drops: [{ id: 'x', requiredMinutes: 1, currentMinutes: 0 }] }] }],
+    ['drops.claim', { claimed: 'oui' }], ['drops.pulse', { active: true }], ['drops.pulse', { claimed: [] }],
+    ['rewards.get', { balance: 1 }], ['rewards.get', { balance: 1, rewards: [{ id: 'r', cost: -1, requiresInput: false, enabled: true, paused: false, inStock: true }] }],
+    ['rewards.get', { balance: 1, rewards: [{ id: 'r', cost: 1, enabled: true, paused: false, inStock: true }] }],
+    ['rewards.redeem', { balance: 'x' }],
+  ]) assert.equal(normalize(...bad), null, JSON.stringify(bad))
 })
 
 // ── Réponses ───────────────────────────────────────────────────────────────

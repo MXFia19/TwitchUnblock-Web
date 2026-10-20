@@ -318,6 +318,7 @@ export class ChatView {
         <button class="icon-btn sm chat-hide" type="button" data-i18n-title="close">${icon('x', 18)}</button>
       </header>
       <div class="bot-cmds" hidden role="dialog"></div>
+      <div class="bot-cmds cx-rewards" hidden role="dialog"></div>
       <div class="chat-pinned" hidden role="region"></div>
       <div class="chat-drops" hidden role="region"></div>
       <div class="chat-events"></div>
@@ -374,6 +375,7 @@ export class ChatView {
       info: $('.chat-info', this.root),
       events: $('.chat-events', this.root),
       points: $('.cx-points', this.root),
+      rewards: $('.cx-rewards', this.root),
     }
 
     this.el.list.addEventListener('scroll', () => this.onScroll(), { passive: true })
@@ -507,6 +509,7 @@ export class ChatView {
       // La fiche d'une emote d'abord : elle peut couvrir la fiche
       // utilisateur ou le sélecteur, qui restent ouverts dessous.
       if (!this.el.info.hidden) { this.el.info.hidden = true; return }
+      if (!this.el.rewards.hidden) { this.cx?.closeRewards(); return }
       this.hideCard()
       this.hidePicker()
     })
@@ -652,14 +655,25 @@ export class ChatView {
       let list = null
       try { list = (await gql(DROPS_QUERY, { l: channel }))?.user?.channel?.viewerDropCampaigns } catch { return }
       if (this.mode !== 'live' || this.channel !== channel) return
-      this.renderDrops(pickCampaign(list))
+      // Rien en public : la campagne lue par l'extension, s'il y en a une.
+      this.renderDrops(pickCampaign(list) ?? this.cx?.dropsFallback(new Set(dismissedDrops())) ?? null)
     }
     load()
     this.dropsTimer = setInterval(load, 600_000)
   }
 
+  /** Drops relus par l'extension TwitchUnblock Connect : la carte montre la
+   *  progression du compte — celle du GQL public, ou à défaut la première
+   *  campagne de l'extension pas encore fermée. */
+  connectDrops() {
+    if (this.dropsCard) { this.cx?.dropsChanged(); return }
+    const c = this.cx?.dropsFallback(new Set(dismissedDrops()))
+    if (c) this.renderDrops(c)
+  }
+
   renderDrops(c) {
     const box = this.el.drops
+    this.dropsCard = c ?? null
     if (!c) { box.hidden = true; box.innerHTML = ''; delete box.dataset.id; return }
     const head = c.reward && c.minutes ? t('drops_notice_title', { m: c.minutes, r: c.reward }) : c.name
     const sub = [c.name, c.game].filter(Boolean).join(' · ') + (c.more ? ` · ${t('drops_notice_more', { n: c.more })}` : '')
@@ -671,10 +685,13 @@ export class ChatView {
         <strong>${esc(head)}</strong>
         <span class="muted">${esc(sub)}</span>
         <span class="drops-meta">${ends ? `<span>${esc(t('drops_notice_ends', { d: ends }))}</span>` : ''}${c.details ? `<a href="${esc(c.details)}" target="_blank" rel="noopener noreferrer">${esc(t('drops_notice_details'))}</a>` : ''}</span>
+        <div class="drops-cx" hidden></div>
       </div>
       <button class="icon-btn xs" type="button" data-drops-close aria-label="${esc(t('close'))}">${icon('x', 14)}</button>`
     box.dataset.id = c.id
     box.hidden = false
+    // Extension : progression du compte, état et bouton « Réclamer ».
+    this.cx?.dropsChanged()
   }
 
   // ── Fiche d'une emote ou d'un badge ────────────────────────────────────
@@ -1799,6 +1816,8 @@ export class ChatView {
     if (!box.hidden) { box.hidden = true; return }
     const channel = this.channel
     if (!channel) return
+    // Même place que les récompenses de la chaîne : un panneau à la fois.
+    this.cx?.closeRewards()
     box.hidden = false
     box.innerHTML = `<div class="bot-cmds-head">${icon('terminal', 16)}<b>${esc(t('bot_commands'))}</b>
         <button class="icon-btn xs" type="button" data-close>${icon('x', 16)}</button></div>
