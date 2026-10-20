@@ -561,8 +561,10 @@ when it's French, Spanish or Russian, English otherwise; what the bot posts
 in a channel stays in English):
 
 - `/roles`: a menu of the roles on offer, the person's own ticked; ticking or
-  unticking, then closing the menu, adds and removes them in one go, and the
-  bot confirms ("+A −B"). One change every 5 seconds per person. The
+  unticking, then closing the menu, adds and removes them one by one (only
+  those that changed; the person's other roles are never sent back), and the
+  bot says what worked ("+A −B") and what didn't. One change every 5 seconds
+  per person. The
   developer picks the roles with `/roles-config add role: [description]
   [emoji]` (again to change them), `remove` and `list`; the release pings
   role is always in the list. Only safe roles are taken, and they're checked

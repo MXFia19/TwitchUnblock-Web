@@ -236,7 +236,7 @@ const I18N = {
     roles_same: 'No change.',
     roles_wait: '⏳ One change every few seconds — try again in a moment.',
     roles_skipped: (n) => `⚠️ ${n === 1 ? 'One role' : `${n} roles`} can’t be given out right now — the developer was told.`,
-    roles_error: (m) => `❌ I couldn’t change your roles (${m}) — please tell the developer.`,
+    roles_error: (r, m) => `❌ I couldn’t change ${r} (${m}) — please tell the developer.`,
     rp_desc: 'Get pinged when a new version is out',
     public_admin_only: 'ℹ️ Only the developer can post this in the channel — here it is, just for you.',
     posted: (c) => `✅ Posted in <#${c}>.`,
@@ -257,7 +257,7 @@ const I18N = {
     rp_check: 'I can’t read the server’s roles and channels to check it — try again.',
     rp_managed: (r) => `<@&${r}> is managed by an integration (bot, Boost…).`,
     rp_perms: (r) => `<@&${r}> has permissions — use a role without any.`,
-    rp_access: (r, c) => `<@&${r}> is given access in <#${c}> — use a role that no channel’s permissions mention.`,
+    rp_access: (r, c) => `<@&${r}> is in the permissions of <#${c}> — use a role that no channel’s permissions mention.`,
     rp_above: (r) => `<@&${r}> is above my highest role — move mine above it (Server Settings → Roles).`,
     dl_ios_title: '📱 iPhone and iPad',
     dl_ios: (src) => 'Not on the App Store: it’s sideloaded. **Add source** opens the source in AltStore, SideStore or Feather (also LiveContainer, StikStore, TrollApps): install **TwitchUnblock**. The same source lists **TU Test**, the test builds (newest features, may be unstable), installed next to the normal app. **Download IPA**: the latest version, for Sideloadly or TrollStore.\n'
@@ -309,7 +309,7 @@ const I18N = {
     roles_same: 'Aucun changement.',
     roles_wait: '⏳ Un changement toutes les quelques secondes — réessaie dans un instant.',
     roles_skipped: (n) => `⚠️ ${n === 1 ? 'Un rôle ne peut' : `${n} rôles ne peuvent`} pas être donné${n === 1 ? '' : 's'} pour l’instant — le développeur est prévenu.`,
-    roles_error: (m) => `❌ Je n’ai pas pu changer tes rôles (${m}) — préviens le développeur.`,
+    roles_error: (r, m) => `❌ Je n’ai pas pu changer ${r} (${m}) — préviens le développeur.`,
     rp_desc: 'Être notifié quand une nouvelle version sort',
     public_admin_only: 'ℹ️ Seul le développeur peut le poster dans le salon — le voici, pour toi seul.',
     posted: (c) => `✅ Posté dans <#${c}>.`,
@@ -330,7 +330,7 @@ const I18N = {
     rp_check: 'Je n’arrive pas à lire les rôles et les salons du serveur pour le vérifier — réessaie.',
     rp_managed: (r) => `<@&${r}> est géré par une intégration (bot, Boost…).`,
     rp_perms: (r) => `<@&${r}> a des permissions — prends un rôle qui n’en a aucune.`,
-    rp_access: (r, c) => `<@&${r}> a des droits dans <#${c}> — prends un rôle cité dans les permissions d’aucun salon.`,
+    rp_access: (r, c) => `<@&${r}> figure dans les permissions de <#${c}> — prends un rôle cité dans les permissions d’aucun salon.`,
     rp_above: (r) => `<@&${r}> est au-dessus de mon rôle le plus haut — place le mien au-dessus (Paramètres du serveur → Rôles).`,
     dl_ios_title: '📱 iPhone et iPad',
     dl_ios: (src) => 'Pas sur l’App Store : elle s’installe autrement (sideload). **Ajouter la source** l’ouvre dans AltStore, SideStore ou Feather (aussi LiveContainer, StikStore, TrollApps) : installe **TwitchUnblock**. La même source propose **TU Test**, les builds de test (nouveautés en avance, parfois instables), installée à côté de l’app normale. **Télécharger l’IPA** : la dernière version, pour Sideloadly ou TrollStore.\n'
@@ -380,7 +380,7 @@ const I18N = {
     roles_same: 'Sin cambios.',
     roles_wait: '⏳ Un cambio cada pocos segundos: vuelve a intentarlo en un momento.',
     roles_skipped: (n) => `⚠️ ${n === 1 ? 'Un rol no se puede' : `${n} roles no se pueden`} dar por ahora; ya se avisó al desarrollador.`,
-    roles_error: (m) => `❌ No pude cambiar tus roles (${m}); avisa al desarrollador.`,
+    roles_error: (r, m) => `❌ No pude cambiar ${r} (${m}); avisa al desarrollador.`,
     rp_desc: 'Recibir un aviso cuando salga una nueva versión',
     public_admin_only: 'ℹ️ Solo el desarrollador puede publicarlo en el canal; aquí lo tienes, solo para ti.',
     posted: (c) => `✅ Publicado en <#${c}>.`,
@@ -401,7 +401,7 @@ const I18N = {
     rp_check: 'No puedo leer los roles y canales del servidor para comprobarlo; inténtalo de nuevo.',
     rp_managed: (r) => `<@&${r}> lo gestiona una integración (bot, Boost…).`,
     rp_perms: (r) => `<@&${r}> tiene permisos; usa un rol sin ninguno.`,
-    rp_access: (r, c) => `<@&${r}> tiene acceso en <#${c}>; usa un rol que no aparezca en los permisos de ningún canal.`,
+    rp_access: (r, c) => `<@&${r}> aparece en los permisos de <#${c}>; usa un rol que no aparezca en los permisos de ningún canal.`,
     rp_above: (r) => `<@&${r}> está por encima de mi rol más alto; sube el mío por encima (Ajustes del servidor → Roles).`,
     dl_ios_title: '📱 iPhone y iPad',
     dl_ios: (src) => 'No está en la App Store: se instala por otra vía (sideload). **Añadir fuente** la abre en AltStore, SideStore o Feather (también LiveContainer, StikStore, TrollApps): instala **TwitchUnblock**. La misma fuente incluye **TU Test**, las versiones de prueba (novedades antes, pueden ser inestables), que se instala junto a la app normal. **Descargar IPA**: la última versión, para Sideloadly o TrollStore.\n'
@@ -451,7 +451,7 @@ const I18N = {
     roles_same: 'Ничего не изменилось.',
     roles_wait: '⏳ Не больше одного изменения в несколько секунд — попробуй чуть позже.',
     roles_skipped: (n) => `⚠️ Сейчас нельзя выдать ролей: ${n} — разработчик предупреждён.`,
-    roles_error: (m) => `❌ Не удалось изменить твои роли (${m}) — сообщи разработчику.`,
+    roles_error: (r, m) => `❌ Не удалось изменить ${r} (${m}) — сообщи разработчику.`,
     rp_desc: 'Уведомление о выходе новой версии',
     public_admin_only: 'ℹ️ Публиковать это в канале может только разработчик — вот ответ только для тебя.',
     posted: (c) => `✅ Опубликовано в <#${c}>.`,
@@ -472,7 +472,7 @@ const I18N = {
     rp_check: 'Не могу прочитать роли и каналы сервера, чтобы её проверить — попробуй ещё раз.',
     rp_managed: (r) => `<@&${r}> управляется интеграцией (бот, буст…).`,
     rp_perms: (r) => `У <@&${r}> есть права — выбери роль без прав.`,
-    rp_access: (r, c) => `<@&${r}> даёт доступ в <#${c}> — выбери роль, которой нет в правах ни одного канала.`,
+    rp_access: (r, c) => `<@&${r}> указана в правах канала <#${c}> — выбери роль, которой нет в правах ни одного канала.`,
     rp_above: (r) => `<@&${r}> выше моей самой высокой роли — подними мою роль выше (Настройки сервера → Роли).`,
     dl_ios_title: '📱 iPhone и iPad',
     dl_ios: (src) => 'Приложения нет в App Store — его ставят в обход (sideload). **Добавить источник** открывает его в AltStore, SideStore или Feather (а также LiveContainer, StikStore, TrollApps): установи **TwitchUnblock**. В том же источнике есть **TU Test** — тестовые сборки (новинки раньше всех, бывают нестабильны), ставятся рядом с обычным приложением. **Скачать IPA** — последняя версия, для Sideloadly или TrollStore.\n'
@@ -1467,9 +1467,11 @@ export function startDiscordBridge({
   /** Pourquoi `role` ne peut pas être donné à qui le demande (rôle des
    *  sorties, /roles) ; null s'il convient. Un rôle géré (bot, Boost…), avec
    *  des permissions, ou qui ouvre un salon (droits accordés au rôle dans les
-   *  permissions d'un salon) en faisait cadeau à tout le monde ; au-dessus du
-   *  rôle le plus haut du bot, Discord refuse de le donner. `f` : guildFacts ;
-   *  `known` : le rôle décrit par l'interaction (/setup, /roles-config). */
+   *  permissions d'un salon) en faisait cadeau à tout le monde ; un rôle qui
+   *  y retire des droits (sanction) se rendait aussi librement, sanction
+   *  levée ; au-dessus du rôle le plus haut du bot, Discord refuse de le
+   *  donner. `f` : guildFacts ; `known` : le rôle décrit par l'interaction
+   *  (/setup, /roles-config). */
   function roleProblem(f, guild, role, known = null, t = EN) {
     if (role === guild) return t('rp_everyone')
     const info = known || f.roles?.find((r) => r.id === role)
@@ -1477,7 +1479,7 @@ export function startDiscordBridge({
     if (info.managed) return t('rp_managed', role)
     if (BigInt(info.permissions || 0) !== 0n) return t('rp_perms', role)
     if (!f.roles || !f.channels || !f.mine) return t('rp_check')
-    const opens = f.channels.find((c) => (c.permission_overwrites || []).some((o) => o.id === role && BigInt(o.allow || 0) !== 0n))
+    const opens = f.channels.find((c) => (c.permission_overwrites || []).some((o) => o.id === role && (BigInt(o.allow || 0) | BigInt(o.deny || 0)) !== 0n))
     if (opens) return t('rp_access', role, opens.id)
     const position = (id) => f.roles.find((r) => r.id === id)?.position
     const top = Math.max(-1, ...f.mine.map((id) => position(id) ?? -1))
@@ -1557,8 +1559,8 @@ export function startDiscordBridge({
       ...(have ? { default: have.has(o.id) } : {}),
     })),
   })
-  const menuValues = (components) => (components || []).flatMap((r) => r.components || [])
-    .filter((c) => c.type === 3).flatMap((c) => (c.options || []).map((o) => o.value))
+  const menuOptions = (components) => (components || []).flatMap((r) => r.components || [])
+    .filter((c) => c.type === 3).flatMap((c) => c.options || [])
   /** Composants d'un message, son menu recoché d'après `have`. */
   const recheck = (components, have) => (components || []).map((r) => ({
     ...r, components: (r.components || []).map((c) => (c.type === 3 ? { ...c, options: (c.options || []).map((o) => ({ ...o, default: have.has(o.value) })) } : c)),
@@ -1668,13 +1670,16 @@ export function startDiscordBridge({
       .catch((e) => log.warn(`Discord bridge: roles menu not updated (${e.message})`))
   }
 
-  /** Rôles choisis dans un menu de /roles, appliqués en un seul appel (toute
-   *  la liste des rôles de la personne). Seuls ceux encore proposés, et sûrs
-   *  à cet instant, sont touchés ; `toggle` (message pour tous) : chaque rôle
-   *  choisi est pris ou rendu. Rend le texte de la réponse, les rôles de la
-   *  personne après coup et les options du menu (null : illisibles). */
+  /** Rôles choisis dans un menu de /roles, donnés ou rendus un par un (PUT
+   *  ou DELETE du seul rôle : renvoyer toute la liste de la personne
+   *  échouait si elle avait un rôle au-dessus du bot, et écrasait un rôle
+   *  donné au même moment par un autre). Seuls ceux encore proposés, sûrs à
+   *  cet instant et qui changent vraiment sont touchés ; `toggle` (message
+   *  pour tous) : chaque rôle choisi est pris ou rendu. Rend le texte de la
+   *  réponse (ce qui a marché, ce qui a raté), les rôles de la personne
+   *  après coup et les options du menu (null : illisibles). */
   async function changeRoles(i, user, t, toggle) {
-    let have = new Set(i.member?.roles || [])
+    const have = new Set(i.member?.roles || [])
     try {
       if (!st.guild || i.guild_id !== st.guild) return { text: t('roles_none'), have, options: null }
       const options = roleOptions(await guildFacts(st.guild), t)
@@ -1682,8 +1687,14 @@ export function startDiscordBridge({
       const offered = new Set(offeredRoles().map((r) => r.id))
       const picked = new Set(i.data?.values || [])
       // Menu pour soi : seuls les rôles qu'il montrait (un rôle ajouté à la
-      // liste depuis, la personne ne l'a pas vu : il n'est pas rendu).
-      const asked = new Set((toggle ? [...picked] : menuValues(i.message?.components)).filter((id) => offered.has(id)))
+      // liste depuis, la personne ne l'a pas vu : il n'est pas rendu), et
+      // parmi eux ceux qu'elle a cochés ou décochés — un rôle reçu ou perdu
+      // ailleurs depuis l'affichage du menu reste tel quel. Coches du menu
+      // illisibles : comparées à ses rôles actuels.
+      const shown = menuOptions(i.message?.components)
+      const ticked = shown.some((o) => 'default' in o) ? new Set(shown.filter((o) => o.default).map((o) => o.value)) : have
+      const asked = new Set((toggle ? [...picked] : shown.map((o) => o.value).filter((id) => picked.has(id) !== ticked.has(id)))
+        .filter((id) => offered.has(id)))
       const add = []
       const drop = []
       for (const id of asked) {
@@ -1694,18 +1705,29 @@ export function startDiscordBridge({
       const adds = add.filter((id) => safe.has(id))
       const drops = drop.filter((id) => safe.has(id))
       const skipped = add.length + drop.length - adds.length - drops.length
-      if (adds.length || drops.length) {
-        const next = [...have].filter((id) => !drops.includes(id)).concat(adds)
+      // L'un après l'autre : rest attend, sur un 429, le temps demandé
+      // (retry_after). Un échec n'empêche pas les autres.
+      const done = []
+      const failed = []
+      let why = ''
+      for (const id of [...adds, ...drops]) {
+        const give = !have.has(id)
+        const mark = `${give ? '+' : '−'}<@&${id}>`
         try {
-          await rest('PATCH', `/guilds/${st.guild}/members/${user.id}`, { roles: next })
+          await rest(give ? 'PUT' : 'DELETE', `/guilds/${st.guild}/members/${user.id}/roles/${id}`)
+          if (give) have.add(id)
+          else have.delete(id)
+          done.push(mark)
         } catch (e) {
-          log.warn(`Discord bridge: roles of a member not changed (${e.message})`)
-          return { text: t('roles_error', e.message), have, options }
+          log.warn(`Discord bridge: role ${id} not ${give ? 'given' : 'removed'} (${e.message})`)
+          failed.push(mark)
+          why ||= e.message.split(' → ').pop()
         }
-        have = new Set(next)
       }
-      const changes = [...adds.map((id) => `+<@&${id}>`), ...drops.map((id) => `−<@&${id}>`)].join(' ')
-      return { text: `${changes ? `✅ ${changes}` : t('roles_same')}${skipped ? `\n${t('roles_skipped', skipped)}` : ''}`, have, options }
+      const lines = [done.length ? `✅ ${done.join(' ')}` : failed.length ? '' : t('roles_same')]
+      if (failed.length) lines.push(t('roles_error', failed.join(' '), why))
+      if (skipped) lines.push(t('roles_skipped', skipped))
+      return { text: lines.filter(Boolean).join('\n'), have, options }
     } catch (e) {
       return { text: `❌ ${e.message}`, have, options: null }
     }
