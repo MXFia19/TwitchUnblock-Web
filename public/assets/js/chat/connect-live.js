@@ -42,6 +42,11 @@ const parseAmount = (s) => {
   return /^\d{1,9}$/.test(v) ? Number(v) : NaN
 }
 
+/** Deuxième clic (ou plus) d'un double-clic : `detail` compte les clics
+ *  rapprochés, quel que soit l'élément visé ; 0 au clavier. Une dépense ne
+ *  part pas sur lui. */
+export const isRepeatClick = (e) => (e?.detail ?? 0) > 1
+
 /** Espace ou Entrée sur un bouton d'une carte : le clic, pas la lecture /
  *  pause du lecteur (ses raccourcis écoutent tout le document). */
 function keepKeys(e) {
@@ -51,8 +56,22 @@ function keepKeys(e) {
 /** Erreur d'une demande → phrase pour l'utilisateur. Pour `twitch`, le
  *  code de Twitch est lu au mieux (il n'est pas documenté) ; `ctx` :
  *  « reward » pour l'échange d'une récompense, dont les refus sont à part. */
-function errorText(e, ctx = '') {
+export function errorText(e, ctx = '') {
   const code = e?.code || 'internal'
+  if (code === 'bad_args') {
+    // Refus de l'extension après relecture chez Twitch (background.js) : le
+    // détail dit lequel — prédiction fermée, points qui manquent, récompense
+    // en recharge… — au lieu d'un « Échec (bad_args) ».
+    const d = String(e.detail || '')
+    if (d === 'points') return t('connect_err_points')
+    if (ctx === 'reward') {
+      if (['cost', 'title', 'rewardId'].includes(d)) return t('reward_err_changed')
+      if (['paused', 'out_of_stock', 'cooldown', 'not_enabled', 'points_disabled'].includes(d)) return t('reward_err_unavailable')
+      if (d === 'input') return t('reward_input_needed')
+    }
+    if (['not_active', 'eventId', 'pollId'].includes(d)) return t('connect_err_closed')
+    if (d === 'other_outcome') return t('pred_one_outcome')
+  }
   if (code === 'twitch') {
     const c = String(e.detail || '').toUpperCase()
     if (/NOT_ENOUGH|INSUFFICIENT/.test(c)) return t('connect_err_points')
@@ -108,7 +127,7 @@ export class ConnectLive {
     this.reset()
     this.onVisible = () => {
       if (document.hidden || !this.channel) return
-      if (Date.now() - this.at.status >= STATUS_ON_RETURN) this.refreshStatus()
+      if (this.installed() && Date.now() - this.at.status >= STATUS_ON_RETURN) this.refreshStatus()
       this.tick()
     }
     view.el.points.addEventListener('click', (e) => {
@@ -163,8 +182,9 @@ export class ConnectLive {
     this.timer = setInterval(() => this.tick(), TICK)
     this.render()
     // Session et réglages relus à chaque direct : ils ont pu changer dans
-    // l'extension (ou sur twitch.tv) depuis le précédent.
-    if (this.connect.state().availability === 'on') this.refreshStatus().then(() => { if (gen === this.gen) this.tick() })
+    // l'extension (ou sur twitch.tv) depuis le précédent — connexion au
+    // site rallumée comprise.
+    if (this.installed()) this.refreshStatus().then(() => { if (gen === this.gen) this.tick() })
   }
 
   stop() {
@@ -204,6 +224,13 @@ export class ConnectLive {
     return this.ready() && this.connect.state().settings?.allowSpend !== false
   }
 
+  /** Extension là, branchée ou coupée : son état (`status`) se relit. Absente,
+   *  rien ne part. */
+  installed() {
+    const a = this.connect.state().availability
+    return Boolean(this.channel) && (a === 'on' || a === 'off')
+  }
+
   onState(gen) {
     if (gen !== this.gen) return
     const s = this.connect.state()
@@ -221,18 +248,21 @@ export class ConnectLive {
     this.renderAct()
     this.view.paintPredHead()
     this.dropsChanged()
-    if (this.ready() && this.tpoll) this.renderPoll()
-    else $('.chat-tpoll', this.view.el.events)?.remove()
+    this.renderPoll()
     if (!this.ready()) this.closeRewards()
     else this.renderRewards()
   }
 
   // ── Boucle ──────────────────────────────────────────────────────────────
   tick() {
-    if (!this.ready()) return
+    if (!this.installed()) return
     const now = Date.now()
-    const every = document.hidden ? READ_HIDDEN : READ_VISIBLE
+    // Session et réglages relus de temps en temps, connexion coupée ou sans
+    // session comprises : l'extension ne prévient pas la page quand on les
+    // change dans sa fenêtre.
     if (now - this.at.status >= STATUS_EVERY) this.refreshStatus()
+    if (!this.ready()) return
+    const every = document.hidden ? READ_HIDDEN : READ_VISIBLE
     // Présence et drops : seulement pendant la lecture (onglet caché compris).
     const playing = this.isPlaying()
     if (playing && now - this.at.beat >= BEAT_EVERY - 1000) this.beat()
@@ -533,7 +563,9 @@ export class ConnectLive {
       this.renderRewards()
       return
     }
-    if (e.target.closest('[data-cx-confirm]')) this.redeem()
+    // Pas le second clic d'un double-clic sur la liste : refaite, elle met
+    // « Échanger » sous le curseur (même rangée que le coût).
+    if (e.target.closest('[data-cx-confirm]') && !isRepeatClick(e)) this.redeem()
   }
 
   /** Clic sur « Échanger » : la demande part dans ce clic même — l'extension
@@ -559,14 +591,18 @@ export class ConnectLive {
     })
     Object.assign(rw, { step: 'sending', error: '' })
     this.renderRewards()
+    // Panneau fermé pendant l'envoi (croix, Échap, solde touché : jusqu'à
+    // 45 s avec le jeton d'intégrité) : l'échange part quand même, son
+    // résultat est donc toujours dit — sinon on le croirait annulé.
     req.then((d) => {
-      if (gen !== this.gen || this.rw !== rw) return
+      if (gen !== this.gen) return
       if (d.balance != null) this.setBalance(d.balance)
       this.at.points = 0
-      this.closeRewards()
+      if (this.rw === rw) this.closeRewards()
       toast(t('reward_done', { r: r.title }), 'success')
     }, (e) => {
-      if (gen !== this.gen || this.rw !== rw) return
+      if (gen !== this.gen) return
+      if (this.rw !== rw) { toast(errorText(e, 'reward'), 'error'); return }
       Object.assign(rw, { step: 'confirm', error: errorText(e, 'reward') })
       this.renderRewards()
     })
@@ -837,7 +873,9 @@ export class ConnectLive {
       $('[data-cx-amount]', act)?.focus()
       return
     }
-    if (e.target.closest('[data-cx-confirm]')) this.placeBet()
+    // Pas le second clic d'un double-clic sur une issue : la confirmation,
+    // repliée sur deux lignes, peut arriver sous le curseur.
+    if (e.target.closest('[data-cx-confirm]') && !isRepeatClick(e)) this.placeBet()
   }
 
   /** Issue choisie : le montant est vérifié, puis la confirmation montre
@@ -932,7 +970,14 @@ export class ConnectLive {
     const poll = this.tpoll
     const events = this.view.el.events
     let box = $('.chat-tpoll', events)
-    if (!poll || !this.ready()) { box?.remove(); return }
+    if (!poll || !this.ready()) {
+      // Carte retirée (extension coupée, session partie) : son compte à
+      // rebours aussi, il tournait sur un élément détaché.
+      clearInterval(this.pollTimer)
+      this.pollTimer = null
+      box?.remove()
+      return
+    }
     if (!box) {
       box = document.createElement('div')
       box.className = `chat-tpoll${this.pollUi.open ? ' open' : ''}`

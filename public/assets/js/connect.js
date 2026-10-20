@@ -19,9 +19,10 @@ export const INSTALL_URL = 'https://github.com/MXFia19/TwitchUnblock-Web/tree/ma
 export const OPS = Object.freeze(['hello', 'status', 'points.get', 'points.claim', 'watch.beat',
   'predictions.get', 'predictions.bet', 'polls.get', 'polls.vote', 'raid.join',
   'drops.get', 'drops.claim', 'drops.pulse', 'rewards.get', 'rewards.redeem'])
-/** Peuvent devoir obtenir un jeton d'intégrité Twitch : 45 s au lieu de 15. */
+/** Peuvent devoir obtenir un jeton d'intégrité Twitch : 45 s au lieu de 15.
+ *  `drops.pulse` aussi : le jeton de lecture du compte peut en demander un. */
 const SLOW_OPS = new Set(['points.claim', 'watch.beat', 'predictions.bet', 'polls.vote',
-  'raid.join', 'drops.claim', 'rewards.redeem'])
+  'raid.join', 'drops.claim', 'drops.pulse', 'rewards.redeem'])
 export const timeoutFor = (op) => (SLOW_OPS.has(op) ? 45_000 : 15_000)
 
 /** Détection : `hello` à 0 ; 0,5 ; 1,5 et 3 s, tant que rien n'a répondu. */

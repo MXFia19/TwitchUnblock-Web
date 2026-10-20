@@ -7,6 +7,8 @@ import assert from 'node:assert/strict'
 import {
   ABSENT_AFTER, ConnectError, HELLO_AT, MAX_BET, MAX_REWARD_INPUT, OPS, cleanArgs, connect, createConnect, normalize, timeoutFor,
 } from '../public/assets/js/connect.js'
+import { ConnectLive, errorText, isRepeatClick } from '../public/assets/js/chat/connect-live.js'
+import { t } from '../public/assets/js/i18n.js'
 
 const ORIGIN = 'https://twitchunblock.vercel.app'
 const flush = () => new Promise((resolve) => setImmediate(resolve))
@@ -274,9 +276,12 @@ test('identifiants de demande uniques', () => {
 })
 
 test('délais d’attente : 15 s, et 45 s pour ce qui peut demander un jeton d’intégrité', async () => {
-  const slow = ['points.claim', 'watch.beat', 'predictions.bet', 'polls.vote', 'raid.join', 'drops.claim', 'rewards.redeem']
+  const slow = ['points.claim', 'watch.beat', 'predictions.bet', 'polls.vote', 'raid.join', 'drops.claim', 'drops.pulse', 'rewards.redeem']
   for (const op of OPS) assert.equal(timeoutFor(op), slow.includes(op) ? 45_000 : 15_000, op)
-  assert.equal(timeoutFor('drops.pulse'), 15_000)
+  // Pulsation : le jeton de lecture du compte peut demander un jeton
+  // d'intégrité (jusqu'à ~40 s) ; à 15 s, la réponse et ses drops réclamés
+  // se perdaient, et la suivante partait pendant la première.
+  assert.equal(timeoutFor('drops.pulse'), 45_000)
   const args = {
     'points.get': { channel: 'a' }, 'points.claim': { channel: 'a' }, 'watch.beat': { channel: 'a' },
     'predictions.get': { channel: 'a' }, 'polls.get': { channel: 'a' }, status: {}, hello: {},
@@ -528,4 +533,71 @@ test('destroy : plus d’écoute ni de minuteur', async () => {
   assert.equal(listeners.size, 0)
   await clock.advance(60_000)
   assert.equal(client.pendingCount(), 0)
+})
+
+// ── Lecteur (chat/connect-live.js), sans DOM : seulement ce qui s'en passe ──
+/** Un ConnectLive sans vue ni document, pour une méthode à la fois. */
+function fakeLive({ availability = 'on', session = { login: 'moi', userId: '1' }, ...extra } = {}) {
+  let statusReads = 0
+  const connect = {
+    state: () => ({ availability, session, settings: { autoClaim: true, allowSpend: true } }),
+    refreshStatus: async () => { statusReads++ },
+  }
+  const live = Object.assign(Object.create(ConnectLive.prototype), {
+    channel: 'chaine', gen: 0, connect, at: { status: 0 }, busy: {}, ...extra,
+  })
+  return { live, statusReads: () => statusReads }
+}
+
+test('lecteur : refus « bad_args » de l’extension expliqués (prédiction fermée, points, récompense…)', () => {
+  const bad = (detail) => new ConnectError('bad_args', detail)
+  for (const d of ['not_active', 'eventId', 'pollId']) assert.equal(errorText(bad(d)), t('connect_err_closed'), d)
+  assert.equal(errorText(bad('points')), t('connect_err_points'))
+  assert.equal(errorText(bad('points'), 'reward'), t('connect_err_points'))
+  assert.equal(errorText(bad('other_outcome')), t('pred_one_outcome'))
+  for (const d of ['paused', 'out_of_stock', 'cooldown', 'not_enabled', 'points_disabled']) {
+    assert.equal(errorText(bad(d), 'reward'), t('reward_err_unavailable'), d)
+  }
+  for (const d of ['cost', 'title', 'rewardId']) assert.equal(errorText(bad(d), 'reward'), t('reward_err_changed'), d)
+  assert.equal(errorText(bad('input'), 'reward'), t('reward_input_needed'))
+  // Raison inconnue, ou demande refusée par le site lui-même : le code, comme avant.
+  assert.equal(errorText(bad('outcomeId')), t('connect_err_other', { c: 'bad_args' }))
+  assert.equal(errorText(new ConnectError('bad_args')), t('connect_err_other', { c: 'bad_args' }))
+  assert.equal(errorText(new ConnectError('twitch', 'NOT_ENOUGH_POINTS')), t('connect_err_points'))
+  assert.equal(errorText(new ConnectError('timeout')), t('connect_err_timeout'))
+})
+
+test('lecteur : le second clic d’un double-clic ne confirme ni mise ni échange', () => {
+  assert.equal(isRepeatClick({ detail: 0 }), false)   // clavier : Entrée, Espace
+  assert.equal(isRepeatClick({ detail: 1 }), false)
+  assert.equal(isRepeatClick({ detail: 2 }), true)
+  const confirm = (detail) => ({ detail, currentTarget: {}, target: { closest: (s) => (s === '[data-cx-confirm]' ? {} : null) } })
+  const { live } = fakeLive({ view: { pred: { id: 'e1' }, el: { rewards: {} } }, bet: { id: 'e1' }, rw: { step: 'confirm' } })
+  let bets = 0
+  let redeems = 0
+  live.placeBet = () => { bets++ }
+  live.redeem = () => { redeems++ }
+  live.onActClick(confirm(2))
+  live.onRewardsClick(confirm(2))
+  assert.deepEqual([bets, redeems], [0, 0])
+  for (const d of [1, 0]) { live.onActClick(confirm(d)); live.onRewardsClick(confirm(d)) }
+  assert.deepEqual([bets, redeems], [2, 2])
+})
+
+test('lecteur : état relu connexion coupée ou sans session, jamais extension absente', () => {
+  for (const [availability, session, reads] of [['off', null, 1], ['on', null, 1], ['absent', undefined, 0], ['detecting', undefined, 0]]) {
+    const { live, statusReads } = fakeLive({ availability, session })
+    live.tick()
+    live.tick()   // pas plus d'une fois par STATUS_EVERY
+    assert.equal(statusReads(), reads, availability)
+    assert.equal(live.installed(), reads === 1, availability)
+  }
+})
+
+test('lecteur : carte du sondage retirée → son compte à rebours arrêté', () => {
+  const timer = setInterval(() => {}, 60_000)
+  const { live } = fakeLive({ availability: 'off', session: null, view: { el: { events: { querySelector: () => null } } }, tpoll: { id: 'p' }, pollTimer: timer })
+  live.renderPoll()
+  clearInterval(timer)
+  assert.equal(live.pollTimer, null)
 })

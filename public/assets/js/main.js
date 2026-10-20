@@ -5115,7 +5115,9 @@ function openSettings() {
   renderSettingsAccount()
   renderUsageStats()
   // Session et réglages de l'extension relus : la section suit (onChange).
-  if (connect.state().availability === 'on') connect.refreshStatus()
+  // Coupée aussi : la connexion a pu être rallumée dans sa fenêtre, qui ne
+  // prévient pas la page.
+  if (['on', 'off'].includes(connect.state().availability)) connect.refreshStatus()
 
   const sheet = $('#sheet')
   sheet.onclick = (e) => {
