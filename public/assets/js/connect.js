@@ -13,7 +13,9 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 export const PROTOCOL = 1
-export const INSTALL_URL = 'https://github.com/MXFia19/TwitchUnblock-Web/tree/main/extension'
+// Dernière release (workflow « Extension » sur main) : les deux zips à
+// télécharger sans compte GitHub, et les étapes d'installation en anglais.
+export const INSTALL_URL = 'https://github.com/MXFia19/TwitchUnblock-Web/releases/latest'
 
 /** Liste fermée du protocole : rien d'autre ne part. */
 export const OPS = Object.freeze(['hello', 'status', 'points.get', 'points.claim', 'watch.beat',

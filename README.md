@@ -122,7 +122,7 @@ The website can't use your Twitch web session: twitch.tv's login cookie is out o
 
 Without the extension, with its connection to the site turned off, or on a phone, the player shows nothing more. When it's installed but the browser isn't logged in to twitch.tv, a line in the chat says so.
 
-**Install**: follow [`extension/README.md`](extension/README.md). The website's **Settings → TwitchUnblock Connect (extension)** says whether it's installed (and which version), connected (`@login`), missing a Twitch session or turned off, with the link to install it.
+**Install**: download `twitchunblock-connect-chrome.zip` (Chrome, Edge, Brave) or `twitchunblock-connect-firefox.zip` from the [latest release](https://github.com/MXFia19/TwitchUnblock-Web/releases/latest), then follow the [install steps](extension/INSTALL.md) (the developer notes are in [`extension/README.md`](extension/README.md)). The website's **Settings → TwitchUnblock Connect (extension)** says whether it's installed (and which version), connected (`@login`), missing a Twitch session or turned off, with the link to install it.
 
 **Security**
 - The Twitch session cookie and the integrity token never leave the extension's background: not to the page, not to its content script, not to TwitchUnblock's servers. The site sends nothing about it to the Worker or the relay, and counts nothing more in the usage statistics.

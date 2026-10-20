@@ -5,9 +5,12 @@
 > *this* browser — channel points, bonus chests, watch presence, drops, channel rewards,
 > predictions, polls and raids — without the session ever leaving the extension. The
 > site can only ask for a closed list of actions (see [PROTOCOL.md](PROTOCOL.md));
-> spending points needs a real click; nothing is sent anywhere but Twitch. Install it
-> unpacked (Chrome/Edge/Brave) or as a temporary add-on (Firefox, until it is signed on
-> AMO).
+> spending points needs a real click; nothing is sent anywhere but Twitch.
+> **Install**: download `twitchunblock-connect-chrome.zip` or
+> `twitchunblock-connect-firefox.zip` from the
+> [latest release](https://github.com/MXFia19/TwitchUnblock-Web/releases/latest) and follow
+> [INSTALL.md](INSTALL.md) — unpacked in Chrome, Edge and Brave, as a temporary add-on in
+> Firefox (until it is signed on AMO).
 
 Extension de navigateur qui relie le site TwitchUnblock à la session Twitch de ce
 navigateur. Le site peut alors afficher le solde de points, réclamer les coffres, faire
@@ -22,9 +25,11 @@ document commun aux deux côtés).
 
 ### Chrome, Edge, Brave (extension non empaquetée)
 
-1. Récupérer le dossier `extension/` (dépôt cloné), ou le zip
-   `twitchunblock-connect-<version>.zip` produit par le workflow « Extension » (onglet
-   *Actions* de GitHub, artefact du dernier passage) et le décompresser.
+1. Télécharger `twitchunblock-connect-chrome.zip` dans la
+   [dernière release](https://github.com/MXFia19/TwitchUnblock-Web/releases/latest)
+   (publiée par le workflow « Extension » à chaque passage sur `main`) et le
+   décompresser, ou prendre le dossier `extension/` d'un dépôt cloné. Étapes en anglais
+   pour les utilisateurs : [INSTALL.md](INSTALL.md).
 2. Ouvrir `chrome://extensions` (Edge : `edge://extensions`, Brave : `brave://extensions`).
 3. Activer le **mode développeur**.
 4. **Charger l'extension non empaquetée** et choisir le dossier (celui qui contient
@@ -34,13 +39,14 @@ document commun aux deux côtés).
 
 Le dossier `extension/` est la version Chrome (Chrome, Edge et Brave refusent
 l'arrière-plan sous forme de script, que Firefox exige). La version Firefox se prépare à
-part : le zip `twitchunblock-connect-<version>-firefox` du workflow « Extension »
-(décompressé), ou `node extension/dev/build-firefox.mjs` depuis le dépôt cloné, qui
-l'écrit dans `extension-firefox/`.
+part : `twitchunblock-connect-firefox.zip` dans la
+[dernière release](https://github.com/MXFia19/TwitchUnblock-Web/releases/latest) (à
+choisir tel quel, sans le décompresser), ou `node extension/dev/build-firefox.mjs` depuis
+le dépôt cloné, qui l'écrit dans `extension-firefox/`.
 
 1. Ouvrir `about:debugging#/runtime/this-firefox`.
-2. **Charger un module complémentaire temporaire…** et choisir le `manifest.json` de la
-   version Firefox.
+2. **Charger un module complémentaire temporaire…** et choisir le zip Firefox de la
+   release (ou le `manifest.json` de `extension-firefox/`).
 3. Ouvrir la fenêtre de l'extension : si un cadre orange signale des accès manquants,
    cliquer **Autoriser l'accès** (ou `about:addons` → TwitchUnblock Connect →
    Permissions → autoriser twitch.tv et les deux adresses du site).

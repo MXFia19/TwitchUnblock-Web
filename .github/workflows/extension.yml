@@ -1,8 +1,9 @@
 # Extension de navigateur TwitchUnblock Connect (dossier extension/) :
 # vérifie les JSON et la syntaxe des JS, lance le banc d'essai (API chrome et
-# Twitch simulés, sans réseau), puis produit le zip à charger dans le
-# navigateur, gardé en artefact de ce workflow. Pas de publication : la
-# signature Firefox (AMO) et une éventuelle mise en ligne restent manuelles.
+# Twitch simulés, sans réseau), puis produit les paquets Chrome et Firefox,
+# gardés en artefacts. Sur main, ils sont aussi publiés dans la release
+# « connect-v<version> » (la dernière), téléchargeables sans compte GitHub.
+# La signature Firefox (AMO) et les boutiques restent manuelles.
 name: Extension
 
 on:
@@ -92,3 +93,44 @@ jobs:
           name: ${{ steps.package.outputs.name }}-firefox
           path: dist/${{ steps.package.outputs.name }}-firefox/
           if-no-files-found: error
+
+  # Sur main seulement : release « connect-v<version> », marquée la dernière,
+  # avec deux zips à nom fixe (liens stables …/releases/latest/download/…) et
+  # les étapes d'installation en anglais (extension/INSTALL.md) pour texte.
+  # La même version republiée remplace ses zips. Le site renvoie vers
+  # …/releases/latest (connect.js, INSTALL_URL).
+  release:
+    name: Publish release
+    needs: build
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download packages
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=$(node -p 'require("./extension/manifest.json").version')
+          name="twitchunblock-connect-$version"
+          tag="connect-v$version"
+          test -f "dist/$name/manifest.json"
+          test -f "dist/$name-firefox/manifest.json"
+          (cd "dist/$name" && zip -qr ../../twitchunblock-connect-chrome.zip .)
+          (cd "dist/$name-firefox" && zip -qr ../../twitchunblock-connect-firefox.zip .)
+          files="twitchunblock-connect-chrome.zip twitchunblock-connect-firefox.zip"
+          if gh release view "$tag" > /dev/null 2>&1; then
+            gh release upload "$tag" $files --clobber
+            gh release edit "$tag" --notes-file extension/INSTALL.md --latest
+          else
+            gh release create "$tag" $files --title "TwitchUnblock Connect $version" \
+              --notes-file extension/INSTALL.md --target "$GITHUB_SHA" --latest
+          fi
