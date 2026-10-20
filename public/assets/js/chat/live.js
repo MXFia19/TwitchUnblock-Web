@@ -34,6 +34,9 @@ const REJECTIONS = {
   msg_ratelimit: 'chat_rej_ratelimit', msg_channel_suspended: 'chat_rej_suspended', msg_suspended: 'chat_rej_suspended',
 }
 const CAPS = 'twitch.tv/tags twitch.tv/commands twitch.tv/membership'
+/** Pseudos présents (NAMES, JOIN) gardés pour l'autocomplétion : au plus
+ *  PRESENT_MAX — sur une grosse chaîne, la liste grossissait toute la séance. */
+const PRESENT_MAX = 5000
 
 /** Couples « compte#chaîne » refusés par Twitch (banni) pendant la séance :
  *  le chat du multi-live, recréé à chaque changement de son, et une
@@ -436,12 +439,12 @@ export class LiveChat {
         // RPL_NAMREPLY : la liste est le dernier paramètre — pas params[1],
         // qui vaut « = ».
         const names = irc.params.length >= 4 ? irc.params[irc.params.length - 1] : null
-        if (names) for (const n of names.split(' ')) if (n) this.present.add(n.toLowerCase())
+        if (names) for (const n of names.split(' ')) if (n && this.present.size < PRESENT_MAX) this.present.add(n.toLowerCase())
         break
       }
       case 'JOIN': {
         const who = irc.tags.login ?? prefixNick(irc)
-        if (who) this.present.add(who)
+        if (who && this.present.size < PRESENT_MAX) this.present.add(who)
         break
       }
       case 'PART': {

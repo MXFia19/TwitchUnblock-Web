@@ -8,7 +8,7 @@
 
 import * as api from './api.js'
 import { t } from './i18n.js'
-import { failedProxy, heightOf, liveRequestUrl, loadHls, noteDirectSegmentError, sortQualities } from './player.js'
+import { bufferConfig, failedProxy, heightOf, liveRequestUrl, loadHls, mediaFixAllowed, noteDirectSegmentError, sortQualities } from './player.js'
 import { store } from './store.js'
 import { $, esc, formatClock, icon, toast, twitchTime } from './util.js'
 
@@ -474,8 +474,8 @@ async function startLive(tile, { avoid = null } = {}) {
       // (sinon hls.js refuse la configuration), avec de la marge pour la
       // cible qu'il relève après des calages (jusqu'à +6 s).
       liveMaxLatencyDuration: 14,
-      maxBufferLength: 12,
-      backBufferLength: 10,
+      // 10 s derrière, 12 s d'avance (bufferConfig).
+      ...bufferConfig('live', { tile: true }),
     })
     tile.hls = hls
     tile.directFails = 0
@@ -489,7 +489,9 @@ async function startLive(tile, { avoid = null } = {}) {
       // Worker, comme dans le lecteur.
       if (noteDirectSegmentError(Hls, data, tile) && data.fatal) return hls.startLoad()
       if (!data.fatal) return
-      if (data.type === Hls.ErrorTypes.MEDIA_ERROR) return hls.recoverMediaError()
+      // Erreur média réparée sur place une fois ; revenue aussitôt, la tuile
+      // repart sur une nouvelle instance (retryLive) — elle restait figée.
+      if (data.type === Hls.ErrorTypes.MEDIA_ERROR && mediaFixAllowed(tile)) return hls.recoverMediaError()
       const network = data.type === Hls.ErrorTypes.NETWORK_ERROR
       retryLive(tile, token, network && navigator.onLine !== false ? failedProxy(data) : null, network)
     })
@@ -599,8 +601,9 @@ async function attachVod(tile, links, variants, at, token) {
       },
       // La reprise (ou le début), même sans fin déclarée.
       startPosition: at > 1 ? at : 0,
-      maxBufferLength: 12,
-      backBufferLength: 10,
+      // 10 s derrière, 30 s d'avance au plus (bufferConfig) : sans plafond,
+      // une tuile en 480p chargeait jusqu'à 60 Mo d'avance (plus de 5 min).
+      ...bufferConfig('vod', { tile: true }),
     })
     tile.hls = hls
     hls.loadSource(url)
@@ -608,7 +611,8 @@ async function attachVod(tile, links, variants, at, token) {
     hls.on(Hls.Events.MANIFEST_PARSED, () => play(tile))
     hls.on(Hls.Events.ERROR, (_e, data) => {
       if (!data.fatal || tile.token !== token) return
-      if (data.type === Hls.ErrorTypes.MEDIA_ERROR) return hls.recoverMediaError()
+      // Comme un direct : une réparation sur place, puis une nouvelle instance.
+      if (data.type === Hls.ErrorTypes.MEDIA_ERROR && mediaFixAllowed(tile)) return hls.recoverMediaError()
       const from = tile.pos > 0 ? tile.pos : at
       // Relais vidéo du VPS en panne : les mêmes liens par le Worker, au
       // même endroit, sans les redemander (comme switchWorker dans main.js).

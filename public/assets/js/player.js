@@ -216,6 +216,58 @@ const LIVE_FLOOR_SEEK_MS = 60_000
 const NET_RETRIES = 3
 const MAX_SKIPPED_FRAGS = 30
 
+// ── Erreurs fatales et image figée ──────────────────────────────────────
+// Erreur média fatale (tampon refusé, image illisible) : réparée d'abord
+// sur place (recoverMediaError). Revenue moins de MEDIA_FIX_MS après — la
+// réparation tournait alors en boucle, image figée —, ou erreur d'un autre
+// type (démultiplexage, exception interne : c'était aussitôt « lecture
+// arrêtée »), l'instance de hls.js est détruite et une nouvelle repart de la
+// même adresse (rebuild). De même pour un direct calé depuis
+// STALL_REBUILD_MS sans aucune erreur. Au plus MAX_REBUILDS fois en
+// REBUILD_WINDOW_MS, puis l'erreur.
+const MEDIA_FIX_MS = 30_000
+const STALL_REBUILD_MS = 30_000
+const MAX_REBUILDS = 3
+const REBUILD_WINDOW_MS = 5 * 60_000
+
+/** Erreur média fatale : se répare-t-elle encore sur place ? Non si la
+ *  dernière réparation de `state` (le lecteur, une tuile du multi-live) a
+ *  moins de MEDIA_FIX_MS. L'essai est noté. */
+export function mediaFixAllowed(state) {
+  const now = Date.now()
+  if (now - (state.mediaFixAt || 0) < MEDIA_FIX_MS) return false
+  state.mediaFixAt = now
+  return true
+}
+
+// ── Mémoire tampon de hls.js ────────────────────────────────────────────
+// Par défaut, hls.js garde derrière la lecture tout ce qu'il a chargé
+// (backBufferLength infini) et charge d'avance jusqu'à 60 Mo (maxBufferSize),
+// sur 600 s au plus (maxMaxBufferLength). Le lecteur gardait 90 s derrière
+// lui, direct compris : sur iPad (Safari 26, ManagedMediaSource), un direct
+// en 1080p faisait planter la page toutes les 20 min environ — mémoire
+// épuisée, selon toute vraisemblance — et ne repartait qu'après avoir fermé
+// Safari (retour du 20/10). En direct, Twitch ne garde que 28 s (14 segments
+// de 2 s) : on ne peut pas reculer plus loin, rien ne sert d'en garder plus.
+// Sur iPad et iPhone, tout est plus court encore ; les tuiles du multi-live
+// (`tile`) ont leurs propres bornes. Les métadonnées des segments et de la
+// playlist (ID3, emsg, DATERANGE) ne deviennent plus des repères de piste de
+// texte que rien ne lit : les pauses pub sont lues dans la playlist
+// (readAdBreaks).
+const MB = 1000 * 1000
+export function bufferConfig(kind, { tile = false, lean = isIOS } = {}) {
+  const base = { enableID3MetadataCues: false, enableEmsgMetadataCues: false, enableDateRangeMetadataCues: false }
+  if (tile) return { ...base, backBufferLength: 10, maxBufferLength: 12, maxMaxBufferLength: 30, maxBufferSize: (lean ? 10 : 20) * MB }
+  if (kind === 'live') {
+    return lean
+      ? { ...base, backBufferLength: 10, maxBufferLength: 15, maxMaxBufferLength: 30, maxBufferSize: 20 * MB }
+      : { ...base, backBufferLength: 30, maxBufferLength: 30, maxMaxBufferLength: 60 }
+  }
+  return lean
+    ? { ...base, backBufferLength: 20, maxBufferLength: 30, maxMaxBufferLength: 60, maxBufferSize: 30 * MB }
+    : { ...base, backBufferLength: 90, maxBufferLength: 30, maxMaxBufferLength: 120 }
+}
+
 // ── Pauses pub de la chaîne ─────────────────────────────────────────────
 // Pendant une pause pub (lancée par le streamer, ou pré-roll à l'ouverture),
 // Twitch remplace le direct par une pub ou par son écran violet
@@ -526,6 +578,7 @@ export class Player {
       if (this.kind === 'live' && !v.paused && !v.seeking && !this.stalledAt) {
         this.stalledAt = Date.now()
         this.stallPos = v.currentTime
+        if (this.hls) this.watchStall()
       }
     })
     // Premier placement (départ demandé, ou saut fait pendant le chargement)
@@ -663,6 +716,9 @@ export class Player {
     this.endAdBreak()
     this.adBreaks.clear()
     this.adSeen = []
+    // Relances après une erreur fatale (rebuild) : comptées par vidéo.
+    this.rebuilds = []
+    this.mediaFixAt = 0
     // Rempli tout de suite : sinon la pastille du direct restait vide tant
     // que la vidéo n'avait pas démarré.
     this.el.liveText.textContent = t('live_now')
@@ -751,8 +807,8 @@ export class Player {
           const fixed = liveRequestUrl(reqUrl, url)
           if (fixed !== reqUrl) xhr.open('GET', fixed, true)
         },
-        backBufferLength: 90,
-        maxBufferLength: 30,
+        // Tampons bornés, en direct surtout (voir bufferConfig).
+        ...bufferConfig(this.kind),
         // Distance au bord du direct, en secondes. Twitch déclare des
         // segments de 6 s (EXT-X-TARGETDURATION) qui en durent 2 : compté en
         // segments (liveSyncDurationCount: 3), le lecteur se tenait à 18 s du
@@ -833,8 +889,10 @@ export class Player {
           if (this.skipMissingFrag(hls, data)) return
           return this.retryLoad(hls, token)
         }
-        if (data.type === Hls.ErrorTypes.MEDIA_ERROR) hls.recoverMediaError()
-        else this.o.onError?.()
+        // Réparée sur place une fois ; revenue aussitôt, ou d'un autre type :
+        // nouvelle instance (voir MEDIA_FIX_MS).
+        if (data.type === Hls.ErrorTypes.MEDIA_ERROR && mediaFixAllowed(this)) hls.recoverMediaError()
+        else this.rebuild(token)
       })
     } else if (native) {
       // Safari (iPhone surtout) : HLS natif.
@@ -898,6 +956,46 @@ export class Player {
     clearTimeout(this.retryTimer)
     this.retryTimer = null
     if (this.onlineWait) { window.removeEventListener('online', this.onlineWait); this.onlineWait = null }
+  }
+
+  /** Erreur fatale que hls.js ne répare pas, ou direct figé (watchStall) :
+   *  l'instance est détruite et une nouvelle repart de la même adresse — à
+   *  la même position pour une VOD, au bord pour un direct. Au-delà de
+   *  MAX_REBUILDS en REBUILD_WINDOW_MS, l'erreur. */
+  rebuild(token) {
+    if (token !== this.attachToken) return
+    const now = Date.now()
+    this.rebuilds = (this.rebuilds ?? []).filter((at) => now - at < REBUILD_WINDOW_MS)
+    if (this.rebuilds.length >= MAX_REBUILDS) {
+      this.stop()
+      this.el.spinner.hidden = true
+      this.o.onError?.()
+      return
+    }
+    this.rebuilds.push(now)
+    console.info('[TwitchUnblock] Lecture bloquée : nouvelle instance de hls.js.')
+    this.el.spinner.hidden = false
+    // Hors de l'événement d'erreur : hls.js n'est pas détruit pendant qu'il
+    // le diffuse encore à ses propres contrôleurs.
+    clearTimeout(this.rebuildTimer)
+    this.rebuildTimer = setTimeout(() => {
+      if (token === this.attachToken) this.attach(this.links[this.quality], this.kind === 'vod' ? this.resumeAt() : 0)
+    }, 1000)
+  }
+
+  /** Direct calé (« waiting ») : toujours au même point STALL_REBUILD_MS
+   *  plus tard, page affichée et appareil en ligne, il repart sur une
+   *  nouvelle instance (rebuild) — sans erreur de hls.js, l'image restait
+   *  figée jusqu'au rechargement. */
+  watchStall() {
+    clearTimeout(this.stallTimer)
+    const token = this.attachToken
+    this.stallTimer = setTimeout(() => {
+      const v = this.video
+      if (token !== this.attachToken || !this.hls || !this.stalledAt || v.paused || v.currentTime !== this.stallPos) return
+      if (document.hidden || navigator.onLine === false) { this.watchStall(); return }
+      this.rebuild(token)
+    }, STALL_REBUILD_MS)
   }
 
   /** VOD : segment introuvable (404, 410 — purgé, VOD reconstruite). Plutôt
@@ -1012,6 +1110,8 @@ export class Player {
 
   destroyHls() {
     this.clearRetry()
+    clearTimeout(this.stallTimer)
+    clearTimeout(this.rebuildTimer)
     if (this.hls) { this.hls.destroy(); this.hls = null }
     // Niveau d'Auto inconnu jusqu'au prochain LEVEL_SWITCHED : le bouton
     // ne garde pas celui de la source précédente.

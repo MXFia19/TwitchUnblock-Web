@@ -10,8 +10,10 @@ import { gql } from '../api.js'
 const globals = new Map()   // nom → emote
 const channel = new Map()   // nom → emote (canal courant)
 /** Les emotes Twitch n'arrivent que par les messages : on les mémorise au vol
- *  pour l'autocomplétion et le sélecteur. */
+ *  pour l'autocomplétion et le sélecteur — les TWITCH_SEEN_MAX vues le plus
+ *  récemment : un long direct très actif en ajoutait sans fin. */
 const twitchSeen = new Map()
+const TWITCH_SEEN_MAX = 1000
 
 let globalsPromise = null
 let loadedChannelId = null
@@ -171,7 +173,8 @@ export function resolveEmote(name, userId) {
 
 export function twitchEmote(id, name) {
   const existing = twitchSeen.get(name)
-  if (existing) return existing
+  // Revue : remise en dernière place (la plus ancienne part la première).
+  if (existing) { twitchSeen.delete(name); twitchSeen.set(name, existing); return existing }
   const emote = {
     id,
     name,
@@ -179,6 +182,7 @@ export function twitchEmote(id, name) {
     source: 'twitch',
   }
   twitchSeen.set(name, emote)
+  if (twitchSeen.size > TWITCH_SEEN_MAX) twitchSeen.delete(twitchSeen.keys().next().value)
   return emote
 }
 

@@ -144,6 +144,15 @@ function acceptRules(channel, rules) {
 }
 
 const MAX_NODES = 300
+// Files bornées : celle des messages qui attendent la prochaine image
+// (flush), et celle du chat synchronisé (deliver). Page masquée (autre
+// onglet, autre app, image dans l'image), la prochaine image n'arrive pas et
+// le minuteur ralentit : un chat très actif y empilait des milliers de
+// messages pendant un long direct, dessinés d'un coup au retour — la page
+// gelait, ou Safari la fermait faute de mémoire. Au-delà, les plus anciens
+// partent : ils auraient quitté la liste aussitôt affichés.
+const QUEUE_MAX = MAX_NODES * 5
+const DELAYED_MAX = MAX_NODES * 10
 
 // Chat synchronisé avec la vidéo : les messages d'un direct attendent le
 // retard de l'image sur le direct (lecteur : chatDelay), moins SYNC_MARGIN —
@@ -1309,6 +1318,8 @@ export class ChatView {
     // derrière ceux qui attendent, pour garder l'ordre.
     if (this.syncDelay() < 0.5 && !this.delayed.length) { this.enqueue(msg); return }
     this.delayed.push({ msg, at: Date.now() })
+    // File pleine (voir DELAYED_MAX) : les plus anciens sortent tout de suite.
+    if (this.delayed.length > DELAYED_MAX) for (const d of this.delayed.splice(0, this.delayed.length - DELAYED_MAX)) this.enqueue(d.msg)
     if (!this.delayTimer) this.delayTimer = setInterval(() => this.releaseDelayed(), 100)
   }
 
@@ -1362,13 +1373,17 @@ export class ChatView {
    *  on les regroupe par image pour ne recalculer la mise en page qu'une fois. */
   enqueue(msg) {
     this.queue.push(msg)
+    if (this.queue.length > QUEUE_MAX) this.queue.splice(0, this.queue.length - QUEUE_MAX)
     if (!this.frame) this.frame = requestAnimationFrame(() => this.flush())
   }
 
   flush() {
     this.frame = 0
     if (!this.queue.length) return
-    const batch = this.queue.splice(0)
+    const all = this.queue.splice(0)
+    // Collé en bas, seuls les MAX_NODES derniers restent : les autres ne sont
+    // pas dessinés (retour sur une page restée masquée).
+    const batch = this.stick && all.length > MAX_NODES ? all.slice(-MAX_NODES) : all
     const frag = document.createDocumentFragment()
     for (const m of batch) frag.appendChild(this.renderMessage(m))
     this.messages.push(...batch)

@@ -6,6 +6,27 @@
 
 export const CHANGELOG = [
   {
+    version: '2026.10.20d',
+    items: {
+      fr: [
+        'Longs directs : le lecteur garde bien moins de vidéo en mémoire — derrière l’image, 10 s au lieu de 90 sur iPad et iPhone (30 s sur ordinateur), et l’avance est bornée elle aussi —, et le chat n’empile plus des milliers de messages quand la page est masquée. Sur iPad, un direct en 1080p faisait planter Safari toutes les 20 minutes environ.',
+        'Lecture bloquée : après une erreur que le lecteur ne sait pas réparer, ou un direct figé 30 s sans aucune erreur, il repart de lui-même (trois fois en 5 minutes au plus) au lieu de rester figé jusqu’au rechargement de la page.',
+      ],
+      en: [
+        'Long lives: the player keeps much less video in memory — behind the picture, 10 s instead of 90 on iPad and iPhone (30 s on a computer), and what it loads ahead is capped too — and the chat no longer piles up thousands of messages while the page is hidden. On iPad, a 1080p live used to crash Safari every 20 minutes or so.',
+        'Stuck playback: after an error the player can’t repair, or a live frozen for 30 s without any error, it restarts on its own (up to three times in 5 minutes) instead of staying frozen until you reload the page.',
+      ],
+      es: [
+        'Directos largos: el reproductor guarda mucho menos vídeo en memoria — detrás de la imagen, 10 s en lugar de 90 en iPad y iPhone (30 s en el ordenador), y lo que carga por adelantado también tiene un límite —, y el chat ya no acumula miles de mensajes mientras la página está oculta. En iPad, un directo en 1080p hacía que Safari se cerrara cada 20 minutos más o menos.',
+        'Reproducción bloqueada: tras un error que el reproductor no sabe reparar, o un directo congelado 30 s sin ningún error, vuelve a arrancar solo (tres veces en 5 minutos como máximo) en lugar de quedarse congelado hasta que recargues la página.',
+      ],
+      ru: [
+        'Долгие эфиры: плеер держит в памяти гораздо меньше видео — позади картинки 10 с вместо 90 на iPad и iPhone (30 с на компьютере), и запас вперёд тоже ограничен, — а чат больше не копит тысячи сообщений, пока страница скрыта. На iPad эфир в 1080p примерно каждые 20 минут приводил к падению Safari.',
+        'Зависшее воспроизведение: после ошибки, которую плеер не может исправить, или если эфир застыл на 30 с без единой ошибки, он сам перезапускается (не больше трёх раз за 5 минут), а не остаётся замершим до перезагрузки страницы.',
+      ],
+    },
+  },
+  {
     version: '2026.10.20c',
     items: {
       fr: [
