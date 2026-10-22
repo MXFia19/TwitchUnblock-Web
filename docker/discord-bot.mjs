@@ -882,9 +882,10 @@ const TODO_DONE_MAX = 50     // éléments faits gardés, les plus récents
 const TODO_TEXT_MAX = 1500   // texte d'un élément, en caractères…
 const TODO_TEXT_MIN = 80     // … raccourci jusque-là si la liste est longue
 const TODO_PAGES = 5         // pages de 100 messages relues dans le salon
-// Une valeur de la mémoire du bot fait 20 000 caractères de JSON au plus
-// (action `set` du Worker) : un peu de marge.
-const TODO_MIRROR_MAX = 19_500
+// La copie fait 400 000 caractères de JSON au plus (action `set` du Worker,
+// limite propre à cette clé ; 20 000 pour le reste de la mémoire du bot) :
+// un peu de marge.
+const TODO_MIRROR_MAX = 390_000
 const TODO_TYPES = new Map([['To-do', 'todo'], ['Suggestion', 'suggestion']])
 // Fin d'une carte « Add to to-do » (addTodo) : le lien du message d'origine
 // et, s'il en avait, son nombre de pièces jointes.

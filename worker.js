@@ -2813,7 +2813,10 @@ async function feedbackBotTool(env, body) {
         case 'set': {
             const k = String(body.key || '');
             const text = JSON.stringify(body.value ?? null);
-            if (!/^[a-z0-9_:-]{1,60}$/.test(k) || text.length > 20000) return jsonError('Bad key or value too big', 400);
+            // La copie de la liste à faire peut être longue (300 éléments) :
+            // une ligne D1 tient bien plus que 20 000 caractères.
+            const max = k === 'todo_mirror' ? 400_000 : 20000;
+            if (!/^[a-z0-9_:-]{1,60}$/.test(k) || text.length > max) return jsonError('Bad key or value too big', 400);
             const ttl = Number(body.ttl) || 0;
             await store(env).put(BOT_STORE_PREFIX + k, text, ttl > 0 ? { expirationTtl: Math.max(60, ttl) } : {});
             return jsonResponse({ ok: true });
