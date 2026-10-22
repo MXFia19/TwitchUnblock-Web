@@ -6,6 +6,26 @@
 
 export const CHANGELOG = [
   {
+    version: '2026.10.23a',
+    items: {
+      fr: [
+        'Commandes des bots d’une chaîne hors ligne : sa page a maintenant un bouton « Commandes des bots », sous « Hors ligne », qui ouvre la même liste que dans le chat — Nightbot, StreamElements, Fossabot et Moobot, avec la recherche —, et un clic copie la commande. Le chat du lecteur ouvert sur une chaîne hors ligne y donne accès aussi. Jusqu’ici, la liste n’était là que pendant un direct.',
+      ],
+      en: [
+        'Bot commands of an offline channel: its page now has a “Bot commands” button, under “Offline”, that opens the same list as in the chat — Nightbot, StreamElements, Fossabot and Moobot, with search —, and a click copies the command. The player’s chat, when opened on an offline channel, gives access to it too. Until now, the list was only there during a live.',
+      ],
+      es: [
+        'Comandos de bots de un canal desconectado: su página tiene ahora un botón «Comandos de bots», bajo «Desconectado», que abre la misma lista que en el chat — Nightbot, StreamElements, Fossabot y Moobot, con la búsqueda —, y un clic copia el comando. El chat del reproductor abierto en un canal desconectado también da acceso a ella. Hasta ahora, la lista solo estaba disponible durante un directo.',
+      ],
+      ru: [
+        'Команды ботов канала не в сети: на его странице теперь есть кнопка «Команды ботов» (под «Не в сети»), которая открывает тот же список, что и в чате, — Nightbot, StreamElements, Fossabot и Moobot, с поиском, — а нажатие копирует команду. Чат плеера, открытого на канале не в сети, тоже даёт к нему доступ. Раньше список был доступен только во время эфира.',
+      ],
+      'zh-Hant': [
+        '離線頻道的機器人指令：頻道頁的「離線」下方新增「機器人指令」按鈕，會開啟和聊天室中相同的清單（Nightbot、StreamElements、Fossabot 與 Moobot，可搜尋），點一下即可複製指令。在離線頻道上開啟的播放器聊天室也能使用。以前只有直播時才看得到這份清單。',
+      ],
+    },
+  },
+  {
     version: '2026.10.22a',
     items: {
       fr: [

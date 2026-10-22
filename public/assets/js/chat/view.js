@@ -9,12 +9,12 @@
 import { LiveChat } from './live.js'
 import { fetchPinned } from './pinned.js'
 import { fetchHypeTrain, hypeFromGQL, hypeFromHermes, hypeView, mergeHype } from './hype.js'
-import { fetchBotCommands } from './botcmds.js'
+import { copyBotCommand, showBotCommands } from './botcmds.js'
 import { VodChat } from './vod.js'
 import { ConnectLive } from './connect-live.js'
 import { badgeInfo, parseBadgeTag } from './badges.js'
 import { emoteCatalog, findEmote, suggestEmotes } from './emotes.js'
-import { linkifyHtml, plainText, resolveWords, systemMessage } from './message.js'
+import { plainText, resolveWords, systemMessage } from './message.js'
 import { clipSlugFrom, gql } from '../api.js'
 import { lang, t } from '../i18n.js'
 import { $, debounce, esc, formatClock, icon, isIOS, toast } from '../util.js'
@@ -421,6 +421,8 @@ export class ChatView {
 
     this.el.list.addEventListener('scroll', () => this.onScroll(), { passive: true })
     $('.chat-cmds-btn', this.root).addEventListener('click', () => this.toggleBotCommands())
+    // Chaîne hors ligne (openOffline) : le bouton du panneau vide aussi.
+    this.el.empty.addEventListener('click', (e) => { if (e.target.closest('[data-bot-cmds]')) this.toggleBotCommands() })
     // La liste change de hauteur (message épinglé déplié, clavier, fenêtre) :
     // on reste calé en bas si on suivait, sinon le suivi semble s'arrêter.
     if ('ResizeObserver' in window) {
@@ -669,6 +671,21 @@ export class ChatView {
    *  chat, lui, reste ouvert). */
   stopConnect() {
     this.cx?.stop()
+  }
+
+  /** Lecteur ouvert sur une chaîne hors ligne : pas de chat à suivre, mais
+   *  ses commandes de bots restent à portée — leurs API ne dépendent pas du
+   *  direct. Le bouton de l'en-tête ouvrait jusque-là celles de la chaîne
+   *  regardée avant, ou rien. */
+  openOffline(channel) {
+    this.close()
+    this.channel = channel
+    this.el.title.textContent = t('chat')
+    this.setStatus('offline')
+    this.refreshComposer()
+    this.el.empty.innerHTML = `<p>${esc(t('chat_offline_hint'))}</p>
+      <button class="btn ghost sm" type="button" data-bot-cmds>${icon('terminal', 16)}<span>${esc(t('bot_commands'))}</span></button>`
+    this.el.empty.hidden = false
   }
 
   // ── Modes du salon et règles ───────────────────────────────────────────
@@ -1344,6 +1361,9 @@ export class ChatView {
     this.client?.stop()
     this.client = null
     this.mode = null
+    // Plus de chaîne : le bouton des commandes ouvrait encore la liste de
+    // celle qu'on venait de quitter (lecteur rouvert sur une erreur).
+    this.channel = null
     cancelAnimationFrame(this.frame)
     // Image annulée : la suivante doit pouvoir être redemandée (enqueue). Une
     // fermeture avec une image en attente laissait le chat suivant sans
@@ -1514,7 +1534,8 @@ export class ChatView {
     const s = this.el.status
     s.dataset.state = state
     s.textContent = state === 'connecting' ? t('chat_connecting')
-      : state === 'disconnected' ? t('chat_disconnected') : ''
+      : state === 'disconnected' ? t('chat_disconnected')
+      : state === 'offline' ? t('offline') : ''
   }
 
   // ── Rendu des messages ─────────────────────────────────────────────────
@@ -1953,7 +1974,8 @@ export class ChatView {
   }
 
   // ── Commandes des bots ─────────────────────────────────────────────────
-  async toggleBotCommands() {
+  /** Liste partagée avec la page d'une chaîne hors ligne (botcmds.js). */
+  toggleBotCommands() {
     const box = $('.bot-cmds', this.root)
     if (!box.hidden) { box.hidden = true; return }
     const channel = this.channel
@@ -1962,45 +1984,20 @@ export class ChatView {
     this.cx?.closeRewards()
     box.hidden = false
     box.innerHTML = `<div class="bot-cmds-head">${icon('terminal', 16)}<b>${esc(t('bot_commands'))}</b>
-        <button class="icon-btn xs" type="button" data-close>${icon('x', 16)}</button></div>
-      <input class="bot-cmds-filter" type="search" autocomplete="off" placeholder="${esc(t('bot_commands_filter'))}">
-      <div class="bot-cmds-list"><p class="muted small">${esc(t('loading'))}</p></div>`
+        <button class="icon-btn xs" type="button" data-close>${icon('x', 16)}</button></div>`
     box.querySelector('[data-close]').onclick = () => { box.hidden = true }
-    const { sets, failed } = await fetchBotCommands(channel)
-    if (box.hidden || this.channel !== channel) return
-    const list = box.querySelector('.bot-cmds-list')
-    // Bots qui n'ont pas répondu (délai, réseau, panne) : nommés, sous les
-    // listes ou seuls. « Impossible de charger » n'apparaissait que si les
-    // quatre échouaient : une chaîne qui n'a que Nightbot, en panne, avait
-    // « Aucune commande trouvée ».
-    const missing = failed.length ? `<p class="muted small">${esc(t('bot_commands_failed', { b: failed.join(', ') }))}</p>` : ''
-    const render = (q = '') => {
-      q = q.trim().toLowerCase()
-      const shown = sets.map((s) => ({ ...s, commands: q ? s.commands.filter((c) => c.name.toLowerCase().includes(q) || c.response.toLowerCase().includes(q)) : s.commands }))
-        .filter((s) => s.commands.length)
-      list.innerHTML = !sets.length
-        ? missing || `<p class="muted small">${esc(t('bot_commands_none'))}</p>`
-        : shown.map((s) => `<section><h4><img src="${esc(s.icon)}" alt="">${esc(s.bot)} <span class="muted">${s.commands.length}</span></h4>
-            ${s.commands.map((c) => `<div class="bot-cmd" role="button" tabindex="0" data-cmd="${esc(c.name)}"><code>${esc(c.name)}</code>${c.response ? `<span>${linkifyHtml(c.response)}</span>` : ''}</div>`).join('')}</section>`).join('') + missing
-    }
-    render()
-    box.querySelector('.bot-cmds-filter').oninput = (e) => render(e.target.value)
-    // Clavier : Entrée sur une commande comme un clic.
-    list.onkeydown = (e) => { if (e.key === 'Enter' && e.target.matches('[data-cmd]')) e.target.click() }
-    list.onclick = async (e) => {
-      // Un lien dans la réponse s'ouvre, sans utiliser la commande.
-      if (e.target.closest('a')) return
-      const b = e.target.closest('[data-cmd]')
-      if (!b) return
+    showBotCommands(box, channel, {
+      alive: () => !box.hidden && this.channel === channel,
       // On peut écrire : la commande va dans le champ ; sinon (pas de compte,
-      // lecture seule d'un banni, connexion en cours) elle est copiée.
-      if (!this.el.composer.hidden && !this.el.inputRow.hidden && !this.el.input.disabled) {
-        box.hidden = true
-        this.insertText(b.dataset.cmd)
-      } else {
-        try { await navigator.clipboard.writeText(b.dataset.cmd); b.classList.add('copied'); setTimeout(() => b.classList.remove('copied'), 900) } catch {}
-      }
-    }
+      // lecture seule d'un banni, connexion en cours, chaîne hors ligne)
+      // elle est copiée.
+      onPick: (name, el) => {
+        if (!this.el.composer.hidden && !this.el.inputRow.hidden && !this.el.input.disabled) {
+          box.hidden = true
+          this.insertText(name)
+        } else copyBotCommand(name, el)
+      },
+    })
   }
 
   insertText(text) {

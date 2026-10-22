@@ -8,6 +8,7 @@ import { LANGS, applyStatic, deviceLang, initLang, setLang, t, lang } from './i1
 import { Player, QUALITY_PREFS, loadHls, qualityText, validQualityPref, validSpeed } from './player.js'
 import { ChatView, HIDDEN_EMOTES_MAX, timeLabel, validEmoteCode } from './chat/view.js'
 import { linkifyHtml } from './chat/message.js'
+import { copyBotCommand, showBotCommands } from './chat/botcmds.js'
 import { Hermes } from './chat/hermes.js'
 import * as usage from './usage.js'
 import * as multi from './multi.js'
@@ -1219,6 +1220,11 @@ const actions = {
     if (b) searchChannel(b.dataset.raw, { tab: b.dataset.retryTab || undefined })
   },
   'retry-highlights': () => loadChannelHighlights(),
+  // Page d'une chaîne hors ligne : ses commandes de bots, sans chat ouvert.
+  'bot-commands': (e) => {
+    const login = e.target.closest('[data-login]')?.dataset.login
+    if (login) openBotCommandsSheet(login)
+  },
   'cat-more': () => loadCategories({ more: true }),
   'cat-streams-more': () => cat.current && openCategory(cat.current, { more: true }),
   'cat-back': () => closeCategory(),
@@ -3482,6 +3488,9 @@ function renderChannel(keyword = '') {
         ${since ? `<span class="muted">${esc(t('offline_since', { t: since }))} · ${esc(sinceDate)}</span>` : ''}</div>
         ${info?.broadcastSettings?.title ? `<p class="hero-title muted">${esc(info.broadcastSettings.title)}</p>` : ''}
         <button type="button" class="hero-next" id="channel-next" data-ctab="schedule" hidden></button>
+        <div class="hero-btns">
+          <button class="btn ghost sm" type="button" data-action="bot-commands" data-login="${esc(login)}">${icon('terminal', 16)}<span>${esc(t('bot_commands'))}</span></button>
+        </div>
       </div>`
   }
 
@@ -3537,6 +3546,19 @@ function renderChannel(keyword = '') {
 
   // Seule la grille est refaite à la frappe : le champ garde son focus.
   $('#vod-filter').addEventListener('input', debounce(renderVodGrid, 200))
+}
+
+/** Commandes des bots d'une chaîne hors ligne : la liste du chat
+ *  (botcmds.js) dans une feuille. Sans champ de message, un clic copie la
+ *  commande. Elle n'existait que dans le chat, donc pendant un direct. */
+function openBotCommandsSheet(login) {
+  openSheet(`
+    <div class="sheet-head"><h2>${esc(t('bot_commands'))}</h2><button class="icon-btn" type="button" data-sheet-close aria-label="${esc(t('close'))}">${icon('x', 20)}</button></div>
+    <p class="muted sheet-sub">${esc(t('bot_commands_copy_hint'))}</p>
+    <div class="bot-cmds-sheet"></div>`)
+  const sheet = $('#sheet')
+  sheet.onclick = (e) => { if (e.target.closest('[data-sheet-close]')) closeSheet() }
+  showBotCommands($('.bot-cmds-sheet', sheet), login, { onPick: copyBotCommand })
 }
 
 /**
@@ -3963,9 +3985,13 @@ async function openLive(rawLogin) {
     logError('direct', `${login} : ${sourcesDown ? 'toutes les sources ont échoué' : links?.error || 'aucun lien'}`)
   }
   if (!liveOk) {
+    const offline = links?.error === 'missing' && Boolean(info) && !sourcesDown
+    // Hors ligne : pas de chat en direct, mais ses commandes de bots restent
+    // à portée dans le panneau du chat.
+    if (offline) chat.openOffline(login)
     return showWatchError(links?.error === 'network' ? t('err_network')
       : sourcesDown ? t('err_live_sources')
-      : links?.error === 'missing' && info ? t('offline') : t('err_live'))
+      : offline ? t('offline') : t('err_live'))
   }
   token.links = links.links
   // Hauteur, cadence et débit de chaque qualité (Worker à jour seulement) :

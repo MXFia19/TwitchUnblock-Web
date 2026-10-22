@@ -6,6 +6,9 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { workerJson } from '../api.js'
+import { t } from '../i18n.js'
+import { esc } from '../util.js'
+import { linkifyHtml } from './message.js'
 
 const ICONS = {
   Moobot: 'https://static-cdn.jtvnw.net/jtv_user_pictures/663db70b-80e7-424b-a54f-ed88f7ac9355-profile_image-50x50.png',
@@ -96,4 +99,56 @@ export function fetchBotCommands(channel) {
     pending.set(ch, run)
   }
   return run
+}
+
+// ── Liste à l'écran ─────────────────────────────────────────────────────────
+// Panneau du chat, et feuille de la page d'une chaîne hors ligne : les API
+// des bots ne dépendent pas du direct, la liste non plus.
+
+/** Filtre et liste des commandes de `channel`, ajoutés au bout de `box` et
+ *  remplis à l'arrivée des réponses. `alive()` : faux quand la liste n'est
+ *  plus voulue entre-temps (panneau fermé, autre chaîne) ; `onPick(nom,
+ *  élément)` : clic, ou Entrée, sur une commande. */
+export async function showBotCommands(box, channel, { onPick, alive = () => true }) {
+  box.insertAdjacentHTML('beforeend', `<input class="bot-cmds-filter" type="search" autocomplete="off" placeholder="${esc(t('bot_commands_filter'))}">
+    <div class="bot-cmds-list"><p class="muted small">${esc(t('loading'))}</p></div>`)
+  const filter = box.querySelector('.bot-cmds-filter')
+  const list = box.querySelector('.bot-cmds-list')
+  const { sets, failed } = await fetchBotCommands(channel)
+  // Panneau refait (rouvert, autre feuille) ou fermé pendant la lecture.
+  if (!list.isConnected || !alive()) return
+  // Bots qui n'ont pas répondu (délai, réseau, panne) : nommés, sous les
+  // listes ou seuls. « Impossible de charger » n'apparaissait que si les
+  // quatre échouaient : une chaîne qui n'a que Nightbot, en panne, avait
+  // « Aucune commande trouvée ».
+  const missing = failed.length ? `<p class="muted small">${esc(t('bot_commands_failed', { b: failed.join(', ') }))}</p>` : ''
+  const render = (q = '') => {
+    q = q.trim().toLowerCase()
+    const shown = sets.map((s) => ({ ...s, commands: q ? s.commands.filter((c) => c.name.toLowerCase().includes(q) || c.response.toLowerCase().includes(q)) : s.commands }))
+      .filter((s) => s.commands.length)
+    list.innerHTML = !sets.length
+      ? missing || `<p class="muted small">${esc(t('bot_commands_none'))}</p>`
+      : shown.map((s) => `<section><h4><img src="${esc(s.icon)}" alt="">${esc(s.bot)} <span class="muted">${s.commands.length}</span></h4>
+          ${s.commands.map((c) => `<div class="bot-cmd" role="button" tabindex="0" data-cmd="${esc(c.name)}"><code>${esc(c.name)}</code>${c.response ? `<span>${linkifyHtml(c.response)}</span>` : ''}</div>`).join('')}</section>`).join('') + missing
+  }
+  // Ce qui a été tapé pendant le chargement compte déjà.
+  render(filter.value)
+  filter.oninput = () => render(filter.value)
+  // Clavier : Entrée sur une commande comme un clic.
+  list.onkeydown = (e) => { if (e.key === 'Enter' && e.target.matches('[data-cmd]')) e.target.click() }
+  list.onclick = (e) => {
+    // Un lien dans la réponse s'ouvre, sans utiliser la commande.
+    if (e.target.closest('a')) return
+    const b = e.target.closest('[data-cmd]')
+    if (b) onPick(b.dataset.cmd, b)
+  }
+}
+
+/** Copie une commande ; une coche la confirme un instant. */
+export async function copyBotCommand(name, el) {
+  try {
+    await navigator.clipboard.writeText(name)
+    el.classList.add('copied')
+    setTimeout(() => el.classList.remove('copied'), 900)
+  } catch { /* presse-papiers refusé : la commande reste affichée */ }
 }
