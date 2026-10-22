@@ -4,6 +4,7 @@
 //  Le russe, traduit avec l'IA, est dans son propre fichier.
 // ═══════════════════════════════════════════════════════════════════════════
 import { RU } from './i18n-ru.js'
+import { ZH_HANT } from './i18n-zh-Hant.js'
 
 const STRINGS = {
   fr: {
@@ -503,6 +504,7 @@ const STRINGS = {
 }
 
 STRINGS.ru = RU
+STRINGS['zh-Hant'] = ZH_HANT
 
 /** `ai` : traduite avec l'IA, sans relecture — dit dans les réglages. */
 export const LANGS = [
@@ -510,6 +512,7 @@ export const LANGS = [
   { id: 'en', label: 'English' },
   { id: 'es', label: 'Español' },
   { id: 'ru', label: 'Русский', ai: true },
+  { id: 'zh-Hant', label: '繁體中文', ai: true },
 ]
 
 let current = 'en'
@@ -520,7 +523,12 @@ const known = (l) => typeof l === 'string' && Object.prototype.hasOwnProperty.ca
 export function deviceLang() {
   const list = navigator.languages?.length ? navigator.languages : [navigator.language || 'en']
   for (const l of list) {
-    const code = String(l).slice(0, 2).toLowerCase()
+    const tag = String(l)
+    if (known(tag)) return tag
+    const code = tag.slice(0, 2).toLowerCase()
+    // zh-Hant est la seule langue chinoise du site : zh-TW, zh-HK et zh-CN
+    // y arrivent tous (le chinois simplifié n'existe pas encore).
+    if (code === 'zh') return 'zh-Hant'
     if (known(code)) return code
   }
   return 'en'
