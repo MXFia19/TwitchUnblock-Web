@@ -790,7 +790,7 @@ node tools/reports.mjs --id fb_…       # one report with its whole conversatio
 node tools/reports.mjs --json          # the Worker's answer as it is (JSON)
 node tools/reports.mjs --todo          # the Discord bot's to-do list: open items, newest first
 node tools/reports.mjs --todo --all    # … then the 50 latest done ones (--json: the answer as it is)
-node tools/reports.mjs --photos fb_…   # the screenshots of a report and of its replies, saved to ./report-photos/fb_…/
+node tools/reports.mjs --photos fb_…   # the screenshots of a report and of its replies, saved to report-photos/fb_…/ in this repository
 ```
 
 Also `--limit=N` (200 at most) and `--url=<Worker>` (or `TU_WORKER_URL`;
@@ -800,9 +800,10 @@ only travels over HTTPS (plain `http://` only to this computer, for tests).
 
 **Screenshots** (`--photos fb_…`): the tool reads the report's conversation
 (`id`), then asks for each picture by its number (`view=photo`) and saves it
-to `./report-photos/fb_…/` (ignored by git; `--out=<folder>` for another
-one), named after the message and the number (`msg00-user-photo0.jpg`: the
-report itself, `msg03-dev-photo5.png`: the developer's reply #3), then prints
+to `report-photos/fb_…/` at the root of this repository, wherever the tool
+is run from (ignored by git; `--out=<folder>` for another one), named after
+the message and the number (`msg00-user-photo0.jpg`: the report itself,
+`msg03-dev-photo5.png`: the developer's reply #3), then prints
 the paths it wrote. Only JPEG, PNG and WebP images are written, checked from
 their first bytes on both sides: the Worker refuses anything else (`415`) and
 the tool checks again; a picture that's missing or refused is listed, the
