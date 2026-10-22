@@ -930,6 +930,16 @@ the website, `/health` for the relay. Both `docker-compose.yml` files set
 `init: true`, so a small init process forwards `docker stop` and cleans up
 finished processes.
 
+**Security.** The image is based on Debian 13 (`node:22-trixie-slim`) and only
+runs Node: npm, corepack and yarn are removed once wrangler is installed, so
+image scanners (Trivy, Grype) no longer report their dependencies. Both
+`docker-compose.yml` files also set `no-new-privileges` and drop every Linux
+capability (`cap_drop: ALL`); nothing in the container needs one (it runs as
+the unprivileged `node` user, on ports above 1024). With an older compose
+file, download the new one once to get these two settings. Every new image is
+started by GitHub Actions with these settings, and the build fails if the
+website, `/api/ping` or the relay's `/health` doesn't answer.
+
 **Resource use.** With nobody watching, the container makes no outside
 requests (with live notifications on: one Twitch request every 2 minutes per
 100 followed channels). Memory sits around half a gigabyte, mostly
