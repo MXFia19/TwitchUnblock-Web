@@ -53,7 +53,9 @@
 //  /app-announce : l'annonce des apps et du site, publiée après un aperçu.
 //  À faire : « Add to to-do » (menu Apps d'un message : une bonne idée lue
 //  sur le serveur) et /todo (texte libre) postent une carte dans le salon
-//  choisi par /setup, avec un bouton Done / Reopen.
+//  choisi par /setup, avec un bouton Done / Reopen. Une copie des cartes
+//  (todo_mirror), relue au moins toutes les 15 min, reste dans le Worker :
+//  tools/reports.mjs --todo la lit depuis le PC du développeur.
 //  Exploitation (salon privé) : plafonds du jour à 80 %, base à 70 % de sa
 //  taille, tâche planifiée muette depuis 5 min, quotas gratuits de
 //  Cloudflare à 70 % (avec CLOUDFLARE_API_TOKEN), VPS ou Worker en retard
@@ -70,8 +72,9 @@
 //  SUMMARY_HOUR, CLOUDFLARE_API_TOKEN et CLOUDFLARE_ACCOUNT_ID (quotas).
 //
 //  Sans dépendance : passerelle de Discord par le WebSocket de Node 22, API
-//  REST par fetch. Sa mémoire (réglages, versions vues, brouillons) est
-//  rangée par le Worker (D1), rien sur le disque du VPS.
+//  REST par fetch. Sa mémoire (réglages, versions vues, brouillons, copie
+//  de la liste à faire) est rangée par le Worker (D1), rien sur le disque
+//  du VPS.
 // ═══════════════════════════════════════════════════════════════════════════
 
 // GUILDS (salons, posts, étiquettes, rôles), GUILD_MESSAGES, DIRECT_MESSAGES (pour
@@ -867,6 +870,99 @@ function chunks(text, max = 1900) {
   }
   if (cur) parts.push(cur)
   return parts
+}
+
+// ── Copie de la liste à faire, pour l'outil du développeur ─────────────────
+// Le bot range dans sa mémoire du Worker (`todo_mirror`) une copie des
+// cartes du salon à faire ; tools/reports.mjs --todo la lit avec la clé
+// REPORTS_KEY (GET /api/admin/reports?view=todo), sans passer par Discord.
+const TODO_MIRROR_KEY = 'todo_mirror'
+const TODO_OPEN_MAX = 300    // éléments ouverts gardés, les plus récents
+const TODO_DONE_MAX = 50     // éléments faits gardés, les plus récents
+const TODO_TEXT_MAX = 1500   // texte d'un élément, en caractères…
+const TODO_TEXT_MIN = 80     // … raccourci jusque-là si la liste est longue
+const TODO_PAGES = 5         // pages de 100 messages relues dans le salon
+// Une valeur de la mémoire du bot fait 20 000 caractères de JSON au plus
+// (action `set` du Worker) : un peu de marge.
+const TODO_MIRROR_MAX = 19_500
+const TODO_TYPES = new Map([['To-do', 'todo'], ['Suggestion', 'suggestion']])
+// Fin d'une carte « Add to to-do » (addTodo) : le lien du message d'origine
+// et, s'il en avait, son nombre de pièces jointes.
+const TODO_ORIGIN = /\n*\[Original message\]\((https:\/\/[^\s()]+)\)(?: · 📎 (\d+) attachments?)?\s*$/
+
+/** `s` coupé à `max` caractères (« … » compris), sans séparer les deux
+ *  moitiés d'un emoji. */
+function clipText(s, max) {
+  if (s.length <= max) return s
+  let end = max - 1
+  if (/[\uD800-\uDBFF]/.test(s[end - 1])) end--
+  return `${s.slice(0, end)}…`
+}
+
+/** Élément de la liste à faire lu dans un message du salon, ou null : seules
+ *  comptent les cartes postées par le bot (`me`), titrées « To-do » ou
+ *  « Suggestion » (« ✅ » devant une fois faites, todoCard). */
+export function todoFromMessage(m, { me, guild, channel }) {
+  const e = m?.embeds?.[0]
+  const title = String(e?.title || '')
+  const type = TODO_TYPES.get(title.replace(/^✅ /, ''))
+  if (!me || m?.author?.id !== me || !type || !/^\d{5,25}$/.test(String(m.id))) return null
+  let text = String(e.description || '')
+  const tail = TODO_ORIGIN.exec(text)
+  if (tail) text = text.slice(0, tail.index)
+  const by = /^Added by (.+)$/.exec(String(e.footer?.text || ''))?.[1]?.trim()
+  const at = Date.parse(e.timestamp || m.timestamp || '')
+  const files = Number(tail?.[2]) || 0
+  return {
+    id: String(m.id),
+    url: `https://discord.com/channels/${guild}/${m.channel_id || channel}/${m.id}`,
+    type,
+    done: title.startsWith('✅ '),
+    text: text.trim(),
+    ...(tail ? { origin: tail[1] } : {}),
+    ...(e.author?.name ? { author: String(e.author.name) } : {}),
+    ...(by ? { addedBy: by } : {}),
+    ...(Number.isFinite(at) ? { at: new Date(at).toISOString() } : {}),
+    ...(files ? { files } : {}),
+  }
+}
+
+/** Copie à ranger, `max` caractères de JSON au plus : { at, channel, items,
+ *  omitted?, partial? }. `open` et `done` : les cartes lues, chacune du plus
+ *  récent au plus ancien. Gardés : les TODO_OPEN_MAX ouverts puis les
+ *  TODO_DONE_MAX faits les plus récents, textes coupés à TODO_TEXT_MAX ;
+ *  trop long, les textes sont raccourcis (le plus long commun qui tient,
+ *  TODO_TEXT_MIN au moins), puis les plus anciens laissés de côté, les faits
+ *  d'abord. `omitted` : cartes lues mais pas copiées ; `partial` : la
+ *  lecture s'est arrêtée à TODO_PAGES pages, d'autres peuvent manquer. */
+export function fitTodoMirror({ at, channel, open, done, partial = false, max = TODO_MIRROR_MAX }) {
+  const nOpen = Math.min(open.length, TODO_OPEN_MAX)
+  const kept = [...open.slice(0, TODO_OPEN_MAX), ...done.slice(0, TODO_DONE_MAX)]
+  // Place de `omitted` et `partial` comptée d'avance, au plus large.
+  const head = JSON.stringify({ at, channel, items: [], omitted: { open: open.length, done: done.length }, partial: true }).length
+  const cut = (cap) => kept.map((x) => ({ ...x, text: clipText(x.text, cap) }))
+  const size = (list) => list.reduce((n, x) => n + JSON.stringify(x).length + 1, head)   // + la virgule
+  let lo = TODO_TEXT_MIN
+  let hi = TODO_TEXT_MAX
+  if (size(cut(hi)) <= max) lo = hi
+  while (lo < hi) {
+    const mid = Math.ceil((lo + hi) / 2)
+    if (size(cut(mid)) <= max) lo = mid
+    else hi = mid - 1
+  }
+  const items = cut(lo)
+  const sizes = items.map((x) => JSON.stringify(x).length + 1)
+  let total = size(items)
+  let o = nOpen
+  let d = items.length - nOpen
+  while (total > max && d) total -= sizes[o + --d]
+  while (total > max && o) total -= sizes[--o]
+  const omitted = { open: open.length - o, done: done.length - d }
+  return {
+    at, channel, items: [...items.slice(0, o), ...items.slice(nOpen, nOpen + d)],
+    ...(omitted.open || omitted.done ? { omitted } : {}),
+    ...(partial ? { partial: true } : {}),
+  }
 }
 
 export function startDiscordBridge({
@@ -1711,6 +1807,8 @@ export function startDiscordBridge({
     else return 'Unknown choice.'
     await kvSet('settings', settings)
     st.settings = settings
+    // Autre salon à faire : sa copie dans le Worker le suit.
+    if (use === 'todo') todoSoon()
     // GUILD_MEMBERS se demande à l'identification : nouvelle session s'il
     // faut la demander, ou ne plus la demander.
     if (Boolean(intents & GUILD_MEMBERS) !== wantsMembers()) reidentify()
@@ -2916,6 +3014,7 @@ export function startDiscordBridge({
     await rest('POST', `/channels/${channel}/messages`, {
       embeds: [embed], components: [row(button('Done', 'todo:done', 3))], allowed_mentions: { parse: [] },
     })
+    todoSoon()
     return `📝 Added to <#${channel}>.`
   }
 
@@ -2930,6 +3029,69 @@ export function startDiscordBridge({
       ...(embed?.footer?.text ? { footer: { text: embed.footer.text } } : {}),
       ...(embed?.timestamp ? { timestamp: embed.timestamp } : {}),
     }
+  }
+
+  // ── Copie de la liste à faire dans le Worker (todo_mirror) ──────────────
+  // Relue dans le salon (TODO_PAGES pages de 100 messages au plus) quelques
+  // secondes après un ajout, un Done ou un Reopen (une fois pour une
+  // rafale), à la connexion, puis toutes les 15 min (cartes supprimées ou
+  // modifiées à la main). Écrite seulement quand elle a changé : son
+  // empreinte reste ici (après un redémarrage, une écriture). Une relecture
+  // à la fois ; une erreur attend la suivante sans rien gêner d'autre.
+  const todoSync = { print: null, timer: null, running: null, again: false, failed: '' }
+
+  async function writeTodoMirror() {
+    const channel = st.settings.todo
+    if (!channel || !st.me || !st.guild) return
+    const open = []
+    const done = []
+    let before = ''
+    let full = false
+    for (let page = 0; page < TODO_PAGES; page++) {
+      const list = await rest('GET', `/channels/${channel}/messages?limit=100${before ? `&before=${before}` : ''}`)
+      if (!Array.isArray(list)) throw new Error('unexpected answer from Discord')
+      for (const m of list) {
+        const x = todoFromMessage(m, { me: st.me, guild: st.guild, channel })
+        if (x) (x.done ? done : open).push(x)
+      }
+      full = list.length === 100
+      if (!full) break
+      before = list.at(-1).id
+    }
+    const mirror = fitTodoMirror({ at: new Date().toISOString(), channel, open, done, partial: full })
+    const { at, ...content } = mirror
+    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(content)))
+    const print = Buffer.from(digest).toString('hex')
+    if (print === todoSync.print) return
+    await kvSet(TODO_MIRROR_KEY, mirror)
+    todoSync.print = print
+  }
+
+  /** Relit le salon et copie si besoin ; demandée pendant qu'une relecture
+   *  tourne, elle est refaite juste après. Ne lève jamais d'erreur, et une
+   *  même erreur n'est notée qu'une fois au journal. */
+  function syncTodoMirror() {
+    if (todoSync.running) { todoSync.again = true; return todoSync.running }
+    todoSync.running = writeTodoMirror()
+      .then(() => { todoSync.failed = '' })
+      .catch((e) => {
+        if (e.message !== todoSync.failed) log.warn(`Discord bridge: to-do copy not updated (${e.message})`)
+        todoSync.failed = e.message
+      })
+      .finally(() => {
+        todoSync.running = null
+        if (todoSync.again && !stopped) { todoSync.again = false; syncTodoMirror() }
+      })
+    return todoSync.running
+  }
+
+  /** Relecture dans quelques secondes : une seule pour une rafale de Done,
+   *  et la carte tout juste changée est alors à jour chez Discord. */
+  function todoSoon(delay = 3000) {
+    if (!st.settings.todo || stopped) return
+    clearTimeout(todoSync.timer)
+    todoSync.timer = setTimeout(syncTodoMirror, delay)
+    todoSync.timer.unref?.()
   }
 
   const publishing = new Set()   // brouillons de notes en cours de publication
@@ -2972,10 +3134,12 @@ export function startDiscordBridge({
       case 'aa': return onAnnouncePreview(i, user, a, b)
       case 'todo': {
         const done = a === 'done'
-        return respond(i, 7, {
+        await respond(i, 7, {
           embeds: [todoCard(i.message?.embeds?.[0], done)],
           components: [row(done ? button('Reopen', 'todo:open') : button('Done', 'todo:done', 3))],
         })
+        todoSoon()
+        return
       }
       case 'qr': {
         const q = QUICK[Number(a)]
@@ -3870,6 +4034,8 @@ export function startDiscordBridge({
     every(5 * 60_000, watchOps)
     every(15 * 60_000, watchQuotas)
     every(30 * 60_000, watchVersions)
+    // Copie de la liste à faire : cartes supprimées ou modifiées à la main.
+    every(15 * 60_000, syncTodoMirror)
     const first = setTimeout(() => {
       for (const fn of [watchReleases, watchActions, watchHealth, tidy, watchOps, watchQuotas, watchVersions]) fn().catch((e) => log.warn(`Discord bridge: ${fn.name} — ${e.message}`))
     }, 30_000)
@@ -3901,6 +4067,8 @@ export function startDiscordBridge({
           log.warn('Discord bridge: the bot isn’t on the webhook’s server — invite it (README, “Discord bot”)')
         }
         await registerCommands()
+        // Copie de la liste à faire relue à chaque connexion (écrite si elle a changé).
+        syncTodoMirror()
         break
       case 'RESUMED':
         retries = 0
@@ -4073,11 +4241,12 @@ export function startDiscordBridge({
     stop() {
       stopped = true
       for (const h of intervals) { clearInterval(h); clearTimeout(h) }
+      clearTimeout(todoSync.timer)
       ws?.close(1000)
     },
     // Passerelle Discord, pour /health du relais.
     health,
     // Pour le banc : les tâches périodiques, à la demande.
-    run: { watchReleases, watchHealth, watchActions, tidy, postSummary, summaryClock, heartbeat, watchOps, watchQuotas, watchVersions, statusText },
+    run: { watchReleases, watchHealth, watchActions, tidy, postSummary, summaryClock, heartbeat, watchOps, watchQuotas, watchVersions, statusText, syncTodoMirror },
   }
 }
