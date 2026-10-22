@@ -332,9 +332,24 @@ export function liveStallWait(state, now = Date.now()) {
 // playlist (ID3, emsg, DATERANGE) ne deviennent plus des repères de piste de
 // texte que rien ne lit : les pauses pub sont lues dans la playlist
 // (readAdBreaks).
+//
+// VOD : tampon tenu par hls.js (MediaSource) partout où le navigateur l'a,
+// Safari sur Mac et iPad compris, et plus par Safari lui-même
+// (ManagedMediaSource, « MMS ») : celui-ci demande d'arrêter de charger à
+// 30 s d'avance (« endstreaming ») et de reprendre sous 10 s
+// (« startstreaming »), et hls.js 1.5 arrête alors tout (stopLoad) —
+// requête en cours abandonnée, démultiplexeur détruit puis recréé, guet des
+// trous et des calages suspendu —, toutes les 20 s environ d'une VOD (une
+// longue VOD finissait par saccader dans Safari sur Mac, retour du 22/10).
+// Et Safari 27 n'envoie plus « startstreaming » après un saut (WebKit
+// 321919) : la VOD restait figée. hls.js préfère d'ailleurs MediaSource
+// depuis sa 1.6.19. L'iPhone n'a que ManagedMediaSource (garde-fou :
+// guardManagedMediaSource) ; les directs n'y changent pas (leur avance reste
+// loin des 30 s : Safari ne leur demande pas d'arrêter).
 const MB = 1000 * 1000
 export function bufferConfig(kind, { tile = false, lean = isIOS } = {}) {
-  const base = { enableID3MetadataCues: false, enableEmsgMetadataCues: false, enableDateRangeMetadataCues: false }
+  const base = { enableID3MetadataCues: false, enableEmsgMetadataCues: false, enableDateRangeMetadataCues: false,
+    ...(kind === 'live' ? {} : { preferManagedMediaSource: false }) }
   if (tile) return { ...base, backBufferLength: 10, maxBufferLength: 12, maxMaxBufferLength: 30, maxBufferSize: (lean ? 10 : 20) * MB }
   if (kind === 'live') {
     return lean
@@ -344,6 +359,202 @@ export function bufferConfig(kind, { tile = false, lean = isIOS } = {}) {
   return lean
     ? { ...base, backBufferLength: 20, maxBufferLength: 30, maxMaxBufferLength: 60, maxBufferSize: 30 * MB }
     : { ...base, backBufferLength: 90, maxBufferLength: 30, maxMaxBufferLength: 120 }
+}
+
+/** hls.js (1.5) prend-il ManagedMediaSource avec cette configuration ? Oui
+ *  s'il le préfère (par défaut) et que le navigateur l'a, ou s'il n'y a que
+ *  lui (iPhone). */
+export function usesManagedMediaSource(config) {
+  if (typeof window === 'undefined' || !window.ManagedMediaSource) return false
+  return config?.preferManagedMediaSource !== false || !window.MediaSource
+}
+
+/** ManagedMediaSource (iPhone ; directs sur Mac et iPad) : à chaque
+ *  « endstreaming », hls.js 1.5 s'arrête (voir plus haut) et ne repart
+ *  qu'au « startstreaming ». Safari 27 ne l'envoie plus quand on saute hors
+ *  de ce qui est chargé (WebKit 321919) : l'image restait figée. Comme
+ *  hls.js 1.6.19 : pas d'arrêt pendant un saut, et un saut pendant l'arrêt
+ *  fait repartir le chargement — après le « seeking » de hls.js lui-même,
+ *  qui retient la position. Et comme lui, une reprise sans arrêt avant ne
+ *  fait rien : en 1.5, elle relançait tout (startLoad), requête en cours
+ *  abandonnée. `note(nom)` compte les arrêts (« mmsPause ») et les reprises
+ *  au saut (« mmsSeek ») pour la santé de la lecture. */
+export function guardManagedMediaSource(Hls, hls, video, note = () => {}) {
+  const pause = hls.pauseBuffering?.bind(hls)
+  const resume = hls.resumeBuffering?.bind(hls)
+  if (!pause || !resume) return
+  let paused = false
+  let timer = 0
+  hls.pauseBuffering = () => {
+    if (video.seeking) return
+    paused = true
+    note('mmsPause')
+    pause()
+  }
+  hls.resumeBuffering = () => {
+    if (!paused) return
+    paused = false
+    resume()
+  }
+  // Vidéo rattachée (réparation sur place) : hls.js repart de lui-même.
+  hls.on(Hls.Events.MEDIA_ATTACHED, () => { paused = false })
+  const onSeeking = () => {
+    if (!paused) return
+    clearTimeout(timer)
+    timer = setTimeout(() => {
+      if (!paused) return
+      note('mmsSeek')
+      hls.resumeBuffering()
+    }, 0)
+  }
+  video.addEventListener('seeking', onSeeking)
+  hls.once(Hls.Events.DESTROYING, () => {
+    clearTimeout(timer)
+    video.removeEventListener('seeking', onSeeking)
+  })
+}
+
+// ── Santé de la lecture (diagnostic) ────────────────────────────────────
+// « Au bout d'un moment, la VOD saccade » ne laissait aucune trace : le
+// journal des erreurs (errlog.js, joint aux signalements) ne gardait que les
+// erreurs fatales. Chaque vidéo compte maintenant ses décrochages (lecture
+// qui attend des données, hors démarrage et sauts) et leur durée, les images
+// perdues (getVideoPlaybackQuality), ce que hls.js règle seul (erreurs non
+// fatales : calage, trou sauté, coup de pouce, tampon plein, segment
+// réessayé…), les réparations du lecteur et les arrêts de ManagedMediaSource.
+// Toutes les minutes de lecture, une minute anormale (HEALTH_BAD) écrit une
+// ligne au journal : 5 minutes d'écart au moins, 6 lignes par vidéo au plus,
+// plus une à l'ouverture d'un signalement (flushHealth). Rien de personnel :
+// ni adresse, ni chaîne, ni identifiant.
+const HEALTH_WINDOW_MS = 60_000
+const HEALTH_LOG_GAP_MS = 5 * 60_000
+const HEALTH_LOG_MAX = 6
+// Erreurs non fatales de hls.js comptées, par nom (`details`) ; les autres
+// vont dans « autre ». Libellés au singulier et au pluriel.
+const HLS_ISSUES = {
+  bufferStalledError: ['calage', 'calages'], bufferNudgeOnStall: ['coup de pouce', 'coups de pouce'],
+  bufferSeekOverHole: ['trou sauté', 'trous sautés'], bufferFullError: ['tampon plein', 'tampons pleins'],
+  bufferAppendError: ['ajout refusé', 'ajouts refusés'], fragLoadError: ['segment réessayé', 'segments réessayés'],
+  fragLoadTimeOut: ['segment lent', 'segments lents'], levelLoadError: ['playlist réessayée', 'playlists réessayées'],
+  levelLoadTimeOut: ['playlist lente', 'playlists lentes'], otherIssue: ['autre', 'autres'],
+}
+// Réparations du lecteur : sur place (recoverMediaError), nouvelle instance
+// (rebuild), nouvel essai après une erreur réseau (retryLoad), autre relais
+// ou Worker (swapLinks), segment introuvable sauté (skipMissingFrag).
+const HEALTH_FIXES = {
+  recover: ['sur place', 'sur place'], rebuild: ['relance', 'relances'], retry: ['nouvel essai', 'nouveaux essais'],
+  swap: ['autre relais', 'autres relais'], missing: ['segment absent', 'segments absents'],
+}
+/** « 1 coup de pouce », « 3 trous sautés ». */
+const counted = (n, [one, many]) => `${n} ${n > 1 ? many : one}`
+// Minute anormale : 2 décrochages ou 3 s d'attente, 2 % d'images perdues
+// (30 au moins), un trou ou un tampon plein que hls.js a dû régler, ou une
+// réparation.
+const HEALTH_BAD = { stalls: 2, stallMs: 3000, dropRatio: 0.02, dropMin: 30,
+  issues: ['bufferNudgeOnStall', 'bufferSeekOverHole', 'bufferFullError', 'bufferAppendError'] }
+
+/** Compteurs d'une vidéo (voir plus haut), d'une source à l'autre. */
+export class PlaybackHealth {
+  /** `video` : ses compteurs d'images (vidéo d'avant) servent de départ. */
+  constructor(now = Date.now(), video = null) {
+    this.c = {}
+    this.stallFrom = 0
+    // Images : cumulées, et derniers relevés du navigateur (remis à zéro à
+    // chaque nouvelle source).
+    const q = video?.getVideoPlaybackQuality?.()
+    this.frames = { total: 0, dropped: 0, seenTotal: q?.totalVideoFrames || 0, seenDropped: q?.droppedVideoFrames || 0 }
+    const start = { at: now, c: {}, total: 0, dropped: 0 }
+    this.mark = start     // dernière ligne écrite (ou début)
+    this.minute = start   // début de la minute examinée
+    this.bad = false      // minute anormale pas encore écrite
+    this.logged = 0
+    this.loggedAt = 0
+  }
+
+  add(name, n = 1) { this.c[name] = (this.c[name] || 0) + n }
+
+  /** Erreur non fatale de hls.js. */
+  hlsIssue(details) { this.add(details in HLS_ISSUES ? details : 'otherIssue') }
+
+  stallStart(now = Date.now()) {
+    if (this.stallFrom) return
+    this.stallFrom = now
+    this.add('stalls')
+  }
+
+  stallEnd(now = Date.now()) {
+    if (!this.stallFrom) return
+    this.add('stallMs', Math.max(0, now - this.stallFrom))
+    this.stallFrom = 0
+  }
+
+  /** Relevé des images de la vidéo. Les compteurs du navigateur repartent
+   *  de zéro avec chaque source : un relevé plus bas qu'avant en est une. */
+  readFrames(video) {
+    const q = video?.getVideoPlaybackQuality?.()
+    if (!q) return
+    const f = this.frames
+    const total = q.totalVideoFrames || 0
+    const dropped = q.droppedVideoFrames || 0
+    if (total < f.seenTotal || dropped < f.seenDropped) f.seenTotal = f.seenDropped = 0
+    f.total += total - f.seenTotal
+    f.dropped += dropped - f.seenDropped
+    f.seenTotal = total
+    f.seenDropped = dropped
+  }
+
+  /** Nouvelle source (attach) : dernier relevé de l'ancienne, puis les
+   *  compteurs du navigateur repartent de zéro. */
+  newSource(video, now = Date.now()) {
+    this.readFrames(video)
+    this.frames.seenTotal = this.frames.seenDropped = 0
+    this.stallEnd(now)
+  }
+
+  /** État cumulé à `now`, décrochage en cours compris. */
+  snapshot(now) {
+    const c = { ...this.c }
+    if (this.stallFrom) c.stallMs = (c.stallMs || 0) + Math.max(0, now - this.stallFrom)
+    return { at: now, c, total: this.frames.total, dropped: this.frames.dropped }
+  }
+
+  /** Écart entre deux états. */
+  static diff(from, to) {
+    const c = {}
+    for (const k of Object.keys(to.c)) {
+      const d = to.c[k] - (from.c[k] || 0)
+      if (d > 0) c[k] = d
+    }
+    return { ms: to.at - from.at, c, total: to.total - from.total, dropped: to.dropped - from.dropped }
+  }
+
+  static isBad(d) {
+    const c = d.c
+    return (c.stalls || 0) >= HEALTH_BAD.stalls || (c.stallMs || 0) >= HEALTH_BAD.stallMs
+      || (d.dropped >= HEALTH_BAD.dropMin && d.dropped >= HEALTH_BAD.dropRatio * d.total)
+      || HEALTH_BAD.issues.some((k) => c[k] > 0) || Object.keys(HEALTH_FIXES).some((k) => c[k] > 0)
+  }
+
+  /** Appelé pendant la lecture (timeupdate) : examine chaque minute, et rend
+   *  l'écart depuis la dernière ligne quand une ligne est à écrire (sinon
+   *  null). `force` (signalement) : l'écart tout de suite, sans compter
+   *  parmi les lignes ni changer l'examen des minutes. */
+  check(now, video, { force = false } = {}) {
+    if (!force && now - this.minute.at < HEALTH_WINDOW_MS) return null
+    this.readFrames(video)
+    const snap = this.snapshot(now)
+    if (!force) {
+      if (PlaybackHealth.isBad(PlaybackHealth.diff(this.minute, snap))) this.bad = true
+      this.minute = snap
+      if (!this.bad || this.logged >= HEALTH_LOG_MAX || (this.loggedAt && now - this.loggedAt < HEALTH_LOG_GAP_MS)) return null
+      this.logged++
+      this.loggedAt = now
+    }
+    const d = PlaybackHealth.diff(this.mark, snap)
+    this.mark = snap
+    this.bad = false
+    return d
+  }
 }
 
 // ── Pauses pub de la chaîne ─────────────────────────────────────────────
@@ -578,6 +789,8 @@ export class Player {
     this.adTimer = null
     // Passages « -unmuted.mp4 » de la VOD : le son y est (soundSpansOf).
     this.soundSpans = []
+    // Santé de la lecture de la vidéo en cours (PlaybackHealth).
+    this.health = null
     this.hideTimer = null
     this.lastTap = 0
     this.tapTimer = null
@@ -648,7 +861,7 @@ export class Player {
 
     // ── Vidéo ────────────────────────────────────────────────────────────
     v.addEventListener('play', () => this.syncPlay())
-    v.addEventListener('pause', () => { this.stalledAt = 0; this.syncPlay(); this.showUI(); this.o.onPause?.() })
+    v.addEventListener('pause', () => { this.stalledAt = 0; this.health?.stallEnd(); this.syncPlay(); this.showUI(); this.o.onPause?.() })
     v.addEventListener('waiting', () => {
       this.el.spinner.hidden = false
       this.passHole()
@@ -658,11 +871,20 @@ export class Player {
         this.stallPos = v.currentTime
         if (this.hls) this.watchStall()
       }
+      this.noteStall()
     })
     // Premier placement (départ demandé, ou saut fait pendant le chargement)
     // ou lecture partie : la position de la vidéo fait foi dès lors (resumeAt).
     v.addEventListener('seeking', () => { this.startPos = 0; this.passHole() })
-    v.addEventListener('playing', () => { this.startPos = 0; this.el.spinner.hidden = true; this.scheduleHide() })
+    v.addEventListener('seeked', () => { this.seekedAt = Date.now() })
+    v.addEventListener('playing', () => {
+      this.startPos = 0
+      this.el.spinner.hidden = true
+      this.scheduleHide()
+      // Fin d'un décrochage, ou première image de la source (santé).
+      this.playedSinceAttach = true
+      this.health?.stallEnd()
+    })
     v.addEventListener('canplay', () => { this.el.spinner.hidden = true })
     v.addEventListener('timeupdate', () => this.onTime())
     v.addEventListener('progress', () => this.drawBuffer())
@@ -797,6 +1019,8 @@ export class Player {
     // Relances après une erreur fatale (rebuild) : comptées par vidéo.
     this.rebuilds = []
     this.mediaFixAt = 0
+    // Santé de la lecture : par vidéo, d'une source à l'autre.
+    this.health = new PlaybackHealth(Date.now(), this.video)
     // Rempli tout de suite : sinon la pastille du direct restait vide tant
     // que la vidéo n'avait pas démarré.
     this.el.liveText.textContent = t('live_now')
@@ -821,6 +1045,10 @@ export class Player {
     const v = this.video
     // Avant tout : un attach() précédent encore en attente n'ira pas plus loin.
     const token = (this.attachToken = (this.attachToken ?? 0) + 1)
+    // Santé : images de l'ancienne source relevées avant qu'elle parte ; le
+    // démarrage de la nouvelle n'est pas un décrochage.
+    this.health?.newSource(v)
+    this.playedSinceAttach = false
     this.destroyHls()
     this.el.spinner.hidden = false
     if (!url) return
@@ -912,6 +1140,8 @@ export class Player {
       })
       this.hls = hls
       this.directFails = 0
+      // iPhone, directs sur Mac et iPad : arrêts de Safari tenus en bride.
+      if (usesManagedMediaSource(hls.config)) guardManagedMediaSource(Hls, hls, v, (name) => this.health?.add(name))
       hls.loadSource(url)
       hls.attachMedia(v)
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
@@ -966,7 +1196,9 @@ export class Player {
         // Twitch), trois de suite et appareil en ligne : les prochaines
         // tentatives passent par le relais du Worker.
         if (noteDirectSegmentError(Hls, data, this) && data.fatal) { hls.startLoad(); return }
-        if (!data.fatal || token !== this.attachToken) return
+        if (token !== this.attachToken) return
+        // Réglée par hls.js lui-même : comptée (santé de la lecture), rien d'autre.
+        if (!data.fatal) { this.health?.hlsIssue(data.details); return }
         logError('lecteur', `hls.js ${data.type} · ${data.details}${data.response?.code ? ` · HTTP ${data.response.code}` : ''}`)
         if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
           // Worker hors service en pleine lecture (quota du jour atteint), ou
@@ -979,8 +1211,10 @@ export class Player {
         }
         // Réparée sur place une fois ; revenue aussitôt, ou d'un autre type :
         // nouvelle instance (voir MEDIA_FIX_MS).
-        if (data.type === Hls.ErrorTypes.MEDIA_ERROR && mediaFixAllowed(this)) recoverMedia(hls, v, this.kind === 'vod' ? this.resumeAt() : -1)
-        else this.rebuild(token)
+        if (data.type === Hls.ErrorTypes.MEDIA_ERROR && mediaFixAllowed(this)) {
+          this.health?.add('recover')
+          recoverMedia(hls, v, this.kind === 'vod' ? this.resumeAt() : -1)
+        } else this.rebuild(token)
       })
     } else if (native) {
       // Safari (iPhone surtout) : HLS natif.
@@ -1037,6 +1271,7 @@ export class Player {
       this.o.onError?.()
       return
     }
+    this.health?.add('retry')
     this.retryTimer = setTimeout(again, 1000 * 2 ** this.netFails)
   }
 
@@ -1064,6 +1299,7 @@ export class Player {
       return
     }
     this.rebuilds.push(now)
+    this.health?.add('rebuild')
     console.info('[TwitchUnblock] Lecture bloquée : nouvelle instance de hls.js.')
     this.el.spinner.hidden = false
     // Hors de l'événement d'erreur : hls.js n'est pas détruit pendant qu'il
@@ -1133,10 +1369,12 @@ export class Player {
       if (!this.loadedUpTo(gap)) return false
       console.info(`[TwitchUnblock] VOD : fin introuvable à partir de ${formatClock(gap)}, la vidéo s'arrête là.`)
       this.pendingHole = { start: gap, end: hole.end, final: true }
+      this.health?.add('missing')
       hls.trigger(eos, {})
       return true
     }
     console.info(`[TwitchUnblock] VOD : segment introuvable à ${formatClock(f.start)}, sauté.`)
+    this.health?.add('missing')
     if (!this.holes.some((x) => x.start === hole.start)) this.holes.push(hole)
     this.pendingHole = hole
     this.passHole()
@@ -1233,6 +1471,7 @@ export class Player {
     // la vidéo pouvait partir après la fermeture, son en arrière-plan.
     this.attachToken = (this.attachToken ?? 0) + 1
     this.destroyHls()
+    this.health = null
     this.endAdBreak()
     this.adBreaks.clear()
     this.video.pause()
@@ -1249,6 +1488,7 @@ export class Player {
     this.links = links
     this.variants = variants && typeof variants === 'object' ? variants : {}
     if (!links[this.quality]) this.quality = pickQuality(Object.keys(links), this.o.prefs.qualityPref, this.variants)
+    this.health?.add('swap')
     this.updateQualityLabel()
     this.attach(links[this.quality], this.kind === 'vod' ? this.resumeAt() : 0)
   }
@@ -1320,17 +1560,116 @@ export class Player {
   setLiveSource(id) { this.liveSource = id || null }
 
   /** Résumé technique joint aux signalements (main.js, feedbackInfo) :
-   *  moteur, qualité, source du direct, vitesse et retard. */
+   *  moteur (celui que hls.js utilise vraiment), qualité, source du direct,
+   *  vitesse, retard, et la santé de la lecture de cette vidéo (healthBrief). */
   debugInfo() {
     const v = this.video
-    const engine = this.hls
-      ? `hls.js ${window.Hls?.version ?? '?'} ${window.ManagedMediaSource ? 'MMS' : 'MSE'}`
-      : /\.mp4(\?|$)/i.test(v.currentSrc || '') ? 'mp4' : 'native'
+    const engine = this.hls ? `hls.js ${window.Hls?.version ?? '?'} ${this.engineName()}` : this.engineName()
     const q = this.quality ? `${this.quality}${this.autoLevel ? `/${this.autoLevel}` : ''}` : null
     const lat = this.kind === 'live' ? this.liveDelay() : 0
     return [engine, q, this.kind === 'live' && this.liveSource ? `src ${this.liveSource}` : null,
       `rate ${v.playbackRate}`, lat > 0 ? `delay ${lat.toFixed(1)}s` : null,
-      this.adBreak ? 'ad break' : null].filter(Boolean).join(' · ')
+      this.adBreak ? 'ad break' : null, this.healthBrief()].filter(Boolean).join(' · ')
+  }
+
+  // ── Santé de la lecture (voir PlaybackHealth) ─────────────────────────
+  /** Moteur de lecture : ManagedMediaSource ou MediaSource sous hls.js,
+   *  sinon le fichier MP4 d'un clip ou le HLS natif. */
+  engineName() {
+    if (this.hls) return usesManagedMediaSource(this.hls.config) ? 'MMS' : 'MSE'
+    return /\.mp4(\?|$)/i.test(this.video.currentSrc || '') ? 'mp4' : 'native'
+  }
+
+  /** Qui relaie la vidéo : le relais du VPS ou un Worker (rien de plus). */
+  proxyName() {
+    const base = proxyBaseOf(this.links?.[this.quality] || '')
+    if (!base) return null
+    return base === RELAY_BASE ? 'relais' : base === API_URL ? 'Worker' : 'autre Worker'
+  }
+
+  /** Tampon autour de la lecture : avance et retard (s) dans la plage où
+   *  elle se trouve, et nombre de plages. */
+  bufferState() {
+    const v = this.video
+    const b = v.buffered
+    const t = v.currentTime
+    let ahead = 0
+    let behind = 0
+    for (let i = 0; i < b.length; i++) {
+      if (b.start(i) - 0.1 <= t && t <= b.end(i) + 0.1) {
+        ahead = Math.max(0, b.end(i) - t)
+        behind = Math.max(0, t - b.start(i))
+      }
+    }
+    return { ahead, behind, ranges: b.length }
+  }
+
+  /** « waiting » pendant la lecture : un décrochage — sauf au démarrage
+   *  d'une source, pendant un saut ou dans la seconde qui suit, et en fin de
+   *  vidéo. Fini à « playing » ou à la pause. */
+  noteStall() {
+    const v = this.video
+    if (!this.health || !this.playedSinceAttach || v.paused || v.seeking || v.ended) return
+    if (Date.now() - (this.seekedAt || 0) < 1000) return
+    this.health.stallStart()
+  }
+
+  /** Pendant la lecture (timeupdate) : une minute anormale écrit une ligne
+   *  au journal des erreurs (PlaybackHealth.check). */
+  watchHealth() {
+    const d = this.health?.check(Date.now(), this.video)
+    if (d) logError('lecteur', this.healthLine(d))
+  }
+
+  /** Signalement en cours : l'état depuis la dernière ligne, écrit au
+   *  journal quoi qu'il en soit (main.js, openFeedback). */
+  flushHealth() {
+    if (!this.health || (!this.hls && !this.video.currentSrc)) return
+    logError('lecteur', this.healthLine(this.health.check(Date.now(), this.video, { force: true }), true))
+  }
+
+  /** Ligne du journal : où (direct ou VOD, moteur, qualité, relais,
+   *  position, durée couverte), puis les décrochages, les images perdues,
+   *  le tampon, le débit mesuré face à celui de la qualité, les réparations,
+   *  ce que hls.js a réglé seul et les arrêts de ManagedMediaSource. */
+  healthLine(d, forced = false) {
+    const c = d.c
+    const b = this.bufferState()
+    const mbps = (bps) => (bps / 1e6).toFixed(1)
+    const level = this.hls?.levels?.[this.hls.currentLevel]
+    const rate = level?.realBitrate || level?.bitrate || this.variants?.[this.quality]?.bw || 0
+    const bw = this.hls?.bandwidthEstimate
+    const list = (labels) => Object.entries(labels).filter(([k]) => c[k] > 0).map(([k, label]) => counted(c[k], label)).join(', ')
+    const fixes = list(HEALTH_FIXES)
+    const issues = list(HLS_ISSUES)
+    const where = [this.kind, this.engineName(), this.quality ? qualityLabel(this.quality) : null, this.proxyName()].filter(Boolean).join(' ')
+    const head = `santé${forced ? ' (signalement)' : ''} ${where} à ${formatClock(this.video.currentTime || 0)}, ${Math.max(1, Math.round(d.ms / 60_000))} min`
+    const parts = [
+      `${c.stalls || 0} décrochage${c.stalls > 1 ? 's' : ''}${c.stalls ? ` (${((c.stallMs || 0) / 1000).toFixed(1)} s)` : ''}`,
+      d.total > 0 ? `${((100 * d.dropped) / d.total).toFixed(1)} % d'images perdues (${d.dropped}/${d.total})` : null,
+      `tampon +${b.ahead.toFixed(0)}/-${b.behind.toFixed(0)} s${b.ranges > 1 ? ` (${b.ranges} plages)` : ''}`,
+      bw > 0 ? `débit ${mbps(bw)}${rate > 0 ? ` pour ${mbps(rate)}` : ''} Mb/s` : null,
+      fixes ? `réparations : ${fixes}` : null,
+      issues ? `hls.js : ${issues}` : null,
+      c.mmsPause || c.mmsSeek ? `MMS : ${c.mmsPause || 0} arrêts${c.mmsSeek ? `, ${c.mmsSeek} reprises au saut` : ''}` : null,
+    ]
+    return `${head} : ${parts.filter(Boolean).join(' · ')}`
+  }
+
+  /** Santé de la vidéo, cumulée, pour debugInfo : décrochages, images
+   *  perdues, tampon, réparations, arrêts de ManagedMediaSource. */
+  healthBrief() {
+    const h = this.health
+    if (!h) return null
+    h.readFrames(this.video)
+    const s = h.snapshot(Date.now())
+    const c = s.c
+    const b = this.bufferState()
+    const fixes = Object.keys(HEALTH_FIXES).reduce((n, k) => n + (c[k] || 0), 0)
+    return [`stalls ${c.stalls || 0}${c.stalls ? ` (${Math.round((c.stallMs || 0) / 1000)}s)` : ''}`,
+      s.total > 0 ? `drops ${((100 * s.dropped) / s.total).toFixed(1)}%` : null,
+      `buf +${Math.round(b.ahead)}/-${Math.round(b.behind)}s`, fixes ? `fixes ${fixes}` : null,
+      c.mmsPause ? `mms ${c.mmsPause}` : null].filter(Boolean).join(' · ')
   }
 
   /** Libellé dans le menu et sur le bouton : « Auto · 720p » une fois le
@@ -1605,6 +1944,7 @@ export class Player {
       this.updateMutedNote(cur)
       if (this.pendingHole) this.passHole()
     }
+    this.watchHealth()
     this.o.onTime?.(cur, v.duration)
   }
 

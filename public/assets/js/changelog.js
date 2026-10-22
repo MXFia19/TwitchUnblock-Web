@@ -6,6 +6,27 @@
 
 export const CHANGELOG = [
   {
+    version: '2026.10.22a',
+    items: {
+      fr: [
+        'VODs dans Safari sur Mac (et iPad) : la lecture ne se met plus à saccader au bout d’un moment. Le lecteur tient lui-même sa mémoire vidéo au lieu de laisser Safari l’interrompre toutes les 20 secondes environ, et une VOD ne reste plus figée après un saut sous Safari 27.',
+        'Le journal des erreurs (Réglages → À propos, joint à tes signalements) note maintenant l’état de la lecture quand elle se met à saccader — décrochages, images perdues, mémoire tampon, réparations — et au moment où tu signales un problème : de quoi comprendre un saccadement qui ne laisse aucune erreur. Rien de personnel n’y figure.',
+      ],
+      en: [
+        'VODs in Safari on Mac (and iPad): playback no longer starts stuttering after a while. The player now keeps its video buffer itself instead of letting Safari interrupt it every 20 seconds or so, and a VOD no longer freezes after a jump in Safari 27.',
+        'The error log (Settings → About, attached to your reports) now notes the playback’s state when it starts stuttering — stalls, dropped frames, buffer, repairs — and when you report a problem: enough to understand stutter that leaves no error behind. Nothing personal goes in it.',
+      ],
+      es: [
+        'VOD en Safari en Mac (y iPad): la reproducción ya no empieza a dar tirones al cabo de un rato. El reproductor gestiona él mismo su memoria de vídeo en lugar de dejar que Safari la interrumpa cada 20 segundos más o menos, y un VOD ya no se queda congelado tras un salto en Safari 27.',
+        'El registro de errores (Ajustes → Acerca de, adjunto a tus reportes) anota ahora el estado de la reproducción cuando empieza a dar tirones — cortes, fotogramas perdidos, búfer, reparaciones — y cuando reportas un problema: lo necesario para entender unos tirones que no dejan ningún error. No incluye nada personal.',
+      ],
+      ru: [
+        'VOD в Safari на Mac (и iPad): воспроизведение больше не начинает дёргаться через некоторое время. Плеер теперь сам управляет своим видеобуфером, а не позволяет Safari прерывать его примерно каждые 20 секунд, и VOD больше не замирает после перемотки в Safari 27.',
+        'Журнал ошибок (Настройки → О проекте, прикрепляется к вашим сообщениям) теперь записывает состояние воспроизведения, когда оно начинает дёргаться, — подвисания, пропущенные кадры, буфер, восстановления — и в момент, когда вы сообщаете о проблеме: этого хватает, чтобы разобраться в рывках, которые не оставляют ошибок. Ничего личного туда не попадает.',
+      ],
+    },
+  },
+  {
     version: '2026.10.20d',
     items: {
       fr: [

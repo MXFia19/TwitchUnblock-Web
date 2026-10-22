@@ -4565,6 +4565,10 @@ function openErrorLog() {
 }
 
 function openFeedback(kind = 'bug', { prefill = '' } = {}) {
+  // Une vidéo à l'écran : l'état de sa lecture (décrochages, images perdues,
+  // tampon…) va au journal joint, pour un saccadement qui ne laisse aucune
+  // erreur (player.js, flushHealth).
+  if (state.watch) player?.flushHealth?.()
   const info = feedbackInfo()
   const errCount = Math.min(20, errorCount())
   const summary = [info.browser, info.os, `v${usage.SITE_VERSION}`, info.page, info.watching, info.player,
