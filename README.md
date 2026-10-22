@@ -889,10 +889,13 @@ Settings (in `docker-compose.yml`):
 | `TWITCH_CLIENT_ID` | Optional. To log in with Twitch, create an app on [dev.twitch.tv/console](https://dev.twitch.tv/console) with `PUBLIC_URL/` as the redirect URL, and paste its Client ID. Its tokens are also the ones the developer tools accept. |
 | `ADMIN_TWITCH_IDS` | Optional. Your Twitch user ID(s), comma-separated, for the developer tools on `/stats`. Empty: nobody gets them (`/stats` says so once you're logged in). |
 | `TRUST_PROXY` | Optional. Set it to `1` only if the container sits behind your own reverse proxy (Caddy, nginx…) that appends the visitor's address to `X-Forwarded-For`: rate limits then count the last address of that header. Default (empty): the address of the connection itself, and any address a client claims (`X-Forwarded-For`, `CF-Connecting-IP`) is ignored — behind a proxy without this setting, all visitors share the proxy's limits. |
+| `ALLOWED_ORIGINS` | Optional. Websites allowed to play video through your instance from a browser (`/api/proxy`), comma-separated; `*` inside a name stands for any part of it (`https://preview-*.example.com`). Empty: your own site (`PUBLIC_URL`, or whatever address you open it with) and the official website, which can use your instance as its *Personal Worker*; `*`: anyone. Other websites get a `403`, as on the [video relay](#video-relay-on-your-own-server-vps); apps and players that send no `Origin` (iOS, Android, VLC) aren't affected. |
 
 Live notifications work too: the container runs the scheduled check itself,
 every minute, through an internal route guarded by a random secret drawn at
-each start (nobody else can trigger it).
+each start (nobody else can trigger it). The front server fires it (no extra
+process), and while no channel is followed for notifications the check is a
+single database read: no write, no outside request.
 
 Only the website and `/api` are reachable on the published port: `wrangler dev`
 listens inside the container, behind a small front server
@@ -904,6 +907,21 @@ The image has a health check (`docker ps` shows `healthy`): `/api/ping` for
 the website, `/health` for the relay. Both `docker-compose.yml` files set
 `init: true`, so a small init process forwards `docker stop` and cleans up
 finished processes.
+
+**Resource use.** With nobody watching, the container makes no outside
+requests (with live notifications on: one Twitch request every 2 minutes per
+100 followed channels). Memory sits around half a gigabyte, mostly
+`wrangler dev` (Node) and its two `workerd` processes — the Worker, and
+wrangler's own proxy in front of it. Video goes through the container: a VOD
+costs about 1.5–3.5 GB per hour, received and sent again; a live stream only
+its playlists, unless the browser can't reach Twitch's CDN (see
+[Video relay](#video-relay-on-your-own-server-vps)). `docker stats` shows
+network totals since the container started, not a rate: compare two readings
+a few minutes apart. Once an hour, if anything was served, the log sums it up —
+requests, video, MB sent, and how many addresses on the local network and on
+the Internet, none written down (`docker logs twitchunblock | grep trafic`;
+behind your own reverse proxy, only with `TRUST_PROXY`). Logs are capped at
+3 × 10 MB (`logging` in `docker-compose.yml`).
 
 Data lives in the `twitchunblock-data` volume. Watching lives, VODs and clips,
 the chat (read-only without login), categories and device follows all work

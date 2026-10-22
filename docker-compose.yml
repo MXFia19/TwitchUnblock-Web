@@ -31,6 +31,15 @@ services:
       # l'adresse du visiteur à X-Forwarded-For : les limites la comptent.
       # Vide : l'adresse de la connexion (README, Docker).
       TRUST_PROXY: ""
+      # Sites qui peuvent lire la vidéo par ton instance depuis un navigateur
+      # (/api/proxy), séparés par des virgules ; les autres reçoivent 403.
+      # Vide : le tien (PUBLIC_URL) et le site officiel (« Worker personnel »
+      # de ses réglages) ; "*" : tout le monde. Les apps ne sont pas touchées.
+      ALLOWED_ORIGINS: ""
+    # Journaux bornés à 3 × 10 Mo : sans cela, ils grandissent sans fin.
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
 
 volumes:
   twitchunblock-data:
