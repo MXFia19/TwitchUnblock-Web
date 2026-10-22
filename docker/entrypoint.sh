@@ -35,17 +35,26 @@ set -- --config /app/wrangler.docker.toml --ip 127.0.0.1 --port "$INNER_PORT" \
 [ -n "$GIT_SHA" ] && set -- "$@" --var "BUILD_SHA:$GIT_SHA"
 
 # Notifications de live : la tâche planifiée de Cloudflare n'existe pas en
-# local. Une boucle la lance chaque minute par POST /api/cron, avec un secret
-# tiré au hasard à chaque démarrage, connu de ce conteneur seul. Avant,
-# wrangler l'exposait sur /__scheduled (--test-scheduled), ouvert à tous sur
-# le port publié : n'importe qui la déclenchait à volonté. (Avec ce secret,
-# scheduled() du Worker ne fait plus rien : seule cette route la lance.)
+# local. Le frontal la lance chaque minute par POST /api/cron (cronLoop de
+# docker/front.mjs ; avant, une boucle ici, un Node neuf par minute), avec un
+# secret tiré au hasard à chaque démarrage, connu de ce conteneur seul.
+# Avant, wrangler l'exposait sur /__scheduled (--test-scheduled), ouvert à
+# tous sur le port publié : n'importe qui la déclenchait à volonté. (Avec ce
+# secret, scheduled() du Worker ne fait plus rien : seule cette route la
+# lance.)
 CRON_SECRET=$(node -e 'process.stdout.write(require("crypto").randomBytes(24).toString("hex"))')
 export CRON_SECRET
 set -- "$@" --var "CRON_SECRET:$CRON_SECRET"
-( while sleep 60; do
-    node -e 'fetch("http://127.0.0.1:" + process.env.INNER_PORT + "/api/cron", { method: "POST", headers: { Authorization: "Bearer " + process.env.CRON_SECRET }, signal: AbortSignal.timeout(300000) }).catch(() => {})'
-  done ) &
+
+# wrangler sans son enveloppe : bin/wrangler.js ne fait que relancer Node sur
+# wrangler-dist/cli.js (avec --no-warnings), et restait en mémoire pour rien
+# (~40 Mo). WRANGLER_CLI est posé par le Dockerfile, qui vérifie le fichier ;
+# absent (image construite autrement), la commande habituelle.
+if [ -f "${WRANGLER_CLI:-}" ]; then
+  set -- node --no-warnings "$WRANGLER_CLI" dev "$@"
+else
+  set -- wrangler dev "$@"
+fi
 
 echo "TwitchUnblock : http://localhost:${PORT} (données dans /data)"
-exec node /app/front.mjs wrangler dev "$@"
+exec node /app/front.mjs "$@"
