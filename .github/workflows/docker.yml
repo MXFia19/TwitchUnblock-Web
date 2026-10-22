@@ -91,3 +91,32 @@ jobs:
           # (site, Worker) sont refaites.
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      # Essai de l'image publiée (amd64), avec les options des docker-compose
+      # (no-new-privileges, aucune capacité) : le site et son Worker
+      # répondent, le relais aussi, et aucun gestionnaire de paquets n'est
+      # resté. Une image qui ne démarre plus (base, wrangler…) passe ici en
+      # rouge, sur la branche de test avant main.
+      - name: Smoke test (amd64)
+        run: |
+          img="$IMAGE:sha-${GITHUB_SHA::7}"
+          opts="--init --security-opt no-new-privileges:true --cap-drop ALL"
+          docker run -d --name site $opts -p 8787:8787 "$img"
+          docker run -d --name relay $opts -p 8788:8788 -e PUBLIC_ORIGIN=https://relay.example.com \
+            --entrypoint node "$img" /app/relay.mjs
+          ok=""
+          for i in $(seq 1 60); do
+            if curl -fsS -o /dev/null http://127.0.0.1:8787/ \
+              && curl -fsS -o /dev/null http://127.0.0.1:8787/api/ping \
+              && curl -fsS -o /dev/null http://127.0.0.1:8788/health; then
+              ok=1; break
+            fi
+            sleep 3
+          done
+          docker logs site 2>&1 | tail -30
+          docker logs relay 2>&1 | tail -15
+          if [ -z "$ok" ]; then echo "::error::L'image ne répond pas (site, Worker ou relais)."; exit 1; fi
+          if docker exec site sh -c 'command -v npm || command -v npx || command -v corepack || command -v yarn'; then
+            echo "::error::Un gestionnaire de paquets est resté dans l'image."; exit 1
+          fi
+          echo "Site, Worker et relais répondent ; npm, corepack et yarn sont absents."

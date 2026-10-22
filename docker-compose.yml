@@ -13,6 +13,13 @@ services:
     # et ramasse les processus finis de wrangler. Santé : HEALTHCHECK de
     # l'image, visible dans « docker ps ».
     init: true
+    # Durcissement : aucun programme du conteneur ne peut gagner de droits
+    # (programmes setuid comme mount ou su) et aucune capacité Linux n'est
+    # gardée ; le site n'en a besoin d'aucune (utilisateur node, port 8787).
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     ports:
       - "8787:8787"
     volumes:

@@ -23,6 +23,14 @@ services:
     # et ramasse les processus finis. Santé : HEALTHCHECK de l'image
     # (/health, bot Discord compris), visible dans « docker ps ».
     init: true
+    # Durcissement : aucun programme du conteneur ne peut gagner de droits
+    # (programmes setuid comme mount ou su) et aucune capacité Linux n'est
+    # gardée ; le relais n'en a besoin d'aucune (utilisateur node, port
+    # 8788). Pas pour Caddy plus bas, qui écoute sur les ports 80 et 443.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     # Joignable depuis le VPS seulement : c'est le serveur web qui le publie.
     ports:
       - "127.0.0.1:8788:8788"
