@@ -1630,8 +1630,11 @@ export class Player {
 
   /** Ligne du journal : où (direct ou VOD, moteur, qualité, relais,
    *  position, durée couverte), puis les décrochages, les images perdues,
-   *  le tampon, le débit mesuré face à celui de la qualité, les réparations,
-   *  ce que hls.js a réglé seul et les arrêts de ManagedMediaSource. */
+   *  le tampon, le débit mesuré face à celui de la qualité, les arrêts de
+   *  ManagedMediaSource, les réparations et ce que hls.js a réglé seul. Le
+   *  journal coupe à 300 caractères : les listes, de longueur variable,
+   *  passent en dernier (placés après elles, les arrêts MMS — ce que la
+   *  ligne doit dire sur iPhone — tombaient d'une minute chargée). */
   healthLine(d, forced = false) {
     const c = d.c
     const b = this.bufferState()
@@ -1649,9 +1652,10 @@ export class Player {
       d.total > 0 ? `${((100 * d.dropped) / d.total).toFixed(1)} % d'images perdues (${d.dropped}/${d.total})` : null,
       `tampon +${b.ahead.toFixed(0)}/-${b.behind.toFixed(0)} s${b.ranges > 1 ? ` (${b.ranges} plages)` : ''}`,
       bw > 0 ? `débit ${mbps(bw)}${rate > 0 ? ` pour ${mbps(rate)}` : ''} Mb/s` : null,
+      c.mmsPause || c.mmsSeek
+        ? `MMS : ${counted(c.mmsPause || 0, ['arrêt', 'arrêts'])}${c.mmsSeek ? `, ${counted(c.mmsSeek, ['reprise au saut', 'reprises au saut'])}` : ''}` : null,
       fixes ? `réparations : ${fixes}` : null,
       issues ? `hls.js : ${issues}` : null,
-      c.mmsPause || c.mmsSeek ? `MMS : ${c.mmsPause || 0} arrêts${c.mmsSeek ? `, ${c.mmsSeek} reprises au saut` : ''}` : null,
     ]
     return `${head} : ${parts.filter(Boolean).join(' · ')}`
   }
