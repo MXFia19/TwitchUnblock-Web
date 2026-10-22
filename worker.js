@@ -2800,6 +2800,9 @@ async function feedbackBotTool(env, body) {
     switch (body.action) {
         // Mémoire du bot (réglages, versions vues, brouillons) : petites
         // valeurs JSON sous `dcbot_<clé>`, gardées ou pour `ttl` secondes.
+        // Lue seulement par le bot (secret partagé), sauf `todo_mirror`, sa
+        // copie de la liste à faire, que rend aussi /api/admin/reports?view=todo
+        // (clé REPORTS_KEY).
         case 'get': {
             const k = String(body.key || '');
             if (!/^[a-z0-9_:-]{1,60}$/.test(k)) return jsonError('Bad key', 400);
@@ -3492,6 +3495,8 @@ async function handleAdminFeedback(request, env, ctx) {
 //   ?since=     date ISO (2026-10-13) ou durée (30m, 24h, 7d, 2w) : retours
 //               actifs depuis (création, message ou changement d'état)
 //   ?limit=     50 par défaut, 200 au plus : les plus récents (création) d'abord
+//   ?view=todo  la liste à faire du bot Discord au lieu des retours (voir
+//               reportsTodo plus bas ; les autres paramètres ne comptent pas)
 // Lecture bornée : une requête D1 sur la plage des clés `fb_`, parcourue de
 // la plus récente à la plus ancienne et arrêtée à `limit` (+1, pour `more`) ;
 // votes comptés seulement pour les suggestions rendues ; jamais de photo
@@ -3597,9 +3602,56 @@ function reportView(key, m, value, votes, full) {
 }
 
 /** Lecture notée au journal d'audit (à côté de la réponse). */
-async function noteReportsRead(env, ctx, detail) {
-    const note = writeAudit(env, { who: 'REPORTS_KEY', from: 'key', what: 'reports.read', detail }).catch((e) => logCaught('audit', e));
+async function noteReportsRead(env, ctx, detail, what = 'reports.read') {
+    const note = writeAudit(env, { who: 'REPORTS_KEY', from: 'key', what, detail }).catch((e) => logCaught('audit', e));
     if (ctx?.waitUntil) ctx.waitUntil(note); else await note;
+}
+
+// ── Liste à faire du bot Discord (?view=todo) ──────────────────────────────
+// Copie que le bot range dans sa mémoire (`dcbot_todo_mirror`, voir
+// writeTodoMirror dans docker/discord-bot.mjs) : les cartes qu'il a postées
+// dans le salon à faire (« Add to to-do », /todo), ouvertes et faites,
+// relues au moins toutes les 15 min. Seule cette route la rend, derrière la
+// clé des retours (l'action `get` du bot aussi, mais derrière
+// FEEDBACK_BOT_SECRET). Chaque champ est choisi et vérifié un à un : liens
+// Discord de la forme d'un message seulement. Une lecture D1 ; notée au
+// journal (« todo.read » : nombre d'éléments).
+const TODO_MIRROR_KEY = `${BOT_STORE_PREFIX}todo_mirror`;
+const TODO_VIEW_ITEMS = 400;     // le bot en garde 350 au plus (300 ouverts, 50 faits)
+const TODO_VIEW_TEXT = 1500;     // le bot coupe à 1 500 caractères
+const DISCORD_MESSAGE_URL_RE = /^https:\/\/(?:ptb\.|canary\.)?discord(?:app)?\.com\/channels\/\d{5,25}\/\d{5,25}\/\d{5,25}$/;
+
+/** Un élément de la copie, champ par champ (null s'il est illisible). */
+function todoItemView(x) {
+    const id = String(x?.id ?? '');
+    if (!/^\d{5,25}$/.test(id)) return null;
+    const str = (v, max) => (typeof v === 'string' ? cleanText(v, max) : '');
+    const link = (v) => (typeof v === 'string' && DISCORD_MESSAGE_URL_RE.test(v) ? v : null);
+    const files = x.files;
+    return {
+        id, url: link(x.url), type: x.type === 'suggestion' ? 'suggestion' : 'todo', done: x.done === true,
+        at: isoDate(Date.parse(str(x.at, 40))), author: str(x.author, 100) || null, addedBy: str(x.addedBy, 100) || null,
+        text: str(x.text, TODO_VIEW_TEXT), origin: link(x.origin),
+        files: Number.isInteger(files) && files > 0 ? Math.min(files, 100) : 0,
+    };
+}
+
+/** { at, items, omitted?, partial? } : `at`, date de la copie (null : pas
+ *  encore de copie) ; `omitted` { open, done }, cartes vues par le bot mais
+ *  pas copiées (liste trop longue) ; `partial`, le bot n'a pas lu tout le
+ *  salon. */
+async function reportsTodo(env, ctx) {
+    let mirror = null;
+    try { mirror = JSON.parse(await store(env).get(TODO_MIRROR_KEY) || 'null'); } catch (e) { logCaught('reports/todo', e); }
+    const items = (Array.isArray(mirror?.items) ? mirror.items : []).slice(0, TODO_VIEW_ITEMS).map(todoItemView).filter(Boolean);
+    const count = (v) => (Number.isInteger(v) && v > 0 ? v : 0);
+    const omitted = { open: count(mirror?.omitted?.open), done: count(mirror?.omitted?.done) };
+    const open = items.filter((x) => !x.done).length;
+    await noteReportsRead(env, ctx, mirror ? `${open} open, ${items.length - open} done` : 'no copy yet', 'todo.read');
+    return {
+        at: isoDate(Date.parse(String(mirror?.at ?? ''))), items,
+        ...(omitted.open || omitted.done ? { omitted } : {}), ...(mirror?.partial === true ? { partial: true } : {}),
+    };
 }
 
 async function handleAdminReports(request, env, ctx) {
@@ -3624,6 +3676,10 @@ async function handleAdminReports(request, env, ctx) {
 
     await ensureSchema(env);
     const url = new URL(request.url);
+    // La liste à faire du bot : mêmes clé, blocage et en-têtes que les retours.
+    const view = String(url.searchParams.get('view') || 'reports').trim().toLowerCase();
+    if (view === 'todo') return reply(await reportsTodo(env, ctx));
+    if (view !== 'reports') return reply({ error: 'view : reports (défaut) ou todo' }, 400);
     const now = Date.now();
     const select = (where) => `SELECT f.key AS key, f.value AS value, f.meta AS meta,
         CASE WHEN json_extract(${SUGGEST_META_SQL}, '$.sg') = 1 THEN ${SUGGEST_VOTES_SQL} END AS votes
@@ -5332,7 +5388,8 @@ async function opsBotTool(env, ctx, body) {
 // ── Journal d'audit ────────────────────────────────────────────────────────
 const AUDIT_PREFIX = 'audit_';
 const AUDIT_TTL = 90 * 86400;
-// key : lecture des retours par la clé REPORTS_KEY (handleAdminReports).
+// key : lecture des retours ou de la liste à faire du bot par la clé
+// REPORTS_KEY (handleAdminReports).
 const AUDIT_FROM = ['stats', 'app', 'discord', 'key'];
 const auditExcerpt = (v, max = 60) => {
     const s = cleanText(v, 400).replace(/\s+/g, ' ');
