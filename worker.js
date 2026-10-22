@@ -4382,9 +4382,38 @@ async function handleCron(request, env) {
     if (await sha256hex(request.headers.get('Authorization') || '') !== await sha256hex(`Bearer ${secret}`)) {
         return jsonError('Accès refusé', 403);
     }
-    const runs = await Promise.allSettled([pushTick(env), relayWatch(env, new Date()), opsCronBeat(env, 'docker')]);
+    // Au repos (pushIdle), pas de passage des notifications : une lecture au
+    // lieu d'une dizaine de requêtes, dont des écritures, chaque minute ;
+    // dans le doute (lecture en échec), le passage habituel. Le battement
+    // (ops_cron) n'est lu que par le bot Discord (opsSnapshot), qui n'entre
+    // qu'avec FEEDBACK_BOT_SECRET (handleFeedbackBot) : sans lui, il n'est
+    // plus écrit (une écriture par minute sur le disque de l'hôte, carte SD
+    // d'un Raspberry Pi comprise, pour personne).
+    const botReads = String(env.FEEDBACK_BOT_SECRET || '').length >= 16;
+    const runs = await Promise.allSettled([
+        pushIdle(env).catch(() => false).then((idle) => (idle ? null : pushTick(env))),
+        relayWatch(env, new Date()),
+        botReads ? opsCronBeat(env, 'docker') : null,
+    ]);
     for (const r of runs) if (r.status === 'rejected') console.error(r.reason);
     return jsonResponse({ ok: true });
+}
+
+/** Docker : les notifications n'ont rien à faire ? Aucune chaîne suivie,
+ *  file vide, aucune chaîne en mémoire (push_live) ni sujet ntfy (le ménage
+ *  des 6 heures les concerne), et les nombres notés pour /stats déjà à zéro
+ *  ou jamais notés (/stats compte alors les tables lui-même). pushTick, dans
+ *  cet état, ne lit et n'écrit que pour constater qu'il n'y a rien. Une
+ *  requête, chaque clause par la clé ou l'arrêt à la première ligne. */
+async function pushIdle(env) {
+    if (!env.DB) return true;
+    await ensureSchema(env);
+    const row = await env.DB.prepare(`SELECT
+            EXISTS (SELECT 1 FROM push_follow) OR EXISTS (SELECT 1 FROM push_queue)
+            OR EXISTS (SELECT 1 FROM push_live) OR EXISTS (SELECT 1 FROM push_subs WHERE kind = 'ntfy') AS busy,
+            (SELECT meta FROM kv WHERE key = ?1) AS snap`).bind(PUSH_CURSOR_KEY).first();
+    const snap = parseMeta(row?.snap) || {};
+    return !row?.busy && !['n', 'live', 'f', 'rn', 'rl'].some((k) => Number(snap[k]) > 0);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
