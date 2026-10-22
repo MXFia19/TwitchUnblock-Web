@@ -265,6 +265,32 @@ function watchedWords(words) {
   return watchedRe
 }
 
+// ── Emotes masquées (Réglages → Chat) ──────────────────────────────────────
+// Choisies depuis la fiche d'une emote : elles s'affichent comme leur mot,
+// quelle que soit leur source, en direct comme dans le chat des VODs. Retenues
+// par leur code exact (casse comprise) dans prefs.hiddenEmotes — la même clé
+// que l'app iPhone dans la synchro des réglages —, les plus récentes en fin
+// de liste, HIDDEN_EMOTES_MAX au plus.
+export const HIDDEN_EMOTES_MAX = 200
+
+/** Code d'emote valable : un mot (sans espace ni caractère de contrôle), 100
+ *  caractères au plus. Sert aussi à la sauvegarde et à la synchro (main.js). */
+export const validEmoteCode = (x) => typeof x === 'string' && /^\S{1,100}$/.test(x) && !/[\u0000-\u001f\u007f]/.test(x)
+
+/** Ensemble des emotes masquées, refait quand la liste change (remplacée,
+ *  ou allongée sur place). */
+let hiddenList = null
+let hiddenLen = 0
+let hiddenSet = new Set()
+function hiddenEmoteSet(list) {
+  if (list !== hiddenList || (list?.length ?? 0) !== hiddenLen) {
+    hiddenList = list
+    hiddenLen = list?.length ?? 0
+    hiddenSet = new Set(Array.isArray(list) ? list : [])
+  }
+  return hiddenSet
+}
+
 /** Texte où chercher les mots surveillés : tout le message, noms d'emotes
  *  et mentions compris, sans les liens. */
 function watchText(tokens) {
@@ -308,6 +334,8 @@ export class ChatView {
     this.syncAt = 0
     /** Fiche d'emote affichée : protège des réponses tardives. */
     this.infoSeq = 0
+    /** Emote dont un appui long vient d'ouvrir la fiche (pressForInfo). */
+    this.pressedEmote = null
     /** Hype train : génération de la boucle de lecture (une par chaîne ouverte). */
     this.hypeGen = 0
     /** Prédiction affichée (forme de la carte), ou null. */
@@ -405,9 +433,15 @@ export class ChatView {
     }
     this.el.resume.addEventListener('click', () => this.scrollToBottom(true))
     this.el.list.addEventListener('click', (e) => this.onListClick(e))
-    // Fiche d'une emote ou d'un badge : copier, ajouter au message, fermer.
+    // Clic droit ou appui long sur une emote (liste, message épinglé, fiche
+    // d'une personne) : sa fiche, comme un clic — c'est là qu'on la masque.
+    for (const box of [this.el.list, this.el.pinned, this.el.card]) this.pressForInfo(box)
+    // Fiche d'une emote ou d'un badge : copier, ajouter au message, masquer,
+    // fermer.
     this.el.info.addEventListener('click', async (e) => {
       if (e.target.closest('[data-ci-close]')) { this.el.info.hidden = true; return }
+      const hide = e.target.closest('[data-ci-hide]')
+      if (hide) { this.el.info.hidden = true; this.hideEmote(hide.dataset.ciHide); return }
       // Chaîne propriétaire : la délégation globale de [data-channel]
       // (main.js) ouvre sa page ; la fiche, elle, se referme. Ctrl, Cmd ou
       // Maj + clic ouvrent un autre onglet : on reste ici, la fiche aussi.
@@ -452,7 +486,7 @@ export class ChatView {
     this.el.pinned.addEventListener('click', (e) => {
       if (e.target.closest('a')) return
       const img = e.target.closest('img.emote, img.badge')
-      if (img) { this.showInfo(img); return }
+      if (img) { if (!this.takePress(img)) this.showInfo(img); return }
       // Pseudo mentionné dans le message épinglé : même fiche que dans la liste.
       const mention = e.target.closest('[data-user]')
       if (mention) { this.onListClick(e); return }
@@ -536,6 +570,72 @@ export class ChatView {
     this.root.classList.toggle('show-time', Boolean(p.timestamps))
     // Synchro coupée ou rallumée dans les réglages : l'indicateur suit.
     if (this.mode === 'live') this.syncDelay()
+    // Emotes masquées ailleurs (synchro des réglages, autre chat) : celles
+    // déjà affichées deviennent leur mot.
+    this.applyHiddenEmotes()
+  }
+
+  // ── Emotes masquées ────────────────────────────────────────────────────
+  /** Clic droit ou appui long sur une emote de `box` : sa fiche. Safari sur
+   *  iPhone et iPad n'émet pas `contextmenu` à l'appui long (il montre son
+   *  menu d'image, retiré en CSS) : l'appui est minuté ici, et le relâcher
+   *  qui suit ne rouvre pas la fiche (onListClick, onCardClick). */
+  pressForInfo(box) {
+    let timer = 0
+    box.addEventListener('pointerdown', (e) => {
+      this.pressedEmote = null
+      clearTimeout(timer)
+      const img = e.pointerType !== 'mouse' && e.target.closest?.('img.emote')
+      if (img) timer = setTimeout(() => { this.pressedEmote = img; this.showInfo(img) }, 500)
+    })
+    // Doigt levé, ou parti faire défiler : pas d'appui long.
+    for (const type of ['pointerup', 'pointercancel']) box.addEventListener(type, () => clearTimeout(timer))
+    box.addEventListener('contextmenu', (e) => {
+      const img = e.target.closest?.('img.emote')
+      if (!img) return
+      e.preventDefault()
+      // Android l'émet aussi à l'appui long : une seule fiche.
+      clearTimeout(timer)
+      if (img !== this.pressedEmote) this.showInfo(img)
+      this.pressedEmote = img
+    })
+  }
+
+  /** Relâcher d'un appui long qui a déjà ouvert la fiche de `img` : sans
+   *  suite (un vrai clic, lui, passe). */
+  takePress(img) {
+    if (!img || img !== this.pressedEmote) return false
+    this.pressedEmote = null
+    return true
+  }
+
+  /** « Masquer cette emote » (sa fiche) : retenue dans les réglages — et
+   *  la synchro avec le compte et l'app —, elle devient son mot partout. */
+  hideEmote(name) {
+    if (!validEmoteCode(name)) return
+    const p = this.o.prefs
+    p.hiddenEmotes = [...(p.hiddenEmotes ?? []).filter((x) => x !== name), name].slice(-HIDDEN_EMOTES_MAX)
+    this.o.onPrefsChange?.()
+    this.applyHiddenEmotes()
+    // Sélecteur ouvert (appui long sur une de ses cases) : elle en sort.
+    if (!this.el.picker.hidden) this.renderPicker()
+    toast(t('emote_hidden_toast', { n: name }))
+  }
+
+  /** Emotes masquées déjà affichées (liste, message épinglé, fiche d'une
+   *  personne) : remplacées par leur mot. */
+  applyHiddenEmotes() {
+    const hidden = hiddenEmoteSet(this.o.prefs.hiddenEmotes)
+    if (!hidden.size) return
+    let changed = false
+    for (const box of [this.el.list, this.el.pinned, this.el.card]) {
+      for (const img of box.querySelectorAll('img.emote')) {
+        if (!hidden.has(img.alt)) continue
+        img.replaceWith(img.alt)
+        changed = true
+      }
+    }
+    if (changed && this.stick) this.scrollToBottom()
   }
 
   // ── Ouverture / fermeture ──────────────────────────────────────────────
@@ -760,7 +860,8 @@ export class ChatView {
         <div class="ci-btns">
           <button class="btn sm primary" type="button" data-ci-copy="${esc(name)}">${icon('copy', 15)}<span>${esc(t('chat_info_copy'))}</span></button>
           ${canInsert ? `<button class="btn sm" type="button" data-ci-insert="${esc(name)}"><span>${esc(t('chat_info_insert'))}</span></button>` : ''}
-        </div>`
+        </div>
+        ${validEmoteCode(name) ? `<button class="btn sm ghost ci-hide" type="button" data-ci-hide="${esc(name)}">${icon('eyeOff', 15)}<span>${esc(t('emote_hide'))}</span></button>` : ''}`
     }
     this.el.info.innerHTML = `<button class="icon-btn xs ci-close" type="button" data-ci-close aria-label="${esc(t('close'))}">${icon('x', 14)}</button>${html}`
     // Grande image absente (FFZ sans taille 4, badge sans /3) : celle du chat.
@@ -800,7 +901,9 @@ export class ChatView {
     if (info.type === 'SUBSCRIPTIONS' && tier) {
       // Comme Twitch : les emotes du même niveau (« 63 autres » = 64 au niveau 1).
       const same = (o.subscriptionProducts ?? []).find((p) => String(p?.tier) === `${tier}000`)?.emotes ?? []
-      const others = same.filter((x) => x?.id && x.id !== info.id).slice(0, 8)
+      // Sans celles qu'on a masquées.
+      const hidden = hiddenEmoteSet(this.o.prefs.hiddenEmotes)
+      const others = same.filter((x) => x?.id && x.id !== info.id && !hidden.has(x.token)).slice(0, 8)
       if (same.length) html += `<p class="ci-src">${esc(t('emote_sub_count', { c: name, n: same.length }))}</p>`
       if (others.length) {
         html += `<div class="ci-more">${others.map((x) => `<img src="https://static-cdn.jtvnw.net/emoticons/v2/${encodeURIComponent(x.id)}/static/dark/2.0" alt="${esc(x.token ?? '')}" title="${esc(x.token ?? '')}" loading="lazy" onerror="this.remove()">`).join('')}</div>`
@@ -1602,9 +1705,12 @@ export class ChatView {
   }
 
   renderTokens(tokens, me) {
+    const hidden = hiddenEmoteSet(this.o.prefs.hiddenEmotes)
     return tokens.map((tk) => {
       switch (tk.kind) {
         case 'emote':
+          // Masquée (Réglages → Chat) : son mot, comme le reste du message.
+          if (hidden.has(tk.emote.name)) return esc(tk.emote.name)
           return `<img class="emote" src="${esc(tk.emote.url)}" alt="${esc(tk.emote.name)}" title="${esc(tk.emote.name)}" data-emote-src="${esc(tk.emote.source ?? '')}" data-emote-id="${esc(tk.emote.id ?? '')}"${tk.emote.personal ? ' data-personal="1"' : ''} loading="lazy" decoding="async" onerror="this.replaceWith(this.alt)">`
         case 'mention': {
           // « @pseudo, » : la ponctuation suit la mention sans en faire
@@ -1789,7 +1895,10 @@ export class ChatView {
           return { kind: 'user', value: `@${value}`, label: value === name ? name : `${name} (${n})`, color: names.get(n)?.color }
         })
     } else if (word.length >= 2) {
-      this.suggestions = suggestEmotes(word, 8).map((e) => ({ kind: 'emote', value: e.name, label: e.name, url: e.url }))
+      // Sans les emotes masquées (Réglages → Chat).
+      const hidden = hiddenEmoteSet(this.o.prefs.hiddenEmotes)
+      this.suggestions = suggestEmotes(word, 8 + hidden.size).filter((e) => !hidden.has(e.name)).slice(0, 8)
+        .map((e) => ({ kind: 'emote', value: e.name, label: e.name, url: e.url }))
     } else {
       this.suggestions = []
     }
@@ -1935,7 +2044,9 @@ export class ChatView {
   renderPicker() {
     const kw = this.el.emoteSearch.value.trim().toLowerCase()
     const { channel, global } = emoteCatalog()
-    const filter = (list) => (kw ? list.filter((e) => e.name.toLowerCase().includes(kw)) : list)
+    // Sans les emotes masquées (Réglages → Chat).
+    const hidden = hiddenEmoteSet(this.o.prefs.hiddenEmotes)
+    const filter = (list) => list.filter((e) => !hidden.has(e.name) && (!kw || e.name.toLowerCase().includes(kw)))
     const section = (title, list) => list.length ? `
       <div class="emote-section">${esc(title)}</div>
       <div class="emote-cells">${list.slice(0, 400).map((e) =>
@@ -1945,9 +2056,10 @@ export class ChatView {
 
   // ── Fiche utilisateur ──────────────────────────────────────────────────
   onListClick(e) {
-    // Emote ou badge : sa fiche (nom exact, source, copier).
+    // Emote ou badge : sa fiche (nom exact, source, copier, masquer). Pas
+    // au relâcher d'un appui long, qui vient de l'ouvrir (pressForInfo).
     const img = e.target.closest('img.emote, img.badge')
-    if (img) return this.showInfo(img)
+    if (img) return this.takePress(img) ? undefined : this.showInfo(img)
     const clip = e.target.closest('[data-clip-link]')
     if (clip && this.o.onOpenClip) { e.preventDefault(); return this.o.onOpenClip(clip.dataset.clipLink) }
     const open = e.target.closest('[data-open-channel]')
@@ -2039,9 +2151,10 @@ export class ChatView {
   }
 
   onCardClick(e) {
-    // Emote d'un message de la fiche : sa fiche, par-dessus.
+    // Emote d'un message de la fiche : sa fiche, par-dessus (pas au relâcher
+    // d'un appui long, qui vient de l'ouvrir).
     const img = e.target.closest('img.emote, img.badge')
-    if (img) return this.showInfo(img)
+    if (img) return this.takePress(img) ? undefined : this.showInfo(img)
     const act = e.target.closest('[data-act]')?.dataset.act
     if (!act) return
     const card = this.el.card

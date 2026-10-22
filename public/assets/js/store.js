@@ -47,6 +47,10 @@ export const DEFAULT_PREFS = {
   hideCommands: false,
   mutedWords: [],
   blockedUsers: [],
+  // Emotes affichées comme leur mot (fiche d'une emote → « Masquer cette
+  // emote ») : codes exacts, plus récentes en dernier, 200 au plus. Même
+  // nom que dans l'app iPhone (synchro des réglages, sauvegarde).
+  hiddenEmotes: [],
   volume: 1,
   muted: false,
   // Qualité préférée : 'auto', 'source', une hauteur ('1080', '720'…) ou

@@ -13,6 +13,7 @@ export const CHANGELOG = [
         'Longs directs, suite : sur iPad et iPhone, le chat garde 150 messages au lieu de 300, comme Twitch — chaque emote animée encore dans la page pèse sur la mémoire de Safari —, seuls les derniers GIF restent des images (les plus anciens redeviennent leur texte), et le sélecteur d’emotes se vide une fois fermé.',
         'VODs dans Safari sur Mac (et iPad) : la lecture ne se met plus à saccader au bout d’un moment. Le lecteur tient lui-même sa mémoire vidéo au lieu de laisser Safari l’interrompre toutes les 20 secondes environ, et une VOD ne reste plus figée après un saut sous Safari 27.',
         'Le journal des erreurs (Réglages → À propos, joint à tes signalements) note maintenant l’état de la lecture quand elle se met à saccader — décrochages, images perdues, mémoire tampon, réparations — et au moment où tu signales un problème : de quoi comprendre un saccadement qui ne laisse aucune erreur. Rien de personnel n’y figure.',
+        'Masquer une emote : clique dessus dans le chat (ou appuie longuement), puis « Masquer cette emote » dans sa fiche — elle s’affiche ensuite comme son mot, quelle que soit sa source, en direct comme dans le chat des VODs. Réglages → Chat → « Emotes masquées » pour les retrouver et les réafficher. La liste suit ton compte (réglages synchronisés), app iPhone comprise.',
         'Le site existe maintenant en chinois traditionnel (繁體中文), grâce à trend0522 : un navigateur réglé en chinois l’ouvre directement dans cette langue, et Réglages → Langue permet d’en changer.',
       ],
       en: [
@@ -20,6 +21,7 @@ export const CHANGELOG = [
         'Long lives, continued: on iPad and iPhone the chat keeps 150 messages instead of 300, like Twitch — every animated emote still in the page weighs on Safari’s memory —, only the latest GIFs stay images (older ones turn back into their text), and the emote picker empties once closed.',
         'VODs in Safari on Mac (and iPad): playback no longer starts stuttering after a while. The player now keeps its video buffer itself instead of letting Safari interrupt it every 20 seconds or so, and a VOD no longer freezes after a jump in Safari 27.',
         'The error log (Settings → About, attached to your reports) now notes the playback’s state when it starts stuttering — stalls, dropped frames, buffer, repairs — and when you report a problem: enough to understand stutter that leaves no error behind. Nothing personal goes in it.',
+        'Hide an emote: click it in the chat (or long-press it), then “Hide this emote” in its card — from then on it shows as its word, whatever its source, in lives and in the VOD chat. Settings → Chat → “Hidden emotes” lists them so you can show them again. The list follows your account (synced settings), iPhone app included.',
         'The site now speaks Traditional Chinese (繁體中文), thanks to trend0522: a browser set to Chinese opens it in that language, and Settings → Language lets you switch.',
       ],
       es: [
@@ -27,6 +29,7 @@ export const CHANGELOG = [
         'Directos largos, continuación: en iPad y iPhone el chat guarda 150 mensajes en lugar de 300, como Twitch — cada emote animado que sigue en la página pesa en la memoria de Safari —, solo los últimos GIF siguen siendo imágenes (los más antiguos vuelven a ser su texto) y el selector de emotes se vacía al cerrarse.',
         'VOD en Safari en Mac (y iPad): la reproducción ya no empieza a dar tirones al cabo de un rato. El reproductor gestiona él mismo su memoria de vídeo en lugar de dejar que Safari la interrumpa cada 20 segundos más o menos, y un VOD ya no se queda congelado tras un salto en Safari 27.',
         'El registro de errores (Ajustes → Acerca de, adjunto a tus reportes) anota ahora el estado de la reproducción cuando empieza a dar tirones — cortes, fotogramas perdidos, búfer, reparaciones — y cuando reportas un problema: lo necesario para entender unos tirones que no dejan ningún error. No incluye nada personal.',
+        'Ocultar un emote: haz clic en él en el chat (o mantenlo pulsado) y luego en «Ocultar este emote» en su ficha — a partir de ahí se muestra como su palabra, sea cual sea su origen, en directo y en el chat de los VOD. Ajustes → Chat → «Emotes ocultos» los reúne para volver a mostrarlos. La lista sigue a tu cuenta (ajustes sincronizados), app de iPhone incluida.',
         'El sitio ya está en chino tradicional (繁體中文), gracias a trend0522: un navegador configurado en chino lo abre directamente en ese idioma, y Ajustes → Idioma permite cambiarlo.',
       ],
       ru: [
@@ -34,6 +37,7 @@ export const CHANGELOG = [
         'Долгие эфиры, продолжение: на iPad и iPhone чат хранит 150 сообщений вместо 300, как Twitch, — каждый анимированный эмоут, оставшийся на странице, занимает память Safari, — картинками остаются только последние GIF (более старые снова становятся текстом), а окно выбора эмоутов очищается после закрытия.',
         'VOD в Safari на Mac (и iPad): воспроизведение больше не начинает дёргаться через некоторое время. Плеер теперь сам управляет своим видеобуфером, а не позволяет Safari прерывать его примерно каждые 20 секунд, и VOD больше не замирает после перемотки в Safari 27.',
         'Журнал ошибок (Настройки → О проекте, прикрепляется к вашим сообщениям) теперь записывает состояние воспроизведения, когда оно начинает дёргаться, — подвисания, пропущенные кадры, буфер, восстановления — и в момент, когда вы сообщаете о проблеме: этого хватает, чтобы разобраться в рывках, которые не оставляют ошибок. Ничего личного туда не попадает.',
+        'Скрыть эмоут: нажмите на него в чате (или удерживайте), затем «Скрыть этот эмоут» в его карточке — дальше он показывается словом, откуда бы он ни был, и в эфире, и в чате VOD. Настройки → Чат → «Скрытые эмоуты» — их список, чтобы вернуть их. Список следует за вашим аккаунтом (синхронизация настроек), включая приложение для iPhone.',
         'Сайт теперь доступен на традиционном китайском (繁體中文) — спасибо trend0522: браузер с китайским языком сразу открывает его на нём, а сменить язык можно в Настройки → Язык.',
       ],
       'zh-Hant': [
@@ -41,6 +45,7 @@ export const CHANGELOG = [
         '長時間直播（續）：在 iPad 與 iPhone 上，聊天室只保留 150 則訊息而不是 300 則，和 Twitch 一樣——頁面上每個還在的動態表情符號都會佔用 Safari 的記憶體——只有最新的幾張 GIF 會保留為圖片（較舊的會變回文字），表情符號選單關閉後也會清空。',
         'Mac（與 iPad）上 Safari 的 VOD：播放不會再過一陣子就開始卡頓。播放器改為自己管理影片緩衝，不再讓 Safari 大約每 20 秒打斷一次；在 Safari 27 中跳轉後，VOD 也不會再卡住不動。',
         '錯誤日誌（設定 → 關於，會附在你的回報中）現在會在播放開始卡頓時記錄播放狀態——停頓、掉格、緩衝、修復——以及你回報問題的當下：足以了解那些沒留下任何錯誤的卡頓。其中不含任何個人資料。',
+        '隱藏表情符號：在聊天室點一下它（或長按），再在它的資訊卡中點「隱藏這個表情符號」——之後不論來源，它都會顯示為文字，直播與 VOD 聊天室都一樣。在「設定 → 聊天室 → 已隱藏的表情符號」可以找到並重新顯示。這份清單會跟著你的帳號（同步設定），iPhone app 也一樣。',
         '網站現在提供繁體中文版，感謝 trend0522：瀏覽器設為中文時會直接以中文開啟，也可以在「設定 → 語言」切換。',
       ],
     },

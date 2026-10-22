@@ -716,6 +716,10 @@ a.card, a.cat-card { display: block; }
 /* Emotes et badges : un clic ouvre leur fiche. */
 .chat-list img.emote, .chat-list img.badge, .chat-pinned img.emote, .chat-pinned img.badge,
 .user-card img.emote, .user-card img.badge { cursor: pointer; }
+/* Appui long sur une emote : sa fiche (view.js, pressForInfo), pas le menu
+   d'image de Safari sur iPhone et iPad. */
+.chat-list img.emote, .chat-pinned img.emote, .user-card img.emote { -webkit-touch-callout: none; }
+.chat-info .ci-hide { margin-top: 2px; }
 /* Plus haute qu'avant (chaîne, autres emotes) : elle défile dans un petit
    chat, comme celui du multi-live, au lieu d'en déborder. */
 .chat-info {

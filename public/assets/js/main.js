@@ -6,7 +6,7 @@ import * as api from './api.js'
 import { DEFAULT_PREFS, qualityPrefOf, store } from './store.js'
 import { LANGS, applyStatic, deviceLang, initLang, setLang, t, lang } from './i18n.js'
 import { Player, QUALITY_PREFS, loadHls, qualityText, validQualityPref, validSpeed } from './player.js'
-import { ChatView, timeLabel } from './chat/view.js'
+import { ChatView, HIDDEN_EMOTES_MAX, timeLabel, validEmoteCode } from './chat/view.js'
 import { linkifyHtml } from './chat/message.js'
 import { Hermes } from './chat/hermes.js'
 import * as usage from './usage.js'
@@ -661,7 +661,13 @@ window.addEventListener('pagehide', () => { flushSync({ force: true }); flushPre
 // depuis le dernier échange : fusion pour les masqués et les épinglés (avec
 // la liste du dernier échange, un retrait fait d'un côté tient), la date la
 // plus récente pour les réglages.
-const PREFS_COMMON = ['topLang', 'showRecent', 'timestamps', 'timeFormat', 'keepDeleted', 'loadHistory', 'hideBots', 'hideCommands', 'mutedWords', 'blockedUsers', 'highlightWords', 'vodSpeed']
+const PREFS_COMMON = ['topLang', 'showRecent', 'timestamps', 'timeFormat', 'keepDeleted', 'loadHistory', 'hideBots', 'hideCommands', 'mutedWords', 'blockedUsers', 'highlightWords', 'vodSpeed', 'hiddenEmotes']
+// Clés ajoutées à `common` après coup (toujours en fin de liste) : une
+// empreinte gardée d'avant leur arrivée, calculée sans elles, n'est pas un
+// changement fait ici (notePrefsChanges). Sinon, au premier passage de la
+// nouvelle version, la section d'ici, datée du moment, écrasait celle du
+// serveur — jusqu'aux emotes masquées venues de l'app iPhone.
+const PREFS_COMMON_ADDED = ['hiddenEmotes']
 const PREFS_SECTIONS = ['common', 'pinned', 'hidden']
 const PREFS_STATE_KEY = 'tu_prefs_sync'
 const PREFS_DELAY = 4000
@@ -724,9 +730,22 @@ function notePrefsChanges(st) {
     const x = st.sec[n]
     const sum = prefsSum(prefsSection(n))
     if (x.sum === sum) continue
-    if (x.sum !== null) x.at = Math.max(Date.now(), x.srv + 1)
+    if (x.sum !== null && !(n === 'common' && commonOnlyGrew(x.sum))) x.at = Math.max(Date.now(), x.srv + 1)
     x.sum = sum
   }
+}
+
+/** L'empreinte gardée `sum` est-elle celle de la section commune d'avant
+ *  les clés ajoutées (PREFS_COMMON_ADDED), restées à leur valeur par
+ *  défaut ? Alors rien n'a changé ici : seule la forme de la section a
+ *  grandi. Une emote déjà masquée ici, elle, est un vrai changement. */
+function commonOnlyGrew(sum) {
+  const c = prefsSection('common')
+  for (const k of PREFS_COMMON_ADDED) {
+    if (prefsSum(c[k]) !== prefsSum(DEFAULT_PREFS[k] ?? null)) return false
+    delete c[k]
+  }
+  return prefsSum(c) === sum
 }
 
 /** Dates gardées pour un autre compte, ou d'avant toute connexion : elles ne
@@ -793,8 +812,10 @@ function prefsFirstMerge(name, mine, theirs) {
   if (name === 'pinned') return mergePins(mine, theirs, null)
   if (name === 'hidden') return mergeHiddenSync(mine, theirs, null)
   const out = theirs && typeof theirs === 'object' && !Array.isArray(theirs) ? { ...theirs } : {}
-  for (const [k, max] of [['mutedWords', 50], ['highlightWords', 30], ['blockedUsers', 500]]) {
-    out[k] = [...new Set([...(Array.isArray(out[k]) ? out[k] : []), ...(mine[k] ?? [])])].slice(0, max)
+  for (const [k, max] of [['mutedWords', 50], ['highlightWords', 30], ['blockedUsers', 500], ['hiddenEmotes', HIDDEN_EMOTES_MAX]]) {
+    const all = [...new Set([...(Array.isArray(out[k]) ? out[k] : []), ...(mine[k] ?? [])])]
+    // Emotes masquées : les plus récentes sont en fin de liste.
+    out[k] = k === 'hiddenEmotes' ? all.slice(-max) : all.slice(0, max)
   }
   return out
 }
@@ -824,6 +845,11 @@ function prefsApplied(names, topBefore) {
   store.savePrefs()
   if (names.includes('common')) {
     chat?.applyPrefs()
+    multiChat?.applyPrefs()
+    // Emotes masquées venues d'un autre appareil : la liste des réglages
+    // ouverts suit.
+    const emotesBox = $('#set-emotes')
+    if (emotesBox) emotesBox.innerHTML = hiddenEmotesInner()
     renderRecentChannels()
     if (store.prefs.topLang !== topBefore) {
       renderTopLocal()
@@ -2160,6 +2186,16 @@ function hiddenSectionInner() {
       ${cats.length ? `<p class="hidden-list-title">${esc(t('hidden_categories_n', { n: cats.length }))}</p>
         <div class="chips hidden-chips">${cats.map((x) => chip('data-unhide-cat', x.id, x.name || x.id)).join('')}</div>` : ''}
       <button class="btn ghost sm" type="button" data-action="unhide-all">${icon('eye', 15)}<span>${esc(t('unhide_all'))}</span></button>`}`
+}
+
+/** Réglages → Chat : les emotes masquées (fiche d'une emote → « Masquer
+ *  cette emote »), les plus récentes d'abord, chacune avec son ✕. */
+function hiddenEmotesInner() {
+  const list = [...(store.prefs.hiddenEmotes ?? [])].reverse()
+  const chip = (name) => `<span class="chip"><span>${esc(name)}</span><button type="button" data-unhide-emote="${esc(name)}" title="${esc(t('unhide'))}" aria-label="${esc(t('unhide'))} · ${esc(name)}">${icon('x', 14)}</button></span>`
+  return `<span class="setting-text"><span>${esc(t('hidden_emotes'))}${list.length ? ` (${list.length})` : ''}</span><small>${esc(t(list.length ? 'hidden_emotes_sub' : 'hidden_emotes_empty'))}</small></span>
+    ${list.length ? `<div class="chips hidden-chips">${list.map(chip).join('')}</div>` : ''}
+    ${list.length > 1 ? `<button class="btn ghost sm" type="button" data-unhide-emotes>${icon('eye', 15)}<span>${esc(t('unhide_all'))}</span></button>` : ''}`
 }
 
 /** Après un masquage ou un réaffichage (ou un suivi) : tout ce qui en
@@ -5067,6 +5103,7 @@ function openSettings() {
         <span class="setting-text"><span>${esc(t('hidden_users', { n: p.blockedUsers.length }))}</span><small>${esc(p.blockedUsers.slice(-6).join(', '))}</small></span>
         <button class="btn sm ghost" type="button" data-action="clear-blocked">${esc(t('clear'))}</button>
       </div>` : ''}
+      <div class="setting setting-col" id="set-emotes">${hiddenEmotesInner()}</div>
       <label class="setting setting-col">
         <span class="setting-text"><span>${esc(t('highlight_words'))}</span><small>${esc(t('highlight_words_sub'))}</small></span>
         <input class="text-input" type="text" id="set-words" autocomplete="off" spellcheck="false" maxlength="300" value="${esc((p.highlightWords ?? []).join(', '))}">
@@ -5130,6 +5167,17 @@ function openSettings() {
   const sheet = $('#sheet')
   sheet.onclick = (e) => {
     if (e.target.closest('[data-sheet-close]')) return closeSheet()
+    // Emotes masquées : ✕ d'une emote, ou « Tout réafficher ». Les messages
+    // suivants la montrent de nouveau (ceux déjà affichés gardent son mot).
+    const unhideEmote = e.target.closest('[data-unhide-emote], [data-unhide-emotes]')
+    if (unhideEmote) {
+      const name = unhideEmote.dataset.unhideEmote
+      store.prefs.hiddenEmotes = name === undefined ? [] : (store.prefs.hiddenEmotes ?? []).filter((x) => x !== name)
+      store.savePrefs()
+      const box = $('#set-emotes')
+      if (box) box.innerHTML = hiddenEmotesInner()
+      return
+    }
     // Apparence : fond et couleur d'accent, appliqués tout de suite.
     const bgBtn = e.target.closest('[data-bg-choice]')
     if (bgBtn) {
@@ -5254,6 +5302,9 @@ const okLogins = (max) => (v) => (Array.isArray(v)
 const okWords = (max) => (v) => (Array.isArray(v)
   ? v.filter((x) => typeof x === 'string').map((x) => x.trim().toLowerCase().slice(0, 100)).filter(Boolean).slice(0, max)
   : undefined)
+// Emotes masquées : codes exacts (casse gardée), sans doublon, les `max`
+// plus récentes (en fin de liste).
+const okEmoteCodes = (max) => (v) => (Array.isArray(v) ? [...new Set(v.filter(validEmoteCode))].slice(-max) : undefined)
 const BACKUP_SETTINGS = {
   lang: (v) => (v === null || LANGS.some((l) => l.id === v) ? v : undefined),
   topLang: (v) => (v === null || TOP_LANGS.includes(v) ? v : undefined),
@@ -5278,6 +5329,7 @@ const BACKUP_SETTINGS = {
   mutedWords: okWords(50),
   highlightWords: okWords(30),
   blockedUsers: okLogins(500),
+  hiddenEmotes: okEmoteCodes(HIDDEN_EMOTES_MAX),
   clickPause: okBool,
   theatre: okBool,
   qualityPref: (v) => (validQualityPref(v) ? v : undefined),
