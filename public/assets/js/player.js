@@ -402,8 +402,15 @@ export function guardManagedMediaSource(Hls, hls, video, note = () => {}) {
     paused = false
     resume()
   }
-  // Vidéo rattachée (réparation sur place) : hls.js repart de lui-même.
-  hls.on(Hls.Events.MEDIA_ATTACHED, () => { paused = false })
+  // Vidéo rattachée (réparation sur place) : hls.js repart de lui-même
+  // (startLoad), mais depuis la 1.5.18 un arrêt en cours y survit (chargement
+  // des segments toujours suspendu), et la reprise de la nouvelle source
+  // serait ignorée ici : on le lève.
+  hls.on(Hls.Events.MEDIA_ATTACHED, () => {
+    if (!paused) return
+    paused = false
+    resume()
+  })
   const onSeeking = () => {
     if (!paused) return
     clearTimeout(timer)
