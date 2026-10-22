@@ -11,18 +11,27 @@ export const CHANGELOG = [
       fr: [
         'VODs dans Safari sur Mac (et iPad) : la lecture ne se met plus à saccader au bout d’un moment. Le lecteur tient lui-même sa mémoire vidéo au lieu de laisser Safari l’interrompre toutes les 20 secondes environ, et une VOD ne reste plus figée après un saut sous Safari 27.',
         'Le journal des erreurs (Réglages → À propos, joint à tes signalements) note maintenant l’état de la lecture quand elle se met à saccader — décrochages, images perdues, mémoire tampon, réparations — et au moment où tu signales un problème : de quoi comprendre un saccadement qui ne laisse aucune erreur. Rien de personnel n’y figure.',
+        'Le site existe maintenant en chinois traditionnel (繁體中文), grâce à trend0522 : un navigateur réglé en chinois l’ouvre directement dans cette langue, et Réglages → Langue permet d’en changer.',
       ],
       en: [
         'VODs in Safari on Mac (and iPad): playback no longer starts stuttering after a while. The player now keeps its video buffer itself instead of letting Safari interrupt it every 20 seconds or so, and a VOD no longer freezes after a jump in Safari 27.',
         'The error log (Settings → About, attached to your reports) now notes the playback’s state when it starts stuttering — stalls, dropped frames, buffer, repairs — and when you report a problem: enough to understand stutter that leaves no error behind. Nothing personal goes in it.',
+        'The site now speaks Traditional Chinese (繁體中文), thanks to trend0522: a browser set to Chinese opens it in that language, and Settings → Language lets you switch.',
       ],
       es: [
         'VOD en Safari en Mac (y iPad): la reproducción ya no empieza a dar tirones al cabo de un rato. El reproductor gestiona él mismo su memoria de vídeo en lugar de dejar que Safari la interrumpa cada 20 segundos más o menos, y un VOD ya no se queda congelado tras un salto en Safari 27.',
         'El registro de errores (Ajustes → Acerca de, adjunto a tus reportes) anota ahora el estado de la reproducción cuando empieza a dar tirones — cortes, fotogramas perdidos, búfer, reparaciones — y cuando reportas un problema: lo necesario para entender unos tirones que no dejan ningún error. No incluye nada personal.',
+        'El sitio ya está en chino tradicional (繁體中文), gracias a trend0522: un navegador configurado en chino lo abre directamente en ese idioma, y Ajustes → Idioma permite cambiarlo.',
       ],
       ru: [
         'VOD в Safari на Mac (и iPad): воспроизведение больше не начинает дёргаться через некоторое время. Плеер теперь сам управляет своим видеобуфером, а не позволяет Safari прерывать его примерно каждые 20 секунд, и VOD больше не замирает после перемотки в Safari 27.',
         'Журнал ошибок (Настройки → О проекте, прикрепляется к вашим сообщениям) теперь записывает состояние воспроизведения, когда оно начинает дёргаться, — подвисания, пропущенные кадры, буфер, восстановления — и в момент, когда вы сообщаете о проблеме: этого хватает, чтобы разобраться в рывках, которые не оставляют ошибок. Ничего личного туда не попадает.',
+        'Сайт теперь доступен на традиционном китайском (繁體中文) — спасибо trend0522: браузер с китайским языком сразу открывает его на нём, а сменить язык можно в Настройки → Язык.',
+      ],
+      'zh-Hant': [
+        'Mac（與 iPad）上 Safari 的 VOD：播放不會再過一陣子就開始卡頓。播放器改為自己管理影片緩衝，不再讓 Safari 大約每 20 秒打斷一次；在 Safari 27 中跳轉後，VOD 也不會再卡住不動。',
+        '錯誤日誌（設定 → 關於，會附在你的回報中）現在會在播放開始卡頓時記錄播放狀態——停頓、掉格、緩衝、修復——以及你回報問題的當下：足以了解那些沒留下任何錯誤的卡頓。其中不含任何個人資料。',
+        '網站現在提供繁體中文版，感謝 trend0522：瀏覽器設為中文時會直接以中文開啟，也可以在「設定 → 語言」切換。',
       ],
     },
   },

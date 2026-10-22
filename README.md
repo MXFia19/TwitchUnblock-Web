@@ -90,7 +90,7 @@ Watch Twitch lives and VODs in your browser, no subscription needed, with the re
 
 ### Everything else
 - **Themes** (Settings → Appearance): light, dark, OLED black or slate background — or your device's — and the app's seven accent colors, applied before the page shows
-- French, English, Spanish and Russian — follows your device language by default. The Russian translation was made with AI: the settings say so, with a button to report a mistake
+- French, English, Spanish, Russian and Traditional Chinese (繁體中文, Taiwan wording, contributed by [trend0522](https://github.com/trend0522)) — follows your device language by default; any Chinese browser (zh-TW, zh-HK, zh-CN…) gets Traditional Chinese, the only Chinese the site has. The Russian and Chinese translations were made with AI: the settings say so, with a button to report a mistake. Live notifications come in the site's language, Chinese included, and the usage count keeps the script (`zh-Hant`, like the apps) instead of only two letters
 - **Twitch-style links**: replace `twitch.tv` with the site's address — `/xqc`, `/xqc/clips`, `/xqc/about`, `/videos/123?t=1h2m3s`, `/directory/category/just-chatting` — and the browser's back/forward buttons move between pages
 - Streams, VODs, clips, categories and channels are real links: middle-click or Ctrl/Cmd + click opens them in a new tab
 - **Bug reports & ideas** from the top bar, the settings or the player, screenshots included (pick them or paste with Ctrl+V). **My reports** shows where each one stands (received, seen, accepted, in progress, done, declined) and the developer's reply, and lets you answer back — updated on its own; a banner tells you when the developer replies. A report that's done or declined, with the developer having the last word, is no longer checked (opening it still looks once); answering it brings it back
@@ -157,7 +157,7 @@ public/              The website, served as-is by Vercel (no build step)
       download.js    Download a VOD or a part of it
       api.js         Worker, Helix and GQL access — configuration at the top
       usage.js       Anonymous usage count
-      i18n.js        Translations
+      i18n.js        Translations (Russian in i18n-ru.js, Traditional Chinese in i18n-zh-Hant.js)
       store.js       History, progress, preferences (localStorage)
       util.js        Escaping, formatting, icons
       connect.js     TwitchUnblock Connect: bridge to the browser extension
@@ -953,5 +953,7 @@ keeps using the official backend.
 Made by [MXFia19](https://github.com/MXFia19).
 
 Thanks to [hls.js](https://github.com/video-dev/hls.js), [BetterTTV](https://betterttv.com), [FrankerFaceZ](https://www.frankerfacez.com), [7TV](https://7tv.app), [recent-messages](https://recent-messages.robotty.de), [Lucide](https://lucide.dev) for the icons and [Inter](https://rsms.me/inter/) for the font.
+
+Traditional Chinese translation by [trend0522](https://github.com/trend0522).
 
 Independent project, not affiliated with Twitch.

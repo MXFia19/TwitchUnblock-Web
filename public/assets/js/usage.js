@@ -125,6 +125,14 @@ export async function ping(enabled) {
   return inflight
 }
 
+/** Langue du site pour le comptage : deux lettres (« fr »), ou avec son
+ *  écriture pour le chinois traditionnel (« zh-Hant »), comme les apps — il
+ *  aurait été compté « zh », à part de leurs utilisateurs. */
+function usageLang(l) {
+  const s = String(l || 'en')
+  return /^[a-z]{2}-[A-Z][a-z]{3}$/.test(s) ? s : s.slice(0, 2).toLowerCase()
+}
+
 async function pingOnce(enabled) {
   const on = () => (typeof enabled === 'function' ? enabled() : enabled)
   if (!on()) return
@@ -140,7 +148,7 @@ async function pingOnce(enabled) {
     const ev = pendingEvents()
     const res = await post({
       id: installId(), version: SITE_VERSION, platform: 'web',
-      lang: (document.documentElement.lang || 'en').slice(0, 2).toLowerCase(),
+      lang: usageLang(document.documentElement.lang),
       device: matchMedia('(pointer: coarse)').matches ? 'mobile' : 'desktop',
       ...(Object.keys(ev).length ? { ev } : {}),
     })

@@ -1197,8 +1197,13 @@ async function handlePing(request, env) {
     // site) ; gardés tels quels si le client ne les envoie pas (anciennes versions).
     const suffix = platform === 'web' ? 'w' : platform === 'tvos' ? 't' : platform === 'android' ? 'a' : 'i';
     for (const f of USAGE_META_FIELDS) if (prev[f] !== undefined) meta[f] = prev[f];
-    const lang = String(body.lang || '').toLowerCase();
-    if (/^[a-z]{2}$/.test(lang)) meta['l' + suffix] = lang;
+    // Langue : deux lettres (« fr »), ou avec son écriture (« zh-Hant » : le
+    // chinois traditionnel des apps et du site, refusé avant — ses
+    // utilisateurs n'étaient comptés dans aucune langue). Gardée sous sa forme
+    // BCP 47 (langue en minuscules, écriture avec une capitale), celle dont
+    // /stats tire le nom (Intl.DisplayNames). Tout le reste est ignoré.
+    const lm = /^([a-z]{2})(?:-([a-z]{4}))?$/i.exec(String(body.lang || ''));
+    if (lm) meta['l' + suffix] = lm[2] ? `${lm[1].toLowerCase()}-${lm[2][0].toUpperCase()}${lm[2].slice(1).toLowerCase()}` : lm[1].toLowerCase();
     if (USAGE_DEVICES.includes(body.device)) meta['d' + suffix] = body.device;
     if (platform === 'ios' && /^\d{1,2}$/.test(String(body.os ?? ''))) meta.os = String(body.os);
 
@@ -4566,6 +4571,7 @@ const PUSH_TEXT = {
     en: { live: (n) => `${n} is live`, test: 'Live notifications are working.' },
     es: { live: (n) => `${n} está en directo`, test: 'Las notificaciones de directos funcionan.' },
     ru: { live: (n) => `${n} в эфире`, test: 'Уведомления о трансляциях работают.' },
+    'zh-Hant': { live: (n) => `${n} 開台了`, test: '直播通知運作正常。' },
 };
 const pushHits = new Map();
 
@@ -4922,7 +4928,10 @@ async function readNtfyLimits(env, names) {
     return new Map(names.map((name, i) => [name, byKey.get(keys[i]) || 0]));
 }
 
-const pushLang = (l) => (PUSH_TEXT[l] ? l : 'en');
+/** Langue d'un abonnement : une de PUSH_TEXT (« zh-Hant » compris), sinon
+ *  l'anglais. Ses propres clés seulement : « constructor » ou « __proto__ »
+ *  passaient (propriétés de tout objet), et l'envoi plantait sur `.live`. */
+const pushLang = (l) => (typeof l === 'string' && Object.prototype.hasOwnProperty.call(PUSH_TEXT, l) ? l : 'en');
 
 async function handlePushKey(env) {
     if (!env.DB) return jsonError('Indisponible', 503);
@@ -5859,7 +5868,7 @@ async function handleAdminForget(request, env, ctx) {
 
 // ── Notifications ntfy de live enrichies ───────────────────────────────────
 /** Bouton des messages ntfy de live, dans la langue de l'abonnement. */
-const NTFY_WATCH = { fr: 'Regarder', en: 'Watch', es: 'Ver', ru: 'Смотреть' };
+const NTFY_WATCH = { fr: 'Regarder', en: 'Watch', es: 'Ver', ru: 'Смотреть', 'zh-Hant': '觀看' };
 const TWITCH_IMAGE = /^https:\/\/static-cdn\.jtvnw\.net\/\S{1,300}$/;
 
 /**
