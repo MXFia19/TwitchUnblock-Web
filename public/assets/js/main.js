@@ -2541,10 +2541,14 @@ function topExtended() {
 function startLiveTicker() {
   setInterval(() => {
     if (document.hidden) return
+    // Lecteur ouvert en grand : il couvre la page, rien à mettre à jour
+    // dessous — chaque seconde, toute la page était parcourue et ses cartes
+    // réécrites pendant des heures de direct. Réduit ou fermé : ça reprend.
+    if (!$('#watch').hidden && !$('#watch').classList.contains('minimized')) return
     for (const el of document.querySelectorAll('[data-started]')) {
       el.textContent = uptimeSince(el.dataset.started)
     }
-    if (state.tab !== 'discover' || document.hidden || !$('#watch').hidden && !$('#watch').classList.contains('minimized')) return
+    if (state.tab !== 'discover') return
     const now = Date.now()
     if (now - state.loaded.top > 60_000 && !topExtended()) loadTop(state.topLang, { silent: true })
     // Sans compte aussi, pour les chaînes suivies sur l'appareil : elles

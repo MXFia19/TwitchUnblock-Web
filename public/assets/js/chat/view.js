@@ -17,7 +17,7 @@ import { emoteCatalog, findEmote, suggestEmotes } from './emotes.js'
 import { linkifyHtml, plainText, resolveWords, systemMessage } from './message.js'
 import { clipSlugFrom, gql } from '../api.js'
 import { lang, t } from '../i18n.js'
-import { $, debounce, esc, formatClock, icon, toast } from '../util.js'
+import { $, debounce, esc, formatClock, icon, isIOS, toast } from '../util.js'
 
 // ── Drops de la chaîne ─────────────────────────────────────────────────────
 // Campagne active (GQL public, sans compte) : une carte à fermer en haut du
@@ -84,9 +84,12 @@ const EMOTE_INFO_QUERY = `query($id: ID!) { emote(id: $id) { id token type subsc
 /** Réponses de Twitch (emote: null compris), jamais les erreurs réseau : une
  *  panne passagère ne doit pas priver la fiche de ses infos pour la séance.
  *  { info, at } : au-delà de 5 min, on redemande (la chaîne a pu démarrer ou
- *  finir son direct). */
+ *  finir son direct). Les EMOTE_INFO_MAX dernières : chacune garde la liste
+ *  des emotes d'abonné de sa chaîne, et 300 fiches gardées toute la séance
+ *  pesaient pour rien. */
 const emoteInfoCache = new Map()
 const EMOTE_INFO_TTL = 5 * 60_000
+const EMOTE_INFO_MAX = 100
 
 async function twitchEmoteInfo(id) {
   const hit = emoteInfoCache.get(id)
@@ -100,7 +103,7 @@ async function twitchEmoteInfo(id) {
   const info = data.emote ?? null
   emoteInfoCache.delete(id)
   emoteInfoCache.set(id, { info, at: Date.now() })
-  if (emoteInfoCache.size > 300) emoteInfoCache.delete(emoteInfoCache.keys().next().value)
+  if (emoteInfoCache.size > EMOTE_INFO_MAX) emoteInfoCache.delete(emoteInfoCache.keys().next().value)
   return info
 }
 
@@ -144,7 +147,17 @@ function acceptRules(channel, rules) {
   } catch {}
 }
 
-const MAX_NODES = 300
+// Messages gardés dans la liste (collée en bas ; cinq fois plus quand on la
+// remonte). Sur iPad et iPhone, 150 comme sur Twitch : chaque message garde
+// ses images, et Safari peut garder décodées toutes les images de chaque
+// emote animée encore dans la page (des dizaines par emote 7TV ou BTTV) —
+// moins de messages, moins d'emotes différentes en mémoire. Un long direct
+// faisait planter l'onglet au bout de quelques minutes (retour du 22/10).
+const MAX_NODES = isIOS ? 150 : 300
+// GIF du clavier GIF de Twitch (Giphy) : bien plus lourds qu'une emote, les
+// MAX_GIFS derniers restent des images, les plus anciens redeviennent leur
+// texte.
+const MAX_GIFS = isIOS ? 6 : 20
 // Files bornées : celle des messages qui attendent la prochaine image
 // (flush), et celle du chat synchronisé (deliver). Page masquée (autre
 // onglet, autre app, image dans l'image), la prochaine image n'arrive pas et
@@ -862,11 +875,21 @@ export class ChatView {
     this.pinResize?.disconnect()
     if (!('ResizeObserver' in window)) { requestAnimationFrame(measure); runBar(); return }
     // Largeur nulle : chat masqué. La barre repart quand il réapparaît.
+    // À l'image suivante, hors de la notification : measure() montre ou
+    // cache le chevron, ce qui change la largeur observée. Fait pendant la
+    // notification, Safari le signalait comme une boucle (« ResizeObserver
+    // loop completed with undelivered notifications », seule ligne du
+    // journal d'un iPad qui plantait sur un long direct, retour du 22/10).
     let sized = false
+    let frame = 0
     this.pinResize = new ResizeObserver(() => {
-      if (!body.clientWidth) { sized = false; return }
-      measure()
-      if (!sized) { sized = true; runBar() }
+      cancelAnimationFrame(frame)
+      frame = requestAnimationFrame(() => {
+        if (!body.isConnected) return
+        if (!body.clientWidth) { sized = false; return }
+        measure()
+        if (!sized) { sized = true; runBar() }
+      })
     })
     this.pinResize.observe(body)
   }
@@ -1489,12 +1512,22 @@ export class ChatView {
     // En pause aussi, une limite haute : un chat très actif laissé remonté
     // accumulait des nœuds sans fin.
     else if (extra > MAX_NODES * 4) for (let i = 0; i < extra - MAX_NODES * 4; i++) this.el.list.firstElementChild?.remove()
+    // GIF de plus, en suivant le chat (remonté, rien ne bouge sous les yeux) :
+    // les plus anciens redeviennent leur texte (voir MAX_GIFS).
+    if (this.stick && batch.some((m) => m.tokens.some((tk) => tk.kind === 'gif'))) this.trimGifs()
 
     if (this.stick) this.scrollToBottom()
     else {
       this.pending += batch.filter((m) => !m.systemMsg).length
       this.showResume()
     }
+  }
+
+  /** Au-delà des MAX_GIFS derniers GIF de la liste, les plus anciens
+   *  laissent la place à leur texte. */
+  trimGifs() {
+    const gifs = this.el.list.querySelectorAll('img.chat-gif')
+    for (let i = 0; i < gifs.length - MAX_GIFS; i++) gifs[i].replaceWith(gifs[i].alt)
   }
 
   prepend(older) {
@@ -1891,7 +1924,13 @@ export class ChatView {
     } else this.hidePicker()
   }
 
-  hidePicker() { this.el.picker.hidden = true }
+  /** Fermé, le sélecteur se vide : ses 800 cases au plus (emotes animées
+   *  comprises) restaient dans la page, masquées, toute la séance. Il est
+   *  refait à chaque ouverture (renderPicker). */
+  hidePicker() {
+    this.el.picker.hidden = true
+    this.el.grid.replaceChildren()
+  }
 
   renderPicker() {
     const kw = this.el.emoteSearch.value.trim().toLowerCase()

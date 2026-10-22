@@ -2100,10 +2100,20 @@ export class Player {
     return this.remainingMuted().find((r) => t0 >= r.start && t0 < r.end) ?? null
   }
 
+  /** Segment au son rétabli : fusionné avec les passages rétablis qu'il
+   *  touche. Une entrée par segment s'ajoutait sans fin (des milliers sur
+   *  une longue VOD), et chaque timeupdate les reparcourait toutes
+   *  (updateMutedNote → remainingMuted). */
   markUnmuted(frag) {
     if (!frag || !Number.isFinite(frag.start)) return
-    this.unmutedSpans ??= []
-    this.unmutedSpans.push({ start: frag.start, end: frag.start + (frag.duration || 0) })
+    const span = { start: frag.start, end: frag.start + (frag.duration || 0) }
+    this.unmutedSpans = (this.unmutedSpans ?? []).filter((s) => {
+      if (s.end < span.start - 0.1 || s.start > span.end + 0.1) return true
+      span.start = Math.min(span.start, s.start)
+      span.end = Math.max(span.end, s.end)
+      return false
+    })
+    this.unmutedSpans.push(span)
     this.drawMuted()
     // Dit une fois (par minute au plus) que le son est revenu.
     if (Date.now() - (this.unmutedToldAt || 0) > 60000) {
