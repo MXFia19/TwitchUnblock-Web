@@ -26,6 +26,12 @@ RUN apt-get update \
 # planifiée en 4.30, explorateur de la base en 4.80). À monter à la main,
 # après lecture des notes de version (routes /cdn-cgi/…, option --ip).
 RUN npm install -g wrangler@4.151.0 && npm cache clean --force
+# Son CLI, lancé directement par docker/entrypoint.sh : l'enveloppe
+# bin/wrangler.js relance Node sur ce fichier et restait en mémoire (~40 Mo).
+# Vérifié ici : une version qui le rangerait ailleurs fait échouer la
+# construction au lieu de démarrer sans lui.
+ENV WRANGLER_CLI=/usr/local/lib/node_modules/wrangler/wrangler-dist/cli.js
+RUN test -f "$WRANGLER_CLI"
 
 COPY docker/front.mjs ./front.mjs
 COPY worker.js ./

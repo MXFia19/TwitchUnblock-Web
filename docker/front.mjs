@@ -10,13 +10,16 @@
 //  wrangler écoute donc sur 127.0.0.1, dans le conteneur seulement, et ce
 //  frontal publie le port : il relaie le site et /api, rien de wrangler.
 //
-//    node front.mjs wrangler dev …     (docker/entrypoint.sh)
+//    node front.mjs node --no-warnings <wrangler>/wrangler-dist/cli.js dev …
+//    (docker/entrypoint.sh ; « node front.mjs wrangler dev … » marche aussi)
 //
 //  Il lance la commande reçue, lui transmet l'arrêt (docker stop) et s'arrête
-//  avec elle : le conteneur redémarre si wrangler tombe.
+//  avec elle : le conteneur redémarre si wrangler tombe. Il lance aussi la
+//  tâche planifiée du Worker chaque minute (cronLoop).
 //
 //  Variables : PORT (8787, publié), INNER_PORT (8786, celui de wrangler),
-//  TRUST_PROXY (voir clientIp).
+//  TRUST_PROXY (voir clientIp), CRON_SECRET (posé par docker/entrypoint.sh,
+//  cronLoop).
 // ═══════════════════════════════════════════════════════════════════════════
 
 import http from 'node:http'
@@ -129,6 +132,42 @@ const server = http.createServer((req, res) => {
 })
 // Derrière un autre serveur (Caddy, nginx…) qui garde ses connexions ouvertes.
 server.keepAliveTimeout = 65_000
+
+// ── Tâche planifiée du Worker ──────────────────────────────────────────────
+// Hors de Cloudflare, pas de Cron Trigger : POST /api/cron chaque minute,
+// directement à wrangler, avec le secret tiré au démarrage
+// (docker/entrypoint.sh). Une boucle du shell lançait pour cela un Node neuf
+// à chaque minute (~40 Mo et ~0,1 s de processeur chacun, bien plus sur un
+// Raspberry Pi) ; ici, une minuterie. Calée sur la minute (pushTick vérifie
+// les lives une minute sur deux : un passage par minute, sans dérive) et
+// jamais deux à la fois : la réponse n'arrive qu'une fois la tâche finie (5
+// minutes au plus), et le passage suivant attend la minute d'après.
+const CRON_SECRET = String(process.env.CRON_SECRET || '')
+
+function cronRun() {
+  return new Promise((done) => {
+    const r = http.request({
+      host: '127.0.0.1', port: INNER_PORT, method: 'POST', path: '/api/cron', agent: false, timeout: 300_000,
+      headers: { Authorization: `Bearer ${CRON_SECRET}`, 'Content-Length': 0 },
+    }, (up) => {
+      up.on('end', done).on('close', done).on('error', done)
+      up.resume()
+    })
+    // wrangler pas encore prêt (démarrage) ou muet : le passage suivant.
+    r.on('timeout', () => r.destroy())
+    r.on('error', done)
+    r.end()
+  })
+}
+
+function cronLoop(first = false) {
+  let wait = 60_000 - (Date.now() % 60_000) + 1_000
+  // Au démarrage, laisser à wrangler le temps de se lancer.
+  if (first && wait < 30_000) wait += 60_000
+  setTimeout(() => cronRun().then(() => cronLoop()), wait)
+}
+// Même condition que le Worker (dockerCron) : sans secret, pas de route.
+if (CRON_SECRET.length >= 16) cronLoop(true)
 
 // ── La commande (wrangler dev) ─────────────────────────────────────────────
 const [cmd, ...args] = process.argv.slice(2)
