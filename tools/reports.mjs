@@ -1,8 +1,9 @@
 #!/usr/bin/env node
-// Retours des utilisateurs (signalements et suggestions) en lecture seule,
-// depuis le PC du propriétaire : l'assistant de développement les lit ici au
-// lieu qu'on les lui recopie. Appelle GET /api/admin/reports du Worker avec
-// la clé REPORTS_KEY (README, « Reading reports from your computer »).
+// Retours des utilisateurs (signalements et suggestions) et liste à faire du
+// bot Discord, en lecture seule, depuis le PC du propriétaire : l'assistant
+// de développement les lit ici au lieu qu'on les lui recopie. Appelle GET
+// /api/admin/reports du Worker avec la clé REPORTS_KEY (README, « Reading
+// reports from your computer »).
 //
 //   node tools/reports.mjs                 signalements ouverts, puis suggestions par votes
 //   node tools/reports.mjs --all           aussi les retours finis (faits, refusés, fusionnés)
@@ -11,6 +12,9 @@
 //   node tools/reports.mjs --platform=ios  ios | web | tvos | android | discord
 //   node tools/reports.mjs --id fb_…       un retour en détail (discussion entière)
 //   node tools/reports.mjs --json          la réponse du Worker telle quelle (JSON)
+//   node tools/reports.mjs --todo          la liste à faire du bot Discord (copie
+//                                          rangée dans le Worker) : éléments ouverts,
+//                                          récents d'abord ; --all ajoute les faits
 //   autres options : --limit=N (200 au plus), --url=<adresse du Worker>
 //
 // Clé : variable d'environnement TU_REPORTS_KEY, sinon le fichier
@@ -26,7 +30,7 @@ import { join } from 'node:path'
 const DEFAULT_URL = 'https://test2.kurzmathis4.workers.dev'
 const KEY_FILE = join(homedir(), '.twitchunblock', 'reports-key')
 
-const HELP = `Retours des utilisateurs de TwitchUnblock, en lecture seule (Markdown).
+const HELP = `Retours des utilisateurs de TwitchUnblock et liste à faire du bot Discord, en lecture seule (Markdown).
 
   node tools/reports.mjs                 signalements ouverts (récents d'abord), puis suggestions par votes
   node tools/reports.mjs --all           tous les retours, finis compris
@@ -35,6 +39,8 @@ const HELP = `Retours des utilisateurs de TwitchUnblock, en lecture seule (Markd
   node tools/reports.mjs --platform=ios  ios | web | tvos | android | discord
   node tools/reports.mjs --id <clé>      un retour en détail (fb_…)
   node tools/reports.mjs --json          réponse brute du Worker
+  node tools/reports.mjs --todo          liste à faire du bot Discord : éléments ouverts (récents d'abord)
+  node tools/reports.mjs --todo --all    … et les 50 derniers faits (--json : réponse brute)
   --limit=N (200 au plus)   --url=<adresse du Worker> (ou TU_WORKER_URL)
 
 Clé : TU_REPORTS_KEY, sinon ${KEY_FILE}.`
@@ -67,8 +73,8 @@ function fail(text, code = 1) {
 // Jamais de valeur recopiée dans les erreurs : une clé collée par mégarde
 // dans la ligne de commande ne s'afficherait pas.
 function parseArgs(argv) {
-  const o = { all: false, json: false, help: false, since: '', kind: '', platform: '', id: '', limit: '', url: '' }
-  const flags = ['all', 'json', 'help']
+  const o = { all: false, json: false, help: false, todo: false, since: '', kind: '', platform: '', id: '', limit: '', url: '' }
+  const flags = ['all', 'json', 'help', 'todo']
   const values = ['since', 'kind', 'platform', 'id', 'limit', 'url']
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]
@@ -299,6 +305,73 @@ function printDetail(r) {
   }
 }
 
+// ── Liste à faire du bot Discord (--todo) ────────────────────────────────
+const TODO_TYPES = { todo: 'To-do', suggestion: 'Suggestion' }
+const nb = (n, one, many) => `${n} ${n > 1 ? many : one}`
+// Du plus récent au plus ancien : l'identifiant Discord d'une carte suit
+// l'ordre où elle a été postée.
+const snowflake = (id) => { try { return BigInt(id) } catch { return 0n } }
+const newestFirst = (a, b) => {
+  const x = snowflake(a.id), y = snowflake(b.id)
+  return x < y ? 1 : x > y ? -1 : 0
+}
+
+function todoEntry(x) {
+  // Une suggestion porte la date du message cité, un to-do celle de l'ajout.
+  const date = x.at ? (x.type === 'suggestion' ? `message du ${when(x.at)}` : when(x.at)) : null
+  const head = [TODO_TYPES[x.type] || x.type, date, x.author ? `de ${oneLine(x.author)}` : null]
+  const added = [x.addedBy ? `Ajouté par ${oneLine(x.addedBy)}` : null,
+    x.files ? `${nb(x.files, 'pièce jointe', 'pièces jointes')} (sur Discord)` : null]
+  const lines = [`### ${head.filter(Boolean).join(' · ')}`]
+  if (added.some(Boolean)) lines.push(`- ${added.filter(Boolean).join(' · ')}`)
+  if (x.url) lines.push(`- Carte : ${x.url}`)
+  if (x.origin) lines.push(`- Message d'origine : ${x.origin}`)
+  return `${lines.join('\n')}\n\n${quote(x.text || '(sans texte)')}`
+}
+
+function printTodo(data, base, opt) {
+  // Worker d'avant ?view=todo : il rend la liste des retours.
+  if (!('at' in data) || 'filters' in data || !Array.isArray(data.items)) {
+    fail('Le Worker ne connaît pas encore la liste à faire (?view=todo) : il doit être déployé depuis main avec cette version.', 2)
+  }
+  const open = data.items.filter((x) => !x.done).sort(newestFirst)
+  const done = data.items.filter((x) => x.done).sort(newestFirst)
+  const omitted = data.omitted || {}
+  out(`# Liste à faire (Discord) — ${data.at ? `copie du ${when(data.at)}` : 'pas encore de copie'} (${new URL(base).host})`)
+  out()
+  if (!data.at) {
+    out('Le bot Discord écrit cette copie à sa connexion, puis dès que la liste change : salon choisi avec /setup → « To-do list », bot du VPS et Worker à jour.')
+    return
+  }
+  out(`${nb(open.length, 'ouvert', 'ouverts')} · ${nb(done.length, 'fait', 'faits')}${done.length && !opt.all ? ' (--all pour les voir)' : ''}`)
+  out()
+  out('Copie relue par le bot au moins toutes les 15 min et réécrite seulement quand la liste change : sa date est celle du dernier changement. Textes coupés à 1 500 caractères au plus (la carte, sur Discord, les montre en entier).')
+  if (omitted.open > 0) {
+    out()
+    out(`Attention : ${nb(omitted.open, 'élément ouvert plus ancien manque', 'éléments ouverts plus anciens manquent')} à la copie (liste trop longue) : voir le salon sur Discord.`)
+  }
+  if (data.partial) {
+    out()
+    out('Attention : le bot n\'a relu que les 500 derniers messages du salon ; des cartes plus anciennes peuvent manquer.')
+  }
+  out()
+  out(NOTE)
+  if (!open.length) {
+    out()
+    out('Aucun élément ouvert.')
+  }
+  const lists = [['Ouverts', open, 0], ...(opt.all && done.length ? [['Faits, les plus récents', done, omitted.done]] : [])]
+  for (const [title, list, left] of lists) {
+    if (!list.length) continue
+    out()
+    out(`## ${title} (${list.length}${left > 0 ? ` ; ${nb(left, 'plus ancien non copié', 'plus anciens non copiés')}` : ''})`)
+    for (const x of list) {
+      out()
+      out(todoEntry(x))
+    }
+  }
+}
+
 // ── Programme ────────────────────────────────────────────────────────────
 async function main() {
   const opt = parseArgs(process.argv.slice(2))
@@ -307,7 +380,10 @@ async function main() {
   secretKey = loadKey()
   const base = workerUrl(opt)
   const params = new URLSearchParams()
-  if (opt.id) params.set('id', opt.id)
+  if (opt.todo) {
+    if (opt.id || opt.kind || opt.platform || opt.since || opt.limit) fail('--todo se combine seulement avec --all, --json et --url.')
+    params.set('view', 'todo')
+  } else if (opt.id) params.set('id', opt.id)
   else {
     params.set('status', opt.all ? 'all' : 'open')
     if (opt.kind) params.set('kind', opt.kind)
@@ -317,6 +393,7 @@ async function main() {
   }
   const data = await callWorker(base, params)
   if (opt.json) return out(JSON.stringify(data, null, 2))
+  if (opt.todo) return printTodo(data, base, opt)
   if (opt.id) {
     if (!data.item) fail('Réponse inattendue du Worker (pas de retour).', 2)
     return printDetail(data.item)
