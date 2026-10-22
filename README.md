@@ -168,7 +168,7 @@ docker/relay.mjs     Video relay for your own server (same proxy as the Worker)
 docker/discord-bot.mjs  Discord bot (feedback, alerts, releases), run by the relay
 docker/healthcheck.mjs  Container health check (site or relay)
 relay/               Its docker-compose.yml and Caddyfile (HTTPS)
-tools/reports.mjs    Reads bug reports, suggestions and the bot's to-do list from the owner's computer (read-only key)
+tools/reports.mjs    Reads bug reports (and their screenshots), suggestions and the bot's to-do list from the owner's computer (read-only key)
 tools/connect-check.mjs  Checks of the extension bridge (Node, no browser or network)
 .github/workflows/   Docker image (docker.yml), daily database backup (d1-backup.yml)
 vercel.json          Website configuration on Vercel
@@ -209,7 +209,7 @@ ntfy.sh's free tier counts messages per IP address (250 a day). Every Cloudflare
 - The Discord bot's actions on the Worker all carry the shared secret (`FEEDBACK_BOT_SECRET`); `/live` and `/top` go through at most 120 Twitch lookups a minute, `/my-reports` and `/suggestions` 30 a minute per member — and as each of those two reads every report in D1, the bot keeps their answers 60 seconds (`/suggestions top` the same for everyone, `/my-reports` per member; read again once that member sends something or votes). `/api/open/live` (the **Open in the app** button) only takes a valid Twitch name and only redirects to `twitchunblock://live/<name>`.
 - The developer tools only accept Twitch tokens issued to the official website and apps (or to `TWITCH_CLIENT_ID`): a token of the owner's account issued to another Twitch app doesn't open them.
 - **Admin log**: every admin action — from `/stats`, the apps or Discord: deleting, closing or merging a report, replies and statuses, announcements, polls, erasing someone's data… — and every read of the reports (or of the bot's to-do list) with the read key is kept 90 days (who, what, when, from where) and listed at the bottom of the developer tools on `/stats`.
-- **Reports on the developer's computer** (`GET /api/admin/reports`, `tools/reports.mjs`): read-only, opened only by the `REPORTS_KEY` secret (constant-time check, 10 wrong keys an hour per address), never returns contacts, install IDs, addresses, tokens or pictures; the same route and key (and nothing else but the bot's own secret) read the Discord bot's copy of its to-do list — see [Reading reports from your computer](#reading-reports-from-your-computer-read-only).
+- **Reports on the developer's computer** (`GET /api/admin/reports`, `tools/reports.mjs`): read-only, opened only by the `REPORTS_KEY` secret (constant-time check, 10 wrong keys an hour per address), never returns contacts, install IDs, addresses or tokens, and screenshots only one at a time, as a download checked to be a JPEG, PNG or WebP image; the same route and key (and nothing else but the bot's own secret) read the Discord bot's copy of its to-do list — see [Reading reports from your computer](#reading-reports-from-your-computer-read-only).
 - **Erasing someone's data** (`/stats` → developer tools, or `/forget-user` on Discord): shows what will go first — with the Twitch account found, ID and current username —, then erases exactly that; the admin log only notes what kind of data went and how much, nothing that identifies the person — see [Discord bot](#discord-bot-feedback-alerts-releases), *Operations*.
 
 ---
@@ -755,8 +755,9 @@ API, GitHub and the website over `fetch`.
 ### Reading reports from your computer (read-only)
 
 `tools/reports.mjs` lists the bug reports and suggestions on the owner's
-computer — and, with `--todo`, the Discord bot's to-do list —, so the coding
-assistant reads them directly instead of having them copied by hand. It calls
+computer — and, with `--todo`, the Discord bot's to-do list; with `--photos`,
+it downloads a report's screenshots —, so the coding assistant reads (and
+sees) them directly instead of having them copied by hand. It calls
 `GET /api/admin/reports` on the Worker with a dedicated key, `REPORTS_KEY`,
 which can only read them.
 
@@ -787,12 +788,23 @@ node tools/reports.mjs --id fb_…       # one report with its whole conversatio
 node tools/reports.mjs --json          # the Worker's answer as it is (JSON)
 node tools/reports.mjs --todo          # the Discord bot's to-do list: open items, newest first
 node tools/reports.mjs --todo --all    # … then the 50 latest done ones (--json: the answer as it is)
+node tools/reports.mjs --photos fb_…   # the screenshots of a report and of its replies, saved to ./report-photos/fb_…/
 ```
 
 Also `--limit=N` (200 at most) and `--url=<Worker>` (or `TU_WORKER_URL`;
 default `https://test2.kurzmathis4.workers.dev`). Node 18 or later, no
 dependency. The key is never printed, not even partly (errors included), and
 only travels over HTTPS (plain `http://` only to this computer, for tests).
+
+**Screenshots** (`--photos fb_…`): the tool reads the report's conversation
+(`id`), then asks for each picture by its number (`view=photo`) and saves it
+to `./report-photos/fb_…/` (ignored by git; `--out=<folder>` for another
+one), named after the message and the number (`msg00-user-photo0.jpg`: the
+report itself, `msg03-dev-photo5.png`: the developer's reply #3), then prints
+the paths it wrote. Only JPEG, PNG and WebP images are written, checked from
+their first bytes on both sides: the Worker refuses anything else (`415`) and
+the tool checks again; a picture that's missing or refused is listed, the
+others are still saved (exit code 2). One D1 read per picture.
 
 **The to-do list** (`--todo`): the Discord bot keeps a copy of its to-do
 channel in the Worker (its memory, key `todo_mirror`) — only the cards it
@@ -823,13 +835,15 @@ The route itself, `GET /api/admin/reports` with `Authorization: Bearer <key>`:
 | `platform` | `ios`, `web`, `tvos`, `android`, `discord`, `all` (default) |
 | `since` | ISO date or duration (`30m`, `24h`, `7d`, `2w`): reports created, answered or changed since then |
 | `limit` | 50 by default, 200 at most: newest reports first, `more: true` when others are left |
-| `view` | `reports` (default) or `todo`: the bot's to-do list instead — `{ at, items, omitted?, partial? }`, the other parameters are ignored |
+| `view` | `reports` (default), `todo`: the bot's to-do list instead — `{ at, items, omitted?, partial? }`, the other parameters are ignored —, or `photo` with `id` and `n` |
+| `n` | With `view=photo`: the number of a screenshot (`photoNumbers` of a message, 0 to 999). The picture itself, as a download (`Content-Disposition: attachment`, `Cache-Control: no-store`, `nosniff`, a CSP that runs nothing), only if its bytes are a JPEG, PNG or WebP image — the type noted when it was sent isn't trusted (`415` otherwise); `404` when there's no such picture. One D1 read |
 
 Each report comes with its key, kind, platform, app version and build,
 creation and last-activity dates, status, title, message, conversation (who —
 user or developer —, text, date; in a list the last 5 messages, cut at 600
 characters, all of them with `id`), votes for a suggestion, the number of
-screenshots (never the pictures), the technical info shown before sending
+screenshots and, for each message, their numbers (`photoNumbers`; the
+pictures themselves only one at a time with `view=photo`), the technical info shown before sending
 (device, system, browser, page without its query string…) and the attached
 error log. Never: the contact (e-mail, Discord account), install ID, IP
 address, token or its hash, Discord links (only the to-do list has some: its
@@ -841,7 +855,8 @@ gets `429` until the hour is over. It opens nothing else — no write, not the
 `/stats` tools — and neither a Twitch token nor the bot's secret opens this
 route. Every read goes to the admin log (`reports.read`, from *read key*:
 filters and number of reports, nothing personal; `todo.read` for the to-do
-list: number of items). One D1 query per call, stopped at `limit`; votes are
+list: number of items; `reports.photo` for a screenshot: the report and the
+number). One D1 query per call, stopped at `limit`; votes are
 only counted for the suggestions returned. Outside this route, only the bot
 reads its copy of the to-do list (with its own secret, `FEEDBACK_BOT_SECRET`).
 To revoke the key, delete or change the secret.

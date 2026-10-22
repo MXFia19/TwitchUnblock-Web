@@ -3500,15 +3500,19 @@ async function handleAdminFeedback(request, env, ctx) {
 //   ?limit=     50 par défaut, 200 au plus : les plus récents (création) d'abord
 //   ?view=todo  la liste à faire du bot Discord au lieu des retours (voir
 //               reportsTodo plus bas ; les autres paramètres ne comptent pas)
+//   ?view=photo&id=fb_…&n=  une photo d'un retour ou d'une réponse, en fichier
+//               (voir reportsPhoto plus bas)
 // Lecture bornée : une requête D1 sur la plage des clés `fb_`, parcourue de
 // la plus récente à la plus ancienne et arrêtée à `limit` (+1, pour `more`) ;
-// votes comptés seulement pour les suggestions rendues ; jamais de photo
-// (leur nombre seulement). Chaque champ rendu est choisi un à un
+// votes comptés seulement pour les suggestions rendues ; pas de photo dans
+// la liste (leur nombre et leurs numéros, `photoNumbers`, à demander une à
+// une avec ?view=photo). Chaque champ rendu est choisi un à un
 // (reportView) : ni contact (e-mail, compte Discord), ni identifiant
 // d'installation, ni adresse, ni jeton ou son empreinte, ni lien Discord ;
 // les infos techniques passent par une liste blanche (reportInfo). Chaque
 // lecture est notée au journal d'audit (« reports.read » : filtres et
-// nombre de retours, rien de personnel).
+// nombre de retours, rien de personnel ; « reports.photo » : le retour et le
+// numéro de la photo).
 const REPORTS_FAILS = 10;            // clés fausses par heure et par adresse
 const REPORTS_LIST_DEFAULT = 50;
 const REPORTS_LIST_MAX = 200;
@@ -3582,10 +3586,12 @@ function reportView(key, m, value, votes, full) {
         return full || t.length <= REPORTS_LIST_TEXT ? t : `${t.slice(0, REPORTS_LIST_TEXT - 1)}…`;
     };
     const pics = (x) => (Array.isArray(x?.ph) ? x.ph.length : 0);
+    // Numéros des photos du message (clés `fbimg_<retour>_<n>`), pour ?view=photo.
+    const picNumbers = (x) => x.ph.filter((v) => Number.isInteger(v) && v >= 0 && v <= REPORT_PHOTO_MAX_N);
     const entries = thread.map((x, n) => ({
         n, from: x?.f === 'a' ? 'developer' : 'user', at: isoDate(x?.at),
         ...(x?.s ? { status: String(x.s), statusLabel: FEEDBACK_STATUS_LABELS[x.s] || String(x.s) } : { text: cut(x?.m) }),
-        ...(pics(x) ? { photos: pics(x) } : {}),
+        ...(pics(x) ? { photos: pics(x), photoNumbers: picNumbers(x) } : {}),
     }));
     return {
         key, kind: FEEDBACK_KINDS.includes(m.k) ? m.k : 'other', suggestion: Boolean(m.sg),
@@ -3657,6 +3663,54 @@ async function reportsTodo(env, ctx) {
     };
 }
 
+// ── Photos d'un retour (?view=photo&id=fb_…&n=) ────────────────────────────
+// Une capture jointe au retour ou à une réponse, pour l'assistant qui lit les
+// retours (tools/reports.mjs --photos) : mêmes clé, blocage et en-têtes que
+// les retours, aucune page ne peut la lire (ni CORS ni cookie : la clé passe
+// en en-tête). `n` : le numéro de la photo dans la discussion (photoNumbers
+// de ?id=), celui de sa clé `fbimg_<retour>_<n>` — une lecture D1, rien
+// d'autre. Rendue en fichier à télécharger (attachment, no-store, nosniff,
+// aucun script), et seulement si ses octets sont bien ceux d'une image JPEG,
+// PNG ou WebP : le type noté à l'envoi n'est pas cru sur parole. Notée au
+// journal (« reports.photo » : le retour et le numéro).
+const REPORT_PHOTO_MAX_N = 999;   // comme /api/feedback/photo
+const REPORT_PHOTO_EXT = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' };
+
+/** Type d'une image d'après ses premiers octets : JPEG, PNG ou WebP
+ *  (« RIFF » suivi de « WEBP » : un autre RIFF, son ou vidéo, ne passe
+ *  pas), sinon null. */
+function imageTypeOf(bytes) {
+    const at = (i, ...v) => bytes.length >= i + v.length && v.every((x, k) => bytes[i + k] === x);
+    if (at(0, 0xff, 0xd8, 0xff)) return 'image/jpeg';
+    if (at(0, 0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a)) return 'image/png';
+    if (at(0, 0x52, 0x49, 0x46, 0x46) && at(8, 0x57, 0x45, 0x42, 0x50)) return 'image/webp';
+    return null;
+}
+
+async function reportsPhoto(env, ctx, url, reply) {
+    const id = String(url.searchParams.get('id') || '').trim();
+    if (!FEEDBACK_KEY_RE.test(id)) return reply({ error: 'Clé de retour invalide' }, 400);
+    const raw = String(url.searchParams.get('n') ?? '').trim();
+    if (!/^\d{1,3}$/.test(raw)) return reply({ error: `n : numéro de photo, 0 à ${REPORT_PHOTO_MAX_N}` }, 400);
+    const n = Number(raw);
+    const { value } = await store(env).getWithMetadata(`${FEEDBACK_PHOTO_PREFIX}${id}_${n}`);
+    let bytes = null;
+    if (value) { try { bytes = b64Bytes(value); } catch (e) { /* base64 illisible : refusée */ } }
+    const type = bytes ? imageTypeOf(bytes) : null;
+    await noteReportsRead(env, ctx, `${id} #${n}${!value ? ' — not found' : !type ? ' — refused' : ''}`, 'reports.photo');
+    if (!value) return reply({ error: 'Photo introuvable' }, 404);
+    if (!type) return reply({ error: 'Type refusé : seulement JPEG, PNG ou WebP' }, 415);
+    return new Response(bytes, {
+        headers: {
+            'Content-Type': type,
+            'Content-Disposition': `attachment; filename="${id}_${n}.${REPORT_PHOTO_EXT[type]}"`,
+            'Cache-Control': 'no-store',
+            'X-Content-Type-Options': 'nosniff',
+            'Content-Security-Policy': "default-src 'none'; sandbox",
+        },
+    });
+}
+
 async function handleAdminReports(request, env, ctx) {
     const secret = String(env.REPORTS_KEY || '').trim();
     // Fonction coupée (secret absent ou trop court) : comme une route inconnue.
@@ -3679,10 +3733,12 @@ async function handleAdminReports(request, env, ctx) {
 
     await ensureSchema(env);
     const url = new URL(request.url);
-    // La liste à faire du bot : mêmes clé, blocage et en-têtes que les retours.
+    // La liste à faire du bot et les photos : mêmes clé, blocage et en-têtes
+    // que les retours.
     const view = String(url.searchParams.get('view') || 'reports').trim().toLowerCase();
     if (view === 'todo') return reply(await reportsTodo(env, ctx));
-    if (view !== 'reports') return reply({ error: 'view : reports (défaut) ou todo' }, 400);
+    if (view === 'photo') return reportsPhoto(env, ctx, url, reply);
+    if (view !== 'reports') return reply({ error: 'view : reports (défaut), todo ou photo' }, 400);
     const now = Date.now();
     const select = (where) => `SELECT f.key AS key, f.value AS value, f.meta AS meta,
         CASE WHEN json_extract(${SUGGEST_META_SQL}, '$.sg') = 1 THEN ${SUGGEST_VOTES_SQL} END AS votes
@@ -5391,8 +5447,8 @@ async function opsBotTool(env, ctx, body) {
 // ── Journal d'audit ────────────────────────────────────────────────────────
 const AUDIT_PREFIX = 'audit_';
 const AUDIT_TTL = 90 * 86400;
-// key : lecture des retours ou de la liste à faire du bot par la clé
-// REPORTS_KEY (handleAdminReports).
+// key : lecture des retours, de leurs photos ou de la liste à faire du bot
+// par la clé REPORTS_KEY (handleAdminReports).
 const AUDIT_FROM = ['stats', 'app', 'discord', 'key'];
 const auditExcerpt = (v, max = 60) => {
     const s = cleanText(v, 400).replace(/\s+/g, ' ');

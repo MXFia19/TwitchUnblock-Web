@@ -1,2 +1,5 @@
 # Version Firefox de l'extension, générée par extension/dev/build-firefox.mjs
 extension-firefox/
+
+# Photos des retours téléchargées par tools/reports.mjs --photos (données d’utilisateurs)
+report-photos/
