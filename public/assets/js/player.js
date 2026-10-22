@@ -19,10 +19,14 @@ const SPEEDS = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2]
 const HIDE_AFTER = 2800
 // Empreinte du fichier attendu (identique sur les deux CDN) : un CDN
 // compromis ne peut pas substituer son propre script.
-const HLS_INTEGRITY = 'sha384-9v3HcdYrO3D+OPDTjZ40RXocgE4GtXVCd3/mCS62JsM93JXgI1afJVuwjFvsu6ni'
+// hls.js 1.5.20, la dernière de la série 1.5 (même interface que la 1.5.17
+// d'avant) : depuis la 1.5.18, un arrêt demandé par ManagedMediaSource
+// (« endstreaming ») suspend seulement le chargement des segments — la 1.5.17
+// arrêtait tout (requête abandonnée, démultiplexeur détruit puis recréé).
+const HLS_INTEGRITY = 'sha384-V5ruNBgmYcC3SJRUQeNykAAAgde5gOFq/Hu0CZj7bygDP0yRIhkvX8+w0u/7mRvr'
 const HLS_SOURCES = [
-  'https://cdn.jsdelivr.net/npm/hls.js@1.5.17/dist/hls.min.js',
-  'https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.5.17/hls.min.js',
+  'https://cdn.jsdelivr.net/npm/hls.js@1.5.20/dist/hls.min.js',
+  'https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.5.20/hls.min.js',
 ]
 
 // ── Segments par le relais du Worker (secours) ──────────────────────────
@@ -333,23 +337,25 @@ export function liveStallWait(state, now = Date.now()) {
 // texte que rien ne lit : les pauses pub sont lues dans la playlist
 // (readAdBreaks).
 //
-// VOD : tampon tenu par hls.js (MediaSource) partout où le navigateur l'a,
-// Safari sur Mac et iPad compris, et plus par Safari lui-même
-// (ManagedMediaSource, « MMS ») : celui-ci demande d'arrêter de charger à
-// 30 s d'avance (« endstreaming ») et de reprendre sous 10 s
-// (« startstreaming »), et hls.js 1.5 arrête alors tout (stopLoad) —
+// VOD et direct : tampon tenu par hls.js (MediaSource) partout où le
+// navigateur l'a, Safari sur Mac et iPad compris, et plus par Safari
+// lui-même (ManagedMediaSource, « MMS ») : celui-ci demande d'arrêter de
+// charger à 30 s d'avance (« endstreaming ») et de reprendre sous 10 s
+// (« startstreaming »), et hls.js 1.5.17 arrêtait alors tout (stopLoad) —
 // requête en cours abandonnée, démultiplexeur détruit puis recréé, guet des
 // trous et des calages suspendu —, toutes les 20 s environ d'une VOD (une
 // longue VOD finissait par saccader dans Safari sur Mac, retour du 22/10).
 // Et Safari 27 n'envoie plus « startstreaming » après un saut (WebKit
 // 321919) : la VOD restait figée. hls.js préfère d'ailleurs MediaSource
-// depuis sa 1.6.19. L'iPhone n'a que ManagedMediaSource (garde-fou :
-// guardManagedMediaSource) ; les directs n'y changent pas (leur avance reste
-// loin des 30 s : Safari ne leur demande pas d'arrêter).
+// depuis sa 1.6.19. Les directs y passent aussi : sur iPad, un long direct
+// en MMS faisait toujours planter Safari au bout de quelques minutes malgré
+// les tampons bornés (retour du 22/10, 2026.10.20d), au point de devoir
+// quitter Safari pour qu'il reparte. L'iPhone n'a que ManagedMediaSource
+// (garde-fou : guardManagedMediaSource).
 const MB = 1000 * 1000
 export function bufferConfig(kind, { tile = false, lean = isIOS } = {}) {
   const base = { enableID3MetadataCues: false, enableEmsgMetadataCues: false, enableDateRangeMetadataCues: false,
-    ...(kind === 'live' ? {} : { preferManagedMediaSource: false }) }
+    preferManagedMediaSource: false }
   if (tile) return { ...base, backBufferLength: 10, maxBufferLength: 12, maxMaxBufferLength: 30, maxBufferSize: (lean ? 10 : 20) * MB }
   if (kind === 'live') {
     return lean
@@ -362,23 +368,23 @@ export function bufferConfig(kind, { tile = false, lean = isIOS } = {}) {
 }
 
 /** hls.js (1.5) prend-il ManagedMediaSource avec cette configuration ? Oui
- *  s'il le préfère (par défaut) et que le navigateur l'a, ou s'il n'y a que
- *  lui (iPhone). */
+ *  s'il le préfère et que le navigateur l'a, ou s'il n'y a que lui : avec
+ *  bufferConfig (qui ne le préfère plus), seulement sur iPhone. */
 export function usesManagedMediaSource(config) {
   if (typeof window === 'undefined' || !window.ManagedMediaSource) return false
   return config?.preferManagedMediaSource !== false || !window.MediaSource
 }
 
-/** ManagedMediaSource (iPhone ; directs sur Mac et iPad) : à chaque
- *  « endstreaming », hls.js 1.5 s'arrête (voir plus haut) et ne repart
- *  qu'au « startstreaming ». Safari 27 ne l'envoie plus quand on saute hors
- *  de ce qui est chargé (WebKit 321919) : l'image restait figée. Comme
- *  hls.js 1.6.19 : pas d'arrêt pendant un saut, et un saut pendant l'arrêt
- *  fait repartir le chargement — après le « seeking » de hls.js lui-même,
- *  qui retient la position. Et comme lui, une reprise sans arrêt avant ne
- *  fait rien : en 1.5, elle relançait tout (startLoad), requête en cours
- *  abandonnée. `note(nom)` compte les arrêts (« mmsPause ») et les reprises
- *  au saut (« mmsSeek ») pour la santé de la lecture. */
+/** ManagedMediaSource (iPhone) : à chaque « endstreaming », hls.js suspend
+ *  le chargement des segments (la 1.5.17 arrêtait tout, voir plus haut) et
+ *  ne le reprend qu'au « startstreaming ». Safari 27 ne l'envoie plus quand
+ *  on saute hors de ce qui est chargé (WebKit 321919) : l'image restait
+ *  figée. Comme hls.js 1.6.19 : pas d'arrêt pendant un saut, et un saut
+ *  pendant l'arrêt fait repartir le chargement — après le « seeking » de
+ *  hls.js lui-même, qui retient la position. Et comme lui, une reprise sans
+ *  arrêt avant ne fait rien (la 1.5.17 relançait tout : startLoad, requête
+ *  en cours abandonnée). `note(nom)` compte les arrêts (« mmsPause ») et les
+ *  reprises au saut (« mmsSeek ») pour la santé de la lecture. */
 export function guardManagedMediaSource(Hls, hls, video, note = () => {}) {
   const pause = hls.pauseBuffering?.bind(hls)
   const resume = hls.resumeBuffering?.bind(hls)
@@ -1140,7 +1146,7 @@ export class Player {
       })
       this.hls = hls
       this.directFails = 0
-      // iPhone, directs sur Mac et iPad : arrêts de Safari tenus en bride.
+      // iPhone (il n'a que ManagedMediaSource) : arrêts de Safari tenus en bride.
       if (usesManagedMediaSource(hls.config)) guardManagedMediaSource(Hls, hls, v, (name) => this.health?.add(name))
       hls.loadSource(url)
       hls.attachMedia(v)

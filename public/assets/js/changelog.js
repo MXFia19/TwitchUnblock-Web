@@ -9,26 +9,31 @@ export const CHANGELOG = [
     version: '2026.10.22a',
     items: {
       fr: [
+        'Directs sur iPad (et Safari sur Mac) : le lecteur tient maintenant lui-même la mémoire vidéo des directs aussi, comme pour les VODs, avec une version plus récente de son moteur (hls.js 1.5.20). Sur iPad, un long direct faisait encore planter Safari au bout de quelques minutes, au point de devoir le quitter pour qu’il reparte.',
         'VODs dans Safari sur Mac (et iPad) : la lecture ne se met plus à saccader au bout d’un moment. Le lecteur tient lui-même sa mémoire vidéo au lieu de laisser Safari l’interrompre toutes les 20 secondes environ, et une VOD ne reste plus figée après un saut sous Safari 27.',
         'Le journal des erreurs (Réglages → À propos, joint à tes signalements) note maintenant l’état de la lecture quand elle se met à saccader — décrochages, images perdues, mémoire tampon, réparations — et au moment où tu signales un problème : de quoi comprendre un saccadement qui ne laisse aucune erreur. Rien de personnel n’y figure.',
         'Le site existe maintenant en chinois traditionnel (繁體中文), grâce à trend0522 : un navigateur réglé en chinois l’ouvre directement dans cette langue, et Réglages → Langue permet d’en changer.',
       ],
       en: [
+        'Lives on iPad (and Safari on Mac): the player now keeps the video buffer of lives itself too, like VODs, with a newer version of its engine (hls.js 1.5.20). On iPad, a long live still crashed Safari after a few minutes, to the point of having to quit it to get it going again.',
         'VODs in Safari on Mac (and iPad): playback no longer starts stuttering after a while. The player now keeps its video buffer itself instead of letting Safari interrupt it every 20 seconds or so, and a VOD no longer freezes after a jump in Safari 27.',
         'The error log (Settings → About, attached to your reports) now notes the playback’s state when it starts stuttering — stalls, dropped frames, buffer, repairs — and when you report a problem: enough to understand stutter that leaves no error behind. Nothing personal goes in it.',
         'The site now speaks Traditional Chinese (繁體中文), thanks to trend0522: a browser set to Chinese opens it in that language, and Settings → Language lets you switch.',
       ],
       es: [
+        'Directos en iPad (y Safari en Mac): el reproductor ahora gestiona él mismo la memoria de vídeo también en los directos, como en los VOD, con una versión más reciente de su motor (hls.js 1.5.20). En iPad, un directo largo seguía haciendo que Safari se cerrara a los pocos minutos, hasta el punto de tener que salir de él para que volviera a funcionar.',
         'VOD en Safari en Mac (y iPad): la reproducción ya no empieza a dar tirones al cabo de un rato. El reproductor gestiona él mismo su memoria de vídeo en lugar de dejar que Safari la interrumpa cada 20 segundos más o menos, y un VOD ya no se queda congelado tras un salto en Safari 27.',
         'El registro de errores (Ajustes → Acerca de, adjunto a tus reportes) anota ahora el estado de la reproducción cuando empieza a dar tirones — cortes, fotogramas perdidos, búfer, reparaciones — y cuando reportas un problema: lo necesario para entender unos tirones que no dejan ningún error. No incluye nada personal.',
         'El sitio ya está en chino tradicional (繁體中文), gracias a trend0522: un navegador configurado en chino lo abre directamente en ese idioma, y Ajustes → Idioma permite cambiarlo.',
       ],
       ru: [
+        'Эфиры на iPad (и в Safari на Mac): плеер теперь сам управляет видеобуфером и в эфирах, как в VOD, с более новой версией своего движка (hls.js 1.5.20). На iPad долгий эфир всё ещё через несколько минут приводил к падению Safari — настолько, что его приходилось закрывать, чтобы всё снова заработало.',
         'VOD в Safari на Mac (и iPad): воспроизведение больше не начинает дёргаться через некоторое время. Плеер теперь сам управляет своим видеобуфером, а не позволяет Safari прерывать его примерно каждые 20 секунд, и VOD больше не замирает после перемотки в Safari 27.',
         'Журнал ошибок (Настройки → О проекте, прикрепляется к вашим сообщениям) теперь записывает состояние воспроизведения, когда оно начинает дёргаться, — подвисания, пропущенные кадры, буфер, восстановления — и в момент, когда вы сообщаете о проблеме: этого хватает, чтобы разобраться в рывках, которые не оставляют ошибок. Ничего личного туда не попадает.',
         'Сайт теперь доступен на традиционном китайском (繁體中文) — спасибо trend0522: браузер с китайским языком сразу открывает его на нём, а сменить язык можно в Настройки → Язык.',
       ],
       'zh-Hant': [
+        'iPad（以及 Mac 上的 Safari）的直播：播放器現在也像 VOD 一樣，自己管理直播的影片緩衝，並換上較新版本的播放引擎（hls.js 1.5.20）。在 iPad 上，長時間的直播仍會在幾分鐘後讓 Safari 當掉，甚至得完全關閉 Safari 才能恢復。',
         'Mac（與 iPad）上 Safari 的 VOD：播放不會再過一陣子就開始卡頓。播放器改為自己管理影片緩衝，不再讓 Safari 大約每 20 秒打斷一次；在 Safari 27 中跳轉後，VOD 也不會再卡住不動。',
         '錯誤日誌（設定 → 關於，會附在你的回報中）現在會在播放開始卡頓時記錄播放狀態——停頓、掉格、緩衝、修復——以及你回報問題的當下：足以了解那些沒留下任何錯誤的卡頓。其中不含任何個人資料。',
         '網站現在提供繁體中文版，感謝 trend0522：瀏覽器設為中文時會直接以中文開啟，也可以在「設定 → 語言」切換。',
