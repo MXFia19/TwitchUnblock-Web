@@ -332,11 +332,16 @@ export class LiveChat {
     // image dans nos messages (selfMessage), et le sélecteur les montre dans
     // « Mes emotes ». En anonyme, rien à lire.
     if (tags['emote-sets'] && this.o.token && this.o.login && !this.readOnly) {
+      // Premiers jeux connus de ce chat : « Mes emotes » peut apparaître même
+      // si tous étaient déjà lus (autre direct de la séance, chat du
+      // multi-live) — loadOwnEmotes ne répond alors pas « tout juste lus ».
+      const first = !me.emoteSets
       me.emoteSets = tags['emote-sets'].split(',').filter(Boolean)
       const gen = this.generation
-      // Jeux tout juste lus : le sélecteur, s'il est ouvert, les ajoute.
+      // Jeux tout juste lus, ou premiers connus : le sélecteur, s'il est
+      // ouvert, les ajoute.
       loadOwnEmotes(me.emoteSets).then((fresh) => {
-        if (fresh && gen === this.generation && !this.closed) this.emit('ownemotes')
+        if ((fresh || first) && gen === this.generation && !this.closed) this.emit('ownemotes')
       })
     }
   }
