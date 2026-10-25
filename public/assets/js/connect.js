@@ -17,14 +17,17 @@ export const PROTOCOL = 1
 // télécharger sans compte GitHub, et les étapes d'installation en anglais.
 export const INSTALL_URL = 'https://github.com/MXFia19/TwitchUnblock-Web/releases/latest'
 
-/** Liste fermée du protocole : rien d'autre ne part. */
+/** Liste fermée du protocole : rien d'autre ne part. `hq.*` : extension
+ *  0.2.0 et plus seulement (qualités supérieures, hq.js). */
 export const OPS = Object.freeze(['hello', 'status', 'points.get', 'points.claim', 'watch.beat',
   'predictions.get', 'predictions.bet', 'polls.get', 'polls.vote', 'raid.join',
-  'drops.get', 'drops.claim', 'drops.pulse', 'rewards.get', 'rewards.redeem'])
+  'drops.get', 'drops.claim', 'drops.pulse', 'rewards.get', 'rewards.redeem',
+  'hq.master', 'hq.playlist'])
 /** Peuvent devoir obtenir un jeton d'intégrité Twitch : 45 s au lieu de 15.
- *  `drops.pulse` aussi : le jeton de lecture du compte peut en demander un. */
+ *  `drops.pulse` et `hq.master` aussi : le jeton de lecture du compte peut en
+ *  demander un. */
 const SLOW_OPS = new Set(['points.claim', 'watch.beat', 'predictions.bet', 'polls.vote',
-  'raid.join', 'drops.claim', 'drops.pulse', 'rewards.redeem'])
+  'raid.join', 'drops.claim', 'drops.pulse', 'rewards.redeem', 'hq.master'])
 export const timeoutFor = (op) => (SLOW_OPS.has(op) ? 45_000 : 15_000)
 
 /** Détection : `hello` à 0 ; 0,5 ; 1,5 et 3 s, tant que rien n'a répondu. */
@@ -38,6 +41,10 @@ export const MAX_BET = 250_000
 const LOGIN_RE = /^[a-z0-9_]{1,25}$/
 const RAID_ID_RE = /^[A-Za-z0-9-]{1,64}$/
 const DROP_INSTANCE_RE = /^[A-Za-z0-9#._:-]{1,200}$/
+/** Variante de la liste du compte : identifiant opaque de l'extension. */
+const HQ_ID_RE = /^[A-Za-z0-9]{22}$/
+/** Codecs annoncés à Twitch (hq.master), du plus efficace au plus courant. */
+export const HQ_CODECS = Object.freeze(['av1', 'h265', 'h264'])
 /** Texte d'une récompense qui en demande un : 1 à 200 caractères. */
 export const MAX_REWARD_INPUT = 200
 
@@ -286,6 +293,37 @@ function normRedeem(d) {
   return balance === undefined ? null : { balance }
 }
 
+/** Variantes de la liste du compte : identifiant, nom, original ou non,
+ *  taille, cadence, débit, codecs — jamais d'adresse (PROTOCOL.md). */
+function normHqMaster(d) {
+  if (!Array.isArray(d.variants) || !d.variants.length) return null
+  const variants = []
+  for (const v of d.variants.slice(0, 20)) {
+    if (!isObj(v) || !isStr(v.id) || !HQ_ID_RE.test(v.id) || typeof v.source !== 'boolean') return null
+    const width = count(v.width)
+    const height = count(v.height)
+    const bandwidth = count(v.bandwidth)
+    if (width === null || height === null || bandwidth === null || height > 10_000) return null
+    if (!isStr(v.codecs) || !/^[A-Za-z0-9.,]{1,120}$/.test(v.codecs)) return null
+    variants.push({
+      id: v.id,
+      name: isStr(v.name) && /^[A-Za-z0-9_.-]{1,24}$/.test(v.name) ? v.name : '',
+      source: v.source,
+      width,
+      height,
+      fps: Number.isFinite(v.fps) && v.fps > 0 && v.fps <= 300 ? v.fps : 0,
+      bandwidth,
+      codecs: v.codecs,
+    })
+  }
+  return { variants }
+}
+
+/** Playlist d'une variante, réécrite par l'extension (texte HLS). */
+function normHqPlaylist(d) {
+  return isStr(d.playlist) && d.playlist.startsWith('#EXTM3U') && d.playlist.length <= 2_000_000 ? { playlist: d.playlist } : null
+}
+
 const NORMALIZE = {
   hello: normHello,
   status: normStatus,
@@ -302,6 +340,8 @@ const NORMALIZE = {
   'drops.pulse': normPulse,
   'rewards.get': normRewards,
   'rewards.redeem': normRedeem,
+  'hq.master': normHqMaster,
+  'hq.playlist': normHqPlaylist,
 }
 
 /** Relit une réponse `data` d'une opération : sa forme propre, ou null. */
@@ -314,10 +354,18 @@ export function normalize(op, data) {
 export function cleanArgs(op, a) {
   if (op === 'hello' || op === 'status') return {}
   if (!isObj(a)) return null
-  // Le seul sans chaîne : un drop se réclame par son instance.
+  // Sans chaîne : un drop se réclame par son instance, une playlist du
+  // compte se demande par l'identifiant de sa variante.
   if (op === 'drops.claim') return dropInstance(a.dropInstanceId) ? { dropInstanceId: a.dropInstanceId } : null
+  if (op === 'hq.playlist') return isStr(a.id) && HQ_ID_RE.test(a.id) ? { id: a.id } : null
   const channel = isStr(a.channel) ? a.channel.trim().toLowerCase() : ''
   if (!LOGIN_RE.test(channel)) return null
+  if (op === 'hq.master') {
+    // Liste fermée, sans doublon, H.264 compris ; envoyée dans l'ordre de HQ_CODECS.
+    const list = Array.isArray(a.codecs) ? a.codecs : []
+    if (!list.length || new Set(list).size !== list.length || !list.every((c) => HQ_CODECS.includes(c)) || !list.includes('h264')) return null
+    return { channel, codecs: HQ_CODECS.filter((c) => list.includes(c)) }
+  }
   if (op === 'predictions.bet') {
     const { eventId, outcomeId, points } = a
     if (!ident(eventId) || !ident(outcomeId) || !Number.isInteger(points) || points < 1 || points > MAX_BET) return null

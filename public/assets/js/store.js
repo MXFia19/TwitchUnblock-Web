@@ -56,6 +56,9 @@ export const DEFAULT_PREFS = {
   // Qualité préférée : 'auto', 'source', une hauteur ('1080', '720'…) ou
   // 'audio' — mêmes valeurs que l'app iOS dans la sauvegarde.
   qualityPref: 'auto',
+  // Qualités supérieures (1440p et plus) par l'extension TwitchUnblock
+  // Connect 0.2.0 (hq.js) : coupé par défaut, comme dans l'app.
+  higherQualities: false,
   vodSpeed: 1,       // vitesse des VODs, retenue d'une VOD à l'autre
   // Masqués du top et des catégories, plus récents d'abord ; `at` en
   // millisecondes, comme l'app iOS (sauvegarde : clé racine `hidden`).

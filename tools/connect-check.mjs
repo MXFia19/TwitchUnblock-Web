@@ -276,7 +276,7 @@ test('identifiants de demande uniques', () => {
 })
 
 test('délais d’attente : 15 s, et 45 s pour ce qui peut demander un jeton d’intégrité', async () => {
-  const slow = ['points.claim', 'watch.beat', 'predictions.bet', 'polls.vote', 'raid.join', 'drops.claim', 'drops.pulse', 'rewards.redeem']
+  const slow = ['points.claim', 'watch.beat', 'predictions.bet', 'polls.vote', 'raid.join', 'drops.claim', 'drops.pulse', 'rewards.redeem', 'hq.master']
   for (const op of OPS) assert.equal(timeoutFor(op), slow.includes(op) ? 45_000 : 15_000, op)
   // Pulsation : le jeton de lecture du compte peut demander un jeton
   // d'intégrité (jusqu'à ~40 s) ; à 15 s, la réponse et ses drops réclamés
@@ -290,6 +290,7 @@ test('délais d’attente : 15 s, et 45 s pour ce qui peut demander un jeton d�
     'raid.join': { channel: 'a', raidId: 'abc-123' },
     'drops.get': { channel: 'a' }, 'drops.pulse': { channel: 'a' }, 'drops.claim': { dropInstanceId: '1#2#3' },
     'rewards.get': { channel: 'a' }, 'rewards.redeem': { channel: 'a', rewardId: 'r', cost: 10, title: 'T', prompt: null, input: null },
+    'hq.master': { channel: 'a', codecs: ['h264'] }, 'hq.playlist': { id: 'A'.repeat(22) },
   }
   for (const op of OPS) {
     const { client, clock } = setup({ ext: null })

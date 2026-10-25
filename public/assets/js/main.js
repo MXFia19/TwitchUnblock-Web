@@ -5,7 +5,8 @@
 import * as api from './api.js'
 import { DEFAULT_PREFS, qualityPrefOf, store } from './store.js'
 import { LANGS, applyStatic, deviceLang, initLang, setLang, t, lang } from './i18n.js'
-import { Player, QUALITY_PREFS, loadHls, qualityText, validQualityPref, validSpeed } from './player.js'
+import { Player, QUALITY_PREFS, loadHls, pickQuality, qualityText, segmentProxyOn, validQualityPref, validSpeed } from './player.js'
+import { HqLive, browserCodecs, buildHq, codecLabel, hqAvailable, hqCanAsk } from './hq.js'
 import { ChatView, HIDDEN_EMOTES_MAX, timeLabel, validEmoteCode } from './chat/view.js'
 import { linkifyHtml } from './chat/message.js'
 import { copyBotCommand, showBotCommands } from './chat/botcmds.js'
@@ -646,6 +647,7 @@ window.addEventListener('pagehide', () => { flushSync({ force: true }); flushPre
 // Ne sont PAS synchronisés, parce qu'ils dépendent de l'appareil :
 //   lang         langue du site (par défaut, celle de chaque appareil) ;
 //   qualityPref  qualité préférée (écran, connexion) ;
+//   higherQualities  1440p et plus (l'extension de ce navigateur, ses codecs) ;
 //   shareUsage   comptage anonyme : consentement donné sur chaque appareil ;
 //   homeList     accueil en liste ou en grille (taille de l'écran) ;
 //   et ce que l'app n'a pas sous le même nom : notifications, thème,
@@ -3655,7 +3657,18 @@ function setupPlayer() {
       if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {})
       openFeedback('bug')
     },
+    // Qualités supérieures (hq.js) : playlists du flux du compte par
+    // l'extension, pauses pub et erreur fatale de ce flux.
+    hqText: (url) => state.watch?.hq?.text(url) ?? Promise.reject(new Error('hq: none')),
+    onAdState: (left) => state.watch?.hq?.onAdState(left),
+    onFatal: () => Boolean(state.watch?.hq?.onFatal()),
   })
+  // Lecture reprise : un retour au flux du compte, ou une bascule pour une
+  // pause pub arrivée pendant la pause, peut avoir attendu.
+  player.video.addEventListener('play', () => state.watch?.hq?.onPlay())
+  // L'extension change d'état (installée, mise à jour, session) : le réglage
+  // des qualités supérieures suit, si les réglages sont ouverts.
+  connect.onChange(() => refreshHqSetting())
   chat = new ChatView($('#chat'), {
     prefs: store.prefs,
     // Retard de l'image sur le direct, pour le chat synchronisé (le chat lit
@@ -3803,7 +3816,8 @@ function switchWorker(base) {
   if (base === api.RELAY_BASE && w.links && api.markWorkerDown(base)) {
     console.info('[TwitchUnblock] Relais vidéo injoignable, retour au Worker :', base)
     w.links = api.withoutRelay(w.links)
-    player.swapLinks(w.links, w.variants)
+    if (w.hq) w.hq.updateAdFree({ links: w.links, variants: w.variants, source: w.source })
+    else player.swapLinks(w.links, w.variants)
     return true
   }
   if (Date.now() - lastWorkerSwitch < 60_000 || !w.links || !api.hasOtherWorker(base)) return false
@@ -3830,10 +3844,20 @@ function switchWorker(base) {
       if (!links?.links || !Object.keys(links.links).length) throw new Error('none')
       w.links = links.links
       w.variants = links.variants ?? {}
-      player.swapLinks(links.links, w.variants)
-      if (w.kind === 'live') player.setLiveSource(links.source)
+      if (w.kind === 'live') w.source = links.source
+      // Qualités supérieures : ce sont les liens de la source habituelle, que
+      // le contrôleur ne lit que s'ils jouent déjà (pause pub).
+      if (w.hq) w.hq.updateAdFree({ links: w.links, variants: w.variants, source: links.source })
+      else {
+        player.swapLinks(links.links, w.variants)
+        if (w.kind === 'live') player.setLiveSource(links.source)
+      }
     })
-    .catch(() => { if (state.watch === w) player.swapLinks(w.links, w.variants) })
+    .catch(() => {
+      if (state.watch !== w) return
+      if (w.hq) w.hq.updateAdFree({ links: w.links, variants: w.variants, source: w.source })
+      else player.swapLinks(w.links, w.variants)
+    })
   return true
 }
 
@@ -3911,6 +3935,14 @@ async function reloadLiveSource() {
   if (!links?.links || !Object.keys(links.links).length) return toast(t('err_live'), 'error')
   w.links = links.links
   w.variants = links.variants ?? {}
+  w.source = links.source
+  // Source choisie à la main : elle l'emporte sur le flux du compte
+  // (qualités supérieures), pour toute cette lecture.
+  if (w.hq) {
+    w.hq.destroy()
+    w.hq = null
+    player.forgetAdBreaks()
+  }
   player.swapLinks(links.links, w.variants)
   player.setLiveSource(links.source)
   if (links.source) toast(t('src_now', { s: t(`src_${links.source}`) }), 'info')
@@ -3957,6 +3989,94 @@ function showWatchError(message) {
   $('#watch-error-text').textContent = message
 }
 
+// ── Qualités supérieures (1440p et plus, extension 0.2.0 : hq.js) ─────────
+// Lecteur principal seulement : le multi-live, le téléchargement et « Ouvrir
+// dans… » gardent les liens de la source habituelle (state.watch.links).
+/** Attente du flux du compte au lancement d'un direct, au plus (liste, puis
+ *  sa playlist) : au-delà, la source habituelle (la demande continue sans
+ *  nous, et le jeton d'intégrité que l'extension a pu obtenir sert au direct
+ *  suivant). Comme l'app : quelques secondes de plus au pire. */
+const HQ_WAIT_MS = 6000
+
+/** Liste du compte demandée tout de suite, si le réglage est actif, que
+ *  l'extension peut la donner (0.2.0, branchée, pas sans session), que hls.js
+ *  est là et que les segments des directs ne passent pas par le relais sur
+ *  cet appareil (ceux du compte n'y passent jamais). { deadline, result } :
+ *  promesse de { variants, codecs } ou de null, rendue avant `deadline`. */
+function askHq(login) {
+  if (!store.prefs.higherQualities || segmentProxyOn()) return null
+  const deadline = Date.now() + HQ_WAIT_MS
+  const work = (async () => {
+    // Page ouverte sur la chaîne : l'extension est peut-être encore en cours
+    // de détection (jusqu'à 4,5 s, connect.js).
+    if (!hqCanAsk(await connectSettled(2500))) return null
+    const [Hls, codecs] = await Promise.all([loadHls(), browserCodecs()])
+    if (!Hls?.isSupported()) return null
+    const res = await connect.request('hq.master', { channel: login, codecs })
+    return { variants: res.variants, codecs }
+  })().catch((e) => {
+    console.info('[TwitchUnblock] Qualités supérieures indisponibles :', e?.code || e?.message || 'erreur')
+    return null
+  })
+  return { deadline, result: Promise.race([work, new Promise((resolve) => setTimeout(() => resolve(null), HQ_WAIT_MS))]) }
+}
+
+/** État de l'extension une fois sa détection finie, `ms` au plus. */
+function connectSettled(ms) {
+  const settled = (s) => s.availability !== 'idle' && s.availability !== 'detecting'
+  if (settled(connect.state())) return Promise.resolve(connect.state())
+  return new Promise((resolve) => {
+    let timer = 0
+    const off = connect.onChange((s) => { if (settled(s)) done() })
+    function done() {
+      off()
+      clearTimeout(timer)
+      resolve(connect.state())
+    }
+    timer = setTimeout(done, ms)
+  })
+}
+
+/** Direct par le compte : seulement si sa liste dépasse 1080p dans des codecs
+ *  que ce navigateur lit, et que son flux répond (pub cousue au bord : la
+ *  source habituelle d'abord, hq.js). null : la source habituelle. */
+async function startHq(token, ask) {
+  const got = await ask.result
+  if (!got || state.watch !== token) return null
+  const hq = buildHq(got.variants, got.codecs)
+  if (!hq) {
+    console.info('[TwitchUnblock] Rien au-dessus de 1080p par le compte : source habituelle.')
+    return null
+  }
+  const live = new HqLive({
+    hq,
+    adFree: { links: token.links, variants: token.variants, source: token.source },
+    player,
+    playlist: (id) => connect.request('hq.playlist', { id }).then((d) => d.playlist),
+    notify: (text) => toast(text, 'info'),
+    t,
+    qualityText,
+    // Liens de la source habituelle trop anciens, au moment d'une pause pub.
+    refreshAdFree: () => api.getLive(token.login).then((l) => {
+      if (!l?.links || !Object.keys(l.links).length || state.watch !== token) return null
+      token.links = l.links
+      token.variants = l.variants ?? {}
+      token.source = l.source
+      return { links: l.links, variants: token.variants, source: l.source }
+    }),
+    // Flux du compte abandonné (pubs répétées, injoignable, en échec) : la
+    // source habituelle pour le reste de cette lecture.
+    onSettle: () => { if (token.hq === live) token.hq = null },
+  })
+  if (!(await live.prepare({ timeoutMs: ask.deadline - Date.now() }))) {
+    live.destroy()
+    console.info('[TwitchUnblock] Flux du compte injoignable : source habituelle.')
+    return null
+  }
+  console.info(`[TwitchUnblock] Qualités supérieures par le compte : ${hq.top}p.`)
+  return live
+}
+
 async function openLive(rawLogin) {
   const login = api.cleanLogin(rawLogin)
   if (!login) return
@@ -3966,6 +4086,9 @@ async function openLive(rawLogin) {
   showWatch('live', login)
   go(`/${login}`, { watch: true })
 
+  // Qualités supérieures (réglage) : la liste du compte, par l'extension, en
+  // même temps que la source habituelle.
+  const hqAsk = askHq(login)
   const [links, info] = await Promise.all([
     // « missing » : aucune source n'a de direct (404) ou nom refusé (400) ;
     // « failed » : une autre erreur du Worker (5xx).
@@ -3997,10 +4120,18 @@ async function openLive(rawLogin) {
   // Hauteur, cadence et débit de chaque qualité (Worker à jour seulement) :
   // gardés pour un changement de Worker ou de source en cours de lecture.
   token.variants = links.variants ?? {}
+  token.source = links.source
   token.info = info
+  // Le compte si sa liste dépasse 1080p et répond à temps ; sinon la source
+  // habituelle, comme sans le réglage. `token.links` reste la source
+  // habituelle : « Ouvrir dans… », le multi-live et les secours s'en servent.
+  const hq = hqAsk ? await startHq(token, hqAsk) : null
+  if (state.watch !== token) { hq?.destroy(); return }
+  token.hq = hq
   $('#watch-loading').hidden = true
-  player.load({ links: links.links, variants: token.variants, kind: 'live' })
-  player.setLiveSource(links.source)
+  const play = hq ? hq.current() : { links: links.links, variants: token.variants }
+  player.load({ links: play.links, variants: play.variants, kind: 'live' })
+  player.setLiveSource(hq ? hq.sourceId() : links.source)
   chat.openLive({ channel: login, channelId: info?.id ?? null })
   renderLiveInfo(info, links)
   if (info?.id) startHermes(token, login, info.id)
@@ -4103,6 +4234,9 @@ function liveEnded(token) {
   const btn = $('[data-ended-raid]', box)
   if (btn) btn.onclick = () => openLive(raid.login)
   $('#watch').classList.add('ended')
+  // Plus de bascule ni de retour prévu vers le flux du compte.
+  token.hq?.destroy()
+  token.hq = null
   // Lecteur arrêté, pas seulement en pause : hls.js relisait sans fin la
   // playlist du direct fini (404), sur le quota du Worker.
   player.stop()
@@ -4376,6 +4510,8 @@ function onPlaybackTime(cur, duration) {
 }
 
 function stopPlayback() {
+  // Qualités supérieures : plus de bascule ni de retour prévu.
+  state.watch?.hq?.destroy()
   hermes?.stop()
   hermes = null
   $('#watch')?.classList.remove('ended')
@@ -4855,10 +4991,18 @@ function closeSheet() {
   setTimeout(() => { sheet.hidden = true; $('#sheet-backdrop').hidden = true }, 200)
 }
 
+/** Qualité de la source habituelle à donner aux applis : celle du lecteur,
+ *  sinon — flux du compte en qualités supérieures, « 1440p60 (Source) »
+ *  n'y est pas — la plus proche selon la préférence. */
+function streamKey(links) {
+  if (Object.hasOwn(links, player.quality)) return player.quality
+  return pickQuality(Object.keys(links), store.prefs.qualityPref, state.watch?.variants) ?? Object.keys(links)[0]
+}
+
 function currentStreamUrl() {
   const links = state.watch?.links
   if (!links) return ''
-  const link = links[player.quality] ?? Object.values(links)[0] ?? ''
+  const link = links[streamKey(links)] ?? Object.values(links)[0] ?? ''
   // Proxy coupé : l'appli externe reçoit l'adresse directe de Twitch.
   return api.EXTERNAL_LINKS_VIA_PROXY ? link : api.directUrl(link)
 }
@@ -4866,6 +5010,7 @@ function currentStreamUrl() {
 function openInSheet() {
   const url = currentStreamUrl()
   if (!url) return
+  const key = streamKey(state.watch.links)
   const name = (state.watch?.login || state.watch?.id || 'Twitch').replace(/[^a-zA-Z0-9]/g, '_')
   // Les trois applis reçoivent l'adresse du flux telle quelle, celle que le
   // Worker et le relais servent (/api/proxy?url=…) : celle d'Infuse devenait
@@ -4878,7 +5023,7 @@ function openInSheet() {
     <a class="sheet-row" href="infuse://x-callback-url/play?url=${esc(encodeURIComponent(url))}"><span class="app-dot infuse"></span><span>Infuse</span>${icon('chevronRight', 16)}</a>` : ''
   openSheet(`
     <div class="sheet-head"><h2>${esc(t('open_in'))}</h2><button class="icon-btn" type="button" data-sheet-close>${icon('x', 20)}</button></div>
-    <p class="muted sheet-sub">${esc(t('quality'))} : ${esc(player.quality ? qualityText(player.quality) : '')}</p>
+    <p class="muted sheet-sub">${esc(t('quality'))} : ${esc(key ? qualityText(key) : '')}</p>
     <div class="sheet-group">
       ${apps}
       <button class="sheet-row" type="button" data-sheet="copy">${icon('copy', 18)}<span>${esc(t('copy_link'))}</span></button>
@@ -5024,6 +5169,33 @@ function connectSectionInner() {
     </div>`
 }
 
+/** Réglages → Lecteur : « Qualités supérieures (1440p et plus) », proposé
+ *  seulement avec l'extension 0.2.0 ou plus, branchée et avec une session
+ *  (hq.js) ; sinon une phrase et le lien vers l'extension. Les codecs lus
+ *  par ce navigateur s'affichent une fois connus. */
+let hqCodecsText = ''
+function hqSettingInner() {
+  if (!hqAvailable(connect.state())) {
+    return `<p class="muted small hq-need">${esc(t('hq_needs_ext'))}
+      <a href="${CONNECT_INSTALL_URL}" target="_blank" rel="noopener">${esc(t('hq_get_ext'))}</a></p>`
+  }
+  if (!hqCodecsText) {
+    browserCodecs().then((list) => {
+      hqCodecsText = codecLabel(list)
+      refreshHqSetting()
+    })
+  }
+  return `<label class="setting">
+      <span class="setting-text"><span>${esc(t('hq_setting'))}</span><small>${esc(t('hq_setting_sub', { c: hqCodecsText || '…' }))}</small></span>
+      <input type="checkbox" class="switch" id="set-hq" ${store.prefs.higherQualities ? 'checked' : ''}>
+    </label>`
+}
+
+function refreshHqSetting() {
+  const el = $('#set-hq-box')
+  if (el) el.innerHTML = hqSettingInner()
+}
+
 /** État de l'extension changé : la section des réglages suit, si ouverte. */
 function refreshConnectUi() {
   const el = $('#set-connect')
@@ -5090,6 +5262,7 @@ function openSettings() {
         <span class="setting-text"><span>${esc(t('pref_quality'))}</span><small>${esc(t('pref_quality_sub'))}</small></span>
         <select class="text-input" id="set-quality">${qualityPrefOptions(p.qualityPref)}</select>
       </label>
+      <div id="set-hq-box">${hqSettingInner()}</div>
       ${toggle('set-clickpause', t('click_pause'), p.clickPause !== false, t('click_pause_sub'))}
       <div class="setting setting-col">
         <span class="setting-text"><span>${esc(t('live_source_order'))}</span><small>${esc(t('live_source_order_sub'))}</small></span>
@@ -5264,6 +5437,8 @@ function openSettings() {
     if (id === 'set-clickpause') p.clickPause = e.target.checked
     // Vaut pour le prochain direct ou la prochaine VOD.
     if (id === 'set-quality') p.qualityPref = validQualityPref(e.target.value) ? e.target.value : 'auto'
+    // Qualités supérieures : pour le prochain direct lancé.
+    if (id === 'set-hq') p.higherQualities = e.target.checked
     if (id === 'set-worker-all') {
       p.customWorkerAll = e.target.checked
       store.savePrefs()
@@ -5359,6 +5534,7 @@ const BACKUP_SETTINGS = {
   clickPause: okBool,
   theatre: okBool,
   qualityPref: (v) => (validQualityPref(v) ? v : undefined),
+  higherQualities: okBool,
   vodSpeed: (v) => (typeof v === 'number' ? validSpeed(v) : undefined),
   liveSourceOrder: (v) => (Array.isArray(v) ? [...new Set(v.filter((id) => api.LIVE_SOURCES.includes(id)))] : undefined),
   liveSource: (v) => (v === null || api.LIVE_SOURCES.includes(v) ? v : undefined),
