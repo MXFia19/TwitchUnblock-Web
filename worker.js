@@ -3628,12 +3628,33 @@ async function noteReportsRead(env, ctx, detail, what = 'reports.read') {
 // relues au moins toutes les 15 min. Seule cette route la rend, derrière la
 // clé des retours (l'action `get` du bot aussi, mais derrière
 // FEEDBACK_BOT_SECRET). Chaque champ est choisi et vérifié un à un : liens
-// Discord de la forme d'un message seulement. Une lecture D1 ; notée au
-// journal (« todo.read » : nombre d'éléments).
+// Discord de la forme d'un message seulement, et pour les pièces jointes,
+// liens du CDN de Discord (les fichiers n'y passent jamais). Une lecture D1 ;
+// notée au journal (« todo.read » : nombre d'éléments).
 const TODO_MIRROR_KEY = `${BOT_STORE_PREFIX}todo_mirror`;
 const TODO_VIEW_ITEMS = 400;     // le bot en garde 350 au plus (300 ouverts, 50 faits)
 const TODO_VIEW_TEXT = 1500;     // le bot coupe à 1 500 caractères
 const DISCORD_MESSAGE_URL_RE = /^https:\/\/(?:ptb\.|canary\.)?discord(?:app)?\.com\/channels\/\d{5,25}\/\d{5,25}\/\d{5,25}$/;
+// Pièces jointes du message d'origine (todoAttachments du bot) : liens signés
+// du CDN de Discord seulement, pour tools/reports.mjs --files.
+const DISCORD_CDN_URL_RE = /^https:\/\/(?:cdn\.discordapp\.com|media\.discordapp\.net)\/attachments\/\d{5,25}\/\d{5,25}\/[^\s?#/]{1,255}(?:\?[^\s#]{0,800})?$/;
+
+/** Pièces jointes d'un élément, champ par champ : dix au plus, liens du CDN
+ *  de Discord seulement (les autres sont écartés). */
+function todoAttachmentsView(v) {
+    if (!Array.isArray(v)) return [];
+    const int = (n, max) => (Number.isInteger(n) && n >= 0 && n <= max ? n : null);
+    return v.slice(0, 10).map((a) => {
+        const url = typeof a?.url === 'string' && a.url.length <= 1200 && DISCORD_CDN_URL_RE.test(a.url) ? a.url : null;
+        if (!url) return null;
+        const type = typeof a.type === 'string' && /^[\w.+-]{1,60}\/[\w.+-]{1,60}$/.test(a.type) ? a.type.toLowerCase() : null;
+        const w = int(a.w, 100_000), h = int(a.h, 100_000);
+        return {
+            name: (typeof a.name === 'string' ? cleanText(a.name, 120) : '') || 'file',
+            size: int(a.size, 2 ** 40) ?? 0, type, url, ...(w && h ? { w, h } : {}),
+        };
+    }).filter(Boolean);
+}
 
 /** Un élément de la copie, champ par champ (null s'il est illisible). */
 function todoItemView(x) {
@@ -3647,6 +3668,7 @@ function todoItemView(x) {
         at: isoDate(Date.parse(str(x.at, 40))), author: str(x.author, 100) || null, addedBy: str(x.addedBy, 100) || null,
         text: str(x.text, TODO_VIEW_TEXT), origin: link(x.origin),
         files: Number.isInteger(files) && files > 0 ? Math.min(files, 100) : 0,
+        attachments: todoAttachmentsView(x.attachments),
     };
 }
 

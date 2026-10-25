@@ -215,7 +215,7 @@ ntfy.sh's free tier counts messages per IP address (250 a day). Every Cloudflare
 - The Discord bot's actions on the Worker all carry the shared secret (`FEEDBACK_BOT_SECRET`); `/live` and `/top` go through at most 120 Twitch lookups a minute, `/my-reports` and `/suggestions` 30 a minute per member — and as each of those two reads every report in D1, the bot keeps their answers 60 seconds (`/suggestions top` the same for everyone, `/my-reports` per member; read again once that member sends something or votes). `/api/open/live` (the **Open in the app** button) only takes a valid Twitch name and only redirects to `twitchunblock://live/<name>`.
 - The developer tools only accept Twitch tokens issued to the official website and apps (or to `TWITCH_CLIENT_ID`): a token of the owner's account issued to another Twitch app doesn't open them.
 - **Admin log**: every admin action — from `/stats`, the apps or Discord: deleting, closing or merging a report, replies and statuses, announcements, polls, erasing someone's data… — and every read of the reports (or of the bot's to-do list) with the read key is kept 90 days (who, what, when, from where) and listed at the bottom of the developer tools on `/stats`.
-- **Reports on the developer's computer** (`GET /api/admin/reports`, `tools/reports.mjs`): read-only, opened only by the `REPORTS_KEY` secret (constant-time check, 10 wrong keys an hour per address), never returns contacts, install IDs, addresses or tokens, and screenshots only one at a time, as a download checked to be a JPEG, PNG or WebP image; the same route and key (and nothing else but the bot's own secret) read the Discord bot's copy of its to-do list — see [Reading reports from your computer](#reading-reports-from-your-computer-read-only).
+- **Reports on the developer's computer** (`GET /api/admin/reports`, `tools/reports.mjs`): read-only, opened only by the `REPORTS_KEY` secret (constant-time check, 10 wrong keys an hour per address), never returns contacts, install IDs, addresses or tokens, and screenshots only one at a time, as a download checked to be a JPEG, PNG or WebP image; the same route and key (and nothing else but the bot's own secret) read the Discord bot's copy of its to-do list, with the Discord links of its cards' attachments (the files themselves never go through the Worker) — see [Reading reports from your computer](#reading-reports-from-your-computer-read-only).
 - **Erasing someone's data** (`/stats` → developer tools, or `/forget-user` on Discord): shows what will go first — with the Twitch account found, ID and current username —, then erases exactly that; the admin log only notes what kind of data went and how much, nothing that identifies the person — see [Discord bot](#discord-bot-feedback-alerts-releases), *Operations*.
 
 ---
@@ -762,8 +762,9 @@ API, GitHub and the website over `fetch`.
 
 `tools/reports.mjs` lists the bug reports and suggestions on the owner's
 computer — and, with `--todo`, the Discord bot's to-do list; with `--photos`,
-it downloads a report's screenshots —, so the coding assistant reads (and
-sees) them directly instead of having them copied by hand. It calls
+it downloads a report's screenshots, and with `--files`, the attachments of a
+to-do card's original message —, so the coding assistant reads (and sees)
+them directly instead of having them copied by hand. It calls
 `GET /api/admin/reports` on the Worker with a dedicated key, `REPORTS_KEY`,
 which can only read them.
 
@@ -795,6 +796,7 @@ node tools/reports.mjs --json          # the Worker's answer as it is (JSON)
 node tools/reports.mjs --todo          # the Discord bot's to-do list: open items, newest first
 node tools/reports.mjs --todo --all    # … then the 50 latest done ones (--json: the answer as it is)
 node tools/reports.mjs --photos fb_…   # the screenshots of a report and of its replies, saved to report-photos/fb_…/ in this repository
+node tools/reports.mjs --files <id>    # the attachments of a to-do card's original message (id shown by --todo; "all": every open card), saved to report-photos/todo-<id>/
 ```
 
 Also `--limit=N` (200 at most) and `--url=<Worker>` (or `TU_WORKER_URL`;
@@ -825,12 +827,27 @@ change, no read. `--todo` reads it through the same route and key
 date (for a suggestion, the quoted message's),
 author, who added it, text, number of attachments, the card's Discord link and
 the original message's. All open items (300 at most) and the 50 latest done
-ones, texts cut at 1,500 characters; but a value of the bot's memory holds
-20,000 characters, so a long list first gets shorter texts (down to 80
-characters), then leaves its oldest items out, done ones first — counted in
-`omitted`, and the tool says so (`partial`: more than 500 messages in the
-channel). The date at the top is the copy's last change. A card deleted in
-Discord leaves the copy at the next read.
+ones, texts cut at 1,500 characters; but the copy holds 400,000 characters at
+most (20,000 for the rest of the bot's memory), so a long list first gets
+shorter texts (down to 80 characters), then leaves its oldest items out, done
+ones first — counted in `omitted`, and the tool says so (`partial`: more than
+500 messages in the channel). The date at the top is the copy's last change. A
+card deleted in Discord leaves the copy at the next read.
+
+**To-do attachments** (`--files <id>`, or `--files all`): the files stay on
+Discord. For the 40 latest open cards that have some, the bot reads the
+original message and copies each attachment's name, size, type, picture size
+and link (`cdn.discordapp.com` or `media.discordapp.net`). Discord signs those
+links for about 24 hours, so the bot reads the message again when less than 6
+hours are left (15 messages at most per read of the channel; a message it
+can't read — deleted, or in a channel the bot can't see — is retried every 30
+minutes and noted once in its log). The Worker only passes links of that form,
+ten per card at most. `--todo` shows each card's id and its attachments; the
+tool then downloads them straight from Discord, without the key, to
+`report-photos/todo-<id>/` (`--out=<folder>` for another one), named `file1.png`,
+`file2.mov`… (extension from a closed list, `.bin` otherwise: nothing the user
+wrote becomes a file name), 25 MB per file and 200 MB per run at most. An
+expired link is refused before any request.
 
 The route itself, `GET /api/admin/reports` with `Authorization: Bearer <key>`:
 

@@ -55,7 +55,9 @@
 //  sur le serveur) et /todo (texte libre) postent une carte dans le salon
 //  choisi par /setup, avec un bouton Done / Reopen. Une copie des cartes
 //  (todo_mirror), relue au moins toutes les 15 min, reste dans le Worker :
-//  tools/reports.mjs --todo la lit depuis le PC du développeur.
+//  tools/reports.mjs --todo la lit depuis le PC du développeur, et --files
+//  télécharge les pièces jointes des messages d'origine (liens copiés et
+//  renouvelés avant leur expiration, jamais les fichiers eux-mêmes).
 //  Exploitation (salon privé) : plafonds du jour à 80 %, base à 70 % de sa
 //  taille, tâche planifiée muette depuis 5 min, quotas gratuits de
 //  Cloudflare à 70 % (avec CLOUDFLARE_API_TOKEN), VPS ou Worker en retard
@@ -890,6 +892,41 @@ const TODO_TYPES = new Map([['To-do', 'todo'], ['Suggestion', 'suggestion']])
 // Fin d'une carte « Add to to-do » (addTodo) : le lien du message d'origine
 // et, s'il en avait, son nombre de pièces jointes.
 const TODO_ORIGIN = /\n*\[Original message\]\((https:\/\/[^\s()]+)\)(?: · 📎 (\d+) attachments?)?\s*$/
+// Pièces jointes de ces messages d'origine, pour tools/reports.mjs --files :
+// la copie garde leurs liens (CDN de Discord), pas les fichiers. Signés par
+// Discord, ils expirent au bout d'environ 24 h : le message d'origine est
+// relu quand il leur reste moins de TODO_FILES_RENEW. Seulement pour les
+// TODO_FILES_ITEMS cartes ouvertes les plus récentes, et TODO_FILES_FETCH
+// messages relus par relecture du salon (les autres à la suivante).
+const TODO_FILES_RENEW = 6 * 3600_000
+const TODO_FILES_ITEMS = 40
+const TODO_FILES_FETCH = 15
+const TODO_FILES_RETRY = 30 * 60_000   // message illisible (supprimé, salon fermé au bot)
+const DISCORD_CDN_RE = /^https:\/\/(?:cdn\.discordapp\.com|media\.discordapp\.net)\/attachments\/\d{5,25}\/\d{5,25}\/[^\s?#/]{1,255}(?:\?[^\s#]{0,800})?$/
+
+/** Pièces jointes d'un message de Discord, telles que copiées : { list:
+ *  [{ name, size, type?, url, w?, h? }], expires } — liens du CDN de Discord
+ *  seulement, dix au plus ; `expires` : la plus proche échéance de leurs
+ *  signatures (paramètre `ex`, en secondes et en hexadécimal), à défaut dans
+ *  20 h ; sans pièce jointe, dans 24 h (rien à renouveler). */
+export function todoAttachments(m, now = Date.now()) {
+  const list = []
+  let expires = Infinity
+  for (const a of (Array.isArray(m?.attachments) ? m.attachments : []).slice(0, 10)) {
+    const url = String(a?.url || '')
+    if (url.length > 1200 || !DISCORD_CDN_RE.test(url)) continue
+    const ex = parseInt(new URL(url).searchParams.get('ex') || '', 16)
+    expires = Math.min(expires, Number.isFinite(ex) && ex > 0 ? ex * 1000 : now + 20 * 3600_000)
+    list.push({
+      name: String(a.filename || 'file').slice(0, 120),
+      size: Number.isInteger(a.size) && a.size >= 0 ? a.size : 0,
+      ...(typeof a.content_type === 'string' && a.content_type ? { type: a.content_type.slice(0, 100) } : {}),
+      url,
+      ...(Number.isInteger(a.width) && Number.isInteger(a.height) ? { w: a.width, h: a.height } : {}),
+    })
+  }
+  return { list, expires: list.length ? expires : now + 24 * 3600_000 }
+}
 
 /** `s` coupé à `max` caractères (« … » compris), sans séparer les deux
  *  moitiés d'un emoji. */
@@ -3040,6 +3077,42 @@ export function startDiscordBridge({
   // empreinte reste ici (après un redémarrage, une écriture). Une relecture
   // à la fois ; une erreur attend la suivante sans rien gêner d'autre.
   const todoSync = { print: null, timer: null, running: null, again: false, failed: '' }
+  // Pièces jointes des cartes ouvertes, par message d'origine : { list,
+  // expires, retryAt? } (todoAttachments). Oubliées avec leur carte.
+  const todoFiles = new Map()
+  let todoFilesFailed = ''
+
+  /** Ajoute leurs pièces jointes (`attachments`) aux cartes ouvertes qui en
+   *  annoncent, liens encore valides seulement (voir TODO_FILES_*). Ne lève
+   *  jamais d'erreur : un message illisible est retenté plus tard, et une
+   *  même erreur n'est notée qu'une fois au journal. */
+  async function attachTodoFiles(open) {
+    const keep = new Set()
+    let fetched = 0
+    for (const x of open.filter((y) => y.files && y.origin).slice(0, TODO_FILES_ITEMS)) {
+      const [, channel, message] = /\/(\d{5,25})\/(\d{5,25})$/.exec(x.origin) || []
+      if (!message) continue
+      keep.add(message)
+      const now = Date.now()
+      let c = todoFiles.get(message)
+      if ((!c || c.expires - now < TODO_FILES_RENEW) && (c?.retryAt || 0) <= now && fetched < TODO_FILES_FETCH) {
+        fetched++
+        try {
+          c = todoAttachments(await rest('GET', `/channels/${channel}/messages/${message}`), now)
+          todoFilesFailed = ''
+        } catch (e) {
+          // La cause seule (« 403 (50001) ») : le chemin change d'un message à l'autre.
+          const why = String(e.message).replace(/^GET \S+ → /, '')
+          if (why !== todoFilesFailed) log.warn(`Discord bridge: to-do attachments not read (${why})`)
+          todoFilesFailed = why
+          c = { list: c?.list || [], expires: c?.expires || 0, retryAt: now + TODO_FILES_RETRY }
+        }
+        todoFiles.set(message, c)
+      }
+      if (c?.list.length && c.expires > now) x.attachments = c.list
+    }
+    for (const id of todoFiles.keys()) if (!keep.has(id)) todoFiles.delete(id)
+  }
 
   async function writeTodoMirror() {
     const channel = st.settings.todo
@@ -3059,6 +3132,7 @@ export function startDiscordBridge({
       if (!full) break
       before = list.at(-1).id
     }
+    await attachTodoFiles(open)
     const mirror = fitTodoMirror({ at: new Date().toISOString(), channel, open, done, partial: full })
     const { at, ...content } = mirror
     const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(content)))
