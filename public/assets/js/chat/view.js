@@ -13,7 +13,7 @@ import { copyBotCommand, showBotCommands } from './botcmds.js'
 import { VodChat } from './vod.js'
 import { ConnectLive } from './connect-live.js'
 import { badgeInfo, parseBadgeTag } from './badges.js'
-import { emoteCatalog, findEmote, suggestEmotes } from './emotes.js'
+import { emoteCatalog, findEmote, ownEmoteGroups, suggestEmotes } from './emotes.js'
 import { plainText, resolveWords, systemMessage } from './message.js'
 import { clipSlugFrom, gql } from '../api.js'
 import { lang, t } from '../i18n.js'
@@ -372,6 +372,7 @@ export class ChatView {
         <div class="emote-picker" hidden>
           <div class="emote-picker-head">
             <input class="emote-search" type="search" autocomplete="off" data-i18n-ph="emote_search_ph">
+            <div class="segmented sm full emote-tabs" role="tablist" hidden></div>
           </div>
           <div class="emote-grid"></div>
         </div>
@@ -401,6 +402,7 @@ export class ChatView {
       picker: $('.emote-picker', this.root),
       grid: $('.emote-grid', this.root),
       emoteSearch: $('.emote-search', this.root),
+      emoteTabs: $('.emote-tabs', this.root),
       suggest: $('.chat-suggest', this.root),
       replying: $('.chat-replying', this.root),
       login: $('.chat-login', this.root),
@@ -516,6 +518,14 @@ export class ChatView {
     this.el.send.addEventListener('click', () => this.submit())
     this.el.emoteBtn.addEventListener('click', () => this.togglePicker())
     this.el.emoteSearch.addEventListener('input', debounce(() => this.renderPicker(), 120))
+    // Onglets du sélecteur : « Mes emotes », la chaîne, les globales.
+    this.el.emoteTabs.addEventListener('click', (e) => {
+      const b = e.target.closest('[data-tab]')
+      if (!b) return
+      this.pickerTab = b.dataset.tab
+      this.renderPicker()
+      this.el.grid.scrollTop = 0
+    })
     // Clic droit ou appui long : la fiche de l'emote ; le clic simple insère
     // toujours. Safari sur iPhone et iPad n'émet pas `contextmenu` à l'appui
     // long (il montre son menu d'image) : l'appui est minuté ici, et le
@@ -1504,6 +1514,11 @@ export class ChatView {
         if (pin && !this.el.pinned.hidden && resolveWords(pin.tokens).some((tk, i) => tk !== pin.tokens[i])) this.renderPinned(pin, true)
         break
       }
+      case 'ownemotes':
+        // Jeux d'emotes du compte lus après l'ouverture du sélecteur : « Mes
+        // emotes » y arrive, l'onglet ouvert reste le même.
+        if (!this.el.picker.hidden) this.renderPicker()
+        break
     }
   }
 
@@ -2026,11 +2041,13 @@ export class ChatView {
     if (this.el.picker.hidden) {
       this.el.picker.hidden = false
       this.el.emoteSearch.value = ''
+      // À chaque ouverture, l'onglet de la chaîne (sinon le premier).
+      this.pickerTab = null
       this.renderPicker()
     } else this.hidePicker()
   }
 
-  /** Fermé, le sélecteur se vide : ses 800 cases au plus (emotes animées
+  /** Fermé, le sélecteur se vide : les cases de son onglet (emotes animées
    *  comprises) restaient dans la page, masquées, toute la séance. Il est
    *  refait à chaque ouverture (renderPicker). */
   hidePicker() {
@@ -2038,17 +2055,56 @@ export class ChatView {
     this.el.grid.replaceChildren()
   }
 
+  /** Onglets « Mes emotes » (jeux du compte, une section par chaîne),
+   *  « Cette chaîne » et « Globales » : seul l'onglet ouvert est dessiné. La
+   *  recherche, elle, couvre les trois, sans onglets. */
   renderPicker() {
     const kw = this.el.emoteSearch.value.trim().toLowerCase()
     const { channel, global } = emoteCatalog()
     // Sans les emotes masquées (Réglages → Chat).
     const hidden = hiddenEmoteSet(this.o.prefs.hiddenEmotes)
-    const filter = (list) => list.filter((e) => !hidden.has(e.name) && (!kw || e.name.toLowerCase().includes(kw)))
-    const section = (title, list) => list.length ? `
-      <div class="emote-section">${esc(title)}</div>
-      <div class="emote-cells">${list.slice(0, 400).map((e) =>
-        `<button type="button" data-emote="${esc(e.name)}" data-emote-src="${esc(e.source ?? '')}" data-emote-id="${esc(e.id ?? '')}" title="${esc(e.name)}"><img src="${esc(e.url)}" alt="${esc(e.name)}" loading="lazy" decoding="async"></button>`).join('')}</div>` : ''
-    this.el.grid.innerHTML = section(t('emotes_channel'), filter(channel)) + section(t('emotes_global'), filter(global))
+    const keep = (e) => !hidden.has(e.name) && (!kw || e.name.toLowerCase().includes(kw))
+    // « Mes emotes » : jeux du compte connecté au chat (tag `emote-sets`).
+    // Rien sans compte, ni avant leur lecture.
+    const mine = ownEmoteGroups(this.client?.me?.emoteSets, this.client?.o?.channelId, this.channel)
+      .map((g) => ({ ...g, emotes: g.emotes.filter(keep) }))
+      .filter((g) => g.emotes.length)
+    const chan = channel.filter(keep)
+    const glob = global.filter(keep)
+    const cells = (list) => `<div class="emote-cells">${list.slice(0, 400).map((e) =>
+      `<button type="button" data-emote="${esc(e.name)}" data-emote-src="${esc(e.source ?? '')}" data-emote-id="${esc(e.id ?? '')}" title="${esc(e.name)}"><img src="${esc(e.url)}" alt="${esc(e.name)}" loading="lazy" decoding="async"></button>`).join('')}</div>`
+    const section = (title, list, avatar) => list.length ? `
+      <div class="emote-section">${avatar ? `<img src="${esc(avatar)}" alt="" loading="lazy" decoding="async">` : ''}${esc(title)}</div>
+      ${cells(list)}` : ''
+    if (kw) {
+      // Recherche : partout, sans onglets ; une emote déjà montrée plus haut
+      // (même nom) ne revient pas.
+      const shown = new Set()
+      const once = (list) => list.filter((e) => {
+        if (shown.has(e.name)) return false
+        shown.add(e.name)
+        return true
+      })
+      this.el.emoteTabs.hidden = true
+      this.el.grid.innerHTML = section(t('emotes_mine'), once(mine.flatMap((g) => g.emotes)))
+        + section(t('emotes_channel'), once(chan)) + section(t('emotes_global'), once(glob))
+      return
+    }
+    // « Mes emotes » en tête. L'onglet de la chaîne s'ouvre d'abord, comme
+    // avant ; sans lui, le premier. Celui qu'on choisit reste ouvert quand
+    // « Mes emotes » arrive après coup.
+    const tabs = [['mine', 'emotes_mine', mine.length], ['channel', 'emotes_channel', chan.length], ['global', 'emotes_global', glob.length]]
+      .filter(([, , n]) => n > 0)
+    const tab = (tabs.find(([id]) => id === (this.pickerTab ?? 'channel')) ?? tabs[0])?.[0]
+    this.el.emoteTabs.hidden = tabs.length < 2
+    this.el.emoteTabs.innerHTML = tabs.map(([id, key]) =>
+      `<button type="button" role="tab" data-tab="${id}" aria-selected="${id === tab}" class="${id === tab ? 'active' : ''}">${esc(t(key))}</button>`).join('')
+    // Un onglet seul, sans barre : son titre, comme avant.
+    const alone = tabs.length < 2
+    if (tab === 'mine') this.el.grid.innerHTML = mine.map((g) => section(g.name, g.emotes, g.avatar)).join('')
+    else if (tab === 'channel') this.el.grid.innerHTML = alone ? section(t('emotes_channel'), chan) : cells(chan)
+    else if (tab === 'global') this.el.grid.innerHTML = alone ? section(t('emotes_global'), glob) : cells(glob)
+    else this.el.grid.replaceChildren()
   }
 
   // ── Fiche utilisateur ──────────────────────────────────────────────────

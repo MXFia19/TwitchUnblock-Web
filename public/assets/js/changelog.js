@@ -6,6 +6,26 @@
 
 export const CHANGELOG = [
   {
+    version: '2026.10.25a',
+    items: {
+      fr: [
+        'Sélecteur d’emotes : nouvel onglet « Mes emotes », en tête, quand tu es connecté au chat. Il réunit toutes les emotes Twitch que ton compte peut utiliser sur n’importe quelle chaîne — celles des chaînes où tu es abonné, Prime, Turbo et les globales —, rangées par chaîne avec son avatar : celle que tu regardes d’abord, les autres par ordre alphabétique, puis Twitch. Un clic en ajoute une à ton message, et la recherche du sélecteur les trouve aussi. Les onglets « Cette chaîne » et « Globales » remplacent les deux parties de la liste ; celui de la chaîne s’ouvre toujours en premier.',
+      ],
+      en: [
+        'Emote picker: a new “Mine” tab, first, when you’re logged in to the chat. It gathers every Twitch emote your account can use on any channel — those of the channels you’re subscribed to, Prime, Turbo and the global ones —, grouped by channel with its avatar: the one you’re watching first, the others alphabetically, then Twitch. A click adds one to your message, and the picker’s search finds them too. “This channel” and “Global” tabs replace the list’s two parts; the channel’s tab still opens first.',
+      ],
+      es: [
+        'Selector de emotes: nueva pestaña «Mis emotes», la primera, cuando has iniciado sesión en el chat. Reúne todos los emotes de Twitch que tu cuenta puede usar en cualquier canal — los de los canales a los que estás suscrito, Prime, Turbo y los globales —, agrupados por canal con su avatar: el que estás viendo primero, los demás por orden alfabético y luego Twitch. Un clic añade uno a tu mensaje, y la búsqueda del selector también los encuentra. Las pestañas «Este canal» y «Globales» sustituyen las dos partes de la lista; la del canal sigue abriéndose primero.',
+      ],
+      ru: [
+        'Окно выбора эмоутов: новая вкладка «Мои эмоуты» — первая, когда вы вошли в чат. В ней собраны все эмоуты Twitch, которые ваш аккаунт может использовать на любом канале, — эмоуты каналов, на которые вы подписаны, Prime, Turbo и глобальные, — по каналам, с аватаром: сначала канал, который вы смотрите, затем остальные по алфавиту, потом Twitch. Нажатие добавляет эмоут в сообщение, и поиск в окне выбора их тоже находит. Вкладки «Этот канал» и «Глобальные» заменяют две части списка; вкладка канала по-прежнему открывается первой.',
+      ],
+      'zh-Hant': [
+        '表情符號選擇器：登入聊天室後，最前面新增「我的表情符號」分頁。它收集你的帳號在任何頻道都能使用的所有 Twitch 表情符號——你訂閱的頻道的表情符號、Prime、Turbo 與全域表情符號——依頻道分組並附上頭像：先是你正在觀看的頻道，其他頻道依字母順序排列，最後是 Twitch。點一下即可加入訊息，選擇器的搜尋也找得到它們。「本頻道」與「全域」分頁取代原本清單的兩個部分；頻道分頁仍會最先開啟。',
+      ],
+    },
+  },
+  {
     version: '2026.10.23a',
     items: {
       fr: [
