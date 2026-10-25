@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "__MSG_extName__",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "__MSG_extDescription__",
   "default_locale": "en",
   "icons": {
@@ -43,6 +43,7 @@
     "https://static.twitchcdn.net/*",
     "https://usher.ttvnw.net/*",
     "https://*.hls.ttvnw.net/*",
+    "https://*.playlist.ttvnw.net/*",
     "https://twitchunblock.vercel.app/*",
     "https://test2-git-test-17d298-mxfia19s-projects.vercel.app/*"
   ]

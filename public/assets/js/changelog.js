@@ -6,6 +6,31 @@
 
 export const CHANGELOG = [
   {
+    version: '2026.10.25b',
+    items: {
+      fr: [
+        'Qualités supérieures (1440p et plus) avec l’extension TwitchUnblock Connect 0.2.0 : Réglages → Lecteur → « Qualités supérieures ». Sur les chaînes qui diffusent au-dessus de 1080p (Enhanced Broadcasting), le direct passe par ton compte Twitch et le menu des qualités propose « 1440p60 (Source) »… ; HEVC et AV1 seulement si ton navigateur les décode en matériel. Sans abonnement ni Turbo, pendant les pauses pub de Twitch, la lecture passe sur la source habituelle (1080p au plus) sans pub, puis revient. Ta session Twitch reste dans l’extension : le site ne reçoit que les playlists du direct, réécrites. Pas dans le multi-live.',
+        'Mets l’extension à jour (Réglages → TwitchUnblock Connect → Page de l’extension) : la 0.2.0 fait aussi de nouveau avancer les drops, Twitch ayant changé l’adresse de ses playlists.',
+      ],
+      en: [
+        'Higher qualities (1440p and above) with the TwitchUnblock Connect extension 0.2.0: Settings → Player → “Higher qualities”. On channels streaming above 1080p (Enhanced Broadcasting), the live goes through your Twitch account and the quality menu offers “1440p60 (Source)”…; HEVC and AV1 only when your browser decodes them in hardware. Without a sub or Turbo, during Twitch ad breaks, playback switches to the usual source (1080p at most) without ads, then comes back. Your Twitch session stays in the extension: the site only gets the live’s playlists, rewritten. Not in multi-live.',
+        'Update the extension (Settings → TwitchUnblock Connect → Extension page): 0.2.0 also gets drops moving again, as Twitch moved its playlists to a new address.',
+      ],
+      es: [
+        'Calidades superiores (1440p o más) con la extensión TwitchUnblock Connect 0.2.0: Ajustes → Reproductor → «Calidades superiores». En los canales que emiten por encima de 1080p (Enhanced Broadcasting), el directo pasa por tu cuenta de Twitch y el menú de calidades ofrece «1440p60 (Source)»…; HEVC y AV1 solo si tu navegador los decodifica por hardware. Sin suscripción ni Turbo, durante las pausas publicitarias de Twitch, la reproducción pasa a la fuente habitual (1080p como máximo) sin anuncios y luego vuelve. Tu sesión de Twitch se queda en la extensión: el sitio solo recibe las playlists del directo, reescritas. No en el multi-live.',
+        'Actualiza la extensión (Ajustes → TwitchUnblock Connect → Página de la extensión): la 0.2.0 también vuelve a hacer avanzar los drops, ya que Twitch cambió la dirección de sus playlists.',
+      ],
+      ru: [
+        'Повышенное качество (1440p и выше) с расширением TwitchUnblock Connect 0.2.0: Настройки → Плеер → «Повышенное качество». На каналах, вещающих выше 1080p (Enhanced Broadcasting), трансляция идёт через ваш аккаунт Twitch, а в меню качества появляются «1440p60 (Source)» и другие; HEVC и AV1 — только если браузер декодирует их аппаратно. Без подписки и Turbo во время рекламных пауз Twitch воспроизведение переходит на обычный источник (не выше 1080p) без рекламы, а затем возвращается. Ваша сессия Twitch остаётся в расширении: сайт получает только переписанные плейлисты трансляции. Не в мульти-просмотре.',
+        'Обновите расширение (Настройки → TwitchUnblock Connect → Страница расширения): версия 0.2.0 также снова продвигает дропы — Twitch сменил адрес своих плейлистов.',
+      ],
+      'zh-Hant': [
+        '更高畫質（1440p 以上），需搭配 TwitchUnblock Connect 擴充功能 0.2.0：設定 → 播放器 →「更高畫質」。在 1080p 以上播出的頻道（Enhanced Broadcasting），直播會走你的 Twitch 帳號，畫質選單會出現「1440p60 (Source)」等選項；HEVC 與 AV1 只在瀏覽器能以硬體解碼時提供。沒有訂閱或 Turbo 時，Twitch 廣告時間會切到平常的來源（最高 1080p）無廣告播放，結束後再切回。你的 Twitch 工作階段留在擴充功能裡：網站只會收到改寫過的直播播放清單。多直播不適用。',
+        '請更新擴充功能（設定 → TwitchUnblock Connect → 擴充功能頁面）：0.2.0 也讓掉寶進度重新推進——Twitch 更改了播放清單的位址。',
+      ],
+    },
+  },
+  {
     version: '2026.10.25a',
     items: {
       fr: [

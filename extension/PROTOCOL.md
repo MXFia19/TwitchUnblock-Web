@@ -4,6 +4,11 @@ Document de référence commun à l'extension (dossier `extension/` du dépôt w
 site (`public/assets/js`). Les deux côtés DOIVENT le suivre à la lettre. Une copie
 vit dans `extension/PROTOCOL.md`.
 
+Le protocole reste en version 1 : l'extension 0.2.0 y ajoute deux opérations
+(`hq.master`, `hq.playlist`, qualités supérieures). Le site ne les demande qu'à une
+extension qui annonce 0.2.0 ou plus (`version` de `hello`) ; la 0.1.0 répondrait
+`unknown_op`.
+
 ## Principe de sécurité
 
 - La session Twitch (cookie `auth-token`) et le jeton `Client-Integrity` ne quittent
@@ -11,6 +16,23 @@ vit dans `extension/PROTOCOL.md`.
   ni dans un journal, ni sur disque. `auth-token` est relu dans les cookies à chaque
   usage ; le jeton d'intégrité vit dans `storage.session` (mémoire seulement, non
   lisible par les content scripts).
+- Le jeton de lecture du compte (`streamPlaybackAccessToken` obtenu avec la session),
+  l'adresse usher qui le porte et les adresses des playlists du direct ne sortent pas
+  non plus de l'arrière-plan. Depuis la 0.2.0, une seule chose de plus va à la page :
+  pour les qualités supérieures (1440p et plus), **le contenu des playlists du direct
+  du compte, réécrit** (`hq.playlist`), c'est-à-dire les adresses des segments vidéo
+  (et du fichier d'initialisation) sur le CDN de Twitch, avec les balises de lecture
+  (durées, numéros, dates, pauses pub). Pourquoi : Twitch ne sert le 1440p qu'au jeton
+  de lecture d'un compte, et la page ne peut lire elle-même ni usher (pas d'en-tête
+  CORS pour son origine) ni les playlists (refusées, 403, dès qu'un en-tête Origin
+  étranger est présent) ; les segments, si (CDN ouvert à toute origine, sans cookie).
+  Une adresse de segment donne au plus quelques secondes de ce direct, sans rien sur
+  le compte ; l'identifiant opaque d'une variante ne sert qu'à demander sa playlist à
+  l'extension, tant que la même session est connectée (6 h au plus). Le reste des
+  playlists (attributs `X-TV-TWITCH-*` des pauses pub : suivi publicitaire et adresses
+  signées ; déclencheurs, séance, adresse IP de la liste maîtresse ; balises
+  inconnues) reste dans l'extension. Pas de `declarativeNetRequest` : la page ne
+  reçoit aucun droit de lire Twitch elle-même.
 - Le site ne peut demander qu'une LISTE FERMÉE d'opérations (ci-dessous). Aucune
   requête GQL libre, aucun relais générique.
 - Le content script n'est injecté que sur les origines autorisées, cadre principal
@@ -50,7 +72,7 @@ Détection côté site : écouter les annonces, et envoyer `hello` à 0 s, 0,5 s
 3 s tant qu'aucune réponse n'est arrivée. Délai d'attente par demande : 15 s (45 s pour
 une opération qui peut devoir obtenir un jeton d'intégrité : `points.claim`,
 `watch.beat`, `predictions.bet`, `polls.vote`, `raid.join`, `drops.claim`,
-`drops.pulse`, `rewards.redeem`).
+`drops.pulse`, `rewards.redeem`, `hq.master`).
 
 Après une installation ou une mise à jour de l'extension, le content script est
 réinjecté dans les onglets du site déjà ouverts ; l'ancien (orphelin sous Chrome) ne
@@ -121,6 +143,42 @@ répond plus.
    pause, en stock, pas en recharge, coût identique à celui relu, ≤ solde ; `input`
    obligatoire si `requiresInput` (1 à 200 caractères) et interdit sinon. Erreur de
    Twitch → `twitch` avec son code.
+16. `hq.master` `{ channel, codecs }` (0.2.0) →
+   `{ variants: [ { id, name, source: bool, width, height, fps, bandwidth, codecs } ] }`
+   Liste du direct AU NOM DU COMPTE avec les qualités supérieures (Enhanced
+   Broadcasting : 1440p et plus, parfois en HEVC ou AV1), comme l'app iOS
+   (`TwitchAPI.swift` : `HigherQualities`, `usherLiveLinks`) : jeton de lecture du
+   compte (avec le jeton d'intégrité si Twitch en demande un), puis usher avec
+   `supported_codecs`. `codecs` : 1 à 3 valeurs de la liste fermée `av1`, `h265`,
+   `h264`, sans doublon, `h264` compris (ce que le navigateur décode, choisi par le
+   site) ; envoyées à Twitch dans cet ordre-là. Une entrée par variante (20 au plus),
+   dans l'ordre de la liste : `id` (22 lettres et chiffres tirés au hasard),
+   `name` (« 1440p60 », « 1080p60 », « audio_only » : VIDEO, STABLE-VARIANT-ID ou
+   IVS-NAME, sinon taille et cadence), `source` (l'original), `width` et `height`
+   (0 pour l'audio seul), `fps` (0 si inconnue), `bandwidth` (bits/s), `codecs`
+   (attribut CODECS). Aucune adresse. Une variante dont la playlist n'est pas sur
+   `*.playlist.ttvnw.net` ou `*.hls.ttvnw.net`, ou sans CODECS, est écartée. Jeton
+   anonyme ou refusé → `twitch` `playback_token` (rien n'est demandé à usher) ;
+   lecture refusée au compte → `twitch` `forbidden` ; usher 404 → `offline`.
+17. `hq.playlist` `{ id }` (0.2.0) → `{ playlist }`
+   Playlist de la variante `id`, lue par l'extension (la page ne le peut pas) et
+   réécrite balise par balise ; rien d'autre ne passe :
+   `#EXTM3U`, `#EXT-X-VERSION`, `#EXT-X-TARGETDURATION`, `#EXT-X-MEDIA-SEQUENCE`,
+   `#EXT-X-DISCONTINUITY-SEQUENCE`, `#EXT-X-PLAYLIST-TYPE`,
+   `#EXT-X-INDEPENDENT-SEGMENTS`, `#EXT-X-DISCONTINUITY`, `#EXT-X-GAP`,
+   `#EXT-X-ENDLIST`, `#EXT-X-PROGRAM-DATE-TIME`, `#EXTINF` (durée, titre de 64
+   caractères sûrs au plus), `#EXT-X-BYTERANGE`, `#EXT-X-MAP` (URI, BYTERANGE),
+   `#EXT-X-TWITCH-PREFETCH`, `#EXT-X-DATERANGE` de classe `twitch-stitched-ad` (ID,
+   CLASS, START-DATE, END-DATE, DURATION, PLANNED-DURATION seulement), et les
+   adresses des segments. Toute adresse devient absolue et doit être en https, sur
+   `*.ttvnw.net`, `*.twitchcdn.net`, `*.jtvnw.net` ou `*.twitchsvc.net`, sans être
+   usher, `*.playlist.ttvnw.net`, un chemin `/playlist/`, `/trigger/` ou `/api/`, un
+   `.m3u8`, ni porter `sig`, `token`, `nauth` ou `nauthsig` : sinon un segment devient
+   un trou (`#EXT-X-GAP` et une adresse factice `https://gap.invalid/<n>.ts`, jamais
+   demandée), une annonce d'avance est retirée, et un fichier d'initialisation
+   illisible fait refuser toute la playlist (`twitch` `bad_response`). Identifiant
+   inconnu, de plus de 6 h, ou donné pour une autre session → `bad_args` `expired` ;
+   playlist 404 → `offline` ; autre statut → `twitch` `http_<statut>`.
 
 Champs inconnus de Twitch : `null`, jamais inventés.
 
@@ -137,7 +195,10 @@ d'intégrité impossible à obtenir), `twitch` (`message` = code d'erreur de Twi
 - forme de la demande, refusée par le content script ou l'arrière-plan : `id`, `args`
   (pas un objet, ou plus de 8 champs), ou le nom du champ inconnu ou mal formé
   (`channel`, `eventId`, `outcomeId`, `points`, `pollId`, `choiceId`, `withPoints`,
-  `raidId`, `dropInstanceId`, `rewardId`, `cost`, `title`, `prompt`, `input`) ;
+  `raidId`, `dropInstanceId`, `rewardId`, `cost`, `title`, `prompt`, `input`,
+  `codecs`, et `id` pour l'identifiant de variante de `hq.playlist`) ;
+- `hq.playlist` : `expired` (identifiant inconnu, de plus de 6 h, ou d'une autre
+  session : redemander `hq.master`) ;
 - `predictions.bet` : `eventId` (pas la prédiction en cours), `not_active` (pas
   ACTIVE), `outcomeId` (issue inconnue), `points` (plus que le solde), `other_outcome`
   (mise déjà faite sur une autre issue) ;
@@ -151,15 +212,23 @@ d'intégrité impossible à obtenir), `twitch` (`message` = code d'erreur de Twi
 
 `message` de `twitch` : le code de Twitch (`NOT_ENOUGH_POINTS`…, `UNKNOWN` s'il est
 illisible), sinon `channel_not_found`, `network`, `bad_response`, `http_<statut>`,
-`validate`, `validate_<statut>`, ou un message de Twitch nettoyé (80 caractères au plus).
+`validate`, `validate_<statut>`, `playback_token` et `forbidden` (`hq.master`), ou un
+message de Twitch nettoyé (80 caractères au plus).
 
 ## Limites de débit (arrière-plan)
 
 Lectures (`*.get`, `status`) : au plus une requête Twitch par 3 s et par chaîne (sinon
 réponse en cache) ; `points.claim` : 1 par 10 s ; `watch.beat` : 1 par 50 s et par
 chaîne ; `raid.join` : 1 par 30 s et par chaîne ; `drops.claim` : 1 par 5 s ;
-`drops.pulse` : 1 par 8 s et par chaîne ; dépenses : 1 par 3 s ; tout confondu :
-60 demandes par minute, au-delà `rate_limited`.
+`drops.pulse` : 1 par 8 s et par chaîne ; dépenses : 1 par 3 s ; `hq.master` : une
+liste demandée à Twitch par 10 s, par chaîne et par choix de codecs (sinon la même
+réponse, mêmes identifiants) ; tout confondu : 60 demandes par minute, au-delà
+`rate_limited`.
+
+`hq.playlist` a son propre budget, hors des 60 : le lecteur relit la playlist du direct
+toutes les 2 à 6 s pendant la lecture, et ne doit pas priver le site de ses autres
+opérations. Au plus une lecture chez Twitch par seconde et par variante (sinon la même
+playlist), et 240 demandes par minute, au-delà `rate_limited`.
 
 ## Réglages (fenêtre de l'extension, stockage local, sans secret)
 
@@ -170,5 +239,18 @@ chaîne ; `raid.join` : 1 par 30 s et par chaîne ; `drops.claim` : 1 par 5 s ;
 
 Dépenses soumises au vrai clic : `predictions.bet`, `polls.vote`, `rewards.redeem`.
 Délais d'attente côté site (voir Transport) : 45 s aussi pour `raid.join`,
-`drops.claim`, `drops.pulse` (qui peut obtenir un jeton d'intégrité pour le jeton de
-lecture du compte) et `rewards.redeem`.
+`drops.claim`, `drops.pulse` et `hq.master` (qui peuvent obtenir un jeton d'intégrité
+pour le jeton de lecture du compte) et `rewards.redeem`. Le site n'attend pourtant
+`hq.master` que quelques secondes au lancement d'un direct : au-delà, il lit la source
+habituelle, et le jeton d'intégrité obtenu entre-temps sert au direct suivant.
+
+## Qualités supérieures côté site (0.2.0)
+
+Réglage « Qualités supérieures (1440p et plus) » du site, coupé par défaut, proposé
+seulement avec une extension 0.2.0 ou plus, branchée et avec une session. La liste du
+compte est demandée en même temps que la source habituelle, avec H.264, et HEVC ou AV1
+seulement si le navigateur les décode en matériel (`navigator.mediaCapabilities`) ;
+elle n'est gardée que si elle dépasse 1080p. Le lecteur lit alors les playlists par `hq.playlist` et les
+segments directement. Pendant une pause pub de Twitch sur le flux du compte (compte
+sans abonnement ni Turbo), il passe sur la source habituelle sans pub, puis revient
+(comme l'app). Jamais pour le multi-live, le téléchargement ni « Ouvrir dans… ».

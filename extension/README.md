@@ -3,9 +3,12 @@
 > **English summary.** A small Manifest V3 browser extension (one code base for Chrome,
 > Edge, Brave and Firefox 128+) that lets the TwitchUnblock site use the Twitch session of
 > *this* browser — channel points, bonus chests, watch presence, drops, channel rewards,
-> predictions, polls and raids — without the session ever leaving the extension. The
-> site can only ask for a closed list of actions (see [PROTOCOL.md](PROTOCOL.md));
-> spending points needs a real click; nothing is sent anywhere but Twitch.
+> predictions, polls, raids, and since 0.2.0 lives in 1440p and above (Enhanced
+> Broadcasting, served by Twitch to logged-in accounts only) — without the session ever
+> leaving the extension. The site can only ask for a closed list of actions (see
+> [PROTOCOL.md](PROTOCOL.md)); spending points needs a real click; for 1440p the page only
+> gets the account's live playlists rewritten by the extension (segment addresses, no
+> token, no playlist address); nothing is sent anywhere but Twitch.
 > **Install**: download `twitchunblock-connect-chrome.zip` or
 > `twitchunblock-connect-firefox.zip` from the
 > [latest release](https://github.com/MXFia19/TwitchUnblock-Web/releases/latest) and follow
@@ -16,7 +19,13 @@ Extension de navigateur qui relie le site TwitchUnblock à la session Twitch de 
 navigateur. Le site peut alors afficher le solde de points, réclamer les coffres, faire
 compter le visionnage (points passifs), faire avancer et réclamer les drops, échanger
 des récompenses de chaîne, parier sur les prédictions, voter aux sondages et rejoindre
-les raids, comme sur twitch.tv. La session Twitch ne quitte jamais l'extension.
+les raids, comme sur twitch.tv, et, depuis la 0.2.0, lire les directs en 1440p et plus
+(voir « Qualités supérieures »). La session Twitch ne quitte jamais l'extension.
+
+Mettre à jour une installation existante (0.1.0 → 0.2.0) : nouveau zip à la place des
+anciens fichiers, puis ↻ sur la carte de l'extension (Chrome, Edge, Brave), ou nouveau
+module temporaire (Firefox, qui demande l'accès de plus `*.playlist.ttvnw.net` :
+« Autoriser l'accès » dans la fenêtre de l'extension). Détails : [INSTALL.md](INSTALL.md).
 
 Le contrat entre le site et l'extension est dans [PROTOCOL.md](PROTOCOL.md) (copie du
 document commun aux deux côtés).
@@ -96,17 +105,29 @@ une signature de Mozilla (AMO), que fera plus tard le propriétaire du projet
 - Drops : l'adresse signée de la playlist (jeton de lecture du compte) et les segments
   déjà vus restent dans `storage.session` ; la page ne reçoit que « actif ou non » et les
   noms des drops réclamés.
+- Qualités supérieures (0.2.0) : le jeton de lecture du compte, l'adresse usher et
+  celles des playlists des variantes restent dans l'arrière-plan (`storage.session`) ;
+  la page reçoit un identifiant tiré au hasard par variante, puis chaque playlist
+  réécrite sur liste blanche (balises de lecture, pauses pub sans leurs attributs
+  `X-TV-TWITCH-*`, adresses des segments du CDN de Twitch). C'est la seule chose de
+  plus qui va à la page : sans elle, pas de 1440p (voir PROTOCOL.md, « Principe de
+  sécurité »). Pas de `declarativeNetRequest` : la page n'obtient aucun droit de lire
+  Twitch elle-même.
 - Limites de débit dans l'arrière-plan (60 demandes par minute en tout, lectures mises en
-  cache 3 s, etc. : voir PROTOCOL.md).
+  cache 3 s ; `hq.playlist` sur un budget à part de 240 par minute, etc. : voir
+  PROTOCOL.md).
 - Rien n'est envoyé ailleurs que chez Twitch : aucun serveur à nous, aucune statistique.
 - Permissions : `cookies` (lire la session), `scripting` + `tabs` (obtenir le jeton
   d'intégrité dans une page twitch.tv), `storage` (réglages et état de session). Hôtes :
   `*.twitch.tv`, `static.twitchcdn.net` (fichier de réglages de twitch.tv où se trouve
   l'adresse des statistiques de visionnage), `usher.ttvnw.net` (liste des qualités d'un
-  direct), `*.hls.ttvnw.net` (playlist et segments, demandés en HEAD pour les drops) et
-  les deux adresses du site (content script, réinjecté dans les onglets déjà ouverts
-  après une installation ou une mise à jour : sous Chrome, l'ancien reste orphelin et
-  se tait). Un réglage changé dans la fenêtre est annoncé tout de suite à ces onglets.
+  direct), `*.hls.ttvnw.net` (segments, demandés en HEAD pour les drops),
+  `*.playlist.ttvnw.net` (0.2.0 : playlists des directs, pour les drops et le 1440p ;
+  sans cet accès, Twitch les refuse à l'extension, en-tête Origin oblige — vérifié dans
+  Chrome 155) et les deux adresses du site (content script, réinjecté dans les onglets
+  déjà ouverts après une installation ou une mise à jour : sous Chrome, l'ancien reste
+  orphelin et se tait). Un réglage changé dans la fenêtre est annoncé tout de suite à
+  ces onglets.
 
 ## Notes de développement
 
@@ -167,6 +188,7 @@ variables, mêmes en-têtes.
 | récompenses | `communityPointsSettings { isEnabled customRewards … }` | iOS `fetchRewards` |
 | fin de recharge | `customRewards { id cooldownExpiresAt }` | requête brute, **pas dans l'iOS** |
 | rachat | `redeemCommunityPointsCustomReward` (mutation écrite en clair) | iOS `redeem` |
+| qualités supérieures | `streamPlaybackAccessToken` au nom du compte, usher avec `supported_codecs`, puis la playlist de chaque variante | iOS `accountPlaybackToken`, `HigherQualities`, `usherLiveLinks` |
 
 ### Drops
 
@@ -183,6 +205,31 @@ que 6 s est annoncée au battement suivant.
 `drops.get` ne fait jamais obtenir de jeton d'intégrité : si Twitch en demande un pour
 le tableau de bord (campagnes pas encore commencées) et qu'aucun n'est gardé, ces
 campagnes manquent jusqu'au prochain jeton (l'app, elle, en obtient un).
+
+Jusqu'à la 0.1.0, la pulsation ne trouvait plus de variante : Twitch sert maintenant
+ses playlists depuis `*.playlist.ttvnw.net` (seul `*.hls.ttvnw.net` était accepté), et
+les refuse (403) à une extension sans accès à cet hôte (requête avec un en-tête Origin
+`chrome-extension://…`). La 0.2.0 accepte cet hôte et en demande l'accès.
+
+### Qualités supérieures
+
+Twitch ne sert les variantes au-dessus de 1080p (Enhanced Broadcasting : 1440p, 4K,
+parfois en HEVC ou AV1) qu'au jeton de lecture d'un compte ; celui d'un jeton anonyme
+dit `maximum_resolution: FULL_HD` (`QUAD_HD: AUTHZ_NOT_LOGGED_IN`). `hq.master` obtient
+le jeton du compte (comme la pulsation des drops), demande la liste à usher avec
+`supported_codecs` (choisis par le site : `h264`, et `h265` ou `av1` si le navigateur
+les décode en matériel) et rend chaque variante sous un identifiant tiré au hasard ;
+`hq.playlist` lit la playlist d'une variante et la réécrit (PROTOCOL.md, opération 17).
+
+Pourquoi l'extension relit chaque playlist au lieu de laisser la page le faire
+(essais du 25/10/2026 avec un jeton anonyme, sans compte) : usher n'envoie
+`Access-Control-Allow-Origin` que pour `https://www.twitch.tv`, et les playlists des
+variantes, ouvertes à tous (`*`), répondent 403 dès qu'un en-tête Origin étranger est
+là (celui du site, `null`, ou `chrome-extension://…`). Une règle
+`declarativeNetRequest` qui réécrirait l'Origin pour la page aurait marché, mais
+demandait une permission de plus et donnait à la page les adresses des playlists
+(valables toute la séance) ; ici elle n'a que celles des segments (quelques secondes
+de vidéo chacune), que leur CDN sert à toute origine.
 
 ### Durée de vie de l'arrière-plan
 
@@ -204,15 +251,21 @@ arguments (même table pour le content script et l'arrière-plan), le refus d'un
 sans vrai clic ou avec le réglage coupé, les limites de débit (y compris après un
 redémarrage de l'arrière-plan), l'obtention du jeton d'intégrité (onglet ouvert,
 onglet temporaire, repli, un seul essai de plus), les drops (pulsation, segments en
-HEAD, réclamation), les vérifications avant un rachat et l'absence de tout morceau de
-jeton ou d'adresse signée dans les réponses, les journaux et `storage.local`.
+HEAD, réclamation), les vérifications avant un rachat, les qualités supérieures (jeton du
+compte, `supported_codecs`, variantes sans adresse, playlist réécrite à l'octet près,
+identifiants liés à la session, budget à part) et l'absence de tout morceau de jeton ou
+d'adresse signée dans les réponses, les journaux et `storage.local` (seules les réponses
+de `hq.playlist` portent des adresses de segments, jamais usher, une playlist, un
+déclencheur ni le jeton de lecture).
 
 ### Paquet
 
 Le workflow `.github/workflows/extension.yml` (poussée sur `test-17d298` ou `main`
 touchant `extension/`, ou lancement manuel) vérifie les JSON, la syntaxe des JS, lance
-le banc d'essai et produit `twitchunblock-connect-<version>.zip` (sans `tests/` ni
-`dev/`) en artefact. Pas de publication automatique.
+le banc d'essai et produit les paquets Chrome et Firefox (sans `tests/` ni `dev/`) en
+artefacts. Sur `main`, il les publie aussi dans la release `connect-v<version>` (la
+version du manifeste : `connect-v0.2.0`), marquée la dernière, avec `INSTALL.md` pour
+texte : c'est elle qu'ouvre le lien du site (…/releases/latest).
 
 Le site (Vercel ne sert que `public/`) et l'image Docker (le `Dockerfile` ne copie que
 des chemins précis) n'embarquent pas ce dossier.

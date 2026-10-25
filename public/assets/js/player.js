@@ -12,6 +12,7 @@ import { lang, t } from './i18n.js'
 import { API_URL, RELAY_BASE, WORKER_BASES, fixProxiedUrl, liveSourceOrder, proxyBaseOf } from './api.js'
 import { $, esc, formatClock, icon, isIOS } from './util.js'
 import { logError } from './errlog.js'
+import { isHqUrl } from './hq.js'
 
 // Mêmes vitesses que dans l'app. Pas au-delà de 2× : Twitch ne publie pas
 // de playlist I-frame, et le débit double déjà à 2×.
@@ -44,7 +45,10 @@ const SEG_PROXY_KEY = 'tu_segment_proxy'
 const SEG_PROXY_DAYS = 7
 const SEG_PROXY_FAILS = 3
 const SEG_RECHECK_MS = 10 * 60 * 1000
-function segmentProxyOn() {
+/** Segments des directs par le relais sur cet appareil (CDN bloqué) ? Les
+ *  qualités supérieures ne s'y lancent pas (main.js) : leurs segments ne
+ *  passent jamais par nos serveurs. */
+export function segmentProxyOn() {
   try { return Number(localStorage.getItem(SEG_PROXY_KEY) || 0) > Date.now() } catch { return false }
 }
 function enableSegmentProxy() {
@@ -631,6 +635,74 @@ function prefetchPlaylistLoader(Hls, player) {
   }
 }
 
+// ── Qualités supérieures : playlists du flux du compte ───────────────────
+// Adresses « tuhq:// » (hq.js) : la playlist vient de l'extension
+// TwitchUnblock Connect (hq.master, hq.playlist), jamais du réseau — Twitch
+// refuse ses playlists à une page d'une autre origine. Les segments partent
+// en direct vers le CDN, comme pour les autres sources. `prefetch` (qualité
+// fixe) : segments annoncés d'avance, comme prefetchPlaylistLoader.
+function hqPlaylistLoader(Hls, player, prefetch) {
+  const Base = Hls.DefaultConfig.loader
+  return class HqLoader extends Base {
+    load(context, config, callbacks) {
+      if (!isHqUrl(context.url)) {
+        if (!prefetch) return super.load(context, config, callbacks)
+        return super.load(context, config, {
+          ...callbacks,
+          onSuccess: (response, stats, ctx, details) => {
+            if (typeof response?.data === 'string' && response.data.includes(PREFETCH_TAG)) response.data = player.withPrefetch(response.data)
+            callbacks.onSuccess(response, stats, ctx, details)
+          },
+        })
+      }
+      const stats = this.stats
+      stats.loading.start = performance.now()
+      const job = { context, callbacks, done: false, timer: 0 }
+      this.hqJob = job
+      const finish = (fn) => {
+        if (job.done || this.hqJob !== job) return
+        job.done = true
+        clearTimeout(job.timer)
+        fn()
+      }
+      job.timer = setTimeout(() => finish(() => callbacks.onTimeout(stats, context, null)), config.timeout || 20_000)
+      Promise.resolve().then(() => player.o.hqText(context.url)).then((text) => finish(() => {
+        let data = String(text)
+        if (prefetch && data.includes(PREFETCH_TAG)) data = player.withPrefetch(data)
+        const now = performance.now()
+        stats.loading.first = Math.max(now, stats.loading.start)
+        stats.loading.end = stats.loading.first
+        stats.loaded = stats.total = data.length
+        callbacks.onSuccess({ url: context.url, data, code: 200 }, stats, context, null)
+      }), (err) => finish(() => {
+        stats.loading.end = performance.now()
+        // Direct fini (offline) : un 404, comme Twitch ; sinon une erreur réseau.
+        callbacks.onError({ code: err?.code === 'offline' ? 404 : 0, text: String(err?.code || err?.message || 'hq') }, context, null, stats)
+      }))
+    }
+
+    abort() {
+      const job = this.hqJob
+      if (!job) return super.abort()
+      if (job.done) return
+      job.done = true
+      clearTimeout(job.timer)
+      this.stats.aborted = true
+      job.callbacks.onAbort?.(this.stats, job.context, null)
+    }
+
+    destroy() {
+      const job = this.hqJob
+      if (job) {
+        job.done = true
+        clearTimeout(job.timer)
+      }
+      this.hqJob = null
+      super.destroy()
+    }
+  }
+}
+
 let hlsPromise = null
 /** Charge hls.js, avec un second CDN si le premier ne répond pas : sans lui,
  *  rien ne se lit hors de Safari. Appelé au démarrage pour être prêt au
@@ -776,6 +848,10 @@ export class Player {
    * @param {() => boolean} o.isChatOpen
    * @param {object} o.prefs
    * @param {() => void} o.savePrefs
+   * Qualités supérieures (hq.js, par main.js) :
+   * @param {(url: string) => Promise<string>} [o.hqText]  playlist d'une adresse tuhq://
+   * @param {(left: number) => void} [o.onAdState]  bandeau de pause pub ouvert (secondes restantes) ou fermé (0)
+   * @param {() => boolean} [o.onFatal]  erreur fatale du flux du compte : true si la source habituelle reprend
    */
   constructor(root, o) {
     this.root = root
@@ -1118,16 +1194,23 @@ export class Player {
     const Hls = await loadHls()
     if (token !== this.attachToken) return
 
+    // Flux du compte en qualités supérieures (hq.js) : ses playlists par
+    // l'extension, ses segments jamais par nos relais.
+    const hqSource = isHqUrl(url)
     if (Hls?.isSupported()) {
       // « Auto » : la liste maîtresse, hls.js choisit le débit (worker.js).
       const master = String(this.quality).toLowerCase() === 'auto'
       const hls = new Hls({
         // Rouvrir la requête avec l'adresse corrigée : c'est le point
         // d'accroche que hls.js offre pour réécrire une URL avant envoi.
-        xhrSetup: (xhr, reqUrl) => {
-          const fixed = liveRequestUrl(reqUrl, url)
-          if (fixed !== reqUrl) xhr.open('GET', fixed, true)
-        },
+        // Pas pour le flux du compte : ses adresses de segments sont
+        // absolues, et ne partent pas au relais même si le CDN y est passé.
+        ...(hqSource ? {} : {
+          xhrSetup: (xhr, reqUrl) => {
+            const fixed = liveRequestUrl(reqUrl, url)
+            if (fixed !== reqUrl) xhr.open('GET', fixed, true)
+          },
+        }),
         // Tampons bornés, en direct surtout (voir bufferConfig).
         ...bufferConfig(this.kind),
         // Distance au bord du direct, en secondes. Twitch déclare des
@@ -1148,8 +1231,10 @@ export class Player {
         // Direct en qualité fixe : segments annoncés d'avance par Twitch
         // (voir plus haut). Pas de maxLiveSyncPlaybackRate : à 1 (valeur par
         // défaut), hls.js ne touche plus à la vitesse ; le retard se rattrape
-        // par des sauts (holdLiveFloor, alignLive).
-        ...(this.kind === 'live' && !master ? { pLoader: prefetchPlaylistLoader(Hls, this) } : {}),
+        // par des sauts (holdLiveFloor, alignLive). Flux du compte : ses
+        // playlists, « Auto » compris, par l'extension (hqPlaylistLoader).
+        ...(hqSource ? { pLoader: hqPlaylistLoader(Hls, this, this.kind === 'live' && !master) }
+          : this.kind === 'live' && !master ? { pLoader: prefetchPlaylistLoader(Hls, this) } : {}),
       })
       this.hls = hls
       this.directFails = 0
@@ -1207,12 +1292,20 @@ export class Player {
       hls.on(Hls.Events.ERROR, (_e, data) => {
         // Segments jamais arrivés (code 0 : bloqués avant d'atteindre
         // Twitch), trois de suite et appareil en ligne : les prochaines
-        // tentatives passent par le relais du Worker.
-        if (noteDirectSegmentError(Hls, data, this) && data.fatal) { hls.startLoad(); return }
+        // tentatives passent par le relais du Worker. Pas ceux du flux du
+        // compte, qui ne passent jamais par nos relais.
+        if (!hqSource && noteDirectSegmentError(Hls, data, this) && data.fatal) { hls.startLoad(); return }
         if (token !== this.attachToken) return
         // Réglée par hls.js lui-même : comptée (santé de la lecture), rien d'autre.
         if (!data.fatal) { this.health?.hlsIssue(data.details); return }
         logError('lecteur', `hls.js ${data.type} · ${data.details}${data.response?.code ? ` · HTTP ${data.response.code}` : ''}`)
+        // Flux du compte : la source habituelle reprend aussitôt (main.js,
+        // hq.js), hors de l'événement de hls.js, sans relances sur ce flux.
+        if (hqSource && this.o.onFatal) {
+          hls.stopLoad()
+          setTimeout(() => { if (token === this.attachToken && !this.o.onFatal()) this.rebuild(token) }, 0)
+          return
+        }
         if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
           // Worker hors service en pleine lecture (quota du jour atteint), ou
           // relais du VPS en panne (failedProxy) : plutôt que de relancer
@@ -1229,7 +1322,10 @@ export class Player {
           recoverMedia(hls, v, this.kind === 'vod' ? this.resumeAt() : -1)
         } else this.rebuild(token)
       })
-    } else if (native) {
+    } else if (hqSource && this.o.onFatal) {
+      // Flux du compte sans hls.js : rien pour le lire, la source habituelle reprend.
+      setTimeout(() => { if (token === this.attachToken && !this.o.onFatal()) this.o.onError?.() }, 0)
+    } else if (native && !hqSource) {
       // Safari (iPhone surtout) : HLS natif.
       v.src = url
       v.addEventListener('loadedmetadata', start, { once: true })
@@ -2035,6 +2131,10 @@ export class Player {
       this.el.ad.hidden = false
       // Son coupé seulement s'il ne l'était pas déjà ; rétabli à la fin.
       if (!this.adKeepSound && !v.muted) { this.adMuted = true; v.muted = true }
+      // Qualités supérieures (hq.js) : une pause sur le flux du compte fait
+      // passer sur la source sans pub. Hors de l'événement de hls.js (qui
+      // appelle ici), et si le bandeau est toujours là.
+      setTimeout(() => { if (this.adBreak) this.o.onAdState?.(this.adBreakLeft()) }, 0)
     }
     // Une pub de plus enchaînée : fin repoussée, y compris pour le compte
     // (un bandeau rouvert dans la partie ajoutée n'est pas recompté).
@@ -2062,6 +2162,23 @@ export class Player {
       this.adMuted = false
       this.video.muted = false
     }
+    this.o.onAdState?.(0)
+  }
+
+  /** Secondes qui restent à la pause pub affichée (0 hors pause). */
+  adBreakLeft() {
+    if (!this.adBreak) return 0
+    const pd = this.hls?.playingDate
+    const at = pd instanceof Date ? pd.getTime() : NaN
+    return Number.isFinite(at) ? Math.max(1, Math.ceil((this.adBreak.end - at) / 1000)) : 1
+  }
+
+  /** Autre flux du même direct (qualités supérieures ↔ source habituelle,
+   *  hq.js) : ses pauses pub ne sont pas forcément celles-ci. Bandeau fermé,
+   *  son rétabli ; celles déjà comptées le restent (adSeen). */
+  forgetAdBreaks() {
+    this.endAdBreak()
+    this.adBreaks.clear()
   }
 
   // ── Passages coupés ────────────────────────────────────────────────────

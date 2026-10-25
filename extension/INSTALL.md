@@ -9,10 +9,13 @@ browser, so that while you watch a live on the site you can:
 - get the raid bonus,
 - bet on predictions and vote in polls,
 - redeem channel rewards,
-- move your drops forward and claim them.
+- move your drops forward and claim them,
+- watch in **1440p and above** on the channels that offer it (new in 0.2.0).
 
 Your Twitch session never leaves the extension: nothing goes through TwitchUnblock's servers,
-and spending points always needs a click from you.
+and spending points always needs a click from you. For 1440p, the site only gets the live's
+playlists, rewritten by the extension (the addresses of the video pieces), never your session
+or your playback token.
 
 Download the zip for your browser from the
 [latest release](https://github.com/MXFia19/TwitchUnblock-Web/releases/latest):
@@ -30,8 +33,11 @@ Download the zip for your browser from the
    with your Twitch name. If it doesn't, log in to [twitch.tv](https://www.twitch.tv) in
    this browser.
 
-**Updating**: download the new zip, replace the folder's content with it, then click the
-reload arrow (↻) on the extension's card in the extensions page.
+**Updating** (for example from 0.1.0 to 0.2.0): download the new zip, delete the old files
+from the extension's folder and unzip the new ones into it, then click the reload arrow (↻)
+on the extension's card in the extensions page. Your settings are kept, and the card now
+shows the new version. Tabs of the site that were already open get the new version by
+themselves; reload them if the site doesn't see it.
 
 ## Firefox (version 128 or later)
 
@@ -45,6 +51,11 @@ which goes away when Firefox closes (load it again the next time).
    twitch.tv and the TwitchUnblock site, allow it (or `about:addons` → TwitchUnblock
    Connect → Permissions).
 
+**Updating**: remove the old temporary add-on (or restart Firefox), then load the new zip
+the same way. Version 0.2.0 needs one more access, to Twitch's live playlists
+(`*.playlist.ttvnw.net`): if the extension's window shows an orange box, click **Allow
+access**.
+
 ## Use it
 
 1. Log in to [twitch.tv](https://www.twitch.tv) in the same browser.
@@ -52,6 +63,12 @@ which goes away when Firefox closes (load it again the next time).
    TwitchUnblock Connect**: it should show the extension as installed, with your account.
 3. Watch a live: your points balance shows above the chat, chests are claimed for you, and
    predictions, polls, rewards and drops get their buttons.
+4. For 1440p and above: **Settings → Player → Higher qualities (1440p and above)** (needs
+   version 0.2.0). Only channels streaming above 1080p (Enhanced Broadcasting) have them;
+   the player's quality menu then lists them (“1440p60 (Source)”…). HEVC and AV1 qualities
+   are offered only when your browser decodes them in hardware. Without a sub or Turbo,
+   during Twitch's ad breaks, playback switches to the usual source (1080p at most) without
+   ads, then comes back. Not used in multi-live.
 
 The extension's window has three switches: the connection to the site, automatic claiming
 (chests and drops), and bets, votes and rewards from the site. Turn any of them off at any

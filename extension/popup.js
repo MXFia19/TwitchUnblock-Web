@@ -14,11 +14,14 @@ const api = globalThis.browser || globalThis.chrome;
 // Accès d'hôte du manifeste (accordables et retirables un à un sous Firefox,
 // dans about:addons, ou sous Chrome par « Accès au site »). Les deux origines
 // du site servent au content script et à sa réinjection après une mise à jour.
+// *.playlist.ttvnw.net (0.2.0) : sans cet accès, Twitch refuse la lecture des
+// playlists du direct à l'extension (en-tête Origin) — drops et 1440p.
 const HOST_ORIGINS = [
   "https://*.twitch.tv/*",
   "https://static.twitchcdn.net/*",
   "https://usher.ttvnw.net/*",
-  "https://*.hls.ttvnw.net/*"
+  "https://*.hls.ttvnw.net/*",
+  "https://*.playlist.ttvnw.net/*"
 ];
 const SITE_ORIGINS = [
   "https://twitchunblock.vercel.app/*",

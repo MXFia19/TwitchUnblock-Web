@@ -42,8 +42,87 @@ const HASHES = {
   DropsPage_ClaimDropRewards: "a455deea71bdc9015b78eb49f4acfbce8baa7ccbedd28e549bb025bd0f751930"
 };
 
+// Qualités supérieures : liste du compte (usher avec supported_codecs) et
+// playlist de sa variante 1440p, avec tout ce qui ne doit pas aller à la page
+// (« …secret », adresse IP, déclencheur signé, suivi publicitaire).
+const HQ_HOST = "https://euw31.playlist.ttvnw.net/v1/playlist/";
+const HQ_MASTER = [
+  "#EXTM3U",
+  '#EXT-X-TWITCH-INFO:NODE="video-edge-aa11.fra05",USER-IP="203.0.113.7",SERVING-ID="SERVINGsecret",CLUSTER="fra05"',
+  '#EXT-X-SESSION-DATA:DATA-ID="com.twitch.session",VALUE="SESSIONsecret"',
+  '#EXT-X-MEDIA:TYPE=VIDEO,GROUP-ID="chunked",NAME="1440p60 (source)",AUTOSELECT=YES,DEFAULT=YES',
+  '#EXT-X-STREAM-INF:BANDWIDTH=9500000,RESOLUTION=2560x1440,CODECS="hvc1.1.2.L150.90.0.0.0.0.0,mp4a.40.2",VIDEO="chunked",FRAME-RATE=60.000',
+  HQ_HOST + "HQ1440secret.m3u8",
+  '#EXT-X-MEDIA:TYPE=VIDEO,GROUP-ID="1080p60",NAME="1080p60",AUTOSELECT=YES,DEFAULT=YES',
+  '#EXT-X-STREAM-INF:BANDWIDTH=6000000,RESOLUTION=1920x1080,CODECS="avc1.64002A,mp4a.40.2",VIDEO="1080p60",FRAME-RATE=60.000',
+  HQ_HOST + "HQ1080secret.m3u8",
+  '#EXT-X-MEDIA:TYPE=VIDEO,GROUP-ID="720p60",NAME="720p60",AUTOSELECT=YES,DEFAULT=YES',
+  '#EXT-X-STREAM-INF:BANDWIDTH=3400000,RESOLUTION=1280x720,CODECS="avc1.4D401F,mp4a.40.2",VIDEO="720p60",FRAME-RATE=60.000',
+  "https://evil.example/HQ720secret.m3u8",
+  '#EXT-X-MEDIA:TYPE=VIDEO,GROUP-ID="audio_only",NAME="audio_only",AUTOSELECT=NO,DEFAULT=NO',
+  '#EXT-X-STREAM-INF:BANDWIDTH=160000,CODECS="mp4a.40.2",VIDEO="audio_only"',
+  HQ_HOST + "HQAUDIOsecret.m3u8",
+  ""
+].join("\n");
+const HQ_SEG = "https://video-edge-aa11.fra05.abs.hls.ttvnw.net/v1/segment/";
+const HQ_CF = "https://cd1f0315f30a.j.cloudfront.hls.ttvnw.net/v1/segment/";
+const HQ_PLAYLIST = [
+  "#EXTM3U",
+  "#EXT-X-VERSION:6",
+  "#EXT-X-TARGETDURATION:6",
+  "#EXT-X-MEDIA-SEQUENCE:100",
+  "#EXT-X-TWITCH-LIVE-SEQUENCE:100",
+  "#EXT-X-TWITCH-ELAPSED-SECS:200.000",
+  '#EXT-X-DATERANGE:ID="playlist-session-1",CLASS="twitch-session",START-DATE="2026-10-25T16:42:21.913Z",END-ON-NEXT=YES,X-TV-TWITCH-SESSIONID="SESSIONIDsecret"',
+  '#EXT-X-DATERANGE:ID="trigger-1",CLASS="twitch-trigger",START-DATE="2026-10-25T16:41:51.237Z",END-ON-NEXT=YES,X-TV-TWITCH-TRIGGER-URL="https://euw31.playlist.ttvnw.net/trigger/TRIGGERsecret"',
+  '#EXT-X-DATERANGE:ID="stitched-ad-1-30",CLASS="twitch-stitched-ad",START-DATE="2026-10-25T16:42:00.000Z",DURATION=30.000,X-TV-TWITCH-AD-ROLL-TYPE="MIDROLL",X-TV-TWITCH-AD-CLICK-TRACKING-URL="https://ads.example/c?u=ADTRACKsecret"',
+  '#EXT-X-MAP:URI="' + HQ_SEG + 'INIThq.mp4"',
+  "#EXT-X-PROGRAM-DATE-TIME:2026-10-25T16:41:51.237Z",
+  "#EXTINF:2.000,live",
+  HQ_SEG + "SEGhq1.mp4?dna=abc",
+  "#EXT-X-DISCONTINUITY",
+  "#EXTINF:2.000,Amazon|123",
+  "seg2.mp4",
+  "#EXTINF:2.000,live",
+  "https://ads.example/ad.ts",
+  "#EXT-X-SCTE35-OUT:CUE=ADTRACKsecret",
+  "#EXTINF:2.000,live",
+  HQ_CF + "SEGhq4.mp4",
+  "#EXT-X-TWITCH-PREFETCH:" + HQ_CF + "SEGhq5.mp4",
+  "#EXT-X-TWITCH-PREFETCH:" + HQ_HOST + "PREFETCHsecret.m3u8",
+  ""
+].join("\n");
+// Ce que la page doit recevoir de HQ_PLAYLIST, à l'octet près.
+const HQ_PLAYLIST_CLEAN = [
+  "#EXTM3U",
+  "#EXT-X-VERSION:6",
+  "#EXT-X-TARGETDURATION:6",
+  "#EXT-X-MEDIA-SEQUENCE:100",
+  '#EXT-X-DATERANGE:ID="stitched-ad-1-30",CLASS="twitch-stitched-ad",START-DATE="2026-10-25T16:42:00.000Z",DURATION=30.000',
+  '#EXT-X-MAP:URI="' + HQ_SEG + 'INIThq.mp4"',
+  "#EXT-X-PROGRAM-DATE-TIME:2026-10-25T16:41:51.237Z",
+  "#EXTINF:2.000,live",
+  HQ_SEG + "SEGhq1.mp4?dna=abc",
+  "#EXT-X-DISCONTINUITY",
+  "#EXTINF:2.000,Amazon|123",
+  "#EXT-X-GAP",
+  "https://gap.invalid/1.ts",
+  "#EXTINF:2.000,live",
+  "#EXT-X-GAP",
+  "https://gap.invalid/2.ts",
+  "#EXTINF:2.000,live",
+  HQ_CF + "SEGhq4.mp4",
+  "#EXT-X-TWITCH-PREFETCH:" + HQ_CF + "SEGhq5.mp4",
+  ""
+].join("\n");
+
 const clone = (v) => (v === undefined ? undefined : JSON.parse(JSON.stringify(v)));
 const ticks = async (n = 1) => { for (let i = 0; i < n; i++) await new Promise((r) => setImmediate(r)); };
+// Empreinte d'un jeton, comme fingerprint() de l'arrière-plan.
+async function fingerprintOf(token) {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(token));
+  return Array.from(new Uint8Array(digest).slice(0, 8), (b) => b.toString(16).padStart(2, "0")).join("");
+}
 
 function makeTwitch() {
   return {
@@ -105,9 +184,16 @@ function makeTwitch() {
     patSignature: "sig0123456789abcdefSECRETsignature",
     patNeedsIntegrity: false,
     usherCalls: 0,
+    // Plus basse qualité donnée par usher pour les drops (playlist.ttvnw.net aujourd'hui).
+    audioVariant: "https://video-weaver.fra05.hls.ttvnw.net/v1/playlist/AUDIOsecret.m3u8",
     segments: [1, 2, 3].map((n) => "https://video-edge-aa11.fra05.abs.hls.ttvnw.net/v1/segment/SEGsecret" + n + ".ts"),
     variantStatus: 200,
     heads: [],
+    // Qualités supérieures
+    hqUsher: [],            // paramètres des demandes usher avec supported_codecs
+    hqMasterStatus: 200,
+    hqVariantStatus: 200,
+    hqPlaylistCalls: 0,
     // Récompenses
     rewards: [
       { id: "rw-hydrate", title: "Hydrate!", cost: 500, isEnabled: true, isPaused: false, isInStock: true, isUserInputRequired: false,
@@ -176,19 +262,32 @@ function twitchFetch(tw) {
       assert.equal(q.get("allow_audio_only"), "true");
       assert.equal(q.get("sig"), tw.patSignature);
       assert.equal(q.get("token"), tw.patValue);
+      if (q.has("supported_codecs")) {
+        tw.hqUsher.push(Object.fromEntries(q));
+        if (tw.hqMasterStatus !== 200) return response(tw.hqMasterStatus, "");
+        return response(200, HQ_MASTER);
+      }
       return response(200, [
         "#EXTM3U",
         "#EXT-X-STREAM-INF:BANDWIDTH=6000000,RESOLUTION=1920x1080",
         "https://video-weaver.fra05.hls.ttvnw.net/v1/playlist/SOURCEsecret.m3u8",
         "#EXT-X-STREAM-INF:BANDWIDTH=160000,CODECS=\"mp4a.40.2\"",
-        "https://video-weaver.fra05.hls.ttvnw.net/v1/playlist/AUDIOsecret.m3u8",
+        tw.audioVariant,
         ""
       ].join("\n"));
     }
 
-    if (url === "https://video-weaver.fra05.hls.ttvnw.net/v1/playlist/AUDIOsecret.m3u8") {
+    if (url === tw.audioVariant) {
       if (tw.variantStatus !== 200) return response(tw.variantStatus, "");
       return response(200, "#EXTM3U\n#EXT-X-TARGETDURATION:2\n" + tw.segments.map((s) => "#EXTINF:2.000,live\n" + s).join("\n") + "\n");
+    }
+
+    if (url.startsWith(HQ_HOST)) {
+      assert.ok(/\/HQ(1440|1080|AUDIO)secret\.m3u8$/.test(url), "variante de la liste du compte : " + url);
+      assert.equal(init.method, "GET");
+      tw.hqPlaylistCalls++;
+      if (tw.hqVariantStatus !== 200) return response(tw.hqVariantStatus, "");
+      return response(200, HQ_PLAYLIST);
     }
 
     if (url.startsWith("https://video-edge-aa11.fra05.abs.hls.ttvnw.net/v1/segment/")) {
@@ -540,6 +639,7 @@ function loadBackground(opts = {}) {
   vm.runInContext(BACKGROUND, ctx, { filename: "background.js" });
 
   const responses = [];
+  const ops = [];   // opération demandée pour chaque réponse
   async function deliver(msg, sender) {
     let answered = false;
     let value;
@@ -550,12 +650,13 @@ function loadBackground(opts = {}) {
     await done;
     const res = answered ? value : undefined;
     responses.push(res);
+    ops.push(msg && typeof msg.op === "string" ? msg.op : null);
     return res;
   }
   const siteSender = (over = {}) => ({ id: EXT_ID, url: SITE + "/live/" + CHANNEL, origin: SITE, frameId: 0, tab: { id: 1, incognito: false }, ...over });
   let n = 0;
   return {
-    tw, clock, session, local, tabs, tabLog, consoleLines, responses, chrome,
+    tw, clock, session, local, tabs, tabLog, consoleLines, responses, ops, chrome,
     deliver,
     op: (op, args, extra = {}) => deliver({ tuConnect: 1, kind: "op", id: "r" + (++n), op, args, activation: false, ...extra }, siteSender()),
     spend: (op, args) => deliver({ tuConnect: 1, kind: "op", id: "r" + (++n), op, args, activation: true }, siteSender()),
@@ -640,9 +741,17 @@ function assertNoSecret(value, label, tw) {
 }
 
 // Ni jeton de lecture, ni adresse signée (usher, playlist, segments, spade).
-function assertNoSignedUrl(value, label, tw) {
+// `segments` (réponses de hq.playlist seulement) : les adresses des segments
+// du CDN y sont permises — c'est ce qu'il faut à la page pour lire le flux du
+// compte —, jamais le reste (usher, playlists, déclencheurs, suivi, IP…).
+function assertNoSignedUrl(value, label, tw, { segments = false } = {}) {
   const text = JSON.stringify(value) || "";
-  for (const piece of [tw.patSignature, "SOURCEsecret", "AUDIOsecret", "SEGsecret", "CuYEsecret", "ttvnw", "usher", "sig=", '"expires":1800000000']) {
+  const always = [tw.patSignature, "SOURCEsecret", "AUDIOsecret", "HQ1440secret", "HQ1080secret", "HQ720secret",
+    "HQAUDIOsecret", "PREFETCHsecret", "TRIGGERsecret", "SESSIONIDsecret", "SESSIONsecret", "SERVINGsecret",
+    "ADTRACKsecret", "203.0.113.7", "usher", "playlist.ttvnw", "/trigger/", "sig=", "token=", '"expires":1800000000',
+    '"user_id":99887766'];
+  const segmentPieces = ["SEGsecret", "CuYEsecret", "ttvnw", "SEGhq", "INIThq"];
+  for (const piece of segments ? always : always.concat(segmentPieces)) {
     assert.ok(!text.includes(piece), label + " contient « " + piece + " »");
   }
 }
@@ -650,7 +759,7 @@ function assertNoSignedUrl(value, label, tw) {
 function assertNoLeaks(h, label) {
   h.responses.forEach((r, i) => {
     assertNoSecret(r, label + " réponse " + i, h.tw);
-    assertNoSignedUrl(r, label + " réponse " + i, h.tw);
+    assertNoSignedUrl(r, label + " réponse " + i, h.tw, { segments: h.ops[i] === "hq.playlist" });
   });
   assertNoSecret(h.consoleLines.join("\n"), label + " journal", h.tw);
   assertNoSecret(h.local, label + " storage.local", h.tw);
@@ -751,8 +860,32 @@ const ARG_CASES = [
   ["rewards.redeem", { channel: CHANNEL, rewardId: "rw-song", cost: 200, title: "Song request", prompt: null, input: "x".repeat(201) }, "bad_args"],
   ["rewards.redeem", { channel: CHANNEL, rewardId: "rw-song", cost: 200, title: "Song request", prompt: null, input: "\u{1F600}".repeat(200) }, "ok"],
   ["rewards.redeem", { channel: CHANNEL, rewardId: "rw-song", cost: 200, title: "Song request", prompt: null, input: "\u{1F600}".repeat(201) }, "bad_args"],
-  ["rewards.redeem", { channel: CHANNEL, rewardId: "rw-hydrate", cost: 500, title: "Hydrate!", prompt: null }, "bad_args"]
+  ["rewards.redeem", { channel: CHANNEL, rewardId: "rw-hydrate", cost: 500, title: "Hydrate!", prompt: null }, "bad_args"],
+  ["hq.master", { channel: CHANNEL, codecs: ["av1", "h265", "h264"] }, "ok"],
+  ["hq.master", { channel: CHANNEL, codecs: ["h264", "av1"] }, "ok"],
+  ["hq.master", { channel: CHANNEL, codecs: ["h264"] }, "ok"],
+  ["hq.master", { channel: CHANNEL, codecs: ["h265"] }, "bad_args"],
+  ["hq.master", { channel: CHANNEL, codecs: ["h264", "h264"] }, "bad_args"],
+  ["hq.master", { channel: CHANNEL, codecs: ["vp9", "h264"] }, "bad_args"],
+  ["hq.master", { channel: CHANNEL, codecs: ["av1", "h265", "h264", "h264"] }, "bad_args"],
+  ["hq.master", { channel: CHANNEL, codecs: [] }, "bad_args"],
+  ["hq.master", { channel: CHANNEL, codecs: "av1,h265,h264" }, "bad_args"],
+  ["hq.master", { channel: CHANNEL, codecs: [{ toString: "h264" }] }, "bad_args"],
+  ["hq.master", { channel: CHANNEL }, "bad_args"],
+  ["hq.master", { channel: "Streamer", codecs: ["h264"] }, "bad_args"],
+  ["hq.master", { channel: CHANNEL, codecs: ["h264"], url: "https://usher.ttvnw.net/" }, "bad_args"],
+  ["hq.playlist", { id: "Hq0123456789abcdefghij" }, "ok"],
+  ["hq.playlist", { id: "Hq0123456789abcdefghi" }, "bad_args"],
+  ["hq.playlist", { id: "Hq0123456789abcdefghi-" }, "bad_args"],
+  ["hq.playlist", { id: 12 }, "bad_args"],
+  ["hq.playlist", { id: "Hq0123456789abcdefghij", channel: CHANNEL }, "bad_args"],
+  ["hq.playlist", { url: HQ_HOST + "HQ1440secret.m3u8" }, "bad_args"]
 ];
+// Variante connue de l'arrière-plan pour les cas « ok » de hq.playlist.
+const HQ_TEST_ID = "Hq0123456789abcdefghij";
+async function hqKnown(clock) {
+  return { hq: { [HQ_TEST_ID]: { url: HQ_HOST + "HQ1440secret.m3u8", fp: await fingerprintOf(AUTH_TOKEN), channel: CHANNEL, at: clock.now } } };
+}
 
 const REDEEM = { channel: CHANNEL, rewardId: "rw-hydrate", cost: 500, title: "Hydrate!", prompt: "Drink \"water\"\nnow", input: null };
 
@@ -1301,6 +1434,157 @@ test("drops.pulse : trois 404 de suite, le direct est fini", async () => {
   assert.equal(h.session.dropPulse[CHANNEL], undefined, "état de la pulsation oublié");
 });
 
+test("drops.pulse : variante sur playlist.ttvnw.net (hôte des playlists aujourd'hui)", async () => {
+  const h = loadBackground({ tabs: [liveTab()], local: { settings: { siteEnabled: true, autoClaim: false, allowSpend: true } } });
+  h.tw.audioVariant = "https://euw31.playlist.ttvnw.net/v1/playlist/AUDIOsecret.m3u8";
+  assert.deepEqual((await h.op("drops.pulse", { channel: CHANNEL })).data, { active: true, claimed: [] });
+  assert.deepEqual(h.tw.heads, h.tw.segments);
+  assertNoLeaks(h, "pulsation playlist.ttvnw.net");
+});
+
+// --- Qualités supérieures (hq.master, hq.playlist) ------------------------------------------------------------
+
+const HQ_ALL = ["av1", "h265", "h264"];
+
+test("hq.master : jeton du compte, supported_codecs, variantes sans aucune adresse", async () => {
+  const h = loadBackground({ tabs: [liveTab()] });
+  const res = await h.op("hq.master", { channel: CHANNEL, codecs: ["h264", "h265", "av1"] });
+  assert.equal(code(res), "ok");
+  // usher : jeton du compte, codecs dans l'ordre de l'app (le plus efficace d'abord).
+  assert.equal(h.tw.hqUsher.length, 1);
+  assert.equal(h.tw.hqUsher[0].supported_codecs, "av1,h265,h264");
+  assert.equal(h.tw.hqUsher[0].fast_bread, "true");
+  assert.equal(h.gqlCount((b) => !Array.isArray(b) && b.query.includes("streamPlaybackAccessToken")), 1);
+  const ids = res.data.variants.map((v) => v.id);
+  for (const id of ids) assert.match(id, /^[A-Za-z0-9]{22}$/);
+  assert.equal(new Set(ids).size, ids.length);
+  assert.deepEqual(res.data.variants.map(({ id, ...v }) => v), [
+    { name: "1440p60", source: true, width: 2560, height: 1440, fps: 60, bandwidth: 9500000, codecs: "hvc1.1.2.L150.90.0.0.0.0.0,mp4a.40.2" },
+    { name: "1080p60", source: false, width: 1920, height: 1080, fps: 60, bandwidth: 6000000, codecs: "avc1.64002A,mp4a.40.2" },
+    { name: "audio_only", source: false, width: 0, height: 0, fps: 0, bandwidth: 160000, codecs: "mp4a.40.2" }
+  ], "720p (hôte inconnu) écartée ; ni IP ni données de séance");
+  assert.deepEqual(Object.keys(res.data), ["variants"]);
+  // Les adresses restent dans storage.session, liées à la session.
+  const fp = await fingerprintOf(AUTH_TOKEN);
+  assert.equal(h.session.hq[ids[0]].url, HQ_HOST + "HQ1440secret.m3u8");
+  assert.equal(h.session.hq[ids[0]].fp, fp);
+  assertNoLeaks(h, "hq.master");
+});
+
+test("hq.master : même réponse pendant 10 s, puis relue ; jeton anonyme, refus, hors ligne", async () => {
+  const h = loadBackground({ tabs: [liveTab()] });
+  const a = await h.op("hq.master", { channel: CHANNEL, codecs: HQ_ALL });
+  h.clock.now += 9000;
+  const b = await h.op("hq.master", { channel: CHANNEL, codecs: HQ_ALL });
+  assert.deepEqual(b, a, "même réponse, mêmes identifiants");
+  assert.equal(h.tw.hqUsher.length, 1);
+  await h.op("hq.master", { channel: CHANNEL, codecs: ["h264"] });
+  assert.equal(h.tw.hqUsher.length, 2, "autres codecs : autre liste");
+  assert.equal(h.tw.hqUsher[1].supported_codecs, "h264");
+  h.clock.now += 1001;
+  const c = await h.op("hq.master", { channel: CHANNEL, codecs: HQ_ALL });
+  assert.equal(h.tw.hqUsher.length, 3);
+  assert.notEqual(c.data.variants[0].id, a.data.variants[0].id, "nouveaux identifiants");
+  assert.ok(h.session.hq[a.data.variants[0].id], "les anciens restent valables (lecture en cours)");
+
+  const anon = loadBackground({ tabs: [liveTab()] });
+  anon.tw.patValue = '{"channel":"streamer_one","user_id":null}';
+  assert.deepEqual((await anon.op("hq.master", { channel: CHANNEL, codecs: HQ_ALL })).error, { code: "twitch", message: "playback_token" });
+  assert.equal(anon.tw.usherCalls, 0, "jeton anonyme : rien demandé à usher (plafonné à 1080p)");
+
+  const geo = loadBackground({ tabs: [liveTab()] });
+  geo.tw.patValue = '{"authorization":{"forbidden":true,"reason":"GEOBLOCK"},"channel":"streamer_one","user_id":99887766}';
+  assert.deepEqual((await geo.op("hq.master", { channel: CHANNEL, codecs: HQ_ALL })).error, { code: "twitch", message: "forbidden" });
+  assert.equal(geo.tw.usherCalls, 0);
+
+  const off = loadBackground({ tabs: [liveTab()] });
+  off.tw.hqMasterStatus = 404;
+  assert.equal(code(await off.op("hq.master", { channel: CHANNEL, codecs: HQ_ALL })), "offline");
+  off.tw.hqMasterStatus = 403;
+  off.clock.now += 10001;
+  assert.deepEqual((await off.op("hq.master", { channel: CHANNEL, codecs: HQ_ALL })).error, { code: "twitch", message: "http_403" });
+
+  const none = loadBackground({ cookies: { "auth-token": "" } });
+  assert.equal(code(await none.op("hq.master", { channel: CHANNEL, codecs: HQ_ALL })), "no_session");
+  assert.equal(none.tw.log.length, 0);
+  for (const x of [h, anon, geo, off]) assertNoLeaks(x, "hq.master erreurs");
+});
+
+test("hq.playlist : playlist réécrite, segments du CDN seulement", async () => {
+  const h = loadBackground({ tabs: [liveTab()] });
+  const master = await h.op("hq.master", { channel: CHANNEL, codecs: HQ_ALL });
+  const id = master.data.variants[0].id;
+  const res = await h.op("hq.playlist", { id });
+  assert.equal(code(res), "ok");
+  assert.deepEqual(Object.keys(res.data), ["playlist"]);
+  assert.equal(res.data.playlist, HQ_PLAYLIST_CLEAN);
+  assert.equal(h.tw.hqPlaylistCalls, 1);
+  assertNoLeaks(h, "hq.playlist");
+  // La page ne peut pas faire lire une autre adresse : seul l'identifiant passe.
+  const page = loadContent({ sendMessage: (m) => h.deliver(m, h.siteSender()) });
+  await ticks(5);
+  const viaPage = await page.reply(page.request("hq.playlist", { id }));
+  assert.equal(viaPage.data.playlist, HQ_PLAYLIST_CLEAN);
+  for (const p of page.posted) assertNoSecret(p.data, "message posté à la page", h.tw);
+});
+
+test("hq.playlist : identifiant inconnu, ancien ou d'un autre compte ; erreurs de Twitch", async () => {
+  const h = loadBackground({ tabs: [liveTab()] });
+  const master = await h.op("hq.master", { channel: CHANNEL, codecs: HQ_ALL });
+  const id = master.data.variants[0].id;
+  assert.deepEqual((await h.op("hq.playlist", { id: "Zz0123456789abcdefghij" })).error, { code: "bad_args", message: "expired" });
+  // Autre compte connecté à twitch.tv : les variantes du premier ne servent plus.
+  const other = loadBackground({ tw: h.tw, clock: h.clock, session: h.session, local: h.local, cookies: { "auth-token": "zq7othersession0123456789ab" } });
+  assert.deepEqual((await other.op("hq.playlist", { id })).error, { code: "bad_args", message: "expired" });
+  // Erreurs de Twitch.
+  h.tw.hqVariantStatus = 404;
+  h.clock.now += 1001;
+  assert.equal(code(await h.op("hq.playlist", { id })), "offline");
+  h.tw.hqVariantStatus = 403;
+  h.clock.now += 1001;
+  assert.deepEqual((await h.op("hq.playlist", { id })).error, { code: "twitch", message: "http_403" });
+  h.tw.hqVariantStatus = 200;
+  h.clock.now += 1001;
+  assert.equal(code(await h.op("hq.playlist", { id })), "ok");
+  // Six heures plus tard : l'adresse n'est plus donnée.
+  h.clock.now += 6 * 3600000;
+  assert.deepEqual((await h.op("hq.playlist", { id })).error, { code: "bad_args", message: "expired" });
+  assertNoLeaks(h, "hq.playlist erreurs");
+});
+
+test("hq.playlist : une lecture Twitch par seconde, budget de 240 par minute à part", async () => {
+  const h = loadBackground({ tabs: [liveTab()] });
+  const master = await h.op("hq.master", { channel: CHANNEL, codecs: HQ_ALL });
+  const id = master.data.variants[0].id;
+  assert.equal(code(await h.op("hq.playlist", { id })), "ok");
+  assert.equal(code(await h.op("hq.playlist", { id })), "ok");
+  assert.equal(h.tw.hqPlaylistCalls, 1, "deuxième demande dans la seconde : la même playlist");
+  h.clock.now += 1001;
+  await h.op("hq.playlist", { id });
+  assert.equal(h.tw.hqPlaylistCalls, 2);
+  // Le site a épuisé ses 60 demandes de la minute : la lecture continue.
+  h.clock.now += 61000;
+  for (let i = 0; i < 60; i++) await h.op("hello", {});
+  assert.equal(code(await h.op("hello", {})), "rate_limited");
+  assert.equal(code(await h.op("hq.playlist", { id })), "ok", "budget à part");
+  // ... mais pas sans limite.
+  for (let i = 1; i < 240; i++) assert.equal(code(await h.op("hq.playlist", { id })), "ok", "demande " + (i + 1));
+  assert.equal(code(await h.op("hq.playlist", { id })), "rate_limited");
+  assert.equal(code(await h.op("points.get", { channel: CHANNEL })), "rate_limited", "le budget du site reste le sien");
+  h.clock.now += 60001;
+  assert.equal(code(await h.op("hq.playlist", { id })), "ok");
+});
+
+test("hq : connexion au site coupée, plus de session", async () => {
+  const off = loadBackground({ local: { settings: { siteEnabled: false, autoClaim: true, allowSpend: true } } });
+  assert.equal(code(await off.op("hq.master", { channel: CHANNEL, codecs: HQ_ALL })), "disabled");
+  assert.equal(code(await off.op("hq.playlist", { id: HQ_TEST_ID })), "disabled");
+  assert.equal(off.tw.log.length, 0);
+  const none = loadBackground({ cookies: { "auth-token": "" }, session: await hqKnown({ now: 1_800_000_000_000 }) });
+  assert.equal(code(await none.op("hq.playlist", { id: HQ_TEST_ID })), "no_session");
+  assert.equal(none.tw.log.length, 0, "session partie : plus rien n'est lu");
+});
+
 // --- Récompenses de chaîne -------------------------------------------------------------------------------
 
 test("rewards.get : récompenses, recharge, couleur, image, ordre par coût", async () => {
@@ -1437,7 +1721,8 @@ test("content script : opération inconnue et arguments refusés sans transmettr
 });
 
 test("content script et arrière-plan : même validation", async () => {
-  const bg = loadBackground();
+  const clock = { now: 1_800_000_000_000 };
+  const bg = loadBackground({ clock, session: await hqKnown(clock) });
   const page = loadContent({ sendMessage: async () => ({ ok: true, data: {} }) });
   page.nav.userActivation.isActive = true;
   await ticks(5);
@@ -1557,7 +1842,13 @@ test("manifeste : origines, permissions et arrière-plan attendus", () => {
   assert.deepEqual(MANIFEST.background, { service_worker: "background.js" });
   assert.equal(MANIFEST.browser_specific_settings, undefined);
   assert.deepEqual(MANIFEST.content_scripts, [{ matches: [SITE + "/*", PREVIEW + "/*"], js: ["content.js"], run_at: "document_start", all_frames: false }]);
+  // 0.2.0 (qualités supérieures) : aucune permission de plus — pas de
+  // declarativeNetRequest ni de webRequest : la page ne lit pas les playlists
+  // de Twitch elle-même, l'extension les lui rend (hq.playlist).
+  assert.equal(MANIFEST.version, "0.2.0");
   assert.deepEqual([...MANIFEST.permissions].sort(), ["cookies", "scripting", "storage", "tabs"]);
+  assert.equal(MANIFEST.declarative_net_request, undefined);
+  assert.equal(MANIFEST.optional_permissions, undefined);
   assert.equal(MANIFEST.externally_connectable, undefined);
   assert.equal(MANIFEST.web_accessible_resources, undefined);
   // Version Firefox (dev/build-firefox.mjs) : script d'arrière-plan et identifiant.
@@ -1568,8 +1859,11 @@ test("manifeste : origines, permissions et arrière-plan attendus", () => {
   assert.deepEqual(firefox.host_permissions, MANIFEST.host_permissions);
   assert.deepEqual(MANIFEST.host_permissions, [
     "https://*.twitch.tv/*", "https://static.twitchcdn.net/*", "https://usher.ttvnw.net/*", "https://*.hls.ttvnw.net/*",
-    SITE + "/*", PREVIEW + "/*"
-  ], "Twitch, et les deux origines du site (réinjection du content script)");
+    "https://*.playlist.ttvnw.net/*", SITE + "/*", PREVIEW + "/*"
+  ], "Twitch (playlists des directs comprises), et les deux origines du site (réinjection du content script)");
+  // La fenêtre de l'extension vérifie les mêmes accès (Firefox : accordables un à un).
+  const popup = readFileSync(join(DIR, "popup.js"), "utf8");
+  for (const origin of MANIFEST.host_permissions) assert.ok(popup.includes(JSON.stringify(origin)), "popup.js : " + origin);
   const en = JSON.parse(readFileSync(join(DIR, "_locales", "en", "messages.json"), "utf8"));
   for (const lang of ["fr", "es", "ru", "it", "ja"]) {
     const other = JSON.parse(readFileSync(join(DIR, "_locales", lang, "messages.json"), "utf8"));
