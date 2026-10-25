@@ -6,6 +6,31 @@
 
 export const CHANGELOG = [
   {
+    version: '2026.10.25c',
+    items: {
+      fr: [
+        'TwitchUnblock Connect : l’extension ne se met pas à jour toute seule (elle s’installe à la main depuis GitHub). Quand une version plus récente que la tienne est sortie, une ligne discrète en haut du site le dit — « TwitchUnblock Connect 0.2.0 est disponible (tu as 0.1.0) » —, avec le lien de téléchargement et, sous « Comment mettre à jour ? », la marche à suivre pour ton navigateur : remplacer le contenu du dossier puis recharger l’extension sous Chrome, Edge ou Brave, la réinstaller avec le nouveau zip sous Firefox. Fermée, elle ne revient plus pour cette version.',
+        'Comptage d’usage : le signal du site dit aussi si l’extension TwitchUnblock Connect est là, avec sa version et son navigateur (Chrome, Firefox ou autre) — rien de ses réglages ni de ta session Twitch. La page /stats montre combien de personnes l’utilisent (aujourd’hui, sur 7 et 30 jours), par version et par navigateur. Comme le reste du comptage, Réglages → Utilisation → « Partager mon utilisation » le coupe.',
+      ],
+      en: [
+        'TwitchUnblock Connect: the extension doesn’t update itself (it’s installed by hand from GitHub). When a newer version than yours is out, a discreet line at the top of the site says so — “TwitchUnblock Connect 0.2.0 is available (you have 0.1.0)” —, with the download link and, under “How to update?”, the steps for your browser: replace the folder’s content then reload the extension in Chrome, Edge or Brave, install it again from the new zip in Firefox. Once closed, it doesn’t come back for that version.',
+        'Usage count: the site’s signal now also says whether the TwitchUnblock Connect extension is there, with its version and its browser (Chrome, Firefox or other) — nothing of its settings or your Twitch session. The /stats page shows how many people use it (today, over 7 and 30 days), by version and by browser. Like the rest of the count, Settings → Usage → “Share my usage” turns it off.',
+      ],
+      es: [
+        'TwitchUnblock Connect: la extensión no se actualiza sola (se instala a mano desde GitHub). Cuando sale una versión más reciente que la tuya, una línea discreta arriba del sitio lo indica — «TwitchUnblock Connect 0.2.0 está disponible (tienes la 0.1.0)» —, con el enlace de descarga y, en «¿Cómo actualizar?», los pasos para tu navegador: sustituir el contenido de la carpeta y recargar la extensión en Chrome, Edge o Brave, volver a instalarla con el nuevo zip en Firefox. Una vez cerrada, no vuelve para esa versión.',
+        'Recuento de uso: la señal del sitio indica también si está la extensión TwitchUnblock Connect, con su versión y su navegador (Chrome, Firefox u otro) — nada de sus ajustes ni de tu sesión de Twitch. La página /stats muestra cuántas personas la usan (hoy, en 7 y 30 días), por versión y por navegador. Como el resto del recuento, Ajustes → Uso → «Compartir mi uso» lo desactiva.',
+      ],
+      ru: [
+        'TwitchUnblock Connect: расширение не обновляется само (оно устанавливается вручную с GitHub). Когда выходит версия новее вашей, вверху сайта появляется неброская строка — «Доступна версия TwitchUnblock Connect 0.2.0 (у вас 0.1.0)» — со ссылкой для скачивания, а в разделе «Как обновить?» — шаги для вашего браузера: в Chrome, Edge или Brave заменить содержимое папки и перезагрузить расширение, в Firefox — установить его заново из нового zip-архива. Если её закрыть, для этой версии она больше не появится.',
+        'Статистика использования: сигнал сайта теперь сообщает и о том, установлено ли расширение TwitchUnblock Connect, — его версию и браузер (Chrome, Firefox или другой), но ничего из его настроек и вашей сессии Twitch. Страница /stats показывает, сколько людей им пользуется (сегодня, за 7 и 30 дней), по версиям и браузерам. Как и остальной подсчёт, это отключается в «Настройки → Статистика → Делиться статистикой».',
+      ],
+      'zh-Hant': [
+        'TwitchUnblock Connect：擴充功能不會自動更新（它是從 GitHub 手動安裝的）。當有比你更新的版本推出時，網站頂端會出現一行不顯眼的提示——「TwitchUnblock Connect 0.2.0 已推出（你目前是 0.1.0）」——附上下載連結，並在「如何更新？」中說明你的瀏覽器該怎麼做：在 Chrome、Edge 或 Brave 中取代資料夾內容後重新載入擴充功能；在 Firefox 中用新的 zip 重新安裝。關閉後，這個版本就不會再出現。',
+        '使用量統計：網站送出的訊號現在也會說明是否裝有 TwitchUnblock Connect 擴充功能，以及它的版本與瀏覽器（Chrome、Firefox 或其他）——不含它的任何設定，也不含你的 Twitch 工作階段。/stats 頁面會顯示有多少人在使用它（今天、7 天與 30 天內），並依版本與瀏覽器分列。和其他統計一樣，可在「設定 → 使用量 → 分享我的使用資料」中關閉。',
+      ],
+    },
+  },
+  {
     version: '2026.10.25a',
     items: {
       fr: [
