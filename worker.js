@@ -67,6 +67,9 @@ export default {
                 // Comptage d'utilisation (app iOS et site)
                 case '/api/ping': return await handlePing(request, env);
                 case '/api/stats': return await cachedStats(request, env, ctx);
+                // Points de chaîne des apps : leurs « minute-watched », relayés
+                // quand un bloqueur coupe l'adresse de statistiques de Twitch.
+                case '/api/spade': return await handleSpade(request);
 
                 // Outils d'administration (compte du propriétaire uniquement)
                 case '/api/admin/me': return await handleAdminMe(request);
@@ -92,7 +95,8 @@ export default {
                 case '/api/feedback/photo': return await handleFeedbackPhoto(url, request, env);
                 case '/api/feedback/discord': return await audited(request, env, ctx, (r) => handleFeedbackBot(r, env, ctx));
                 case '/api/admin/feedback': return await audited(request, env, ctx, (r) => handleAdminFeedback(r, env, ctx));
-                // Lecture seule des retours par la clé REPORTS_KEY (tools/reports.mjs).
+                // Retours lus par la clé REPORTS_KEY (tools/reports.mjs), qui
+                // change aussi l'état d'un retour et marque des cartes à faire.
                 case '/api/admin/reports': return await handleAdminReports(request, env, ctx);
                 // Bouton « Open in the app » du bot Discord (/live, /top) : vers l'app.
                 case '/api/open/live': return handleOpenLive(url, request);
@@ -924,6 +928,95 @@ async function handleProxy(url, request, env) {
         return new Response(newText, { status: res.status, headers: newHeaders });
     }
     return new Response(res.body, { status: res.status, headers: proxyResponseHeaders(res, proxyMediaType(type), true) });
+}
+
+// ── Relais des « minute-watched » (points de chaîne des apps) ─────────────
+// Chaque minute, l'app envoie un événement « minute-watched » à l'adresse de
+// statistiques de Twitch (`spade_url`, lue dans la page de la chaîne) :
+// c'est lui qui crédite les points de chaîne. Un bloqueur de pubs ou un DNS
+// filtrant coupe souvent cette adresse (spade.twitch.tv), et plus rien
+// n'était crédité ; l'app passe alors par ici.
+//   POST /api/spade   { url: <spade_url>, data: <base64 des événements JSON> }
+//   → 200 { ok: true, status: <code HTTP de Twitch> } ; 400 adresse refusée
+//     ou données invalides ; 429 trop d'envois ; 502 Twitch injoignable.
+// L'envoi est refait comme l'app le fait (POST, `data=<base64>` en
+// application/x-www-form-urlencoded, User-Agent de Safari sur iPhone, celui
+// de ChannelPointsService), sans suivre de redirection. Ce n'est pas un
+// mandataire ouvert : https seulement, hôte spade.twitch.tv ou
+// video-edge-<…>.<…>.abs.hls.ttvnw.net, sans identifiants ni port, chemin
+// (requête comprise) de SPADE_PATH_MAX caractères au plus ; les données,
+// SPADE_DATA_MAX caractères de base64 au plus, doivent se décoder en une
+// liste JSON de 1 à SPADE_EVENTS_MAX événements « minute-watched » (des
+// objets, `properties` en objet) — rien d'autre ne part. SPADE_PER_MINUTE
+// envois par minute et par adresse (/64 en IPv6), en mémoire de l'instance :
+// ni lecture ni écriture D1 (une écriture par minute et par spectateur
+// viderait le quota), et rien sur l'utilisateur au journal, même en erreur.
+// En-têtes CORS comme les autres routes /api : un navigateur peut de toute
+// façon poster directement à spade.twitch.tv.
+const SPADE_UA = 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 '
+    + '(KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1';
+const SPADE_HOST_RE = /^(?:spade\.twitch\.tv|video-edge-[a-z0-9-]{1,63}\.[a-z0-9-]{1,63}\.abs\.hls\.ttvnw\.net)$/;
+const SPADE_PATH_MAX = 300;
+const SPADE_DATA_MAX = 8 * 1024;
+const SPADE_EVENTS_MAX = 5;
+const SPADE_PER_MINUTE = 20;
+const SPADE_BODY_MAX = SPADE_DATA_MAX + 2048;   // { url, data } en JSON
+const spadeHits = new Map();   // adresse → { n, until } (mémoire de l'instance)
+
+/** Adresse de statistiques de Twitch admise, rendue sans fragment ; null
+ *  sinon. */
+function spadeTarget(raw) {
+    if (typeof raw !== 'string' || raw.length > 1000) return null;
+    let u;
+    try { u = new URL(raw); } catch (e) { return null; }
+    if (u.protocol !== 'https:' || u.username || u.password || u.port || !SPADE_HOST_RE.test(u.hostname)) return null;
+    const path = u.pathname + u.search;
+    return path.length <= SPADE_PATH_MAX ? `https://${u.hostname}${path}` : null;
+}
+
+/** `data` admis : du base64 qui se décode en une liste JSON de 1 à
+ *  SPADE_EVENTS_MAX événements « minute-watched ». */
+function spadeEventsOk(data) {
+    if (typeof data !== 'string' || !data || data.length > SPADE_DATA_MAX || data.length % 4 !== 0
+        || !/^[A-Za-z0-9+/]+={0,2}$/.test(data)) return false;
+    let events;
+    try { events = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(b64Bytes(data))); } catch (e) { return false; }
+    const object = (v) => Boolean(v) && typeof v === 'object' && !Array.isArray(v);
+    return Array.isArray(events) && events.length >= 1 && events.length <= SPADE_EVENTS_MAX
+        && events.every((e) => object(e) && e.event === 'minute-watched' && object(e.properties));
+}
+
+async function handleSpade(request) {
+    if (request.method !== 'POST') return jsonError('Method Not Allowed', 405);
+    if (overLimit(spadeHits, clientKey(request), SPADE_PER_MINUTE, 60 * 1000)) {
+        return jsonError('Trop d\x27envois, réessaie dans une minute', 429);
+    }
+    let body = null;
+    try {
+        if (!(Number(request.headers.get('Content-Length')) > SPADE_BODY_MAX)) {
+            const text = await request.text();
+            if (text.length <= SPADE_BODY_MAX) body = JSON.parse(text);
+        }
+    } catch (e) { body = null; }
+    if (!body || typeof body !== 'object' || Array.isArray(body)) return jsonError('Données invalides', 400);
+    const target = spadeTarget(body.url);
+    if (!target) return jsonError('Adresse refusée', 400);
+    if (!spadeEventsOk(body.data)) return jsonError('Données invalides', 400);
+    let res;
+    try {
+        res = await fetch(target, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'User-Agent': SPADE_UA },
+            body: `data=${encodeURIComponent(body.data)}`,
+            redirect: 'manual',
+            signal: AbortSignal.timeout(10000),
+        });
+    } catch (e) {
+        return jsonError('Twitch injoignable', 502);
+    }
+    // Rien à lire dans la réponse : seul son code compte.
+    res.body?.cancel().catch(() => {});
+    return jsonResponse({ ok: true, status: res.status });
 }
 
 // --- FONCTIONS UTILITAIRES ---
@@ -2545,16 +2638,28 @@ async function trashDiscordPosts(env, ctx, threads, cards = []) {
     if (posts.length) echoTeamToDiscord(env, ctx, { dt: posts[0] }, { note: '🗑️ Report deleted from /stats: this post is being deleted.' });
 }
 
-function echoTeamToDiscord(env, ctx, meta, { message = '', photos = [], status = null, note = null }) {
+/** `from` : d'où vient le changement, dit dans le message (/stats et les
+ *  apps par défaut ; « the developer's tool » pour la clé des retours). */
+function echoTeamToDiscord(env, ctx, meta, { message = '', photos = [], status = null, note = null, from = '/stats or the app' }) {
     if (!env.FEEDBACK_WEBHOOK || !meta?.dt) return Promise.resolve();
     const content = note
         || (status
-            ? `📌 Status: **${FEEDBACK_STATUS_LABELS[status] || status}** (from /stats or the app)`
-            : `💬 **Your reply** (from /stats or the app)${message ? `\n${message}` : ''}`);
+            ? `📌 Status: **${FEEDBACK_STATUS_LABELS[status] || status}** (from ${from})`
+            : `💬 **Your reply** (from ${from})${message ? `\n${message}` : ''}`);
     const payload = { username: 'TwitchUnblock', allowed_mentions: { parse: [] }, content: content.slice(0, 2000) };
     const job = discordHook(env.FEEDBACK_WEBHOOK, payload, photoFiles(photos), { threadId: meta.dt }).catch(() => {});
     if (ctx?.waitUntil) ctx.waitUntil(job);
     return job;
+}
+
+/** Réponse ou état du développeur (`r` : rendu par feedbackTeamUpdate)
+ *  recopié dans le post Discord du retour, et dans ceux de ses doublons qui
+ *  ont suivi son état — depuis /stats, l'app ou l'outil du développeur
+ *  (`from`, voir echoTeamToDiscord). */
+function echoTeamUpdate(env, ctx, r, update, from) {
+    const echo = from ? { ...update, from } : update;
+    if (!r.unchanged) echoTeamToDiscord(env, ctx, r.metadata, echo);
+    for (const dt of r.dupThreads || []) echoTeamToDiscord(env, ctx, { dt }, echo);
 }
 
 /**
@@ -2625,7 +2730,8 @@ async function feedbackTeamUpdate(env, key, { message = '', photos = [], status 
 //                                                     et leurs numéros)
 //     { action: 'photo', thread, n }                → { type, b64 } (une photo)
 //   Outils du bot (voir plus bas) : get / set (sa mémoire), trash-done
-//   (posts supprimés, retirés de sa corbeille), create /
+//   (posts supprimés, retirés de sa corbeille), todo-actions-done (cartes
+//   de la liste à faire marquées par l'outil du développeur), create /
 //   userReply (/bug sur Discord, réponses en message privé, photos
 //   comprises), delete, block, merge, fix / released (« c'est en ligne »),
 //   summary, health, announce, poll / poll-end / poll-state (sondage).
@@ -2807,7 +2913,8 @@ async function feedbackBotTool(env, body) {
         // valeurs JSON sous `dcbot_<clé>`, gardées ou pour `ttl` secondes.
         // Lue seulement par le bot (secret partagé), sauf `todo_mirror`, sa
         // copie de la liste à faire, que rend aussi /api/admin/reports?view=todo
-        // (clé REPORTS_KEY).
+        // (clé REPORTS_KEY) ; `todo_actions`, les cartes à marquer, est
+        // remplie par cette même route (POST, queueTodoActions).
         case 'get': {
             const k = String(body.key || '');
             if (!/^[a-z0-9_:-]{1,60}$/.test(k)) return jsonError('Bad key', 400);
@@ -2839,6 +2946,27 @@ async function feedbackBotTool(env, body) {
                 WHERE key = ?1 AND json_valid(value) AND json_type(value) = 'array'`)
                 .bind(`${BOT_STORE_PREFIX}trash`, JSON.stringify(ids)).run();
             return jsonResponse({ ok: true });
+        }
+        // Demandes de l'outil du développeur sur les cartes de la liste à
+        // faire (reportsAction, `todo`) que le bot a traitées : retirées sur
+        // place, chacune seulement si carte, sens et date sont les mêmes —
+        // une demande arrivée entre-temps reste, même pour la même carte.
+        // Rend le nombre de demandes qui attendent encore (`left`).
+        case 'todo-actions-done': {
+            const items = (Array.isArray(body.items) ? body.items : []).slice(0, TODO_ACTIONS_MAX)
+                .filter((x) => TODO_CARD_RE.test(String(x?.id ?? '')) && typeof x?.done === 'boolean' && Number.isSafeInteger(x?.at))
+                .map((x) => ({ id: String(x.id), done: x.done, at: x.at }));
+            if (!items.length) return jsonResponse({ ok: true, left: null });
+            await ensureSchema(env);
+            const row = await env.DB.prepare(`UPDATE kv SET value = (
+                    SELECT json_group_array(json(o.value)) FROM json_each(kv.value) AS o
+                    WHERE o.type = 'object' AND NOT EXISTS (SELECT 1 FROM json_each(?2) AS d
+                        WHERE json_extract(d.value, '$.id') = json_extract(o.value, '$.id')
+                          AND json_extract(d.value, '$.done') = json_extract(o.value, '$.done')
+                          AND json_extract(d.value, '$.at') = json_extract(o.value, '$.at')))
+                WHERE key = ?1 AND json_valid(value) AND json_type(value) = 'array'
+                RETURNING json_array_length(value) AS n`).bind(TODO_ACTIONS_KEY, JSON.stringify(items)).first();
+            return jsonResponse({ ok: true, left: row ? Number(row.n) : 0 });
         }
         // /bug et /idea sur Discord : le même retour que depuis l'app ; les
         // réponses partent en message privé (deliver), pas de jeton à garder.
@@ -3428,8 +3556,7 @@ async function handleAdminFeedback(request, env, ctx) {
             if (r.error) return jsonError(r.error, r.code);
             // Recopié dans le post Discord du retour (salon forum), et dans
             // ceux de ses doublons qui ont suivi son état.
-            if (!r.unchanged) echoTeamToDiscord(env, ctx, r.metadata, update);
-            for (const dt of r.dupThreads || []) echoTeamToDiscord(env, ctx, { dt }, update);
+            echoTeamUpdate(env, ctx, r, update);
             return jsonResponse({ ok: true, item: summary(target, r.metadata), thread: r.thread });
         }
 
@@ -3483,13 +3610,16 @@ async function handleAdminFeedback(request, env, ctx) {
     }), { headers: noStore });
 }
 
-// ── Lecture des retours par clé (outil du développeur) ────────────────────
-// GET /api/admin/reports — les retours en lecture seule, pour tools/reports.mjs
-// (l'assistant de développement les lit depuis le PC du propriétaire, sans
-// qu'il ait à les recopier). Seul accès : le secret REPORTS_KEY du Worker (32
+// ── Retours lus (et marqués) par clé (outil du développeur) ───────────────
+// GET /api/admin/reports — les retours, pour tools/reports.mjs (l'assistant
+// de développement les lit depuis le PC du propriétaire, sans qu'il ait à
+// les recopier) ; POST : deux changements seulement, l'état d'un retour et
+// les cartes de la liste à faire du bot (voir reportsAction plus bas). Seul
+// accès : le secret REPORTS_KEY du Worker (32
 // caractères au moins) dans `Authorization: Bearer <clé>`, comparé en temps
 // constant ; ni jeton Twitch ni secret du bot n'ouvrent cette route, et la
-// clé n'ouvre rien d'autre (aucune écriture). Sans le secret, la route
+// clé n'ouvre rien d'autre (ni réponse, ni suppression, ni fusion, ni les
+// outils de /stats). Sans le secret, la route
 // répond comme une adresse inconnue (404). Clé fausse : 401 ; après
 // REPORTS_FAILS essais ratés en une heure depuis une adresse (/64 en IPv6),
 // 429 pour toute requête de cette adresse jusqu'à la fin de l'heure
@@ -3615,7 +3745,8 @@ function reportView(key, m, value, votes, full) {
     };
 }
 
-/** Lecture notée au journal d'audit (à côté de la réponse). */
+/** Lecture (ou changement, reportsAction) par la clé, notée au journal
+ *  d'audit (à côté de la réponse). */
 async function noteReportsRead(env, ctx, detail, what = 'reports.read') {
     const note = writeAudit(env, { who: 'REPORTS_KEY', from: 'key', what, detail }).catch((e) => logCaught('audit', e));
     if (ctx?.waitUntil) ctx.waitUntil(note); else await note;
@@ -3745,6 +3876,113 @@ async function reportsPhoto(env, ctx, url, reply) {
     });
 }
 
+// ── Changements par la clé (POST, tools/reports.mjs --done…) ───────────────
+// La clé des retours fait aussi, et seulement, ces deux changements :
+//   { action: 'status', key: 'fb_…', status: done | refused | accepted | progress | seen }
+//     → exactement le changement d'état de /stats (handleAdminFeedback) :
+//       feedbackTeamUpdate (les doublons fusionnés suivent), puis
+//       « 📌 Status: … (from the developer's tool) » dans le post Discord du
+//       retour et dans ceux de ses doublons — le bot du relais y remet
+//       l'étiquette, demande où sortira un correctif passé à « Done » (la
+//       personne est prévenue à la sortie) et transmet l'état à qui a écrit
+//       depuis Discord, comme après /stats. Rend { ok, key, status,
+//       previous, unchanged, kind, suggestion, title, dups }.
+//   { action: 'todo', ids: ['<carte>', …], done: true | false }
+//     → le Worker ne parle pas à Discord : chaque demande { id, done, at }
+//       va dans la mémoire du bot (`dcbot_todo_actions`, queueTodoActions),
+//       qui la relit toutes les 2 min et fait ce que font ses boutons Done
+//       / Reopen. Rend { ok, done, cards: [{ id, known, wasDone, type,
+//       text }] (d'après la copie de la liste, `mirrorAt`), pending, oldest }.
+// Ni réponse, ni suppression, ni fusion : aucun message n'est écrit aux
+// personnes (un nouvel état leur parvient comme après /stats, rien de plus).
+// Chaque changement est noté au journal d'audit (qui : REPORTS_KEY, d'où :
+// « key » ; « report.status », « todo.done » ou « todo.reopen »).
+const REPORTS_SET_STATUSES = ['done', 'refused', 'accepted', 'progress', 'seen'];
+const TODO_ACTIONS_KEY = `${BOT_STORE_PREFIX}todo_actions`;
+const TODO_ACTIONS_MAX = 100;     // demandes gardées pour le bot, les plus récentes
+const TODO_CARD_RE = /^\d{5,25}$/;
+const REPORTS_TOOL = "the developer's tool";
+
+/** Demandes ajoutées à la mémoire du bot sur place, en une requête, comme
+ *  la corbeille (trashDiscordPosts) : relue puis réécrite, la liste perdait
+ *  une demande arrivée entre les deux, ou en rendait une que le bot venait
+ *  de retirer (`todo-actions-done`). Une demande par carte (la nouvelle
+ *  remplace l'ancienne), les TODO_ACTIONS_MAX plus récentes. Rend la liste
+ *  à jour. */
+async function queueTodoActions(env, entries) {
+    await ensureSchema(env);
+    const row = await env.DB.prepare(`INSERT INTO kv (key, value, expires) VALUES (?1, ?2, NULL)
+        ON CONFLICT(key) DO UPDATE SET expires = NULL, value = (
+            SELECT json_group_array(json(e)) FROM (
+                SELECT e FROM (
+                    SELECT o.value AS e, json_extract(o.value, '$.at') AS at
+                    FROM json_each(CASE WHEN (kv.expires IS NULL OR kv.expires > ?3) AND json_valid(kv.value)
+                        AND json_type(kv.value) = 'array' THEN kv.value ELSE '[]' END) AS o
+                    WHERE o.type = 'object'
+                      AND json_extract(o.value, '$.id') NOT IN (SELECT json_extract(n.value, '$.id') FROM json_each(excluded.value) AS n)
+                    UNION ALL
+                    SELECT n.value, json_extract(n.value, '$.at') FROM json_each(excluded.value) AS n
+                ) ORDER BY at DESC LIMIT ${TODO_ACTIONS_MAX}))
+        RETURNING value`).bind(TODO_ACTIONS_KEY, JSON.stringify(entries), Date.now()).first();
+    let list = [];
+    try { list = JSON.parse(row?.value || '[]'); } catch (e) { logCaught('reports/todo-actions', e); }
+    return Array.isArray(list) ? list : [];
+}
+
+async function reportsAction(request, env, ctx, reply) {
+    const body = await readJsonObject(request);
+    if (!body) return reply({ error: 'JSON invalide' }, 400);
+
+    if (body.action === 'status') {
+        const key = String(body.key ?? '').trim();
+        const status = String(body.status ?? '').trim();
+        if (!FEEDBACK_KEY_RE.test(key)) return reply({ error: 'Clé de retour invalide' }, 400);
+        if (!REPORTS_SET_STATUSES.includes(status)) return reply({ error: `status : ${REPORTS_SET_STATUSES.join(', ')}` }, 400);
+        // Lu d'abord : l'état d'avant et le titre, pour ce que l'outil affiche.
+        const { metadata: m } = await store(env).getWithMetadata(key);
+        if (!m) return reply({ error: 'Retour introuvable' }, 404);
+        const update = { status };
+        const r = await feedbackTeamUpdate(env, key, update);
+        if (r.error) return reply({ error: r.error }, r.code);
+        echoTeamUpdate(env, ctx, r, update, REPORTS_TOOL);
+        await noteReportsRead(env, ctx, `${key} → ${status}${r.unchanged ? ' (unchanged)' : ''}`, 'report.status');
+        return reply({
+            ok: true, key, status, previous: FEEDBACK_STATUSES.includes(m.s) ? m.s : 'new', unchanged: Boolean(r.unchanged),
+            kind: FEEDBACK_KINDS.includes(m.k) ? m.k : 'other', suggestion: Boolean(m.sg),
+            title: auditExcerpt(m.sg && m.st ? m.st : m.m, 100),
+            dups: !r.unchanged && Array.isArray(m.dups) ? Math.min(m.dups.length, 20) : 0,
+        });
+    }
+
+    if (body.action === 'todo') {
+        const ids = Array.isArray(body.ids) ? [...new Set(body.ids.map((x) => String(x ?? '').trim()))] : [];
+        if (!ids.length || ids.length > TODO_ACTIONS_MAX || !ids.every((x) => TODO_CARD_RE.test(x))) {
+            return reply({ error: `ids : 1 à ${TODO_ACTIONS_MAX} identifiants de cartes (des chiffres)` }, 400);
+        }
+        if (typeof body.done !== 'boolean') return reply({ error: 'done : true ou false' }, 400);
+        const at = Date.now();
+        const list = await queueTodoActions(env, ids.map((id) => ({ id, done: body.done, at })));
+        // Ce qu'en dit la copie de la liste (une lecture), pour l'affichage.
+        let mirror = null;
+        try { mirror = JSON.parse(await store(env).get(TODO_MIRROR_KEY) || 'null'); } catch (e) { logCaught('reports/todo', e); }
+        const known = new Map((Array.isArray(mirror?.items) ? mirror.items : []).slice(0, TODO_VIEW_ITEMS)
+            .map(todoItemView).filter(Boolean).map((x) => [x.id, x]));
+        await noteReportsRead(env, ctx, `${ids.length} card(s): ${ids.join(', ')}`, body.done ? 'todo.done' : 'todo.reopen');
+        const times = list.map((x) => Number(x?.at)).filter((t) => t > 0);
+        return reply({
+            ok: true, done: body.done,
+            cards: ids.map((id) => {
+                const x = known.get(id);
+                return { id, known: Boolean(x), wasDone: x ? x.done : null, type: x?.type || null, text: x ? auditExcerpt(x.text, 100) : null };
+            }),
+            mirrorAt: isoDate(Date.parse(String(mirror?.at ?? ''))),
+            pending: list.length, oldest: times.length ? isoDate(Math.min(...times)) : null,
+        });
+    }
+
+    return reply({ error: 'action : status ou todo' }, 400);
+}
+
 async function handleAdminReports(request, env, ctx) {
     const secret = String(env.REPORTS_KEY || '').trim();
     // Fonction coupée (secret absent ou trop court) : comme une route inconnue.
@@ -3752,7 +3990,7 @@ async function handleAdminReports(request, env, ctx) {
     // Pas d'en-têtes CORS : réservé à l'outil local, aucune page ne lit la réponse.
     const headers = { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' };
     const reply = (obj, status = 200, extra = {}) => new Response(JSON.stringify(obj), { status, headers: { ...headers, ...extra } });
-    if (request.method !== 'GET') return reply({ error: 'Method Not Allowed' }, 405);
+    if (request.method !== 'GET' && request.method !== 'POST') return reply({ error: 'Method Not Allowed' }, 405);
     const who = clientKey(request);
     const fails = reportsFailHits.get(who);
     if (fails && fails.until >= Date.now() && fails.n >= REPORTS_FAILS) {
@@ -3766,6 +4004,9 @@ async function handleAdminReports(request, env, ctx) {
     }
 
     await ensureSchema(env);
+    // État d'un retour, cartes de la liste à faire : mêmes clé, blocage et
+    // en-têtes que la lecture.
+    if (request.method === 'POST') return reportsAction(request, env, ctx, reply);
     const url = new URL(request.url);
     // La liste à faire du bot et les photos : mêmes clé, blocage et en-têtes
     // que les retours.
@@ -5515,7 +5756,8 @@ async function opsBotTool(env, ctx, body) {
 const AUDIT_PREFIX = 'audit_';
 const AUDIT_TTL = 90 * 86400;
 // key : lecture des retours, de leurs photos ou de la liste à faire du bot
-// par la clé REPORTS_KEY (handleAdminReports).
+// par la clé REPORTS_KEY (handleAdminReports), et ses changements (état
+// d'un retour, cartes de la liste à faire : reportsAction).
 const AUDIT_FROM = ['stats', 'app', 'discord', 'key'];
 const auditExcerpt = (v, max = 60) => {
     const s = cleanText(v, 400).replace(/\s+/g, ' ');

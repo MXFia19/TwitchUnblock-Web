@@ -175,7 +175,7 @@ docker/relay.mjs     Video relay for your own server (same proxy as the Worker)
 docker/discord-bot.mjs  Discord bot (feedback, alerts, releases), run by the relay
 docker/healthcheck.mjs  Container health check (site or relay)
 relay/               Its docker-compose.yml and Caddyfile (HTTPS)
-tools/reports.mjs    Reads bug reports (and their screenshots), suggestions and the bot's to-do list from the owner's computer (read-only key)
+tools/reports.mjs    Reads bug reports (and their screenshots), suggestions and the bot's to-do list from the owner's computer, and marks them done (reports key)
 tools/connect-check.mjs  Checks of the extension bridge (Node, no browser or network)
 .github/workflows/   Docker image (docker.yml), daily database backup (d1-backup.yml)
 vercel.json          Website configuration on Vercel
@@ -207,16 +207,27 @@ The iOS app can't use Apple's push service (it needs a paid developer account), 
 
 ntfy.sh's free tier counts messages per IP address (250 a day). Every Cloudflare Worker sends from the same shared addresses, so ntfy.sh answers them `429 Too Many Requests`. The Worker therefore hands its ntfy messages to the [video relay](#video-relay-on-your-own-server-vps) (`NTFY_RELAY` in `wrangler.toml`), which publishes them from its own address. Messages leave in one batch per run (12 at most, ntfy.sh's pace of one request every 5 seconds), signed with the Worker's VAPID key: the relay checks the signature against the Worker's public key (`/api/push/key`) and refuses anything else, so no secret needs to be shared. After a `429` the Worker stops sending to ntfy for 5 minutes, or until midnight UTC (when ntfy.sh resets its counters) once the daily quota is reached; the app's **Test** button says so. That quota is shared by every user of the app, so daily caps kept in D1 protect it: the **Test** button only works for a topic the app has already subscribed (5 tests a day per topic, 40 in all), new topics are capped (5 a day per IP address, 10 per network — a `/48` in IPv6 —, 40 in all), each topic gets at most 30 live notifications a day, and all topics together at most 200 (below ntfy.sh's 250 with the tests), of which topics younger than 3 days get 100 at most — so new topics can't use up the day for everyone and trigger the pause (without `NTFY_TOKEN` only). Web notifications and ntfy messages are read from the queue separately, so neither can hold up the other. While the relay is down, messages wait in the queue (30 minutes at most): there is no fallback to sending directly, which ntfy.sh would refuse anyway. The relay logs one line per batch (`docker compose logs relay`). With `NTFY_TOKEN` (a paid ntfy account, counted per account rather than per address) the Worker publishes directly, like the Docker image does from your own server.
 
+**Channel points relay** (apps): every minute, the app sends Twitch a *minute-watched* event — what credits channel points — at the analytics address read in the channel's page (`spade_url`, today `https://spade.twitch.tv/track`). Ad blockers and filtering DNS often cut that address, and then nothing is credited; the app can then send it through the Worker:
+
+```
+POST /api/spade
+Content-Type: application/json
+{ "url": "<spade_url>", "data": "<base64 of the JSON events>" }
+```
+
+The Worker sends it again the way the app does — `POST url`, body `data=<base64>` as `application/x-www-form-urlencoded`, an iPhone Safari User-Agent, redirects not followed — and answers `200 { "ok": true, "status": <Twitch's HTTP code> }`, `400` when the address is refused or the data is invalid, `429` for too many sends, `502` when Twitch can't be reached. It is not an open proxy (see [Security](#security)) and costs no D1 read or write. The [Docker image](#self-hosting-with-docker) has it too.
+
 ### Security
 - **History backups and synced settings are private**: every read or write must carry the owner's Twitch token. The Worker has Twitch confirm it and checks it belongs to that account — knowing someone's (public) Twitch ID is no longer enough.
 - **The proxy only relays Twitch and the proxy sources** (`ttvnw.net`, `jtvnw.net`, `twitch.tv`, `twitchcdn.net`, `luminous.dev`, exactly `twitch-al.nadeko.net`, and on `cloudfront.net` only Twitch's own VOD distributions — a new one is accepted once Twitch itself points to it), over HTTPS — it is not an open proxy. Redirects are followed one by one (4 at most), each new address checked the same way. What comes back is served as media with only the headers a player needs, never as a web page (`nosniff`, sandboxing CSP).
+- **The channel points relay** (`POST /api/spade`) only sends to Twitch's analytics addresses — over HTTPS, host `spade.twitch.tv` or `video-edge-<…>.<…>.abs.hls.ttvnw.net`, no credentials, no port, a path (query included) of 300 characters at most — and only what the apps send there: base64 (8 KB at most) of a JSON list of 1 to 5 `minute-watched` events. Anything else gets `400` before any request; redirects aren't followed. 20 sends a minute per address (a `/64` in IPv6), counted in the instance's memory: no D1 read or write (one write a minute per viewer would eat the free quota), and nothing about the user is logged, errors included. CORS headers like the other `/api` routes: a browser can post to Twitch's address directly anyway.
 - Usage pings only accept random UUIDs and store no IP address.
 - Rate limits (feedback, replies, pings, notifications) count an IPv6 address by its `/64` block. Screenshots attached to feedback have a daily share per person (address or Discord account, counted in one of 65,536 anonymous buckets: no address is stored), per network (`/48`) and a daily cap for the whole Worker, and stop before the D1 database fills up; the message itself still goes through, and the website says the screenshots weren't kept.
 - Per-address limits only hold in one Worker instance's memory, and a free IPv6 `/48` holds 65,536 `/64`s, so whatever writes to D1 also has daily caps kept in D1, for the whole Worker and per network: feedback (300 new reports a day, 30 per network; 1,000 replies a day; no new report or reply once the database passes 400 MB), Discord suggestions (one every 10 minutes per person, 5 a day per person, 50 a day in all, within the 300 reports) and their votes (5,000 a day, 60 an hour per member), new anonymous installs counted (1,000 a day, 100 per network), votes and reactions (2,000 a day per poll or announcement, 40 new devices per network), followed channels for live notifications (only the difference is written: 2,000 changes a day per subscription, 3,000 per network, 10,000 in all, and 1,000 channels new to the server a day). Over a cap the answer is `429` (an install is just not counted), and a cap already reached refuses without writing anything.
 - The Discord bot's actions on the Worker all carry the shared secret (`FEEDBACK_BOT_SECRET`); `/live` and `/top` go through at most 120 Twitch lookups a minute, `/my-reports` and `/suggestions` 30 a minute per member — and as each of those two reads every report in D1, the bot keeps their answers 60 seconds (`/suggestions top` the same for everyone, `/my-reports` per member; read again once that member sends something or votes). `/api/open/live` (the **Open in the app** button) only takes a valid Twitch name and only redirects to `twitchunblock://live/<name>`.
 - The developer tools only accept Twitch tokens issued to the official website and apps (or to `TWITCH_CLIENT_ID`): a token of the owner's account issued to another Twitch app doesn't open them.
-- **Admin log**: every admin action — from `/stats`, the apps or Discord: deleting, closing or merging a report, replies and statuses, announcements, polls, erasing someone's data… — and every read of the reports (or of the bot's to-do list) with the read key is kept 90 days (who, what, when, from where) and listed at the bottom of the developer tools on `/stats`.
-- **Reports on the developer's computer** (`GET /api/admin/reports`, `tools/reports.mjs`): read-only, opened only by the `REPORTS_KEY` secret (constant-time check, 10 wrong keys an hour per address), never returns contacts, install IDs, addresses or tokens, and screenshots only one at a time, as a download checked to be a JPEG, PNG or WebP image; the same route and key (and nothing else but the bot's own secret) read the Discord bot's copy of its to-do list, with the Discord links of its cards' attachments (the files themselves never go through the Worker) — see [Reading reports from your computer](#reading-reports-from-your-computer-read-only).
+- **Admin log**: every admin action — from `/stats`, the apps or Discord: deleting, closing or merging a report, replies and statuses, announcements, polls, erasing someone's data… — and everything done with the reports key (reading the reports or the bot's to-do list, a report's new status, to-do cards marked done or reopened) is kept 90 days (who, what, when, from where) and listed at the bottom of the developer tools on `/stats`.
+- **Reports on the developer's computer** (`/api/admin/reports`, `tools/reports.mjs`): opened only by the `REPORTS_KEY` secret (constant-time check, 10 wrong keys an hour per address); it reads, and makes two changes only — a report's status (exactly as in `/stats`) and marking the Discord bot's to-do cards done or open again —: no reply, no deletion, no merge (a new status reaches the person just as after `/stats`). It never returns contacts, install IDs, addresses or tokens, and screenshots only one at a time, as a download checked to be a JPEG, PNG or WebP image; the same route and key (and nothing else but the bot's own secret) read the Discord bot's copy of its to-do list, with the Discord links of its cards' attachments (the files themselves never go through the Worker) — see [Reading reports from your computer](#reading-reports-from-your-computer).
 - **Erasing someone's data** (`/stats` → developer tools, or `/forget-user` on Discord): shows what will go first — with the Twitch account found, ID and current username —, then erases exactly that; the admin log only notes what kind of data went and how much, nothing that identifies the person — see [Discord bot](#discord-bot-feedback-alerts-releases), *Operations*.
 
 ---
@@ -275,7 +286,7 @@ Optional settings, in the Cloudflare dashboard under *Workers & Pages → your W
 |---|---|---|
 | `FEEDBACK_WEBHOOK` | Secret | Discord webhook address: each bug report, idea and reply is posted there, screenshots attached. In a **forum** channel, each report gets its own post, where its replies land too. `/stats` shows whether the last delivery worked and has a **Test Discord delivery** button. |
 | `FEEDBACK_BOT_SECRET` | Secret | Optional. Shared secret (32+ random characters) of the [Discord bot](#discord-bot-feedback-alerts-releases): the same value goes in the relay's `.env`. Without it, the bot's route is off. |
-| `REPORTS_KEY` | Secret | Optional. Read-only key (32+ characters: `openssl rand -hex 32`) for [reading reports from your computer](#reading-reports-from-your-computer-read-only) with `tools/reports.mjs`. Without it, `/api/admin/reports` doesn't exist (404). |
+| `REPORTS_KEY` | Secret | Optional. Key (32+ characters: `openssl rand -hex 32`) for [reading reports from your computer](#reading-reports-from-your-computer) with `tools/reports.mjs` — and marking them done: a report's status, the bot's to-do cards; nothing else. Without it, `/api/admin/reports` doesn't exist (404). |
 | `ALERT_WEBHOOK` | Secret | Optional. Webhook of a private Discord channel: every 5 minutes the Worker checks the [video relay](#video-relay-on-your-own-server-vps) (`NTFY_RELAY`) and the Discord bot, and posts there when one goes down or comes back. |
 | `ADMIN_TWITCH_IDS` | Text | Twitch user ID(s) of the site owner, comma-separated, for the developer tools on `/stats`. Optional: without it, the Worker uses `OFFICIAL_ADMIN_TWITCH_IDS` from `wrangler.toml` (the official Worker's owner; a different name, so a dashboard variable or secret never clashes with it on deploy). For your own Worker, set this or change `OFFICIAL_ADMIN_TWITCH_IDS`. With neither, nobody gets the tools. |
 | `SITE_ORIGINS` | Text | Website address(es) whose usage pings are counted, comma-separated. |
@@ -713,7 +724,12 @@ with a menu of the next 24 messages; pick the *last* one, and a single
 number of attachments, and links to the first and last messages. `/todo
 text:` adds an item by hand. Developer only. The bot keeps a copy of the list
 in the Worker, read from the owner's computer with
-[`tools/reports.mjs --todo`](#reading-reports-from-your-computer-read-only).
+[`tools/reports.mjs --todo`](#reading-reports-from-your-computer); cards can
+also be marked done or reopened from there (`--done`, `--reopen`): the
+Worker keeps each request in the bot's memory (`todo_actions`), and every 2
+minutes — and before each read of the channel — the bot updates those cards
+exactly like their **Done** / **Reopen** button (a card it can't find in the
+to-do channel is dropped and noted once in its log).
 
 Setting it up:
 
@@ -765,15 +781,16 @@ and memory in the Worker's database, nothing on the server's disk, and takes
 no new dependency: Discord's gateway over Node's built-in WebSocket, its REST
 API, GitHub and the website over `fetch`.
 
-### Reading reports from your computer (read-only)
+### Reading reports from your computer
 
 `tools/reports.mjs` lists the bug reports and suggestions on the owner's
 computer — and, with `--todo`, the Discord bot's to-do list; with `--photos`,
 it downloads a report's screenshots, and with `--files`, the attachments of a
 to-do card's original message —, so the coding assistant reads (and sees)
-them directly instead of having them copied by hand. It calls
-`GET /api/admin/reports` on the Worker with a dedicated key, `REPORTS_KEY`,
-which can only read them.
+them directly instead of having them copied by hand, and marks what it fixed
+as done itself. It calls `/api/admin/reports` on the Worker with a dedicated
+key, `REPORTS_KEY`, which reads them and makes two changes only: a report's
+status, and to-do cards marked done or open again.
 
 Setup, once:
 
@@ -804,6 +821,9 @@ node tools/reports.mjs --todo          # the Discord bot's to-do list: open item
 node tools/reports.mjs --todo --all    # … then the 50 latest done ones (--json: the answer as it is)
 node tools/reports.mjs --photos fb_…   # the screenshots of a report and of its replies, saved to report-photos/fb_…/ in this repository
 node tools/reports.mjs --files <id>    # the attachments of a to-do card's original message (id shown by --todo; "all": every open card), saved to report-photos/todo-<id>/
+node tools/reports.mjs --done fb_…,<id>  # marks done: reports (fb_…, status “Done”) and to-do cards (ids shown by --todo), mixed, comma-separated
+node tools/reports.mjs --reopen <id>   # to-do cards open again
+node tools/reports.mjs --status fb_… --to progress  # another status: seen | accepted | progress | done | refused
 ```
 
 Also `--limit=N` (200 at most) and `--url=<Worker>` (or `TU_WORKER_URL`;
@@ -860,6 +880,31 @@ tool then downloads them straight from Discord, without the key, to
 wrote becomes a file name), 25 MB per file and 200 MB per run at most. An
 expired link is refused before any request.
 
+**Marking things done** (`--done`, `--reopen`, `--status … --to …`, which
+can go together): every key or id is checked before any request (unknown
+formats are refused, and so is the same card in both `--done` and
+`--reopen`), then the tool prints what changed, report by report and card by
+card.
+- A **report** (`fb_…`) changes status at once, exactly as from `/stats`:
+  the person sees it in the app or on the website, duplicates merged into it
+  follow, and its Discord post gets `📌 Status: … (from the developer's
+  tool)` — the bot sets the post's tag and, for *Done*, asks where the fix
+  will ship (the person is told when it's live) — like after `/stats`.
+  Already in that status: nothing changes. The tool shows the status before
+  and after.
+- A **to-do card** (an id from `--todo`): the Worker doesn't talk to
+  Discord. It keeps the request in the bot's memory (`todo_actions`: one per
+  card — the latest wins —, the 100 latest), and the bot applies it within 2
+  minutes exactly like the card's **Done** / **Reopen** button, then the
+  `--todo` copy follows. The tool says what the copy knows of each card
+  (text, open or done) and how many requests are waiting — and warns when
+  one has been waiting for more than 10 minutes (bot stopped or not up to
+  date?). A card the bot can't find in the to-do channel is dropped, noted
+  once in its log.
+
+The tool can't reply to anyone, delete or merge anything: the route doesn't
+take it. With a Worker from before this (no `POST`), it says so plainly.
+
 The route itself, `GET /api/admin/reports` with `Authorization: Bearer <key>`:
 
 | Parameter | Values |
@@ -884,17 +929,29 @@ error log. Never: the contact (e-mail, Discord account), install ID, IP
 address, token or its hash, Discord links (only the to-do list has some: its
 cards and the messages they quote, which open only for the server's members).
 
+`POST /api/admin/reports`, same key, JSON body — the only two changes:
+
+| Body | What it does |
+|---|---|
+| `{ "action": "status", "key": "fb_…", "status": "done" }` | `done`, `refused`, `accepted`, `progress` or `seen` (not `new`): the status change of `/stats` (above). Answers `{ ok, key, status, previous, unchanged, kind, suggestion, title, dups }`; `404` for an unknown report. One D1 read before the change |
+| `{ "action": "todo", "ids": ["<card id>", …], "done": true }` | 1 to 100 card ids (digits), `done: false` to reopen: queued for the bot (one D1 write, in place: a request arriving meanwhile, or one the bot is removing, is never lost). Answers `{ ok, done, cards: [{ id, known, wasDone, type, text }], mirrorAt, pending, oldest }` — what the bot's copy says of each card (one D1 read) and how many requests are waiting |
+
+Any other action (reply, delete, merge…) gets `400`.
+
 The key is checked in constant time; a wrong one gets `401`, and after 10
 wrong keys within an hour from one address (a `/64` in IPv6), that address
-gets `429` until the hour is over. It opens nothing else — no write, not the
-`/stats` tools — and neither a Twitch token nor the bot's secret opens this
-route. Every read goes to the admin log (`reports.read`, from *read key*:
-filters and number of reports, nothing personal; `todo.read` for the to-do
-list: number of items; `reports.photo` for a screenshot: the report and the
-number). One D1 query per call, stopped at `limit`; votes are
-only counted for the suggestions returned. Outside this route, only the bot
-reads its copy of the to-do list (with its own secret, `FEEDBACK_BOT_SECRET`).
-To revoke the key, delete or change the secret.
+gets `429` until the hour is over. Besides those two changes it opens
+nothing — no reply, deletion or merge, not the `/stats` tools — and neither
+a Twitch token nor the bot's secret opens this route. Everything goes to the
+admin log, from *feedback key* (in `/stats`): `reports.read` (filters and number of
+reports, nothing personal), `todo.read` for the to-do list (number of
+items), `reports.photo` for a screenshot (the report and the number),
+`report.status` for a status (the report and its new status), `todo.done` /
+`todo.reopen` for cards (their ids). One D1 query per read, stopped at
+`limit`; votes are only counted for the suggestions returned. Outside this
+route, only the bot reads its copy of the to-do list and its requests (with
+its own secret, `FEEDBACK_BOT_SECRET`). To revoke the key, delete or change
+the secret.
 
 ### Locally
 ```bash
@@ -952,6 +1009,12 @@ listens inside the container, behind a small front server
 (`docker/front.mjs`), so its local tools under `/cdn-cgi/` — the scheduled
 trigger, the D1 database explorer — can't be reached from outside. The
 wrangler version is pinned in the `Dockerfile`.
+
+The [channel points relay](#how-it-works) (`POST /api/spade`) is there too,
+the same `worker.js` behind the same front server: *minute-watched* events
+sent to your instance leave from your server's address. Its limit (20 a
+minute) counts each address like the other limits: behind your own reverse
+proxy, set `TRUST_PROXY`, or every viewer shares the proxy's.
 
 The image has a health check (`docker ps` shows `healthy`): `/api/ping` for
 the website, `/health` for the relay. Both `docker-compose.yml` files set

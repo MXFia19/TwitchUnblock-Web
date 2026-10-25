@@ -59,7 +59,10 @@
 //  (todo_mirror), relue au moins toutes les 15 min, reste dans le Worker :
 //  tools/reports.mjs --todo la lit depuis le PC du développeur, et --files
 //  télécharge les pièces jointes des messages d'origine (liens copiés et
-//  renouvelés avant leur expiration, jamais les fichiers eux-mêmes).
+//  renouvelés avant leur expiration, jamais les fichiers eux-mêmes). Les
+//  cartes marquées faites ou rouvertes avec --done / --reopen arrivent par
+//  la mémoire du bot (todo_actions), relue toutes les 2 min : il fait ce
+//  que font ses boutons.
 //  Exploitation (salon privé) : plafonds du jour à 80 %, base à 70 % de sa
 //  taille, tâche planifiée muette depuis 5 min, quotas gratuits de
 //  Cloudflare à 70 % (avec CLOUDFLARE_API_TOKEN), VPS ou Worker en retard
@@ -1109,6 +1112,30 @@ export function fitTodoMirror({ at, channel, open, done, partial = false, max = 
   }
 }
 
+// ── Cartes marquées depuis l'outil du développeur ──────────────────────────
+// tools/reports.mjs --done / --reopen : le Worker (POST /api/admin/reports,
+// clé REPORTS_KEY) range chaque demande { id, done, at } dans la mémoire du
+// bot (`todo_actions` : 100 au plus, une par carte). Le bot la relit toutes
+// les 2 min et avant chaque relecture du salon (applyTodoActions).
+const TODO_ACTIONS_KEY = 'todo_actions'
+const TODO_ACTIONS_EVERY = 2 * 60_000
+
+/** Demandes lues dans `todo_actions` → { cards: [{ id, done }], entries } :
+ *  pour chaque carte, le sens de sa demande la plus récente ; `entries`,
+ *  toutes les demandes lisibles, à retirer une fois traitées (le Worker ne
+ *  retire que celles-là, à l'identique : une demande arrivée entre-temps
+ *  reste). */
+export function todoActionPlan(value) {
+  const entries = (Array.isArray(value) ? value : [])
+    .filter((x) => x && typeof x === 'object' && /^\d{5,25}$/.test(String(x.id ?? ''))
+      && typeof x.done === 'boolean' && Number.isSafeInteger(x.at))
+    .map((x) => ({ id: String(x.id), done: x.done, at: x.at }))
+    .sort((a, b) => a.at - b.at)
+  const latest = new Map()
+  for (const x of entries) latest.set(x.id, x.done)
+  return { cards: [...latest].map(([id, done]) => ({ id, done })), entries }
+}
+
 export function startDiscordBridge({
   token, secret, worker, admins = [],
   api = 'https://discord.com/api/v10',
@@ -1214,6 +1241,7 @@ export function startDiscordBridge({
         try { code = JSON.parse(text).code || 0 } catch {}
         const e = new Error(`${method} ${path.split('?')[0]} → ${r.status}${code ? ` (${code})` : ''}`)
         e.code = code
+        e.status = r.status
         throw e
       }
       try { return text ? JSON.parse(text) : null } catch { return null }
@@ -3265,6 +3293,9 @@ export function startDiscordBridge({
   async function writeTodoMirror() {
     const channel = st.settings.todo
     if (!channel || !st.me || !st.guild) return
+    // Cartes marquées depuis l'outil du développeur d'abord : la relecture
+    // qui suit les voit déjà changées (pas besoin de todoSoon ici).
+    await runTodoActions()
     const open = []
     const done = []
     let before = ''
@@ -3315,6 +3346,75 @@ export function startDiscordBridge({
     clearTimeout(todoSync.timer)
     todoSync.timer = setTimeout(syncTodoMirror, delay)
     todoSync.timer.unref?.()
+  }
+
+  // ── Cartes marquées depuis l'outil du développeur (todo_actions) ────────
+  // Demandes relues toutes les 2 min (une lecture) et avant chaque relecture
+  // du salon. Chaque carte est rebâtie exactement comme par ses boutons Done
+  // / Reopen (todoCard, et le bouton inverse), si c'est bien une carte du
+  // bot dans le salon à faire ; déjà dans cet état, elle reste telle quelle.
+  // Introuvable (supprimée, autre salon, pas une carte du bot) : demande
+  // abandonnée, notée une fois au journal. Les demandes traitées sont
+  // ensuite retirées par le Worker, à l'identique (`todo-actions-done`) :
+  // celles arrivées entre-temps restent pour le passage suivant. Discord ou
+  // le Worker en panne : rien n'est retiré, tout est repris au passage
+  // suivant (une carte déjà changée n'est pas refaite), et une même erreur
+  // n'est notée qu'une fois.
+  const todoActs = { running: null, failed: '', missing: new Set() }
+
+  /** Message que Discord ne trouve pas (supprimé, d'un autre salon) ou dont
+   *  l'identifiant est refusé : la carte est introuvable. Le reste (salon
+   *  fermé au bot, panne) attend le passage suivant. */
+  const unknownMessage = (e) => e.code === 10008 || e.code === 50035 || (e.status === 404 && e.code !== 10003)
+
+  /** Applique les demandes ; rend leur nombre (0 : rien à faire). */
+  async function applyTodoActions() {
+    const channel = st.settings.todo
+    if (!channel || !st.me || !st.guild) return 0
+    const { cards, entries } = todoActionPlan(await kvGet(TODO_ACTIONS_KEY))
+    if (!entries.length) return 0
+    for (const { id, done } of cards) {
+      let m = null
+      try {
+        m = await rest('GET', `/channels/${channel}/messages/${id}`)
+      } catch (e) {
+        if (!unknownMessage(e)) throw e
+      }
+      const card = m && todoFromMessage(m, { me: st.me, guild: st.guild, channel })
+      if (!card) {
+        if (!todoActs.missing.has(id)) log.warn(`Discord bridge: to-do card ${id} (from the developer’s tool) not found in the to-do channel — request dropped`)
+        if (todoActs.missing.size > 1000) todoActs.missing.clear()
+        todoActs.missing.add(id)
+        continue
+      }
+      if (card.done === done) continue
+      // Ce que fait le bouton (onComponent, `todo`), sans interaction.
+      await rest('PATCH', `/channels/${channel}/messages/${id}`, {
+        embeds: [todoCard(m.embeds?.[0], done)],
+        components: [row(done ? button('Reopen', 'todo:open') : button('Done', 'todo:done', 3))],
+      })
+    }
+    await call({ action: 'todo-actions-done', items: entries })
+    return entries.length
+  }
+
+  /** Un passage à la fois ; ne lève jamais d'erreur. */
+  function runTodoActions() {
+    todoActs.running ??= applyTodoActions()
+      .then((n) => { todoActs.failed = ''; return n })
+      .catch((e) => {
+        if (e.message !== todoActs.failed) log.warn(`Discord bridge: to-do cards from the developer’s tool not updated (${e.message})`)
+        todoActs.failed = e.message
+        return 0
+      })
+      .finally(() => { todoActs.running = null })
+    return todoActs.running
+  }
+
+  /** Toutes les 2 min ; la copie de la liste suit (todoSoon) quand des
+   *  demandes ont été traitées. */
+  async function watchTodoActions() {
+    if (await runTodoActions()) todoSoon()
   }
 
   const publishing = new Set()   // brouillons de notes en cours de publication
@@ -4268,6 +4368,8 @@ export function startDiscordBridge({
     every(30 * 60_000, watchVersions)
     // Copie de la liste à faire : cartes supprimées ou modifiées à la main.
     every(15 * 60_000, syncTodoMirror)
+    // Cartes marquées depuis l'outil du développeur (todo_actions).
+    every(TODO_ACTIONS_EVERY, watchTodoActions)
     const first = setTimeout(() => {
       for (const fn of [watchReleases, watchActions, watchHealth, tidy, watchOps, watchQuotas, watchVersions]) fn().catch((e) => log.warn(`Discord bridge: ${fn.name} — ${e.message}`))
     }, 30_000)
@@ -4479,6 +4581,6 @@ export function startDiscordBridge({
     // Passerelle Discord, pour /health du relais.
     health,
     // Pour le banc : les tâches périodiques, à la demande.
-    run: { watchReleases, watchHealth, watchActions, tidy, postSummary, summaryClock, heartbeat, watchOps, watchQuotas, watchVersions, statusText, syncTodoMirror },
+    run: { watchReleases, watchHealth, watchActions, tidy, postSummary, summaryClock, heartbeat, watchOps, watchQuotas, watchVersions, statusText, syncTodoMirror, watchTodoActions },
   }
 }
