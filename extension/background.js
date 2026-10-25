@@ -1955,10 +1955,15 @@ function parseHqMaster(text, base) {
 // Adresse d'un segment (ou d'un fichier d'initialisation) que la page peut
 // lire : absolue, https, sur le CDN de Twitch ; jamais usher, une playlist,
 // un déclencheur, ni une adresse qui porterait un jeton de lecture.
-function segmentUrl(uri, base) {
+// Écrite en entier dans la playlist (Twitch n'en met pas d'autres) : une
+// adresse relative serait résolue contre celle de la variante, signée, et en
+// garderait l'hôte et les dossiers — selon sa forme, un morceau de cette
+// adresse passerait à la page.
+function segmentUrl(uri) {
+  if (typeof uri !== "string" || !/^https:\/\//i.test(uri)) return null;
   let u;
   try {
-    u = new URL(uri, base);
+    u = new URL(uri);
   } catch (e) {
     return null;
   }
@@ -1989,9 +1994,9 @@ function adDateRange(value) {
 
 // Playlist d'une variante, réécrite pour la page (liste blanche de balises,
 // valeurs vérifiées). null si elle est illisible : la page n'en reçoit rien.
-// Un segment hors du CDN de Twitch devient un trou (#EXT-X-GAP, adresse
-// factice jamais demandée), sans décaler les numéros des suivants.
-function cleanMediaPlaylist(text, base) {
+// Un segment hors du CDN de Twitch, ou relatif, devient un trou (#EXT-X-GAP,
+// adresse factice jamais demandée), sans décaler les numéros des suivants.
+function cleanMediaPlaylist(text) {
   const lines = text.split("\n");
   if (!lines.length || lines[0].trim() !== "#EXTM3U") return null;
   const out = ["#EXTM3U"];
@@ -2000,7 +2005,7 @@ function cleanMediaPlaylist(text, base) {
     const line = lines[i].trim();
     if (!line) continue;
     if (!line.startsWith("#")) {
-      const url = segmentUrl(line, base);
+      const url = segmentUrl(line);
       if (url) out.push(url);
       else out.push("#EXT-X-GAP", "https://gap.invalid/" + (++gaps) + ".ts");
       continue;
@@ -2042,7 +2047,7 @@ function cleanMediaPlaylist(text, base) {
       case "#EXT-X-MAP": {
         // Fichier d'initialisation (fMP4 : HEVC, AV1) : indispensable.
         const a = m3u8Attrs(value);
-        const url = a.URI ? segmentUrl(a.URI, base) : null;
+        const url = a.URI ? segmentUrl(a.URI) : null;
         if (!url) return null;
         const range = /^\d{1,12}(@\d{1,12})?$/.test(a.BYTERANGE || "") ? ',BYTERANGE="' + a.BYTERANGE + '"' : "";
         out.push('#EXT-X-MAP:URI="' + url + '"' + range);
@@ -2054,7 +2059,7 @@ function cleanMediaPlaylist(text, base) {
         break;
       case "#EXT-X-TWITCH-PREFETCH": {
         // Prochains segments annoncés d'avance (direct au plus près, player.js).
-        const url = segmentUrl(value, base);
+        const url = segmentUrl(value);
         if (url) out.push(tag + ":" + url);
         break;
       }
@@ -2132,7 +2137,7 @@ async function opHqPlaylist(args, session) {
     const { status, body } = await fetchWith(v.url, { method: "GET" }, (res) => res.text());
     if (status === 404) throw new TuError("offline");
     if (status !== 200 || typeof body !== "string") throw new TuError("twitch", "http_" + status);
-    const text = cleanMediaPlaylist(body.slice(0, LIMIT.hqPlaylistBytes), v.url);
+    const text = cleanMediaPlaylist(body.slice(0, LIMIT.hqPlaylistBytes));
     if (!text) throw new TuError("twitch", "bad_response");
     return text;
   });

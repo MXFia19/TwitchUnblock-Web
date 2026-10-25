@@ -64,6 +64,9 @@ const HQ_MASTER = [
   HQ_HOST + "HQAUDIOsecret.m3u8",
   ""
 ].join("\n");
+// Autre forme possible d'une adresse de variante : la partie signée dans un
+// dossier, sur un hôte *.hls.ttvnw.net (accepté pour les variantes).
+const HQ_WEAVER = "https://video-weaver.fra05.hls.ttvnw.net/v1/HQDIRsecret/";
 const HQ_SEG = "https://video-edge-aa11.fra05.abs.hls.ttvnw.net/v1/segment/";
 const HQ_CF = "https://cd1f0315f30a.j.cloudfront.hls.ttvnw.net/v1/segment/";
 const HQ_PLAYLIST = [
@@ -194,6 +197,8 @@ function makeTwitch() {
     hqMasterStatus: 200,
     hqVariantStatus: 200,
     hqPlaylistCalls: 0,
+    hqMaster: HQ_MASTER,    // liste maîtresse du compte servie par usher
+    hqPlaylist: HQ_PLAYLIST, // playlist servie pour chaque variante
     // Récompenses
     rewards: [
       { id: "rw-hydrate", title: "Hydrate!", cost: 500, isEnabled: true, isPaused: false, isInStock: true, isUserInputRequired: false,
@@ -265,7 +270,7 @@ function twitchFetch(tw) {
       if (q.has("supported_codecs")) {
         tw.hqUsher.push(Object.fromEntries(q));
         if (tw.hqMasterStatus !== 200) return response(tw.hqMasterStatus, "");
-        return response(200, HQ_MASTER);
+        return response(200, tw.hqMaster);
       }
       return response(200, [
         "#EXTM3U",
@@ -282,12 +287,12 @@ function twitchFetch(tw) {
       return response(200, "#EXTM3U\n#EXT-X-TARGETDURATION:2\n" + tw.segments.map((s) => "#EXTINF:2.000,live\n" + s).join("\n") + "\n");
     }
 
-    if (url.startsWith(HQ_HOST)) {
-      assert.ok(/\/HQ(1440|1080|AUDIO)secret\.m3u8$/.test(url), "variante de la liste du compte : " + url);
+    if (url.startsWith(HQ_HOST) || url.startsWith(HQ_WEAVER)) {
+      assert.ok(/\/HQ(1440|1080|AUDIO)secret\.m3u8$/.test(url) || url === HQ_WEAVER + "index.m3u8", "variante de la liste du compte : " + url);
       assert.equal(init.method, "GET");
       tw.hqPlaylistCalls++;
       if (tw.hqVariantStatus !== 200) return response(tw.hqVariantStatus, "");
-      return response(200, HQ_PLAYLIST);
+      return response(200, tw.hqPlaylist);
     }
 
     if (url.startsWith("https://video-edge-aa11.fra05.abs.hls.ttvnw.net/v1/segment/")) {
@@ -747,7 +752,7 @@ function assertNoSecret(value, label, tw) {
 function assertNoSignedUrl(value, label, tw, { segments = false } = {}) {
   const text = JSON.stringify(value) || "";
   const always = [tw.patSignature, "SOURCEsecret", "AUDIOsecret", "HQ1440secret", "HQ1080secret", "HQ720secret",
-    "HQAUDIOsecret", "PREFETCHsecret", "TRIGGERsecret", "SESSIONIDsecret", "SESSIONsecret", "SERVINGsecret",
+    "HQAUDIOsecret", "HQDIRsecret", "PREFETCHsecret", "TRIGGERsecret", "SESSIONIDsecret", "SESSIONsecret", "SERVINGsecret",
     "ADTRACKsecret", "203.0.113.7", "usher", "playlist.ttvnw", "/trigger/", "sig=", "token=", '"expires":1800000000',
     '"user_id":99887766'];
   const segmentPieces = ["SEGsecret", "CuYEsecret", "ttvnw", "SEGhq", "INIThq"];
@@ -1526,6 +1531,56 @@ test("hq.playlist : playlist réécrite, segments du CDN seulement", async () =>
   const viaPage = await page.reply(page.request("hq.playlist", { id }));
   assert.equal(viaPage.data.playlist, HQ_PLAYLIST_CLEAN);
   for (const p of page.posted) assertNoSecret(p.data, "message posté à la page", h.tw);
+});
+
+test("hq.playlist : adresses relatives jamais résolues contre celle de la variante", async () => {
+  const h = loadBackground({ tabs: [liveTab()] });
+  // Variante dont la partie signée est un dossier : résolue contre elle,
+  // « seg1.mp4 » aurait donné …/v1/HQDIRsecret/seg1.mp4 à la page.
+  h.tw.hqMaster = HQ_MASTER.replace(HQ_HOST + "HQ1440secret.m3u8", HQ_WEAVER + "index.m3u8");
+  h.tw.hqPlaylist = [
+    "#EXTM3U",
+    "#EXT-X-TARGETDURATION:6",
+    "#EXT-X-MEDIA-SEQUENCE:7",
+    '#EXT-X-MAP:URI="' + HQ_SEG + 'INIThq.mp4"',
+    "#EXTINF:2.000,live",
+    "seg1.mp4",
+    "#EXTINF:2.000,live",
+    "../seg2.mp4",
+    "#EXTINF:2.000,live",
+    "//video-edge-aa11.fra05.abs.hls.ttvnw.net/v1/segment/SEGhq3.mp4",
+    "#EXTINF:2.000,live",
+    HQ_SEG + "SEGhq4.mp4",
+    "#EXT-X-TWITCH-PREFETCH:seg5.mp4",
+    ""
+  ].join("\n");
+  const master = await h.op("hq.master", { channel: CHANNEL, codecs: HQ_ALL });
+  const id = master.data.variants[0].id;
+  assert.equal(h.session.hq[id].url, HQ_WEAVER + "index.m3u8");
+  const res = await h.op("hq.playlist", { id });
+  assert.equal(res.data.playlist, [
+    "#EXTM3U",
+    "#EXT-X-TARGETDURATION:6",
+    "#EXT-X-MEDIA-SEQUENCE:7",
+    '#EXT-X-MAP:URI="' + HQ_SEG + 'INIThq.mp4"',
+    "#EXTINF:2.000,live",
+    "#EXT-X-GAP",
+    "https://gap.invalid/1.ts",
+    "#EXTINF:2.000,live",
+    "#EXT-X-GAP",
+    "https://gap.invalid/2.ts",
+    "#EXTINF:2.000,live",
+    "#EXT-X-GAP",
+    "https://gap.invalid/3.ts",
+    "#EXTINF:2.000,live",
+    HQ_SEG + "SEGhq4.mp4",
+    ""
+  ].join("\n"));
+  // Fichier d'initialisation relatif : toute la playlist est refusée.
+  h.tw.hqPlaylist = '#EXTM3U\n#EXT-X-MAP:URI="init.mp4"\n#EXTINF:2.000,live\n' + HQ_SEG + "SEGhq1.mp4\n";
+  h.clock.now += 1001;
+  assert.deepEqual((await h.op("hq.playlist", { id })).error, { code: "twitch", message: "bad_response" });
+  assertNoLeaks(h, "hq.playlist relatives");
 });
 
 test("hq.playlist : identifiant inconnu, ancien ou d'un autre compte ; erreurs de Twitch", async () => {

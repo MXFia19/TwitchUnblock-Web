@@ -170,8 +170,9 @@ répond plus.
    caractères sûrs au plus), `#EXT-X-BYTERANGE`, `#EXT-X-MAP` (URI, BYTERANGE),
    `#EXT-X-TWITCH-PREFETCH`, `#EXT-X-DATERANGE` de classe `twitch-stitched-ad` (ID,
    CLASS, START-DATE, END-DATE, DURATION, PLANNED-DURATION seulement), et les
-   adresses des segments. Toute adresse devient absolue et doit être en https, sur
-   `*.ttvnw.net`, `*.twitchcdn.net`, `*.jtvnw.net` ou `*.twitchsvc.net`, sans être
+   adresses des segments. Toute adresse doit être écrite en entier dans la playlist
+   (une adresse relative n'est jamais résolue contre celle de la variante, signée),
+   en https, sur `*.ttvnw.net`, `*.twitchcdn.net`, `*.jtvnw.net` ou `*.twitchsvc.net`, sans être
    usher, `*.playlist.ttvnw.net`, un chemin `/playlist/`, `/trigger/` ou `/api/`, un
    `.m3u8`, ni porter `sig`, `token`, `nauth` ou `nauthsig` : sinon un segment devient
    un trou (`#EXT-X-GAP` et une adresse factice `https://gap.invalid/<n>.ts`, jamais
