@@ -3633,18 +3633,20 @@ async function noteReportsRead(env, ctx, detail, what = 'reports.read') {
 // notée au journal (« todo.read » : nombre d'éléments).
 const TODO_MIRROR_KEY = `${BOT_STORE_PREFIX}todo_mirror`;
 const TODO_VIEW_ITEMS = 400;     // le bot en garde 350 au plus (300 ouverts, 50 faits)
-const TODO_VIEW_TEXT = 1500;     // le bot coupe à 1 500 caractères
+const TODO_VIEW_TEXT = 1500;     // le bot coupe à 1 500 caractères…
+const TODO_VIEW_CONV_TEXT = 4000; // … et une conversation (transcription) à 4 000
+const TODO_VIEW_FILES = 30;       // pièces jointes d'un élément (une conversation : plusieurs messages)
 const DISCORD_MESSAGE_URL_RE = /^https:\/\/(?:ptb\.|canary\.)?discord(?:app)?\.com\/channels\/\d{5,25}\/\d{5,25}\/\d{5,25}$/;
 // Pièces jointes du message d'origine (todoAttachments du bot) : liens signés
 // du CDN de Discord seulement, pour tools/reports.mjs --files.
 const DISCORD_CDN_URL_RE = /^https:\/\/(?:cdn\.discordapp\.com|media\.discordapp\.net)\/attachments\/\d{5,25}\/\d{5,25}\/[^\s?#/]{1,255}(?:\?[^\s#]{0,800})?$/;
 
-/** Pièces jointes d'un élément, champ par champ : dix au plus, liens du CDN
- *  de Discord seulement (les autres sont écartés). */
+/** Pièces jointes d'un élément, champ par champ : TODO_VIEW_FILES au plus,
+ *  liens du CDN de Discord seulement (les autres sont écartés). */
 function todoAttachmentsView(v) {
     if (!Array.isArray(v)) return [];
     const int = (n, max) => (Number.isInteger(n) && n >= 0 && n <= max ? n : null);
-    return v.slice(0, 10).map((a) => {
+    return v.slice(0, TODO_VIEW_FILES).map((a) => {
         const url = typeof a?.url === 'string' && a.url.length <= 1200 && DISCORD_CDN_URL_RE.test(a.url) ? a.url : null;
         if (!url) return null;
         const type = typeof a.type === 'string' && /^[\w.+-]{1,60}\/[\w.+-]{1,60}$/.test(a.type) ? a.type.toLowerCase() : null;
@@ -3663,10 +3665,15 @@ function todoItemView(x) {
     const str = (v, max) => (typeof v === 'string' ? cleanText(v, max) : '');
     const link = (v) => (typeof v === 'string' && DISCORD_MESSAGE_URL_RE.test(v) ? v : null);
     const files = x.files;
+    // Conversation (« Add conversation to to-do ») : transcription plus
+    // longue, liens du premier (origin) et du dernier message, leur nombre.
+    const type = x.type === 'suggestion' || x.type === 'conversation' ? x.type : 'todo';
+    const messages = type === 'conversation' && Number.isInteger(x.messages) && x.messages > 0 ? Math.min(x.messages, 200) : 0;
     return {
-        id, url: link(x.url), type: x.type === 'suggestion' ? 'suggestion' : 'todo', done: x.done === true,
+        id, url: link(x.url), type, done: x.done === true,
         at: isoDate(Date.parse(str(x.at, 40))), author: str(x.author, 100) || null, addedBy: str(x.addedBy, 100) || null,
-        text: str(x.text, TODO_VIEW_TEXT), origin: link(x.origin),
+        text: str(x.text, type === 'conversation' ? TODO_VIEW_CONV_TEXT : TODO_VIEW_TEXT), origin: link(x.origin),
+        last: type === 'conversation' ? link(x.last) : null, messages,
         files: Number.isInteger(files) && files > 0 ? Math.min(files, 100) : 0,
         attachments: todoAttachmentsView(x.attachments),
     };

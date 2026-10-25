@@ -52,7 +52,9 @@
 //  sans lui et coupe la bienvenue).
 //  /app-announce : l'annonce des apps et du site, publiée après un aperçu.
 //  À faire : « Add to to-do » (menu Apps d'un message : une bonne idée lue
-//  sur le serveur) et /todo (texte libre) postent une carte dans le salon
+//  sur le serveur), « Add conversation to to-do » (sur le premier message
+//  d'une conversation, puis le dernier choisi dans un menu : une seule carte
+//  pour tous) et /todo (texte libre) postent une carte dans le salon
 //  choisi par /setup, avec un bouton Done / Reopen. Une copie des cartes
 //  (todo_mirror), relue au moins toutes les 15 min, reste dans le Worker :
 //  tools/reports.mjs --todo la lit depuis le PC du développeur, et --files
@@ -170,6 +172,9 @@ const COMMANDS = [
   { name: 'summary', description: 'Post the daily summary now', default_member_permissions: ADMIN },
   // Menu « Apps » d'un message (clic droit, ou appui long sur mobile).
   { type: 3, name: 'Add to to-do', default_member_permissions: ADMIN },
+  // Sur le premier message d'une conversation : le bot propose les suivants
+  // pour en choisir le dernier, puis poste une seule carte (pickConversation).
+  { type: 3, name: 'Add conversation to to-do', default_member_permissions: ADMIN },
   {
     name: 'todo', description: 'Add an item to the to-do channel', default_member_permissions: ADMIN,
     options: [{ type: 3, name: 'text', description: 'What to do', required: true, max_length: 1500 }],
@@ -356,7 +361,7 @@ const I18N = {
     h_setup: 'use this channel for alerts, release announcements, test builds, the to-do list, suggestions or welcome messages',
     h_announce: 'banner in the app and on the website, and remove it',
     h_poll: 'poll in the app and on the website, and end it (results posted)',
-    h_todo: 'add to the to-do channel (or a message’s Apps menu → Add to to-do)',
+    h_todo: 'add to the to-do channel (or a message’s Apps menu → Add to to-do, or Add conversation to to-do for several messages)',
     h_summary: 'post the daily summary now',
     h_status: 'server status in one message, with the D1 queries that read the most today',
     h_roles_config: 'roles offered in /roles: add, remove, list',
@@ -484,7 +489,7 @@ const I18N = {
     h_setup: 'ce salon pour les alertes, les annonces de version, les builds de test, la liste à faire, les suggestions ou la bienvenue',
     h_announce: 'bandeau dans l’app et sur le site, et le retirer',
     h_poll: 'sondage dans l’app et sur le site, et le clore (résultats postés)',
-    h_todo: 'ajouter à la liste à faire (ou menu Apps d’un message → Add to to-do)',
+    h_todo: 'ajouter à la liste à faire (ou menu Apps d’un message → Add to to-do, ou Add conversation to to-do pour plusieurs messages)',
     h_summary: 'poster le résumé du jour maintenant',
     h_status: 'état du serveur en un message, avec les requêtes D1 qui lisent le plus aujourd’hui',
     h_roles_config: 'rôles proposés dans /roles : ajouter, retirer, lister',
@@ -611,7 +616,7 @@ const I18N = {
     h_setup: 'usar este canal para alertas, anuncios de versiones, versiones de prueba, la lista de tareas, sugerencias o bienvenidas',
     h_announce: 'aviso en la app y el sitio web, y quitarlo',
     h_poll: 'encuesta en la app y el sitio web, y cerrarla (resultados publicados)',
-    h_todo: 'añadir a la lista de tareas (o menú Apps de un mensaje → Add to to-do)',
+    h_todo: 'añadir a la lista de tareas (o menú Apps de un mensaje → Add to to-do, o Add conversation to to-do para varios mensajes)',
     h_summary: 'publicar ahora el resumen del día',
     h_status: 'estado del servidor en un mensaje, con las consultas D1 que más filas leen hoy',
     h_roles_config: 'roles ofrecidos en /roles: añadir, quitar, listar',
@@ -738,7 +743,7 @@ const I18N = {
     h_setup: 'этот канал для оповещений, анонсов версий, тестовых сборок, списка задач, предложений или приветствий',
     h_announce: 'баннер в приложении и на сайте, и убрать его',
     h_poll: 'опрос в приложении и на сайте, и завершить его (итоги публикуются)',
-    h_todo: 'добавить в список задач (или меню «Приложения» у сообщения → Add to to-do)',
+    h_todo: 'добавить в список задач (или меню «Приложения» у сообщения → Add to to-do, или Add conversation to to-do для нескольких сообщений)',
     h_summary: 'опубликовать сводку дня сейчас',
     h_status: 'состояние сервера одним сообщением, с запросами D1, которые сегодня читают больше всего строк',
     h_roles_config: 'роли в /roles: добавить, убрать, список',
@@ -882,16 +887,90 @@ const TODO_MIRROR_KEY = 'todo_mirror'
 const TODO_OPEN_MAX = 300    // éléments ouverts gardés, les plus récents
 const TODO_DONE_MAX = 50     // éléments faits gardés, les plus récents
 const TODO_TEXT_MAX = 1500   // texte d'un élément, en caractères…
+const TODO_CONV_TEXT_MAX = 4000   // … d'une conversation (sa transcription)…
 const TODO_TEXT_MIN = 80     // … raccourci jusque-là si la liste est longue
 const TODO_PAGES = 5         // pages de 100 messages relues dans le salon
 // La copie fait 400 000 caractères de JSON au plus (action `set` du Worker,
 // limite propre à cette clé ; 20 000 pour le reste de la mémoire du bot) :
 // un peu de marge.
 const TODO_MIRROR_MAX = 390_000
-const TODO_TYPES = new Map([['To-do', 'todo'], ['Suggestion', 'suggestion']])
+const TODO_TYPES = new Map([['To-do', 'todo'], ['Suggestion', 'suggestion'], ['Conversation', 'conversation']])
 // Fin d'une carte « Add to to-do » (addTodo) : le lien du message d'origine
 // et, s'il en avait, son nombre de pièces jointes.
 const TODO_ORIGIN = /\n*\[Original message\]\((https:\/\/[^\s()]+)\)(?: · 📎 (\d+) attachments?)?\s*$/
+// Fin d'une carte « Add conversation to to-do » (conversationEmbed) : liens
+// du premier et du dernier message, nombre de messages et de pièces jointes.
+const TODO_CONV_ORIGIN = /\n*\[First message\]\((https:\/\/[^\s()]+)\) → \[Last message\]\((https:\/\/[^\s()]+)\) · (\d+) messages(?: · 📎 (\d+) attachments?)?\s*$/
+const TODO_CONV_PICK = 24      // messages proposés après le premier (un menu : 25 choix au plus)
+const TODO_CONV_BUDGET = 3700  // transcription dans la carte (description : 4 096 au plus)
+const TODO_CONV_FILES = 30     // pièces jointes d'une conversation gardées dans la copie
+const byId = (a, b) => (BigInt(a.id) < BigInt(b.id) ? -1 : BigInt(a.id) > BigInt(b.id) ? 1 : 0)
+const authorName = (u) => String(u?.global_name || u?.username || 'Unknown')
+
+/** Texte d'un message, sur une ligne, pour une transcription : mentions
+ *  remplacées par des noms (ceux que Discord joint au message), emotes du
+ *  serveur par leur nom, et pas de bloc de code qui avalerait la suite. */
+function messageLine(m) {
+  const users = new Map((m?.mentions || []).map((u) => [String(u.id), authorName(u)]))
+  return String(m?.content || m?.embeds?.[0]?.description || '')
+    .replace(/<@!?(\d+)>/g, (s, id) => (users.has(id) ? `@${users.get(id)}` : '@someone'))
+    .replace(/<@&\d+>/g, '@role').replace(/<#\d+>/g, '#channel')
+    .replace(/<a?:(\w+):\d+>/g, ':$1:')
+    .replace(/```/g, "'''")
+    .replace(/\s+/g, ' ').trim()
+}
+
+/** Message gardé dans une conversation : écrit par une personne (pas un
+ *  bot), message ordinaire ou réponse ; le premier, choisi, l'est toujours. */
+const conversationMessage = (m, first) => String(m?.id) === String(first)
+  || (!m?.author?.bot && (m?.type === 0 || m?.type === 19))
+
+/** Menu de « Add conversation to to-do » : les messages qui suivent `first`
+ *  (`after`, déjà triés et filtrés), pour choisir le dernier. */
+export function conversationPicker(first, after) {
+  const options = after.slice(0, TODO_CONV_PICK).map((m, n) => {
+    const files = m.attachments?.length || 0
+    return {
+      label: clipText(`${n + 2}. ${authorName(m.author)}`, 100),
+      description: clipText(messageLine(m) || (files ? `📎 ${files} attachment${files > 1 ? 's' : ''}` : '(no text)'), 100),
+      value: String(m.id),
+    }
+  })
+  return {
+    content: `Conversation starting with **${clipText(authorName(first.author), 60)}**: “${clipText(messageLine(first) || '…', 120)}”\nPick its last message (the next ${options.length} are listed):`,
+    components: [row({ type: 3, custom_id: `todoconv:${first.channel_id}:${first.id}`, placeholder: 'Last message of the conversation', options })],
+  }
+}
+
+/** Carte « Conversation » faite des messages `list` (du premier au dernier) :
+ *  une ligne par message (auteur, texte, 📎 pièces jointes), textes
+ *  raccourcis ensemble pour tenir dans TODO_CONV_BUDGET, puis les liens du
+ *  premier et du dernier message, que todoFromMessage relit. */
+export function conversationEmbed(list, { guild, by }) {
+  const link = (m) => `https://discord.com/channels/${guild}/${m.channel_id}/${m.id}`
+  const rows = list.map((m) => ({ who: clipText(authorName(m.author), 40), text: messageLine(m), files: m.attachments?.length || 0 }))
+  const files = rows.reduce((n, r) => n + r.files, 0)
+  const render = (cap) => rows.map((r) => `**${r.who}**: ${[r.text && clipText(r.text, cap), r.files && `📎${r.files}`].filter(Boolean).join(' ')}`).join('\n')
+  let lo = 40
+  let hi = 1000
+  if (render(hi).length <= TODO_CONV_BUDGET) lo = hi
+  while (lo < hi) {
+    const mid = Math.ceil((lo + hi) / 2)
+    if (render(mid).length <= TODO_CONV_BUDGET) lo = mid
+    else hi = mid - 1
+  }
+  const body = clipText(render(lo), TODO_CONV_BUDGET)
+  const people = [...new Set(rows.map((r) => r.who))]
+  return {
+    title: 'Conversation',
+    description: `${body}\n\n[First message](${link(list[0])}) → [Last message](${link(list.at(-1))}) · ${list.length} messages`
+      + (files ? ` · 📎 ${files} attachment${files > 1 ? 's' : ''}` : ''),
+    color: 0x9146ff,
+    author: { name: clipText(people.join(', '), 100) },
+    footer: { text: by },
+    timestamp: list[0].timestamp || new Date().toISOString(),
+  }
+}
 // Pièces jointes de ces messages d'origine, pour tools/reports.mjs --files :
 // la copie garde leurs liens (CDN de Discord), pas les fichiers. Signés par
 // Discord, ils expirent au bout d'environ 24 h : le message d'origine est
@@ -928,6 +1007,27 @@ export function todoAttachments(m, now = Date.now()) {
   return { list, expires: list.length ? expires : now + 24 * 3600_000 }
 }
 
+/** Pièces jointes d'une conversation, comme todoAttachments : celles de ses
+ *  messages, du premier au dernier (`list` : les messages lus à partir du
+ *  premier), dans l'ordre, TODO_CONV_FILES au plus. */
+export function conversationAttachments(list, first, last, now = Date.now()) {
+  const lo = BigInt(first)
+  const hi = BigInt(last)
+  const out = { list: [], expires: Infinity }
+  const msgs = (Array.isArray(list) ? list : [])
+    .filter((m) => /^\d{5,25}$/.test(String(m?.id)) && BigInt(m.id) >= lo && BigInt(m.id) <= hi)
+    .sort(byId)
+  for (const m of msgs) {
+    const a = todoAttachments(m, now)
+    if (!a.list.length) continue
+    out.list.push(...a.list)
+    out.expires = Math.min(out.expires, a.expires)
+  }
+  out.list = out.list.slice(0, TODO_CONV_FILES)
+  if (!out.list.length) out.expires = now + 24 * 3600_000
+  return out
+}
+
 /** `s` coupé à `max` caractères (« … » compris), sans séparer les deux
  *  moitiés d'un emoji. */
 function clipText(s, max) {
@@ -946,17 +1046,21 @@ export function todoFromMessage(m, { me, guild, channel }) {
   const type = TODO_TYPES.get(title.replace(/^✅ /, ''))
   if (!me || m?.author?.id !== me || !type || !/^\d{5,25}$/.test(String(m.id))) return null
   let text = String(e.description || '')
-  const tail = TODO_ORIGIN.exec(text)
-  if (tail) text = text.slice(0, tail.index)
+  // Conversation : liens du premier et du dernier message ; sinon celui du
+  // message d'origine.
+  const conv = type === 'conversation' ? TODO_CONV_ORIGIN.exec(text) : null
+  const tail = conv ? null : TODO_ORIGIN.exec(text)
+  if (conv || tail) text = text.slice(0, (conv || tail).index)
   const by = /^Added by (.+)$/.exec(String(e.footer?.text || ''))?.[1]?.trim()
   const at = Date.parse(e.timestamp || m.timestamp || '')
-  const files = Number(tail?.[2]) || 0
+  const files = Number(conv ? conv[4] : tail?.[2]) || 0
   return {
     id: String(m.id),
     url: `https://discord.com/channels/${guild}/${m.channel_id || channel}/${m.id}`,
     type,
     done: title.startsWith('✅ '),
     text: text.trim(),
+    ...(conv ? { origin: conv[1], last: conv[2], messages: Number(conv[3]) } : {}),
     ...(tail ? { origin: tail[1] } : {}),
     ...(e.author?.name ? { author: String(e.author.name) } : {}),
     ...(by ? { addedBy: by } : {}),
@@ -968,20 +1072,22 @@ export function todoFromMessage(m, { me, guild, channel }) {
 /** Copie à ranger, `max` caractères de JSON au plus : { at, channel, items,
  *  omitted?, partial? }. `open` et `done` : les cartes lues, chacune du plus
  *  récent au plus ancien. Gardés : les TODO_OPEN_MAX ouverts puis les
- *  TODO_DONE_MAX faits les plus récents, textes coupés à TODO_TEXT_MAX ;
- *  trop long, les textes sont raccourcis (le plus long commun qui tient,
- *  TODO_TEXT_MIN au moins), puis les plus anciens laissés de côté, les faits
- *  d'abord. `omitted` : cartes lues mais pas copiées ; `partial` : la
- *  lecture s'est arrêtée à TODO_PAGES pages, d'autres peuvent manquer. */
+ *  TODO_DONE_MAX faits les plus récents, textes coupés à TODO_TEXT_MAX
+ *  (TODO_CONV_TEXT_MAX pour une conversation) ; trop long, les textes sont
+ *  raccourcis (le plus long commun qui tient, TODO_TEXT_MIN au moins), puis
+ *  les plus anciens laissés de côté, les faits d'abord. `omitted` : cartes
+ *  lues mais pas copiées ; `partial` : la lecture s'est arrêtée à
+ *  TODO_PAGES pages, d'autres peuvent manquer. */
 export function fitTodoMirror({ at, channel, open, done, partial = false, max = TODO_MIRROR_MAX }) {
   const nOpen = Math.min(open.length, TODO_OPEN_MAX)
   const kept = [...open.slice(0, TODO_OPEN_MAX), ...done.slice(0, TODO_DONE_MAX)]
   // Place de `omitted` et `partial` comptée d'avance, au plus large.
   const head = JSON.stringify({ at, channel, items: [], omitted: { open: open.length, done: done.length }, partial: true }).length
-  const cut = (cap) => kept.map((x) => ({ ...x, text: clipText(x.text, cap) }))
+  const capOf = (x) => (x.type === 'conversation' ? TODO_CONV_TEXT_MAX : TODO_TEXT_MAX)
+  const cut = (cap) => kept.map((x) => ({ ...x, text: clipText(x.text, Math.min(cap, capOf(x))) }))
   const size = (list) => list.reduce((n, x) => n + JSON.stringify(x).length + 1, head)   // + la virgule
   let lo = TODO_TEXT_MIN
-  let hi = TODO_TEXT_MAX
+  let hi = TODO_CONV_TEXT_MAX
   if (size(cut(hi)) <= max) lo = hi
   while (lo < hi) {
     const mid = Math.ceil((lo + hi) / 2)
@@ -1762,6 +1868,8 @@ export function startDiscordBridge({
       case 'Add to to-do':
       case 'todo':
         return deferred(i, () => addTodo(i, user))
+      case 'Add conversation to to-do':
+        return deferred(i, () => pickConversation(i))
       case 'announce': {
         // Modèle choisi : formulaire pré-rempli (à relire avant d'envoyer),
         // depuis les modèles gardés (refreshTemplates).
@@ -1863,7 +1971,7 @@ export function startDiscordBridge({
           + 'Members take or drop it with /release-pings or the button I just posted — I need “Manage Roles”, above that role.'
         : 'Published release notes will go to this channel (add a role to mention it at each release).',
       testers: `New test builds will be posted here${role ? ` and mention <@&${role}> (the role must be mentionable)` : ''}.`,
-      todo: 'To-do items will be listed here: right-click a message → Apps → “Add to to-do”, or /todo.',
+      todo: 'To-do items will be listed here: right-click a message → Apps → “Add to to-do” (or “Add conversation to to-do” on the first message of a conversation), or /todo.',
       suggestions: 'Suggestions (/suggest) will be posted here as public cards that members vote on. Their report also gets a post in the forum, tagged “Suggestion”.',
       welcome: 'New members will be welcomed here, with Download, Pick roles and Help buttons. This needs the **Server Members Intent** (developer portal → your application → Bot → Privileged Gateway Intents): if it’s off, Discord refuses the connection — I then reconnect without it, turn the welcome off and say so in the alerts channel.',
       'welcome-off': 'Welcome messages are off.',
@@ -3056,6 +3164,42 @@ export function startDiscordBridge({
     return `📝 Added to <#${channel}>.`
   }
 
+  /** « Add conversation to to-do » (menu du premier message) : les messages
+   *  qui le suivent, proposés dans un menu (pour soi seul) pour choisir le
+   *  dernier ; addTodoConversation fait la carte. */
+  async function pickConversation(i) {
+    if (!st.settings.todo) return 'Pick the to-do channel first: run /setup there with “To-do list”.'
+    const first = i.data?.resolved?.messages?.[i.data?.target_id]
+    if (!first) return '❌ Message not found.'
+    // Les messages qui suivent, dans l'ordre (gardés : ceux des personnes).
+    const list = await rest('GET', `/channels/${first.channel_id}/messages?after=${first.id}&limit=50`)
+    const after = (Array.isArray(list) ? list : []).filter((m) => conversationMessage(m, first.id)).sort(byId)
+    if (!after.length) return 'No message after this one yet: use “Add to to-do” for a single message.'
+    return conversationPicker(first, after)
+  }
+
+  /** Carte « Conversation » : les messages de `first` à `last` (inclus) du
+   *  salon `channel`, une seule carte ; 📝 sur le premier. */
+  async function addTodoConversation(channel, first, last, user) {
+    const todo = st.settings.todo
+    if (!todo) return 'Pick the to-do channel first: run /setup there with “To-do list”.'
+    if (![channel, first, last].every((v) => /^\d{5,25}$/.test(String(v || ''))) || BigInt(last) <= BigInt(first)) {
+      return '❌ Pick a message after the first one.'
+    }
+    const head = await rest('GET', `/channels/${channel}/messages/${first}`)
+    const after = await rest('GET', `/channels/${channel}/messages?after=${first}&limit=100`)
+    const list = [head, ...(Array.isArray(after) ? after : [])]
+      .filter((m) => m && BigInt(m.id) <= BigInt(last) && conversationMessage(m, first))
+      .sort(byId)
+    const embed = conversationEmbed(list, { guild: st.guild, by: `Added by ${user.global_name || user.username}` })
+    await rest('POST', `/channels/${todo}/messages`, {
+      embeds: [embed], components: [row(button('Done', 'todo:done', 3))], allowed_mentions: { parse: [] },
+    })
+    react(channel, first, '📝')
+    todoSoon()
+    return `📝 Conversation (${list.length} messages) added to <#${todo}>.`
+  }
+
   /** Carte du salon à faire, rebâtie (Done : ✅ et vert ; Reopen : comme avant). */
   function todoCard(embed, done) {
     const title = String(embed?.title || 'To-do').replace(/^✅ /, '')
@@ -3092,13 +3236,17 @@ export function startDiscordBridge({
     for (const x of open.filter((y) => y.files && y.origin).slice(0, TODO_FILES_ITEMS)) {
       const [, channel, message] = /\/(\d{5,25})\/(\d{5,25})$/.exec(x.origin) || []
       if (!message) continue
+      // Conversation : ses messages relus d'un coup, à partir du premier.
+      const last = x.last ? /\/(\d{5,25})$/.exec(x.last)?.[1] : null
       keep.add(message)
       const now = Date.now()
       let c = todoFiles.get(message)
       if ((!c || c.expires - now < TODO_FILES_RENEW) && (c?.retryAt || 0) <= now && fetched < TODO_FILES_FETCH) {
         fetched++
         try {
-          c = todoAttachments(await rest('GET', `/channels/${channel}/messages/${message}`), now)
+          c = last
+            ? conversationAttachments(await rest('GET', `/channels/${channel}/messages?after=${BigInt(message) - 1n}&limit=100`), message, last, now)
+            : todoAttachments(await rest('GET', `/channels/${channel}/messages/${message}`), now)
           todoFilesFailed = ''
         } catch (e) {
           // La cause seule (« 403 (50001) ») : le chemin change d'un message à l'autre.
@@ -3214,6 +3362,15 @@ export function startDiscordBridge({
           components: [row(done ? button('Reopen', 'todo:open') : button('Done', 'todo:done', 3))],
         })
         todoSoon()
+        return
+      }
+      // Dernier message choisi dans le menu de « Add conversation to to-do »
+      // (pickConversation) : le menu laisse place au résultat.
+      case 'todoconv': {
+        await respond(i, 6)
+        const text = await addTodoConversation(a, b, i.data?.values?.[0], user)
+          .catch((e) => `❌ Not added: ${e.message}`)
+        await editOriginal(i, { content: text, components: [], allowed_mentions: { parse: [] } })
         return
       }
       case 'qr': {

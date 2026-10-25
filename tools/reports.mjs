@@ -334,7 +334,7 @@ function printDetail(r) {
 }
 
 // ── Liste à faire du bot Discord (--todo) ────────────────────────────────
-const TODO_TYPES = { todo: 'To-do', suggestion: 'Suggestion' }
+const TODO_TYPES = { todo: 'To-do', suggestion: 'Suggestion', conversation: 'Conversation' }
 const nb = (n, one, many) => `${n} ${n > 1 ? many : one}`
 // Du plus récent au plus ancien : l'identifiant Discord d'une carte suit
 // l'ordre où elle a été postée.
@@ -348,9 +348,12 @@ const newestFirst = (a, b) => {
 const sizeLabel = (n) => (n >= 1024 * 1024 ? `${(n / 1024 / 1024).toFixed(1).replace('.', ',')} Mo` : `${Math.max(1, Math.round(n / 1024))} Ko`)
 
 function todoEntry(x) {
-  // Une suggestion porte la date du message cité, un to-do celle de l'ajout.
-  const date = x.at ? (x.type === 'suggestion' ? `message du ${when(x.at)}` : when(x.at)) : null
-  const head = [TODO_TYPES[x.type] || x.type, date, x.author ? `de ${oneLine(x.author)}` : null]
+  // Une suggestion porte la date du message cité, une conversation celle de
+  // son premier message, un to-do celle de l'ajout.
+  const conv = x.type === 'conversation'
+  const date = x.at ? (x.type === 'suggestion' || conv ? `message du ${when(x.at)}` : when(x.at)) : null
+  const kind = conv && x.messages ? `Conversation de ${x.messages} messages` : TODO_TYPES[x.type] || x.type
+  const head = [kind, date, x.author ? `${conv ? 'entre' : 'de'} ${oneLine(x.author)}` : null]
   const files = Array.isArray(x.attachments) ? x.attachments : []
   const added = [x.addedBy ? `Ajouté par ${oneLine(x.addedBy)}` : null,
     x.files ? `${nb(x.files, 'pièce jointe', 'pièces jointes')}${files.length ? '' : ' (sur Discord)'}` : null]
@@ -361,7 +364,8 @@ function todoEntry(x) {
     lines.push(`- Pièces jointes (\`--files ${x.id}\`) : ${list.join(' · ')}`)
   }
   if (x.url) lines.push(`- Carte : ${x.url}`)
-  if (x.origin) lines.push(`- Message d'origine : ${x.origin}`)
+  if (conv && x.origin) lines.push(`- Premier message : ${x.origin}${x.last ? ` · dernier : ${x.last}` : ''}`)
+  else if (x.origin) lines.push(`- Message d'origine : ${x.origin}`)
   return `${lines.join('\n')}\n\n${quote(x.text || '(sans texte)')}`
 }
 
@@ -381,7 +385,7 @@ function printTodo(data, base, opt) {
   }
   out(`${nb(open.length, 'ouvert', 'ouverts')} · ${nb(done.length, 'fait', 'faits')}${done.length && !opt.all ? ' (--all pour les voir)' : ''}`)
   out()
-  out('Copie relue par le bot au moins toutes les 15 min et réécrite seulement quand la liste change : sa date est celle du dernier changement. Textes coupés à 1 500 caractères au plus (la carte, sur Discord, les montre en entier).')
+  out('Copie relue par le bot au moins toutes les 15 min et réécrite seulement quand la liste change : sa date est celle du dernier changement. Textes coupés à 1 500 caractères au plus, 4 000 pour une conversation (la carte, sur Discord, les montre en entier).')
   if (omitted.open > 0) {
     out()
     out(`Attention : ${nb(omitted.open, 'élément ouvert plus ancien manque', 'éléments ouverts plus anciens manquent')} à la copie (liste trop longue) : voir le salon sur Discord.`)

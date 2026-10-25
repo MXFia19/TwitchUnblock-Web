@@ -704,8 +704,14 @@ again in the welcome channel.
 **To-do**: right-click a message (long-press on mobile) → *Apps* → **Add to
 to-do** sends a good suggestion to the to-do channel — author, text, a link to
 the message, with a **Done** / **Reopen** button — and adds 📝 to the original
-message. `/todo text:` adds an item by hand. Developer only. The bot keeps a
-copy of the list in the Worker, read from the owner's computer with
+message. For several messages at once (a conversation), use **Add
+conversation to to-do** on its *first* message: the bot answers (for you only)
+with a menu of the next 24 messages; pick the *last* one, and a single
+**Conversation** card holds them all — who said what, one line per message
+(texts shortened together to fit the card, bots' messages left out), the
+number of attachments, and links to the first and last messages. `/todo
+text:` adds an item by hand. Developer only. The bot keeps a copy of the list
+in the Worker, read from the owner's computer with
 [`tools/reports.mjs --todo`](#reading-reports-from-your-computer-read-only).
 
 Setting it up:
@@ -817,17 +823,20 @@ others are still saved (exit code 2). One D1 read per picture.
 
 **The to-do list** (`--todo`): the Discord bot keeps a copy of its to-do
 channel in the Worker (its memory, key `todo_mirror`) — only the cards it
-posted there (*Add to to-do*, `/todo`), open and done. It reads the channel
+posted there (*Add to to-do*, *Add conversation to to-do*, `/todo`), open and done. It reads the channel
 again (its last 500 messages) a few seconds after an add, a **Done** or a
 **Reopen** (once for a burst of clicks), when it connects and every 15
 minutes — so cards deleted or edited by hand follow —, and only writes the
 copy when something changed (and once after a restart): one D1 write per
 change, no read. `--todo` reads it through the same route and key
-(`?view=todo`): for each item its type (to-do or suggestion), open or done,
-date (for a suggestion, the quoted message's),
-author, who added it, text, number of attachments, the card's Discord link and
-the original message's. All open items (300 at most) and the 50 latest done
-ones, texts cut at 1,500 characters; but the copy holds 400,000 characters at
+(`?view=todo`): for each item its type (to-do, suggestion or conversation),
+open or done, date (for a suggestion, the quoted message's; for a conversation,
+its first message's), author (for a conversation, everyone in it), who added
+it, text (a conversation's transcript), number of attachments, the card's
+Discord link and the original message's (for a conversation, its first and
+last messages', and how many messages). All open items (300 at most) and the
+50 latest done ones, texts cut at 1,500 characters (4,000 for a conversation);
+but the copy holds 400,000 characters at
 most (20,000 for the rest of the bot's memory), so a long list first gets
 shorter texts (down to 80 characters), then leaves its oldest items out, done
 ones first — counted in `omitted`, and the tool says so (`partial`: more than
@@ -836,13 +845,14 @@ card deleted in Discord leaves the copy at the next read.
 
 **To-do attachments** (`--files <id>`, or `--files all`): the files stay on
 Discord. For the 40 latest open cards that have some, the bot reads the
-original message and copies each attachment's name, size, type, picture size
-and link (`cdn.discordapp.com` or `media.discordapp.net`). Discord signs those
+original message (a conversation's messages, in one request) and copies each
+attachment's name, size, type, picture size and link (`cdn.discordapp.com` or
+`media.discordapp.net`). Discord signs those
 links for about 24 hours, so the bot reads the message again when less than 6
 hours are left (15 messages at most per read of the channel; a message it
 can't read — deleted, or in a channel the bot can't see — is retried every 30
 minutes and noted once in its log). The Worker only passes links of that form,
-ten per card at most. `--todo` shows each card's id and its attachments; the
+30 per card at most. `--todo` shows each card's id and its attachments; the
 tool then downloads them straight from Discord, without the key, to
 `report-photos/todo-<id>/` (`--out=<folder>` for another one), named `file1.png`,
 `file2.mov`… (extension from a closed list, `.bin` otherwise: nothing the user
