@@ -234,6 +234,7 @@ export const RU = {
   emotes: 'Эмоуты',
   emotes_channel: 'Этот канал',
   emotes_global: 'Глобальные',
+  emotes_mine: 'Мои эмоуты',
   emote_search_ph: 'Поиск эмоутов',
   user_messages: 'Сообщения пользователя',
   mention: 'Упомянуть',

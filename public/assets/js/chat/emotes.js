@@ -192,35 +192,107 @@ export function twitchEmote(id, name) {
 // que le compte peut utiliser (tag `emote-sets` de GLOBALUSERSTATE et
 // USERSTATE). Une emote d'abonné vue chez les autres, que le compte n'a pas,
 // part en texte : notre copie l'affichait en image.
-/** Id d'un jeu → Map(nom → emote) ; null pendant sa lecture. */
+/** Id d'un jeu → Map(nom → emote) ; null pendant sa lecture. Chaque emote
+ *  garde son type GQL (`kind` : SUBSCRIPTIONS, GLOBALS, SMILIES…). */
 const ownSets = new Map()
+/** Id d'un jeu → sa chaîne ({ id, login, name, avatar }), ou null pour un
+ *  jeu de Twitch (globales, Prime…) : « Mes emotes » du sélecteur. */
+const ownSetOwners = new Map()
 /** GQL refuse plus de 15 alias par requête. */
 const SETS_PER_QUERY = 15
 
-/** Lit (une fois par séance) le contenu des jeux pas encore connus. Un échec
- *  sera retenté au prochain USERSTATE (après chacun de nos messages). */
+/** Lit (une fois par séance) le contenu des jeux pas encore connus : leurs
+ *  emotes et leur chaîne, dans la même série de requêtes pour nos messages
+ *  et pour le sélecteur. Un échec sera retenté au prochain USERSTATE (après
+ *  chacun de nos messages). Promesse : vraie si un jeu vient d'être lu. */
 export function loadOwnEmotes(ids) {
   const todo = [...new Set(ids)].filter((id) => /^[\w-]{1,64}$/.test(id) && !ownSets.has(id)).slice(0, 300)
+  const parts = []
   for (let i = 0; i < todo.length; i += SETS_PER_QUERY) {
     const part = todo.slice(i, i + SETS_PER_QUERY)
     for (const id of part) ownSets.set(id, null)
     const vars = Object.fromEntries(part.map((id, k) => [`s${k}`, id]))
     const query = `query(${part.map((_, k) => `$s${k}: ID!`).join(', ')}) {
-      ${part.map((_, k) => `s${k}: emoteSet(id: $s${k}) { emotes { id token } }`).join('\n')}
+      ${part.map((_, k) => `s${k}: emoteSet(id: $s${k}) { id owner { id login displayName profileImageURL(width: 50) } emotes { id token type } }`).join('\n')}
     }`
-    gql(query, vars)
+    parts.push(gql(query, vars)
       .then((data) => {
         if (!data) throw new Error('vide')
         part.forEach((id, k) => {
+          const set = data[`s${k}`]
           const map = new Map()
-          for (const e of data[`s${k}`]?.emotes ?? []) {
-            if (e?.id && e.token) map.set(e.token, { id: e.id, name: e.token, url: `https://static-cdn.jtvnw.net/emoticons/v2/${e.id}/default/dark/2.0`, source: 'twitch' })
+          for (const e of set?.emotes ?? []) {
+            if (e?.id && e.token) map.set(e.token, { id: e.id, name: e.token, url: `https://static-cdn.jtvnw.net/emoticons/v2/${e.id}/default/dark/2.0`, source: 'twitch', kind: e.type ?? '' })
           }
           ownSets.set(id, map)
+          ownSetOwners.set(id, readOwner(set?.owner))
         })
+        return true
       })
-      .catch(() => { for (const id of part) if (ownSets.get(id) === null) ownSets.delete(id) })
+      .catch(() => {
+        for (const id of part) if (ownSets.get(id) === null) ownSets.delete(id)
+        return false
+      }))
   }
+  return Promise.all(parts).then((done) => done.includes(true))
+}
+
+/** Chaîne propriétaire d'un jeu ; null sans propriétaire (jeu de Twitch). */
+function readOwner(o) {
+  if (!o?.id || typeof o.login !== 'string' || !o.login) return null
+  const pic = o.profileImageURL
+  return {
+    id: String(o.id), login: o.login, name: o.displayName || o.login,
+    avatar: typeof pic === 'string' && pic.startsWith('https://') ? pic : null,
+  }
+}
+
+/** Types rangés sous la chaîne du jeu. Les autres (globales, Prime, Turbo,
+ *  2FA, Hype Train…) vont dans « Twitch » : le jeu des emotes 2FA, par
+ *  exemple, appartient à un compte interne de Twitch (qa_TW_Partner). */
+const CHANNEL_KINDS = new Set(['SUBSCRIPTIONS', 'FOLLOWER', 'BITS_BADGE_TIERS', 'CHANNEL_POINTS'])
+
+/** Jeux par id croissant (les ids sont des nombres) : les plus anciens
+ *  d'abord — les globales (jeu 0) en tête de « Twitch ». */
+function setOrder(a, b) {
+  const x = /^\d{1,15}$/.test(a)
+  const y = /^\d{1,15}$/.test(b)
+  if (x && y) return Number(a) - Number(b)
+  if (x !== y) return x ? -1 : 1
+  return a < b ? -1 : a > b ? 1 : 0
+}
+
+/** « Mes emotes » (sélecteur) : les emotes Twitch des jeux `ids` du compte,
+ *  une section par chaîne — celle regardée d'abord si le compte a ses
+ *  emotes, les autres par ordre alphabétique —, puis « Twitch ». Ni smileys
+ *  (« :) », « <3 » et leurs variantes : ils se tapent tels quels), ni
+ *  emotes follower d'une autre chaîne (utilisables chez elle seulement).
+ *  Une emote présente dans deux jeux ne sort qu'une fois. Vide tant
+ *  qu'aucun jeu n'est lu. */
+export function ownEmoteGroups(ids, channelId, channelLogin) {
+  const login = String(channelLogin ?? '').toLowerCase()
+  const here = (o) => Boolean(o) && ((channelId != null && o.id === String(channelId)) || (Boolean(login) && o.login.toLowerCase() === login))
+  const channels = new Map()
+  const twitch = []
+  const seen = new Set()
+  for (const id of [...new Set(ids ?? [])].sort(setOrder)) {
+    const map = ownSets.get(id)
+    if (!map) continue
+    for (const e of map.values()) {
+      if (e.kind === 'SMILIES' || !/^\w+$/.test(e.name)) continue
+      const owner = CHANNEL_KINDS.has(e.kind) ? ownSetOwners.get(id) ?? null : null
+      if (e.kind === 'FOLLOWER' && !here(owner)) continue
+      if (seen.has(e.id)) continue
+      seen.add(e.id)
+      if (!owner) { twitch.push(e); continue }
+      if (!channels.has(owner.id)) channels.set(owner.id, { ...owner, emotes: [] })
+      channels.get(owner.id).emotes.push(e)
+    }
+  }
+  const groups = [...channels.values()].sort((a, b) =>
+    (Number(here(b)) - Number(here(a))) || a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }))
+  if (twitch.length) groups.push({ id: 'twitch', login: 'twitch', name: 'Twitch', avatar: null, emotes: twitch })
+  return groups
 }
 
 /** Emote Twitch du compte (jeux `ids`), par son nom. */

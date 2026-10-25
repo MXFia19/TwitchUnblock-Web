@@ -329,10 +329,15 @@ export class LiveChat {
     if (tags.badges != null) me.badges = tags.badges
     if (tags['user-id']) me.userId = tags['user-id']
     // Jeux d'emotes du compte : seules leurs emotes Twitch s'affichent en
-    // image dans nos messages (selfMessage). En anonyme, rien à lire.
+    // image dans nos messages (selfMessage), et le sélecteur les montre dans
+    // « Mes emotes ». En anonyme, rien à lire.
     if (tags['emote-sets'] && this.o.token && this.o.login && !this.readOnly) {
       me.emoteSets = tags['emote-sets'].split(',').filter(Boolean)
-      loadOwnEmotes(me.emoteSets)
+      const gen = this.generation
+      // Jeux tout juste lus : le sélecteur, s'il est ouvert, les ajoute.
+      loadOwnEmotes(me.emoteSets).then((fresh) => {
+        if (fresh && gen === this.generation && !this.closed) this.emit('ownemotes')
+      })
     }
   }
 

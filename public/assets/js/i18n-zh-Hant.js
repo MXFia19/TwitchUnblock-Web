@@ -236,6 +236,7 @@ export const ZH_HANT = {
   emotes: '表情符號',
   emotes_channel: '本頻道',
   emotes_global: '全域',
+  emotes_mine: '我的表情符號',
   emote_search_ph: '搜尋表情符號',
   user_messages: '他的訊息',
   mention: '提及',
