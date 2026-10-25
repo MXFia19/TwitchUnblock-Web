@@ -1314,7 +1314,9 @@ async function handlePing(request, env) {
     // téléphone, et chaque signal de l'un puis de l'autre réécrirait l'entrée
     // —, seulement « - » si elle n'a jamais été vue (le site l'a cherchée).
     if (platform === 'web') {
-        if (USAGE_EXT_VERSION.test(String(body.ext ?? ''))) {
+        // Une chaîne seulement : String(["0.1.0"]) passerait le motif, et le
+        // tableau serait gardé tel quel dans les métadonnées.
+        if (typeof body.ext === 'string' && USAGE_EXT_VERSION.test(body.ext)) {
             meta.xv = body.ext;
             meta.xd = day;
             if (USAGE_EXT_BROWSERS.includes(body.extBrowser)) meta.xb = body.extBrowser;
