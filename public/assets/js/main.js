@@ -17,6 +17,7 @@ import * as dl from './download.js'
 import { CHANGELOG } from './changelog.js'
 import { INSTALL_URL as CONNECT_INSTALL_URL, connect } from './connect.js'
 import { captureGlobalErrors, clearErrors, errorCount, errorLines, logError } from './errlog.js'
+import { initConnectUpdate } from './connect-update.js'
 import {
   $, $$, debounce, esc, formatClock, formatDuration, formatViewers, icon, isIOS, isMobile,
   thumb, toast, twitchTime, uptimeSince,
@@ -102,6 +103,8 @@ async function boot() {
   renderContinue()
   renderRecentChannels()
   startLiveTicker()
+  // Extension plus ancienne que la dernière publiée : bandeau de mise à jour.
+  initConnectUpdate()
   usage.ping(() => store.prefs.shareUsage)
   setInterval(() => usage.ping(() => store.prefs.shareUsage), 15 * 60 * 1000)
   // Installable comme une app (et la coque s'ouvre hors ligne).

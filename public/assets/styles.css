@@ -292,6 +292,21 @@ input[type='search']::-webkit-search-cancel-button { filter: invert(1) opacity(0
 .poll-pct { position: relative; font-weight: 700; font-size: 13px; font-variant-numeric: tabular-nums; }
 .announce-body .poll-meta { margin-top: 8px; font-size: 12.5px; }
 .poll-meta .link-btn { padding: 0; border: 0; background: none; font: inherit; font-weight: 600; cursor: pointer; }
+/* Nouvelle version de TwitchUnblock Connect : une ligne discrète, au-dessus
+   des pages (connect-update.js) ; les étapes dans « Comment mettre à jour ? ». */
+#connect-update { margin-bottom: 20px; }
+.cx-update { display: flex; align-items: flex-start; gap: 10px; padding: 7px 6px 7px 12px; border-radius: 12px; border: 1px solid var(--line-strong); background: var(--card); font-size: 13px; }
+.cx-update-ic { flex: none; display: grid; place-items: center; height: 34px; color: var(--purple); }
+.cx-update-body { flex: 1; min-width: 0; padding-top: 8px; }
+.cx-update-body p { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; }
+.cx-update-body b { font-weight: 600; }
+.cx-update-body .link-btn { display: inline-flex; align-items: center; gap: 4px; }
+.cx-update details { margin-top: 4px; color: var(--muted); }
+.cx-update summary { width: fit-content; cursor: pointer; padding-bottom: 6px; }
+.cx-update summary:hover { color: var(--text); }
+.cx-update ul { margin: 0 0 6px; padding-left: 18px; line-height: 1.45; overflow-wrap: anywhere; }
+.cx-update li + li { margin-top: 4px; }
+.cx-update .icon-btn { color: var(--muted); }
 .block-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
 .block-head h2 { display: flex; align-items: center; gap: 10px; font-size: 19px; font-weight: 800; letter-spacing: -0.01em; }
 .block-head h2 .ic { color: var(--purple); }

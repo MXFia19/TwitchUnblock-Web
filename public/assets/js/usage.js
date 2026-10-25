@@ -8,8 +8,10 @@
 //  compter le compte une seule fois sur tous les appareils (le Worker garde
 //  l'identifiant et le pseudo Twitch, visibles du seul administrateur). Plus
 //  la langue du site, « mobile » ou « ordinateur », et le nombre de lectures
-//  depuis le signal précédent (source qui a servi un direct, échecs). Pas de
-//  chaîne regardée, pas d'historique ; pas d'adresse IP.
+//  depuis le signal précédent (source qui a servi un direct, échecs). Et la
+//  version de l'extension TwitchUnblock Connect avec son navigateur, ou son
+//  absence (connect.js, usageFields) : ni ses réglages ni la session Twitch.
+//  Pas de chaîne regardée, pas d'historique ; pas d'adresse IP.
 //
 //  Désactivable dans les réglages : l'identifiant est alors effacé côté
 //  serveur.
@@ -17,8 +19,9 @@
 
 import { API_URL } from './api.js'
 import { uid } from './util.js'
+import { connect, usageFields } from './connect.js'
 
-export const SITE_VERSION = '2026.10.25b'
+export const SITE_VERSION = '2026.10.25c'
 const ID_KEY = 'tu_install_id'
 const LAST_KEY = 'tu_last_ping'
 const EV_KEY = 'tu_usage_ev'
@@ -150,6 +153,8 @@ async function pingOnce(enabled) {
       id: installId(), version: SITE_VERSION, platform: 'web',
       lang: usageLang(document.documentElement.lang),
       device: matchMedia('(pointer: coarse)').matches ? 'mobile' : 'desktop',
+      // Détection finie depuis longtemps (5 min de visite au moins).
+      ...usageFields(connect.state()),
       ...(Object.keys(ev).length ? { ev } : {}),
     })
     if (res.ok) {

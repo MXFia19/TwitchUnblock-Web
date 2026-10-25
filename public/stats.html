@@ -113,6 +113,8 @@
     .kind .fresh-line { margin: 12px 0 0; color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }
     .who { color: var(--muted); font-size: 13px; }
     .who b { color: var(--text); }
+    .ext-card { margin-bottom: 12px; }
+    .ext-tables { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 28px; }
 
     /* Outils développeur */
     .dev { border-color: rgba(191, 148, 255, 0.35); margin-top: 12px; }
@@ -202,6 +204,7 @@
       .tiles { grid-template-columns: 1fr; }
       .grid2 { grid-template-columns: 1fr; }
       .kinds { grid-template-columns: 1fr; }
+      .ext-tables { grid-template-columns: 1fr; }
       .tile .value { font-size: 34px; }
     }
   </style>
@@ -303,6 +306,13 @@
       <p class="sub" data-t="verSub"></p>
       <table id="versions"></table>
     </div>
+  </section>
+
+  <!-- Extension TwitchUnblock Connect, d'après le signal du site -->
+  <section class="card ext-card">
+    <h2 data-t="exTitle"></h2>
+    <p class="sub" id="ex-sub"></p>
+    <div id="ext"></div>
   </section>
 
   <section class="card dev" id="dev" hidden>
@@ -452,7 +462,7 @@
       devTitle: 'Outils développeur', devSub: 'Visible seulement par le compte administrateur. Chaque suppression compte comme une écriture D1 (100 000 par jour en gratuit), plafonnée à 500 par action.',
       delAnonWeb: 'Supprimer les anonymes web', delAnon: 'Supprimer tous les anonymes', delOnce: 'Supprimer les « vus un seul jour »', delAll: 'Tout réinitialiser',
       loginPh: 'Pseudo Twitch', syncBtn: 'Effacer sa sauvegarde (historique, progression, réglages)', filterPh: 'Filtrer (pseudo, version…)',
-      footer: 'Comptage : connecté, le compte Twitch (compté une fois sur tous ses appareils) ; sinon un identifiant tiré au hasard par navigateur ou par installation. Au plus un signal par heure, avec la langue de l’interface, le type d’appareil, la version d’iOS et le nombre de lectures (source du direct, échecs, pauses pub) ; ni adresse IP ni chaîne regardée. Les entrées expirent après 35 jours. Depuis le 3 octobre 2026, les robots, navigateurs automatisés, copies locales du site et navigations privées sans stockage ne sont plus comptés ; les anciens identifiants parasites disparaîtront d’eux-mêmes.',
+      footer: 'Comptage : connecté, le compte Twitch (compté une fois sur tous ses appareils) ; sinon un identifiant tiré au hasard par navigateur ou par installation. Au plus un signal par heure, avec la langue de l’interface, le type d’appareil, la version d’iOS et le nombre de lectures (source du direct, échecs, pauses pub), et sur le site la version de l’extension TwitchUnblock Connect (ou son absence) et son navigateur ; ni adresse IP ni chaîne regardée, rien des réglages de l’extension ni de la session Twitch. Les entrées expirent après 35 jours. Depuis le 3 octobre 2026, les robots, navigateurs automatisés, copies locales du site et navigations privées sans stockage ne sont plus comptés ; les anciens identifiants parasites disparaîtront d’eux-mêmes.',
       today: "Aujourd'hui", week: '7 derniers jours', month: '30 derniers jours', partial: 'données depuis le {d} seulement',
       actTitle: 'Actifs par jour', actSub: 'Personnes différentes chaque jour (une fois par jour, même si elles reviennent plusieurs fois).', actSince: 'Mesuré depuis le {d}.', actNone: 'Pas encore de données : la mesure commence avec cette mise à jour.',
       rtTitle: 'Rétention', rtSub: 'Parmi les personnes arrivées depuis assez longtemps, la part revue au moins 1, 7 ou 14 jours après son premier jour. Par semaine d’arrivée, 5 dernières semaines.',
@@ -463,6 +473,7 @@
       dvTitle: 'Appareils et langues', dvSub: 'Personnes actives sur 30 jours qui envoient ces infos : {ios} sur l’app, {tv} sur l’Apple TV, {web} sur le site (nouvelles versions seulement).', dvLangTv: 'Langue (Apple TV)',
       dvLangIos: 'Langue de l’app', dvLangWeb: 'Langue du site', dvOs: 'Version d’iOS', dvDevIos: 'Appareil (app)', dvDevWeb: 'Appareil (site)', dvMobile: 'Mobile ou tablette', dvDesktop: 'Ordinateur', dvNone: 'Pas encore de données : elles arrivent avec les nouvelles versions de l’app et du site.',
       tNew: '{n} nouvelles', tOld: '{n} déjà venues avant',
+      exTitle: 'Extension TwitchUnblock Connect', exSub: 'Personnes uniques vues sur le site avec l’extension, comptées une fois par période au dernier jour où elle l’a été, puis par version et par navigateur. Sur 30 jours, le site l’a cherchée chez {n} personnes (avec ou sans elle ; site 2026.10.25c et après).', exNone: 'Personne n’a été vu avec l’extension sur 30 jours (le site la signale depuis sa version 2026.10.25c).', exBrowser: 'Navigateur', ex_chrome: 'Chrome, Edge, Brave…', ex_firefox: 'Firefox', ex_other: 'Autre',
       uniqueNote: 'Personnes uniques : chacune compte une seule fois par période, même si elle revient plusieurs jours (une par compte Twitch connecté, sinon une par appareil ou navigateur).',
       redeploy: 'Worker à redéployer', noDaily: 'Pas encore de données jour par jour (Worker à redéployer).',
       once: '1 seul jour', few: '2 à 6 jours', regular: '7 à 29 jours', daily: '30 jours et +',
@@ -510,7 +521,7 @@
       devTitle: 'Developer tools', devSub: 'Only visible to the admin account. Each deletion counts as one D1 write (100,000 per day on the free plan), capped at 500 per action.',
       delAnonWeb: 'Delete anonymous web', delAnon: 'Delete all anonymous', delOnce: 'Delete “seen on one day only”', delAll: 'Reset everything',
       loginPh: 'Twitch username', syncBtn: 'Erase their backup (history, progress, settings)', filterPh: 'Filter (username, version…)',
-      footer: 'Counting: when signed in, the Twitch account (counted once across all devices); otherwise a random identifier per browser or install. At most one signal per hour, with the interface language, the device type, the iOS version and the number of plays (live source, failures, ad breaks); no IP address and no watched channel. Entries expire after 35 days. Since October 3, 2026, bots, automated browsers, local copies of the site and private browsing without storage are no longer counted; old noisy identifiers will disappear on their own.',
+      footer: 'Counting: when signed in, the Twitch account (counted once across all devices); otherwise a random identifier per browser or install. At most one signal per hour, with the interface language, the device type, the iOS version and the number of plays (live source, failures, ad breaks), and on the website the version of the TwitchUnblock Connect extension (or that it’s missing) and its browser; no IP address and no watched channel, nothing of the extension’s settings or the Twitch session. Entries expire after 35 days. Since October 3, 2026, bots, automated browsers, local copies of the site and private browsing without storage are no longer counted; old noisy identifiers will disappear on their own.',
       today: 'Today', week: 'Last 7 days', month: 'Last 30 days', partial: 'data only since {d}',
       actTitle: 'Active per day', actSub: 'Different people each day (once per day, even if they come back several times).', actSince: 'Measured since {d}.', actNone: 'No data yet: measuring starts with this update.',
       rtTitle: 'Retention', rtSub: 'Among people who arrived long enough ago, the share seen again at least 1, 7 or 14 days after their first day. By arrival week, last 5 weeks.',
@@ -521,6 +532,7 @@
       dvTitle: 'Devices and languages', dvSub: 'People active over 30 days who send this info: {ios} on the app, {tv} on the Apple TV, {web} on the website (new versions only).', dvLangTv: 'Language (Apple TV)',
       dvLangIos: 'App language', dvLangWeb: 'Website language', dvOs: 'iOS version', dvDevIos: 'Device (app)', dvDevWeb: 'Device (website)', dvMobile: 'Phone or tablet', dvDesktop: 'Computer', dvNone: 'No data yet: it comes with the new versions of the app and the website.',
       tNew: '{n} new', tOld: '{n} had come before',
+      exTitle: 'TwitchUnblock Connect extension', exSub: 'Unique people seen on the website with the extension, counted once per period on the last day it was seen, then by version and by browser. Over 30 days, the website looked for it for {n} people (with it or without; website 2026.10.25c and later).', exNone: 'Nobody was seen with the extension over 30 days (the website reports it since its 2026.10.25c version).', exBrowser: 'Browser', ex_chrome: 'Chrome, Edge, Brave…', ex_firefox: 'Firefox', ex_other: 'Other',
       uniqueNote: 'Unique people: each one counts once per period, even if they come back on several days (one per signed-in Twitch account, otherwise one per device or browser).',
       redeploy: 'Worker needs redeploying', noDaily: 'No day-by-day data yet (Worker needs redeploying).',
       once: '1 day only', few: '2 to 6 days', regular: '7 to 29 days', daily: '30 days +',
@@ -568,7 +580,7 @@
       devTitle: 'Herramientas de desarrollo', devSub: 'Solo visible para la cuenta de administrador. Cada eliminación cuenta como una escritura D1 (100 000 al día en el plan gratuito), con un máximo de 500 por acción.',
       delAnonWeb: 'Eliminar anónimos web', delAnon: 'Eliminar todos los anónimos', delOnce: 'Eliminar «vistos un solo día»', delAll: 'Restablecer todo',
       loginPh: 'Usuario de Twitch', syncBtn: 'Borrar su copia (historial, progreso, ajustes)', filterPh: 'Filtrar (usuario, versión…)',
-      footer: 'Recuento: con sesión iniciada, la cuenta de Twitch (contada una vez en todos sus dispositivos); si no, un identificador aleatorio por navegador o instalación. Como mucho una señal por hora, con el idioma de la interfaz, el tipo de dispositivo, la versión de iOS y el número de reproducciones (fuente del directo, fallos, pausas publicitarias); sin dirección IP ni canal visto. Las entradas caducan a los 35 días. Desde el 3 de octubre de 2026, los bots, navegadores automatizados, copias locales del sitio y la navegación privada sin almacenamiento ya no se cuentan; los antiguos identificadores parásitos desaparecerán solos.',
+      footer: 'Recuento: con sesión iniciada, la cuenta de Twitch (contada una vez en todos sus dispositivos); si no, un identificador aleatorio por navegador o instalación. Como mucho una señal por hora, con el idioma de la interfaz, el tipo de dispositivo, la versión de iOS y el número de reproducciones (fuente del directo, fallos, pausas publicitarias), y en el sitio la versión de la extensión TwitchUnblock Connect (o su ausencia) y su navegador; sin dirección IP ni canal visto, nada de los ajustes de la extensión ni de la sesión de Twitch. Las entradas caducan a los 35 días. Desde el 3 de octubre de 2026, los bots, navegadores automatizados, copias locales del sitio y la navegación privada sin almacenamiento ya no se cuentan; los antiguos identificadores parásitos desaparecerán solos.',
       today: 'Hoy', week: 'Últimos 7 días', month: 'Últimos 30 días', partial: 'datos solo desde el {d}',
       actTitle: 'Activos por día', actSub: 'Personas distintas cada día (una vez por día, aunque vuelvan varias veces).', actSince: 'Medido desde el {d}.', actNone: 'Aún no hay datos: la medición empieza con esta actualización.',
       rtTitle: 'Retención', rtSub: 'Entre las personas que llegaron hace suficiente tiempo, la parte que volvió al menos 1, 7 o 14 días después de su primer día. Por semana de llegada, últimas 5 semanas.',
@@ -579,6 +591,7 @@
       dvTitle: 'Dispositivos e idiomas', dvSub: 'Personas activas en 30 días que envían estos datos: {ios} en la app, {tv} en el Apple TV, {web} en el sitio (solo versiones nuevas).', dvLangTv: 'Idioma (Apple TV)',
       dvLangIos: 'Idioma de la app', dvLangWeb: 'Idioma del sitio', dvOs: 'Versión de iOS', dvDevIos: 'Dispositivo (app)', dvDevWeb: 'Dispositivo (sitio)', dvMobile: 'Móvil o tableta', dvDesktop: 'Ordenador', dvNone: 'Aún no hay datos: llegan con las nuevas versiones de la app y del sitio.',
       tNew: '{n} nuevas', tOld: '{n} ya habían venido',
+      exTitle: 'Extensión TwitchUnblock Connect', exSub: 'Personas únicas vistas en el sitio con la extensión, contadas una vez por periodo el último día en que se vio, y luego por versión y por navegador. En 30 días, el sitio la buscó en {n} personas (con o sin ella; sitio 2026.10.25c o posterior).', exNone: 'Nadie ha sido visto con la extensión en 30 días (el sitio la indica desde su versión 2026.10.25c).', exBrowser: 'Navegador', ex_chrome: 'Chrome, Edge, Brave…', ex_firefox: 'Firefox', ex_other: 'Otro',
       uniqueNote: 'Personas únicas: cada una cuenta una sola vez por periodo, aunque vuelva varios días (una por cuenta de Twitch conectada; si no, una por dispositivo o navegador).',
       redeploy: 'Hay que redesplegar el Worker', noDaily: 'Aún no hay datos por día (hay que redesplegar el Worker).',
       once: 'Un solo día', few: '2 a 6 días', regular: '7 a 29 días', daily: '30 días o más',
@@ -901,6 +914,27 @@
         const [plat, ...rest] = String(v.version).split(' ')
         return `<tr><td><i class="dot ${plat === 'web' ? 'web' : 'ios'}" style="display:inline-block;margin-right:8px"></i>${esc(plat === 'web' ? 'Web' : 'iOS')} ${esc(rest.join(' '))}</td><td class="n">${fmt(v.count)}</td></tr>`
       }).join('') || '<tr><td colspan="2" class="sub">—</td></tr>'}</tbody>`
+  }
+
+  /** Extension TwitchUnblock Connect : personnes qui l'ont (aujourd'hui, 7 et
+   *  30 jours), puis par version (la plus récente d'abord) et par navigateur. */
+  const EXT_BROWSERS = ['chrome', 'firefox', 'other']
+  function extension(s) {
+    const x = s.ext
+    const box = $('#ext')
+    if (!x) { box.innerHTML = `<p class="sub">${esc(t('redeploy'))}</p>`; $('#ex-sub').textContent = ''; return }
+    $('#ex-sub').textContent = t('exSub', { n: fmt(x.reporting) })
+    if (!x.month) { box.innerHTML = `<p class="sub">${esc(t('exNone'))}</p>`; return }
+    const cell = (n, label) => `<div><b>${fmt(n)}</b><span>${esc(label)}</span></div>`
+    const parts = (v) => String(v).split('.').map(Number)
+    const newer = (a, b) => { const p = parts(a), q = parts(b); for (let i = 0; i < 3; i++) if (p[i] !== q[i]) return (q[i] || 0) - (p[i] || 0); return 0 }
+    const table = (head, rows) => `<table><thead><tr><th>${esc(head)}</th><th class="n">${esc(t('today'))}</th><th class="n">${esc(t('days7'))}</th><th class="n">${esc(t('days30'))}</th></tr></thead><tbody>${
+      rows.map(([label, c]) => `<tr><td>${esc(label)}</td><td class="n">${fmt(c.today)}</td><td class="n">${fmt(c.week)}</td><td class="n">${fmt(c.month)}</td></tr>`).join('')
+      || '<tr><td colspan="4" class="sub">—</td></tr>'}</tbody></table>`
+    const versions = Object.entries(x.versions ?? {}).sort((a, b) => newer(a[0], b[0])).slice(0, 10)
+    const browsers = EXT_BROWSERS.filter((k) => x.browsers?.[k]).map((k) => [t('ex_' + k), x.browsers[k]])
+    box.innerHTML = `<div class="nums3">${cell(x.today, t('kToday'))}${cell(x.week, t('kWeek'))}${cell(x.month, t('kMonth'))}</div>
+      <div class="ext-tables">${table(t('thVersion'), versions)}${table(t('exBrowser'), browsers)}</div>`
   }
 
   function kinds(s) {
@@ -1541,7 +1575,7 @@
       const s = await res.json()
       lastStats = s
       tiles(s); kinds(s); chartNew(s.daily); chartActive(s); retention(s); health(s); devices(s); pushNow(s); chartPush(s)
-      loyalty(s); platformReturning(s); versions(s)
+      loyalty(s); platformReturning(s); versions(s); extension(s)
       const at = s.generatedAt ? new Date(s.generatedAt) : new Date()
       $('#updated').textContent = t('updated', { t: at.toLocaleTimeString(LOCALE, { hour: '2-digit', minute: '2-digit' }) })
     } catch (e) {

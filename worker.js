@@ -1184,8 +1184,13 @@ const BOT_UA = /headless|bot\b|crawler|spider|slurp|playwright|puppeteer|seleniu
 // d'appareil, version majeure d'iOS, et des compteurs de lectures — la source
 // qui a servi un direct, les échecs. Jamais de chaîne ni de titre.
 const USAGE_DEVICES = ['iphone', 'ipad', 'tv', 'mobile', 'desktop'];
-// Langue (l) et appareil (d) par plateforme : i(OS), w(eb), t(vOS) ; version d'iOS.
-const USAGE_META_FIELDS = ['li', 'lw', 'lt', 'la', 'di', 'dw', 'dt', 'da', 'os'];
+// Langue (l) et appareil (d) par plateforme : i(OS), w(eb), t(vOS) ; version
+// d'iOS ; extension TwitchUnblock Connect vue par le site (x…, voir handlePing).
+const USAGE_META_FIELDS = ['li', 'lw', 'lt', 'la', 'di', 'dw', 'dt', 'da', 'os', 'xv', 'xb', 'xd'];
+// Extension du site : version « 0.1.0 » (comme le site, connect.js) et
+// navigateur de la liste ; autre chose est ignoré.
+const USAGE_EXT_VERSION = /^\d{1,4}\.\d{1,4}\.\d{1,4}$/;
+const USAGE_EXT_BROWSERS = ['chrome', 'firefox', 'other'];
 // live_account : direct de l'app servi par le compte d'un abonné sans pub ;
 // live_ad_break : pause pub de la chaîne affichée (une fois par pause).
 const USAGE_EVENTS = ['live_as', 'live_al', 'live_eu', 'live_twitch', 'live_account', 'live_worker', 'live_unknown',
@@ -1302,6 +1307,19 @@ async function handlePing(request, env) {
     if (lm) meta['l' + suffix] = lm[2] ? `${lm[1].toLowerCase()}-${lm[2][0].toUpperCase()}${lm[2].slice(1).toLowerCase()}` : lm[1].toLowerCase();
     if (USAGE_DEVICES.includes(body.device)) meta['d' + suffix] = body.device;
     if (platform === 'ios' && /^\d{1,2}$/.test(String(body.os ?? ''))) meta.os = String(body.os);
+    // Extension TwitchUnblock Connect (site) : sa version (xv), son navigateur
+    // (xb) et le dernier jour où elle a été vue (xd), qui la compte dans les
+    // périodes de /stats comme `last` les personnes. Absente (« none ») : rien
+    // n'est effacé — un compte peut l'avoir sur un ordinateur et pas sur son
+    // téléphone, et chaque signal de l'un puis de l'autre réécrirait l'entrée
+    // —, seulement « - » si elle n'a jamais été vue (le site l'a cherchée).
+    if (platform === 'web') {
+        if (USAGE_EXT_VERSION.test(String(body.ext ?? ''))) {
+            meta.xv = body.ext;
+            meta.xd = day;
+            if (USAGE_EXT_BROWSERS.includes(body.extBrowser)) meta.xb = body.extBrowser;
+        } else if (body.ext === 'none' && !meta.xd) meta.xv = '-';
+    }
 
     // Compteurs du jour : actifs (une fois par personne), lectures par issue
     // (plafonnées par ping, contre un client qui enverrait n'importe quoi).
@@ -1410,6 +1428,13 @@ async function handleStats(env) {
     // Appareils : personnes actives sur 30 jours qui envoient ces infos.
     const devices = { reporting: { ios: 0, web: 0, tvos: 0, android: 0 }, lang: { ios: {}, web: {}, tvos: {}, android: {} }, os: {}, device: { ios: {}, web: {}, tvos: {}, android: {} } };
     const tally = (obj, k) => { obj[k] = (obj[k] || 0) + 1; };
+    // Extension TwitchUnblock Connect : personnes vues avec elle sur le site,
+    // une fois par période d'après le dernier jour où elle l'a été (xd), en
+    // tout, par version et par navigateur (les derniers vus). `reporting` :
+    // personnes actives sur 30 jours dont le site l'a cherchée, qu'elle y
+    // soit ou non (versions du site depuis 2026.10.25c).
+    const ext = { today: 0, week: 0, month: 0, reporting: 0, versions: {}, browsers: {} };
+    const periods = () => ({ today: 0, week: 0, month: 0 });
 
     // list() renvoie les métadonnées sans lecture par clé ; 1000 clés par page.
     do {
@@ -1471,6 +1496,17 @@ async function handleStats(env) {
                 if (meta.os) tally(devices.os, meta.os);
                 if (meta.di) tally(devices.device.ios, meta.di);
                 if (meta.dw) tally(devices.device.web, meta.dw);
+                if (meta.xv) ext.reporting++;
+            }
+            const xThen = meta.xd && meta.xv !== '-' ? Date.parse(meta.xd + 'T00:00:00Z') : NaN;
+            const xAge = Number.isNaN(xThen) ? Infinity : Math.floor((todayMs - xThen) / 86400000);
+            if (xAge < 30) {
+                const browser = USAGE_EXT_BROWSERS.includes(meta.xb) ? meta.xb : 'other';
+                for (const c of [ext, ext.versions[meta.xv] ??= periods(), ext.browsers[browser] ??= periods()]) {
+                    c.month++;
+                    if (xAge < 7) c.week++;
+                    if (xAge === 0) c.today++;
+                }
             }
         }
         cursor = page.list_complete ? undefined : page.cursor;
@@ -1588,7 +1624,7 @@ async function handleStats(env) {
     const payload = {
         ...total, platforms, accounts: kinds.accounts, anonymous: kinds.anonymous, returning, loyalty,
         retention: { ...ret, cohorts: Object.values(cohorts).sort((a, b) => b.week.localeCompare(a.week)).slice(0, 5) },
-        devices, activeDaily, activeSince, health, push,
+        devices, ext, activeDaily, activeSince, health, push,
         avgDays: total.known ? Math.round((totalDays / total.known) * 10) / 10 : 0,
         oldestFirst,
         versions: Object.entries(versions).map(([version, count]) => ({ version, count })).sort((a, b) => b.count - a.count),
