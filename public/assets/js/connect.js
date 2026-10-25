@@ -7,7 +7,8 @@
 //  Protocole commun : extension/PROTOCOL.md (v1).
 //  Tout passe par window.postMessage vers la page elle-même (sa propre
 //  origine), que le content script de l'extension écoute : rien ne part
-//  vers le Worker ni le relais, et rien n'est compté (usage.js).
+//  vers le Worker ni le relais. Le comptage d'usage (usage.js) n'en dit que
+//  la version et le navigateur de l'extension, ou son absence (usageFields).
 //  Sans `window` (vérifications Node), le module se charge quand même :
 //  createConnect() prend une fausse fenêtre.
 // ═══════════════════════════════════════════════════════════════════════════
@@ -16,6 +17,51 @@ export const PROTOCOL = 1
 // Dernière release (workflow « Extension » sur main) : les deux zips à
 // télécharger sans compte GitHub, et les étapes d'installation en anglais.
 export const INSTALL_URL = 'https://github.com/MXFia19/TwitchUnblock-Web/releases/latest'
+
+// ── Version publiée : bandeau de mise à jour, comptage d'usage ────────────
+/** Dernière version publiée de l'extension : celle de extension/manifest.json
+ *  (extension/dev/check-site-version.mjs le vérifie en CI). Installée à la
+ *  main depuis GitHub, l'extension ne se met jamais à jour seule : plus
+ *  ancienne, le site le dit (connect-update.js). */
+export const CONNECT_LATEST = '0.2.0'
+/** Version comptée par /stats : trois nombres (« 0.1.0 »), comme le Worker. */
+export const USAGE_VERSION_RE = /^\d{1,4}\.\d{1,4}\.\d{1,4}$/
+
+/** Compare deux versions nombre par nombre (« 0.10.0 » après « 0.9.1 »,
+ *  « 1.0 » = « 1.0.0 ») : -1, 0 ou 1 ; NaN si l'une n'en est pas une. */
+export function compareVersions(a, b) {
+  const parse = (v) => (typeof v === 'string' && /^\d{1,9}(\.\d{1,9}){0,3}$/.test(v) ? v.split('.').map(Number) : null)
+  const x = parse(a)
+  const y = parse(b)
+  if (!x || !y) return NaN
+  for (let i = 0; i < Math.max(x.length, y.length); i++) {
+    const d = (x[i] ?? 0) - (y[i] ?? 0)
+    if (d) return Math.sign(d)
+  }
+  return 0
+}
+
+/** Mise à jour à proposer : { latest, current } quand l'extension détectée
+ *  (branchée ou connexion au site coupée) est plus ancienne que `latest` ;
+ *  null sinon — absente, pas encore détectée, à jour, version illisible. */
+export function updateFor(st, latest = CONNECT_LATEST) {
+  if (st?.availability !== 'on' && st?.availability !== 'off') return null
+  return compareVersions(st.version, latest) < 0 ? { latest, current: st.version } : null
+}
+
+/** Ce que le signal d'usage (usage.js) dit de l'extension, rien d'autre (ni
+ *  réglages ni session) : { ext: '0.1.0', extBrowser } si elle est là,
+ *  { ext: 'none' } si elle est absente, {} tant que la détection n'a pas
+ *  abouti. Navigateur d'après `hello` ; une annonce arrivée avant lui (ou
+ *  après une installation, page ouverte) ne le donne pas : celui de la page
+ *  alors, le même (Edge, Brave… font tourner la version Chrome). */
+export function usageFields(st, ua = globalThis.navigator?.userAgent ?? '') {
+  if (st?.availability === 'absent') return { ext: 'none' }
+  if (st?.availability !== 'on' && st?.availability !== 'off') return {}
+  if (!USAGE_VERSION_RE.test(st.version ?? '')) return {}
+  const browser = st.browser ?? (/Firefox\//.test(ua) ? 'firefox' : /Chrom(e|ium)\//.test(ua) ? 'chrome' : 'other')
+  return { ext: st.version, extBrowser: browser }
+}
 
 /** Liste fermée du protocole : rien d'autre ne part. */
 export const OPS = Object.freeze(['hello', 'status', 'points.get', 'points.claim', 'watch.beat',

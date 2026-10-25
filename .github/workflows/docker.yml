@@ -38,6 +38,27 @@ env:
   IMAGE: ghcr.io/mxfia19/twitchunblock-web
 
 jobs:
+  # Le site annonce la dernière version de l'extension TwitchUnblock Connect
+  # (CONNECT_LATEST, public/assets/js/connect.js) : elle doit valoir celle de
+  # extension/manifest.json (vérifié aussi par le workflow « Extension »).
+  # Job à part : un écart le signale sans bloquer l'image.
+  connect-version:
+    name: Connect version
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: CONNECT_LATEST matches the extension
+        run: node extension/dev/check-site-version.mjs
+
   image:
     name: Build and push
     runs-on: ubuntu-latest

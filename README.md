@@ -131,14 +131,16 @@ Without the extension, with its connection to the site turned off, or on a phone
 
 **Install**: download `twitchunblock-connect-chrome.zip` (Chrome, Edge, Brave) or `twitchunblock-connect-firefox.zip` from the [latest release](https://github.com/MXFia19/TwitchUnblock-Web/releases/latest), then follow the [install steps](extension/INSTALL.md) (the developer notes are in [`extension/README.md`](extension/README.md)). The website's **Settings → TwitchUnblock Connect (extension)** says whether it's installed (and which version), connected (`@login`), missing a Twitch session or turned off, with the link to install it.
 
+**Updates**: installed by hand, the extension never updates itself. The site knows the latest published version (`CONNECT_LATEST` in `public/assets/js/connect.js`): when the extension it detects — connected, or with its connection to the site turned off — is older, a discreet line at the top of every page says “TwitchUnblock Connect 0.2.0 is available (you have 0.1.0)”, with the download link and, under *How to update?*, the steps of the [install guide](extension/INSTALL.md) for that browser (Chrome, Edge, Brave: replace the folder's content, then reload the extension; Firefox: load the new zip again). Once closed, it stays away until the next version (remembered in the browser); nothing shows without the extension or once it's up to date. `CONNECT_LATEST` must equal the version in `extension/manifest.json`: `node extension/dev/check-site-version.mjs` fails otherwise. It runs in the *Extension* workflow, before the release, and in the *Docker image* workflow, as a job of its own that doesn't hold the image back — so a new version of the extension and the site's line ship together.
+
 **Security**
-- The Twitch session cookie and the integrity token never leave the extension's background: not to the page, not to its content script, not to TwitchUnblock's servers. The site sends nothing about it to the Worker or the relay, and counts nothing more in the usage statistics.
+- The Twitch session cookie and the integrity token never leave the extension's background: not to the page, not to its content script, not to TwitchUnblock's servers. The site sends nothing about it to the Worker or the relay; the usage count only gets the extension's version and browser, or that it's missing (see [Usage count](#usage-count)).
 - The page and the extension only talk through `window.postMessage` to the page's own origin; each side drops anything from another window, another origin or another protocol. The content script only runs on the official website and the test branch's preview, top frame only.
 - A closed list of operations, every argument checked on both sides (channel login, amounts from 1 to 250,000…): no free GQL request, no generic relay. Every answer is checked again by the site before use; a malformed one is an error, never a guess.
 - Spending points (bets, paid poll votes, rewards) and voting need a real click: the site sends the request inside the click on **Confirm**, **Vote** or **Redeem**, and the extension refuses it otherwise, or when *Bets, votes and rewards from the site* is off. Its settings are only changed in its own window, never by the page.
 - The extension limits the pace itself (reads at most once per 3 s per channel, one minute watched per 50 s, one drops pulse per 8 s, 60 requests a minute in all).
 
-Messages, operations, error codes and limits: [`extension/PROTOCOL.md`](extension/PROTOCOL.md). On the site's side, `public/assets/js/connect.js` is the bridge (detection, requests, time limits, answers checked) and `public/assets/js/chat/connect-live.js` the player and chat part; `node tools/connect-check.mjs` checks the bridge with a fake window and a fake extension (no browser, no network).
+Messages, operations, error codes and limits: [`extension/PROTOCOL.md`](extension/PROTOCOL.md). On the site's side, `public/assets/js/connect.js` is the bridge (detection, requests, time limits, answers checked) and `public/assets/js/chat/connect-live.js` the player and chat part, `public/assets/js/connect-update.js` the update line; `node tools/connect-check.mjs` checks the bridge — the update line and what the usage count gets included — with a fake window and a fake extension (no browser, no network).
 
 ---
 
@@ -166,6 +168,7 @@ public/              The website, served as-is by Vercel (no build step)
       store.js       History, progress, preferences (localStorage)
       util.js        Escaping, formatting, icons
       connect.js     TwitchUnblock Connect: bridge to the browser extension
+      connect-update.js  Its “new version available” line
       chat/          Chat: IRC, emotes, badges, pinned message, hype train, VOD replay,
                      the extension's points, rewards, bets, polls, raids and drops (connect-live.js)
 extension/           TwitchUnblock Connect, the browser extension (README.md, PROTOCOL.md)
@@ -177,7 +180,7 @@ docker/healthcheck.mjs  Container health check (site or relay)
 relay/               Its docker-compose.yml and Caddyfile (HTTPS)
 tools/reports.mjs    Reads bug reports (and their screenshots), suggestions and the bot's to-do list from the owner's computer, and marks them done (reports key)
 tools/connect-check.mjs  Checks of the extension bridge (Node, no browser or network)
-.github/workflows/   Docker image (docker.yml), daily database backup (d1-backup.yml)
+.github/workflows/   Docker image (docker.yml), extension packages and release (extension.yml), daily database backup (d1-backup.yml)
 vercel.json          Website configuration on Vercel
 ```
 
@@ -234,7 +237,7 @@ The Worker sends it again the way the app does — `POST url`, body `data=<base6
 
 ## Usage count
 
-To know whether people actually use the website and the apps, each browser (and each iPhone or Apple TV app install) sends a small signal to the Worker at most once an hour. Numbers are public at **[/stats](https://twitchunblock.vercel.app/stats)**: unique people today, over 7 and 30 days (each one counted once per period), iOS app vs Apple TV app vs website (someone seen on several counts once: the iPhone first, then the Apple TV), logged-in accounts vs anonymous, new vs returning people, active people per day, retention (back after 1, 7 and 14 days), live health (which source served each live, failures, channel ad breaks seen), devices and languages, and live notifications.
+To know whether people actually use the website and the apps, each browser (and each iPhone or Apple TV app install) sends a small signal to the Worker at most once an hour. Numbers are public at **[/stats](https://twitchunblock.vercel.app/stats)**: unique people today, over 7 and 30 days (each one counted once per period), iOS app vs Apple TV app vs website (someone seen on several counts once: the iPhone first, then the Apple TV), logged-in accounts vs anonymous, new vs returning people, active people per day, retention (back after 1, 7 and 14 days), live health (which source served each live, failures, channel ad breaks seen), devices and languages, the TwitchUnblock Connect extension (people who have it, by version and by browser), and live notifications.
 
 | Sent | Never sent |
 |---|---|
@@ -243,6 +246,9 @@ To know whether people actually use the website and the apps, each browser (and 
 | The website version, `web` or `ios` | |
 | The interface language, the device type (phone or computer; iPhone or iPad) and, from the app, the iOS major version | Titles, searches |
 | How many lives and VODs were started since the last signal: which source served each live, how many failed, how many channel ad breaks were shown — counters only | |
+| From the website: whether the [TwitchUnblock Connect](#twitchunblock-connect-browser-extension) extension is there — its version and its browser (Chrome, Firefox, other) —, or that it's missing | The extension's settings, your Twitch session |
+
+**The extension on `/stats`**: someone counts once per period (today, 7 and 30 days) by the last day the website saw the extension — kept apart from their last visit, so an account that has it on a computer but not on its phone stays counted, and the phone's signals rewrite nothing —, then by version and by browser (the last ones seen). The Worker only keeps a version of the form `0.1.0` and a browser among `chrome`, `firefox` and `other`; when the extension has never been seen, it notes that the website looked for it, which gives how many people active over 30 days report it at all (website 2026.10.25c and later). No extra D1 read or write per signal: the extension rides along in the person's usage entry, which is still only written when something in it changes — once a day as before, plus the first time that day the website sees the extension when the person's first signal of the day came from elsewhere (an app, another browser), and when its version or browser changes.
 
 Not counted: automated browsers and bots, copies of the site outside the official domain, private windows that can't keep the ID, visits shorter than 15 s. Keys expire on their own after 35 days. Anyone can turn it off in the settings, which also deletes their entry from the server.
 

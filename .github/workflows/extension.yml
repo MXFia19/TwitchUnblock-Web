@@ -54,6 +54,12 @@ jobs:
       - name: Test bench
         run: node extension/tests/run.mjs
 
+      # Le site annonce la dernière version (CONNECT_LATEST, dans
+      # public/assets/js/connect.js) et propose la mise à jour aux versions plus
+      # anciennes : elle doit valoir celle de manifest.json, publiée plus bas.
+      - name: Website announces this version
+        run: node extension/dev/check-site-version.mjs
+
       # Le dossier préparé est envoyé tel quel : GitHub en fait l'archive, que l'on
       # télécharge sous le nom twitchunblock-connect-<version>.zip, manifest.json à
       # la racine (prête pour « Charger l'extension non empaquetée » une fois

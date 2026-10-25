@@ -9,6 +9,10 @@ import {
 } from '../public/assets/js/connect.js'
 import { ConnectLive, errorText, isRepeatClick } from '../public/assets/js/chat/connect-live.js'
 import { t } from '../public/assets/js/i18n.js'
+// Version publiée : bandeau de mise à jour et comptage d'usage.
+import { CONNECT_LATEST, INSTALL_URL, compareVersions, updateFor, usageFields } from '../public/assets/js/connect.js'
+import { updateBannerHtml } from '../public/assets/js/connect-update.js'
+import { esc } from '../public/assets/js/util.js'
 
 const ORIGIN = 'https://twitchunblock.vercel.app'
 const flush = () => new Promise((resolve) => setImmediate(resolve))
@@ -533,6 +537,83 @@ test('destroy : plus d’écoute ni de minuteur', async () => {
   assert.equal(listeners.size, 0)
   await clock.advance(60_000)
   assert.equal(client.pendingCount(), 0)
+})
+
+// ── Version publiée : bandeau de mise à jour, comptage d'usage ────────────
+const UA_FIREFOX = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:131.0) Gecko/20100101 Firefox/131.0'
+const UA_EDGE = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36 Edg/130.0.0.0'
+/** État du client tel que le rend connect.state(), session et réglages compris. */
+const cxState = (availability, version = '0.1.0', browser = 'chrome') => ({
+  availability, version, browser, session: { login: 'moi', userId: '1' }, settings: { autoClaim: true, allowSpend: false },
+})
+
+test('versions comparées nombre par nombre', () => {
+  assert.equal(compareVersions('0.1.0', '0.2.0'), -1)
+  assert.equal(compareVersions('0.10.0', '0.9.9'), 1, 'pas en texte')
+  assert.equal(compareVersions('1.0', '1.0.0'), 0)
+  assert.equal(compareVersions('0.2.0', '0.2.0'), 0)
+  assert.equal(compareVersions('1.2.3.4', '1.2.3'), 1)
+  for (const bad of [null, undefined, '', 'v0.1.0', '0.1.0-beta', '0..1', '1.2.3.4.5', 12]) {
+    assert.ok(Number.isNaN(compareVersions(bad, '0.2.0')), String(bad))
+    assert.ok(Number.isNaN(compareVersions('0.2.0', bad)), String(bad))
+  }
+})
+
+test('mise à jour proposée seulement à une extension détectée plus ancienne', () => {
+  assert.deepEqual(updateFor(cxState('on', '0.1.0'), '0.2.0'), { latest: '0.2.0', current: '0.1.0' })
+  assert.deepEqual(updateFor(cxState('off', '0.1.9'), '0.2.0'), { latest: '0.2.0', current: '0.1.9' }, 'connexion au site coupée : installée quand même')
+  assert.equal(updateFor(cxState('on', '0.2.0'), '0.2.0'), null, 'à jour')
+  assert.equal(updateFor(cxState('on', '0.10.0'), '0.2.0'), null, 'plus récente (développement)')
+  for (const a of ['idle', 'detecting', 'absent']) assert.equal(updateFor(cxState(a, '0.1.0'), '0.2.0'), null, a)
+  for (const v of [null, 'n/a']) assert.equal(updateFor(cxState('on', v), '0.2.0'), null, String(v))
+  assert.equal(updateFor(cxState('on', CONNECT_LATEST)), null, 'dernière publiée par défaut')
+})
+
+test('bandeau : versions, lien de téléchargement, étapes du navigateur, texte échappé', () => {
+  const upd = { latest: '0.2.0', current: '0.1.0' }
+  const has = (html, key, params) => html.includes(esc(t(key, params)))
+  const chrome = updateBannerHtml(upd, 'chrome')
+  assert.ok(has(chrome, 'connect_update', { v: '0.2.0', cur: '0.1.0' }))
+  assert.ok(chrome.includes(`href="${esc(INSTALL_URL)}"`) && chrome.includes('rel="noopener"'))
+  assert.ok(has(chrome, 'connect_update_chrome') && !has(chrome, 'connect_update_firefox'))
+  const firefox = updateBannerHtml(upd, 'firefox')
+  assert.ok(has(firefox, 'connect_update_firefox') && !has(firefox, 'connect_update_chrome'))
+  const unknown = updateBannerHtml(upd, null)
+  assert.ok(has(unknown, 'connect_update_chrome') && has(unknown, 'connect_update_firefox'), 'navigateur inconnu : les deux')
+  assert.ok(chrome.includes('data-cxu-close'), 'fermable')
+  assert.ok(!updateBannerHtml({ latest: '<img src=x>', current: '"><b>' }).includes('<img'), 'échappé')
+})
+
+test('comptage d’usage : version et navigateur de l’extension, ou son absence, rien d’autre', () => {
+  assert.deepEqual(usageFields(cxState('on')), { ext: '0.1.0', extBrowser: 'chrome' })
+  assert.deepEqual(usageFields(cxState('off', '0.2.0', 'firefox')), { ext: '0.2.0', extBrowser: 'firefox' }, 'connexion coupée : installée')
+  assert.deepEqual(usageFields(cxState('absent', null, null)), { ext: 'none' })
+  for (const a of ['idle', 'detecting']) assert.deepEqual(usageFields(cxState(a)), {}, `${a} : on ne sait pas encore`)
+  // Navigateur pas encore donné par `hello` : celui de la page.
+  assert.equal(usageFields(cxState('on', '0.1.0', null), UA_FIREFOX).extBrowser, 'firefox')
+  assert.equal(usageFields(cxState('on', '0.1.0', null), UA_EDGE).extBrowser, 'chrome')
+  assert.equal(usageFields(cxState('on', '0.1.0', null), 'Mozilla/5.0 (Macintosh) Version/18.0 Safari/605.1.15').extBrowser, 'other')
+  // Version hors du format compté : rien (le Worker l'ignorerait).
+  for (const v of [null, '1.0', '0.1.0.1', '0.1.0-beta', '9'.repeat(40)]) assert.deepEqual(usageFields(cxState('on', v)), {}, String(v))
+})
+
+test('comptage d’usage d’après la détection : hello, puis annonce seule', async () => {
+  const withExt = setup()
+  withExt.client.start()
+  await withExt.clock.advance(10)
+  assert.deepEqual(usageFields(withExt.client.state()), { ext: '1.0.0', extBrowser: 'chrome' })
+  assert.deepEqual(updateFor(withExt.client.state(), '1.1.0'), { latest: '1.1.0', current: '1.0.0' })
+  withExt.client.destroy()
+
+  const { client, clock, deliver } = setup({ ext: null })
+  client.start()
+  await clock.advance(5000)
+  assert.deepEqual(usageFields(client.state()), { ext: 'none' })
+  // Installée page ouverte : l'annonce donne la version, pas le navigateur.
+  deliver({ tuConnect: 1, dir: 'hello', protocol: 1, version: '0.1.0', enabled: true })
+  assert.equal(client.state().browser, null)
+  assert.deepEqual(usageFields(client.state(), UA_FIREFOX), { ext: '0.1.0', extBrowser: 'firefox' })
+  client.destroy()
 })
 
 // ── Lecteur (chat/connect-live.js), sans DOM : seulement ce qui s'en passe ──
