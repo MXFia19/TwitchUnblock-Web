@@ -1,9 +1,12 @@
 #!/usr/bin/env node
 // Retours des utilisateurs (signalements et suggestions) et liste à faire du
-// bot Discord, en lecture seule, depuis le PC du propriétaire : l'assistant
-// de développement les lit ici au lieu qu'on les lui recopie. Appelle GET
-// /api/admin/reports du Worker avec la clé REPORTS_KEY (README, « Reading
-// reports from your computer »).
+// bot Discord, depuis le PC du propriétaire : l'assistant de développement
+// les lit ici au lieu qu'on les lui recopie, et marque lui-même ce qui est
+// fait. Appelle /api/admin/reports du Worker avec la clé REPORTS_KEY
+// (README, « Reading reports from your computer ») : GET pour lire, POST
+// pour les deux seuls changements permis — l'état d'un retour (comme depuis
+// /stats) et les cartes de la liste à faire (faites ou rouvertes, par le
+// bot). Ni réponse, ni suppression, ni fusion ; tout va au journal d'audit.
 //
 //   node tools/reports.mjs                 signalements ouverts, puis suggestions par votes
 //   node tools/reports.mjs --all           aussi les retours finis (faits, refusés, fusionnés)
@@ -24,6 +27,15 @@
 //                                          (son identifiant, donné par --todo ; « all » :
 //                                          celles de toutes les cartes ouvertes) dans
 //                                          report-photos/todo-<id>/ (ou --out=<dossier>)
+//   node tools/reports.mjs --done fb_…,123…
+//                                          marque faits des retours (fb_… : état « Fait »,
+//                                          comme depuis /stats) et des cartes de la liste
+//                                          à faire (identifiants donnés par --todo), mêlés
+//   node tools/reports.mjs --reopen 123…   rouvre des cartes de la liste à faire
+//   node tools/reports.mjs --status fb_… --to progress
+//                                          autre état : seen | accepted | progress | done | refused
+//                                          (ces trois-là se combinent ; listes séparées par des
+//                                          virgules ; les cartes changent par le bot, 2 min au plus)
 //   autres options : --limit=N (200 au plus), --url=<adresse du Worker>
 //
 // Clé : variable d'environnement TU_REPORTS_KEY, sinon le fichier
@@ -40,7 +52,7 @@ import { fileURLToPath } from 'node:url'
 const DEFAULT_URL = 'https://test2.kurzmathis4.workers.dev'
 const KEY_FILE = join(homedir(), '.twitchunblock', 'reports-key')
 
-const HELP = `Retours des utilisateurs de TwitchUnblock et liste à faire du bot Discord, en lecture seule (Markdown).
+const HELP = `Retours des utilisateurs de TwitchUnblock et liste à faire du bot Discord : lecture (Markdown), et ce qui est fait.
 
   node tools/reports.mjs                 signalements ouverts (récents d'abord), puis suggestions par votes
   node tools/reports.mjs --all           tous les retours, finis compris
@@ -58,9 +70,19 @@ const HELP = `Retours des utilisateurs de TwitchUnblock et liste à faire du bot
                                          ouvertes), écrites dans report-photos/todo-<id>/ (ou --out)
   --limit=N (200 au plus)   --url=<adresse du Worker> (ou TU_WORKER_URL)
 
+Marquer ce qui est fait (POST, même clé ; listes séparées par des virgules) :
+  node tools/reports.mjs --done fb_…,123…  retours (fb_…) passés à « Fait », comme depuis /stats, et
+                                         cartes de la liste à faire (identifiants de --todo) faites
+  node tools/reports.mjs --reopen 123…   cartes de la liste à faire rouvertes
+  node tools/reports.mjs --status fb_… --to <état>
+                                         autre état d'un retour : seen | accepted | progress | done | refused
+  Ces trois-là se combinent (avec --url seulement). Une carte change par le bot du relais, dans les
+  2 min ; un retour, tout de suite (son post Discord le dit, le bot remet l'étiquette). Rien d'autre :
+  ni réponse, ni suppression, ni fusion.
+
 Clé : TU_REPORTS_KEY, sinon ${KEY_FILE}.`
 
-const MISSING_KEY = `Clé de lecture des retours introuvable : ni variable TU_REPORTS_KEY, ni fichier
+const MISSING_KEY = `Clé des retours introuvable : ni variable TU_REPORTS_KEY, ni fichier
 ${KEY_FILE}.
 
 Pour la créer (une seule fois) :
@@ -88,9 +110,12 @@ function fail(text, code = 1) {
 // Jamais de valeur recopiée dans les erreurs : une clé collée par mégarde
 // dans la ligne de commande ne s'afficherait pas.
 function parseArgs(argv) {
-  const o = { all: false, json: false, help: false, todo: false, since: '', kind: '', platform: '', id: '', limit: '', url: '', photos: '', files: '', out: '' }
+  const o = {
+    all: false, json: false, help: false, todo: false, since: '', kind: '', platform: '', id: '', limit: '', url: '', photos: '', files: '', out: '',
+    done: '', reopen: '', status: '', to: '',
+  }
   const flags = ['all', 'json', 'help', 'todo']
-  const values = ['since', 'kind', 'platform', 'id', 'limit', 'url', 'photos', 'files', 'out']
+  const values = ['since', 'kind', 'platform', 'id', 'limit', 'url', 'photos', 'files', 'out', 'done', 'reopen', 'status', 'to']
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]
     if (a === '-h') { o.help = true; continue }
@@ -147,12 +172,13 @@ function workerUrl(opt) {
 }
 
 // ── Appel ────────────────────────────────────────────────────────────────
-/** GET de la route avec la clé : la réponse et son corps (octets). Réseau
- *  en panne : arrêt. */
-async function getRoute(base, params, accept) {
+/** Requête à la route avec la clé : la réponse et son corps (octets).
+ *  Réseau en panne : arrêt. */
+async function askRoute(base, query, init) {
   try {
-    const res = await fetch(`${base}/api/admin/reports?${params}`, {
-      headers: { Authorization: `Bearer ${secretKey}`, Accept: accept },
+    const res = await fetch(`${base}/api/admin/reports${query ? `?${query}` : ''}`, {
+      ...init,
+      headers: { Authorization: `Bearer ${secretKey}`, ...init.headers },
       // Une redirection n'emporte pas la clé ailleurs.
       redirect: 'error',
       signal: AbortSignal.timeout(30000),
@@ -163,6 +189,8 @@ async function getRoute(base, params, accept) {
     fail(`Worker injoignable (${base}) : ${why}.`, 2)
   }
 }
+
+const getRoute = (base, params, accept) => askRoute(base, params, { headers: { Accept: accept } })
 
 const jsonOf = (body) => { try { return JSON.parse(body.toString('utf8')) } catch { return null } }
 
@@ -593,11 +621,150 @@ async function downloadTodoFiles(base, opt) {
   out(FILES_NOTE)
 }
 
+// ── Marquer ce qui est fait (--done, --reopen, --status … --to …) ────────
+// POST /api/admin/reports, même clé. Un retour change d'état tout de suite,
+// exactement comme depuis /stats (son post Discord le dit, « from the
+// developer's tool » ; le bot du relais remet l'étiquette et, pour « Fait »,
+// demande où sort le correctif). Une carte de la liste à faire est une
+// demande que le Worker range pour le bot, qui la fait dans les 2 min comme
+// ses boutons Done / Reopen. Chaque élément est vérifié avant toute requête.
+const SET_STATUSES = ['seen', 'accepted', 'progress', 'done', 'refused']
+const CHANGES_MAX = 50   // éléments par option
+const DONE_LABEL = { true: 'faite', false: 'ouverte' }
+
+/** « a,b,a » → [a, b], chaque élément vérifié par `check` (rend la raison
+ *  d'un refus, ou rien). Jamais de valeur recopiée dans une erreur : sa
+ *  place seulement. */
+function idList(name, value, check) {
+  const items = [...new Set(String(value).split(',').map((s) => s.trim()).filter(Boolean))]
+  if (!items.length) fail(`--${name} attend une liste séparée par des virgules.`)
+  if (items.length > CHANGES_MAX) fail(`--${name} : ${CHANGES_MAX} éléments au plus par appel.`)
+  items.forEach((x, i) => {
+    const why = check(x)
+    if (why) fail(`--${name}, ${i + 1}${i ? 'e' : 'er'} élément : ${why}`)
+  })
+  return items
+}
+
+/** { reports: Map(clé → état), cards: { done: [], open: [] } }, ou arrêt. */
+function changePlan(opt) {
+  const reports = new Map()
+  const cards = { done: [], open: [] }
+  if (opt.done) {
+    const list = idList('done', opt.done, (x) => (FEEDBACK_KEY_RE.test(x) || TODO_ID_RE.test(x) ? null
+      : 'ni une clé de retour (fb_…), ni un identifiant de carte de la liste à faire (des chiffres, donné par --todo).'))
+    for (const x of list) {
+      if (FEEDBACK_KEY_RE.test(x)) reports.set(x, 'done')
+      else cards.done.push(x)
+    }
+  }
+  if (opt.reopen) {
+    cards.open = idList('reopen', opt.reopen, (x) => (TODO_ID_RE.test(x) ? null
+      : FEEDBACK_KEY_RE.test(x) ? 'un retour ne se rouvre pas ainsi : --status <clé> --to seen (ou accepted, progress).'
+        : 'pas un identifiant de carte de la liste à faire (des chiffres, donné par --todo).'))
+    if (cards.open.some((x) => cards.done.includes(x))) fail('Une même carte dans --done et --reopen.')
+  }
+  if (opt.status || opt.to) {
+    if (!opt.status || !opt.to) fail('--status et --to vont ensemble : --status <fb_…> --to <état>.')
+    const to = opt.to.toLowerCase()
+    if (!SET_STATUSES.includes(to)) fail(`--to : ${SET_STATUSES.join(', ')}.`)
+    for (const x of idList('status', opt.status, (k) => (FEEDBACK_KEY_RE.test(k) ? null : 'pas une clé de retour (fb_…, comme dans la liste).'))) {
+      if (reports.has(x)) fail('Un même retour dans --done et --status.')
+      reports.set(x, to)
+    }
+  }
+  return { reports, cards }
+}
+
+/** Un changement : { data } ou { error } (refus propre à cet élément :
+ *  retour introuvable…). Route absente, clé refusée ou bloquée, Worker
+ *  d'avant : arrêt. */
+async function postChange(base, body) {
+  const { res, body: raw } = await askRoute(base, '', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify(body),
+  })
+  const data = jsonOf(raw)
+  // Le Worker d'avant ne connaît que GET (405 avant même la clé).
+  if (res.status === 405) {
+    fail('Ce Worker ne sait pas encore changer l\'état d\'un retour ni marquer une carte (POST /api/admin/reports refusé, 405) : il doit être déployé depuis main avec cette version — et, pour les cartes, le bot du VPS mis à jour.', 2)
+  }
+  if (res.ok && data?.ok === true) return { data }
+  return { error: routeRefusal(res, data, base) }
+}
+
+async function applyChanges(base, plan) {
+  let failures = 0
+  out(`# Changements — ${when(new Date().toISOString())} (${new URL(base).host})`)
+  if (plan.reports.size) {
+    out()
+    out('## Retours')
+    out()
+    for (const [key, status] of plan.reports) {
+      const r = await postChange(base, { action: 'status', key, status })
+      if (r.error) { failures++; out(`- ${key} : pas changé, ${r.error}.`); continue }
+      const d = r.data
+      const what = `${d.suggestion ? 'Suggestion' : KINDS[d.kind] || d.kind} « ${clip(oneLine(d.title), 80)} »`
+      const dups = d.dups ? ` (${d.dups} ${d.dups > 1 ? 'doublons suivent' : 'doublon suit'})` : ''
+      out(d.unchanged ? `- ${key} — ${what} : déjà ${statusLabel(d.status)}, rien n'a changé.`
+        : `- ${key} — ${what} : ${statusLabel(d.previous)} → **${statusLabel(d.status)}**${dups}.`)
+    }
+    out()
+    out('Comme depuis /stats : la personne voit le nouvel état dans l\'app ou sur le site, le post Discord du retour le dit (« from the developer\'s tool ») et le bot du relais remet son étiquette — pour « Fait », il demande où sortira le correctif.')
+  }
+  const lists = [[true, plan.cards.done], [false, plan.cards.open]].filter(([, ids]) => ids.length)
+  if (lists.length) {
+    out()
+    out('## Cartes de la liste à faire')
+    out()
+    let last = null
+    for (const [done, ids] of lists) {
+      const r = await postChange(base, { action: 'todo', ids, done })
+      if (r.error) {
+        failures += ids.length
+        for (const id of ids) out(`- ${id} : pas demandé, ${r.error}.`)
+        continue
+      }
+      last = r.data
+      for (const c of r.data.cards || []) {
+        if (!c.known) {
+          out(`- ${c.id} — absente de la copie de la liste${r.data.mirrorAt ? ` (copie du ${when(r.data.mirrorAt)})` : ''} : à ${done ? 'marquer faite' : 'rouvrir'} ; le bot la cherchera quand même dans le salon (introuvable : demande abandonnée, notée dans son journal).`)
+          continue
+        }
+        const what = `${TODO_TYPES[c.type] || c.type} « ${clip(oneLine(c.text), 80)} »`
+        out(c.wasDone === done ? `- ${c.id} — ${what} : déjà ${DONE_LABEL[done]} d'après la copie de la liste (le bot vérifie quand même).`
+          : `- ${c.id} — ${what} : ${DONE_LABEL[c.wasDone]} → **${done ? 'faite' : 'rouverte'}**.`)
+      }
+    }
+    if (last) {
+      out()
+      out(`Demandes rangées pour le bot du relais : il les fait dans les 2 min, comme ses boutons Done / Reopen, puis la copie de --todo suit. En attente : ${nb(last.pending, 'demande', 'demandes')}${last.oldest ? ` (la plus ancienne du ${when(last.oldest)})` : ''}.`)
+      if (Date.parse(last.oldest || '') < Date.now() - 10 * 60_000) {
+        out()
+        out('Attention : une demande attend depuis plus de 10 min — le bot du VPS tourne-t-il, et est-il à jour ?')
+      }
+    }
+  }
+  out()
+  out(NOTE)
+  if (failures) process.exitCode = 2
+}
+
 // ── Programme ────────────────────────────────────────────────────────────
 async function main() {
   const opt = parseArgs(process.argv.slice(2))
   if (opt.help) return out(HELP)
   if (typeof fetch !== 'function') fail('Node 18 ou plus est nécessaire (fetch intégré).')
+  if (opt.done || opt.reopen || opt.status || opt.to) {
+    if (opt.todo || opt.id || opt.kind || opt.platform || opt.since || opt.limit || opt.all || opt.json || opt.photos || opt.files || opt.out) {
+      fail('--done, --reopen et --status … --to … se combinent seulement entre eux et avec --url.')
+    }
+    // Tout est vérifié avant la moindre requête.
+    const plan = changePlan(opt)
+    secretKey = loadKey()
+    return applyChanges(workerUrl(opt), plan)
+  }
   if (opt.photos || opt.files) {
     if (opt.todo || opt.id || opt.kind || opt.platform || opt.since || opt.limit || opt.all || opt.json || (opt.photos && opt.files)) {
       fail(`--${opt.photos ? 'photos' : 'files'} se combine seulement avec --out et --url.`)
