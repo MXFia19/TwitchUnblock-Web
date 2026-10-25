@@ -956,17 +956,20 @@ async function handleProxy(url, request, env) {
 const SPADE_UA = 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 '
     + '(KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1';
 const SPADE_HOST_RE = /^(?:spade\.twitch\.tv|video-edge-[a-z0-9-]{1,63}\.[a-z0-9-]{1,63}\.abs\.hls\.ttvnw\.net)$/;
-const SPADE_PATH_MAX = 300;
+// Chemin : aujourd'hui « /track » (spade.twitch.tv), mais la forme
+// video-edge-…/v1/segment/<jeton> porte un long jeton.
+const SPADE_URL_MAX = 2500;
+const SPADE_PATH_MAX = 2000;
 const SPADE_DATA_MAX = 8 * 1024;
 const SPADE_EVENTS_MAX = 5;
 const SPADE_PER_MINUTE = 20;
-const SPADE_BODY_MAX = SPADE_DATA_MAX + 2048;   // { url, data } en JSON
+const SPADE_BODY_MAX = SPADE_DATA_MAX + SPADE_URL_MAX + 512;   // { url, data } en JSON
 const spadeHits = new Map();   // adresse → { n, until } (mémoire de l'instance)
 
 /** Adresse de statistiques de Twitch admise, rendue sans fragment ; null
  *  sinon. */
 function spadeTarget(raw) {
-    if (typeof raw !== 'string' || raw.length > 1000) return null;
+    if (typeof raw !== 'string' || raw.length > SPADE_URL_MAX) return null;
     let u;
     try { u = new URL(raw); } catch (e) { return null; }
     if (u.protocol !== 'https:' || u.username || u.password || u.port || !SPADE_HOST_RE.test(u.hostname)) return null;
