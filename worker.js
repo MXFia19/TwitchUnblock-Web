@@ -67,6 +67,9 @@ export default {
                 // Comptage d'utilisation (app iOS et site)
                 case '/api/ping': return await handlePing(request, env);
                 case '/api/stats': return await cachedStats(request, env, ctx);
+                // Points de chaîne des apps : leurs « minute-watched », relayés
+                // quand un bloqueur coupe l'adresse de statistiques de Twitch.
+                case '/api/spade': return await handleSpade(request);
 
                 // Outils d'administration (compte du propriétaire uniquement)
                 case '/api/admin/me': return await handleAdminMe(request);
@@ -924,6 +927,95 @@ async function handleProxy(url, request, env) {
         return new Response(newText, { status: res.status, headers: newHeaders });
     }
     return new Response(res.body, { status: res.status, headers: proxyResponseHeaders(res, proxyMediaType(type), true) });
+}
+
+// ── Relais des « minute-watched » (points de chaîne des apps) ─────────────
+// Chaque minute, l'app envoie un événement « minute-watched » à l'adresse de
+// statistiques de Twitch (`spade_url`, lue dans la page de la chaîne) :
+// c'est lui qui crédite les points de chaîne. Un bloqueur de pubs ou un DNS
+// filtrant coupe souvent cette adresse (spade.twitch.tv), et plus rien
+// n'était crédité ; l'app passe alors par ici.
+//   POST /api/spade   { url: <spade_url>, data: <base64 des événements JSON> }
+//   → 200 { ok: true, status: <code HTTP de Twitch> } ; 400 adresse refusée
+//     ou données invalides ; 429 trop d'envois ; 502 Twitch injoignable.
+// L'envoi est refait comme l'app le fait (POST, `data=<base64>` en
+// application/x-www-form-urlencoded, User-Agent de Safari sur iPhone, celui
+// de ChannelPointsService), sans suivre de redirection. Ce n'est pas un
+// mandataire ouvert : https seulement, hôte spade.twitch.tv ou
+// video-edge-<…>.<…>.abs.hls.ttvnw.net, sans identifiants ni port, chemin
+// (requête comprise) de SPADE_PATH_MAX caractères au plus ; les données,
+// SPADE_DATA_MAX caractères de base64 au plus, doivent se décoder en une
+// liste JSON de 1 à SPADE_EVENTS_MAX événements « minute-watched » (des
+// objets, `properties` en objet) — rien d'autre ne part. SPADE_PER_MINUTE
+// envois par minute et par adresse (/64 en IPv6), en mémoire de l'instance :
+// ni lecture ni écriture D1 (une écriture par minute et par spectateur
+// viderait le quota), et rien sur l'utilisateur au journal, même en erreur.
+// En-têtes CORS comme les autres routes /api : un navigateur peut de toute
+// façon poster directement à spade.twitch.tv.
+const SPADE_UA = 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 '
+    + '(KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1';
+const SPADE_HOST_RE = /^(?:spade\.twitch\.tv|video-edge-[a-z0-9-]{1,63}\.[a-z0-9-]{1,63}\.abs\.hls\.ttvnw\.net)$/;
+const SPADE_PATH_MAX = 300;
+const SPADE_DATA_MAX = 8 * 1024;
+const SPADE_EVENTS_MAX = 5;
+const SPADE_PER_MINUTE = 20;
+const SPADE_BODY_MAX = SPADE_DATA_MAX + 2048;   // { url, data } en JSON
+const spadeHits = new Map();   // adresse → { n, until } (mémoire de l'instance)
+
+/** Adresse de statistiques de Twitch admise, rendue sans fragment ; null
+ *  sinon. */
+function spadeTarget(raw) {
+    if (typeof raw !== 'string' || raw.length > 1000) return null;
+    let u;
+    try { u = new URL(raw); } catch (e) { return null; }
+    if (u.protocol !== 'https:' || u.username || u.password || u.port || !SPADE_HOST_RE.test(u.hostname)) return null;
+    const path = u.pathname + u.search;
+    return path.length <= SPADE_PATH_MAX ? `https://${u.hostname}${path}` : null;
+}
+
+/** `data` admis : du base64 qui se décode en une liste JSON de 1 à
+ *  SPADE_EVENTS_MAX événements « minute-watched ». */
+function spadeEventsOk(data) {
+    if (typeof data !== 'string' || !data || data.length > SPADE_DATA_MAX || data.length % 4 !== 0
+        || !/^[A-Za-z0-9+/]+={0,2}$/.test(data)) return false;
+    let events;
+    try { events = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(b64Bytes(data))); } catch (e) { return false; }
+    const object = (v) => Boolean(v) && typeof v === 'object' && !Array.isArray(v);
+    return Array.isArray(events) && events.length >= 1 && events.length <= SPADE_EVENTS_MAX
+        && events.every((e) => object(e) && e.event === 'minute-watched' && object(e.properties));
+}
+
+async function handleSpade(request) {
+    if (request.method !== 'POST') return jsonError('Method Not Allowed', 405);
+    if (overLimit(spadeHits, clientKey(request), SPADE_PER_MINUTE, 60 * 1000)) {
+        return jsonError('Trop d\x27envois, réessaie dans une minute', 429);
+    }
+    let body = null;
+    try {
+        if (!(Number(request.headers.get('Content-Length')) > SPADE_BODY_MAX)) {
+            const text = await request.text();
+            if (text.length <= SPADE_BODY_MAX) body = JSON.parse(text);
+        }
+    } catch (e) { body = null; }
+    if (!body || typeof body !== 'object' || Array.isArray(body)) return jsonError('Données invalides', 400);
+    const target = spadeTarget(body.url);
+    if (!target) return jsonError('Adresse refusée', 400);
+    if (!spadeEventsOk(body.data)) return jsonError('Données invalides', 400);
+    let res;
+    try {
+        res = await fetch(target, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'User-Agent': SPADE_UA },
+            body: `data=${encodeURIComponent(body.data)}`,
+            redirect: 'manual',
+            signal: AbortSignal.timeout(10000),
+        });
+    } catch (e) {
+        return jsonError('Twitch injoignable', 502);
+    }
+    // Rien à lire dans la réponse : seul son code compte.
+    res.body?.cancel().catch(() => {});
+    return jsonResponse({ ok: true, status: res.status });
 }
 
 // --- FONCTIONS UTILITAIRES ---

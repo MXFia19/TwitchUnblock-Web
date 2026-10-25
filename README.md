@@ -207,9 +207,20 @@ The iOS app can't use Apple's push service (it needs a paid developer account), 
 
 ntfy.sh's free tier counts messages per IP address (250 a day). Every Cloudflare Worker sends from the same shared addresses, so ntfy.sh answers them `429 Too Many Requests`. The Worker therefore hands its ntfy messages to the [video relay](#video-relay-on-your-own-server-vps) (`NTFY_RELAY` in `wrangler.toml`), which publishes them from its own address. Messages leave in one batch per run (12 at most, ntfy.sh's pace of one request every 5 seconds), signed with the Worker's VAPID key: the relay checks the signature against the Worker's public key (`/api/push/key`) and refuses anything else, so no secret needs to be shared. After a `429` the Worker stops sending to ntfy for 5 minutes, or until midnight UTC (when ntfy.sh resets its counters) once the daily quota is reached; the app's **Test** button says so. That quota is shared by every user of the app, so daily caps kept in D1 protect it: the **Test** button only works for a topic the app has already subscribed (5 tests a day per topic, 40 in all), new topics are capped (5 a day per IP address, 10 per network — a `/48` in IPv6 —, 40 in all), each topic gets at most 30 live notifications a day, and all topics together at most 200 (below ntfy.sh's 250 with the tests), of which topics younger than 3 days get 100 at most — so new topics can't use up the day for everyone and trigger the pause (without `NTFY_TOKEN` only). Web notifications and ntfy messages are read from the queue separately, so neither can hold up the other. While the relay is down, messages wait in the queue (30 minutes at most): there is no fallback to sending directly, which ntfy.sh would refuse anyway. The relay logs one line per batch (`docker compose logs relay`). With `NTFY_TOKEN` (a paid ntfy account, counted per account rather than per address) the Worker publishes directly, like the Docker image does from your own server.
 
+**Channel points relay** (apps): every minute, the app sends Twitch a *minute-watched* event — what credits channel points — at the analytics address read in the channel's page (`spade_url`, today `https://spade.twitch.tv/track`). Ad blockers and filtering DNS often cut that address, and then nothing is credited; the app can then send it through the Worker:
+
+```
+POST /api/spade
+Content-Type: application/json
+{ "url": "<spade_url>", "data": "<base64 of the JSON events>" }
+```
+
+The Worker sends it again the way the app does — `POST url`, body `data=<base64>` as `application/x-www-form-urlencoded`, an iPhone Safari User-Agent, redirects not followed — and answers `200 { "ok": true, "status": <Twitch's HTTP code> }`, `400` when the address is refused or the data is invalid, `429` for too many sends, `502` when Twitch can't be reached. It is not an open proxy (see [Security](#security)) and costs no D1 read or write. The [Docker image](#self-hosting-with-docker) has it too.
+
 ### Security
 - **History backups and synced settings are private**: every read or write must carry the owner's Twitch token. The Worker has Twitch confirm it and checks it belongs to that account — knowing someone's (public) Twitch ID is no longer enough.
 - **The proxy only relays Twitch and the proxy sources** (`ttvnw.net`, `jtvnw.net`, `twitch.tv`, `twitchcdn.net`, `luminous.dev`, exactly `twitch-al.nadeko.net`, and on `cloudfront.net` only Twitch's own VOD distributions — a new one is accepted once Twitch itself points to it), over HTTPS — it is not an open proxy. Redirects are followed one by one (4 at most), each new address checked the same way. What comes back is served as media with only the headers a player needs, never as a web page (`nosniff`, sandboxing CSP).
+- **The channel points relay** (`POST /api/spade`) only sends to Twitch's analytics addresses — over HTTPS, host `spade.twitch.tv` or `video-edge-<…>.<…>.abs.hls.ttvnw.net`, no credentials, no port, a path (query included) of 300 characters at most — and only what the apps send there: base64 (8 KB at most) of a JSON list of 1 to 5 `minute-watched` events. Anything else gets `400` before any request; redirects aren't followed. 20 sends a minute per address (a `/64` in IPv6), counted in the instance's memory: no D1 read or write (one write a minute per viewer would eat the free quota), and nothing about the user is logged, errors included. CORS headers like the other `/api` routes: a browser can post to Twitch's address directly anyway.
 - Usage pings only accept random UUIDs and store no IP address.
 - Rate limits (feedback, replies, pings, notifications) count an IPv6 address by its `/64` block. Screenshots attached to feedback have a daily share per person (address or Discord account, counted in one of 65,536 anonymous buckets: no address is stored), per network (`/48`) and a daily cap for the whole Worker, and stop before the D1 database fills up; the message itself still goes through, and the website says the screenshots weren't kept.
 - Per-address limits only hold in one Worker instance's memory, and a free IPv6 `/48` holds 65,536 `/64`s, so whatever writes to D1 also has daily caps kept in D1, for the whole Worker and per network: feedback (300 new reports a day, 30 per network; 1,000 replies a day; no new report or reply once the database passes 400 MB), Discord suggestions (one every 10 minutes per person, 5 a day per person, 50 a day in all, within the 300 reports) and their votes (5,000 a day, 60 an hour per member), new anonymous installs counted (1,000 a day, 100 per network), votes and reactions (2,000 a day per poll or announcement, 40 new devices per network), followed channels for live notifications (only the difference is written: 2,000 changes a day per subscription, 3,000 per network, 10,000 in all, and 1,000 channels new to the server a day). Over a cap the answer is `429` (an install is just not counted), and a cap already reached refuses without writing anything.
@@ -952,6 +963,12 @@ listens inside the container, behind a small front server
 (`docker/front.mjs`), so its local tools under `/cdn-cgi/` — the scheduled
 trigger, the D1 database explorer — can't be reached from outside. The
 wrangler version is pinned in the `Dockerfile`.
+
+The [channel points relay](#how-it-works) (`POST /api/spade`) is there too,
+the same `worker.js` behind the same front server: *minute-watched* events
+sent to your instance leave from your server's address. Its limit (20 a
+minute) counts each address like the other limits: behind your own reverse
+proxy, set `TRUST_PROXY`, or every viewer shares the proxy's.
 
 The image has a health check (`docker ps` shows `healthy`): `/api/ping` for
 the website, `/health` for the relay. Both `docker-compose.yml` files set
