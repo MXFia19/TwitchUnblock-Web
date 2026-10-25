@@ -64,7 +64,7 @@
     "message": "Connection to the TwitchUnblock site"
   },
   "setSiteHelp": {
-    "message": "Lets the site read your points, drops, rewards, predictions and polls, and use your session for the actions below."
+    "message": "Lets the site read your points, drops, rewards, predictions and polls, play lives in 1440p and above through your account, and use your session for the actions below."
   },
   "setClaim": {
     "message": "Claim automatically (chests and drops)"
@@ -192,7 +192,7 @@
     "message": "Security"
   },
   "securityText": {
-    "message": "Your Twitch session and tokens never leave the extension. The site can only ask for a closed list of actions; bets, votes and rewards need a real click. Nothing is sent anywhere but Twitch."
+    "message": "Your Twitch session and tokens never leave the extension. The site can only ask for a closed list of actions; bets, votes and rewards need a real click. Nothing is sent anywhere but Twitch. For 1440p, the site only gets the live's playlists, rewritten: the addresses of the video pieces, never your playback token."
   },
   "versionLabel": {
     "message": "Version $VERSION$",

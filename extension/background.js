@@ -18,6 +18,12 @@
 // Requêtes GQL reprises de l'app iOS (ChannelPointsService.swift,
 // LiveEventsService.swift, TwitchGQL.swift, TwitchWebGQL.swift) : mêmes
 // persisted queries (hashes), mêmes variables, mêmes en-têtes.
+//
+// Qualités supérieures (hq.master, hq.playlist ; 0.2.0) : la liste du direct
+// au-dessus de 1080p n'est servie qu'au jeton de lecture d'un compte. Ce
+// jeton, l'adresse usher et celles des playlists des variantes restent ici ;
+// la page reçoit des identifiants opaques, puis chaque playlist réécrite :
+// balises utiles à la lecture et adresses des segments du CDN de Twitch.
 // ---------------------------------------------------------------------------
 
 const api = globalThis.browser || globalThis.chrome;
@@ -111,7 +117,14 @@ const LIMIT = {
   tabLoadMs: 15000,          // chargement de l'onglet temporaire
   warmMs: 3000,              // temps laissé au script anti-robots de Twitch (comme les apps)
   mintBackoffMs: 30000,      // après un échec : pas de nouvel essai avant 30 s (demande du site)
-  mintBackoffAutoMs: 300000  // ... ni avant 5 min pour le coffre automatique
+  mintBackoffAutoMs: 300000, // ... ni avant 5 min pour le coffre automatique
+  hqMasterMs: 10000,         // hq.master : liste du compte relue au plus toutes les 10 s par chaîne
+  hqPlaylistMs: 1000,        // hq.playlist : une playlist relue au plus chaque seconde (sinon la même)
+  hqPerMinute: 240,          // hq.playlist : budget à part (hls.js relit la playlist toutes les 2 à 6 s)
+  hqKeepMs: 21600000,        // adresse d'une variante gardée 6 h au plus
+  hqMax: 48,                 // variantes gardées en tout (deux ou trois directs)
+  hqMasterBytes: 1000000,    // liste maîtresse lue sur 1 Mo au plus
+  hqPlaylistBytes: 2000000   // playlist d'une variante : 2 Mo au plus
 };
 
 const ERROR_CODES = [
@@ -129,9 +142,23 @@ const NUMERIC_ID_RE = /^[0-9]{1,20}$/;
 const AUTH_TOKEN_RE = /^[A-Za-z0-9._~-]{8,256}$/;
 const DEVICE_ID_RE = /^[A-Za-z0-9_-]{8,64}$/;
 const INTEGRITY_RE = /^[\x21-\x7e]{16,8192}$/;
+// Identifiant opaque d'une variante donné à la page (hq.master → hq.playlist).
+const HQ_ID_RE = /^[A-Za-z0-9]{22}$/;
+// Codecs que la page peut annoncer à Twitch (supported_codecs), du plus
+// efficace au plus courant ; H.264 toujours.
+const HQ_CODECS = ["av1", "h265", "h264"];
 
 // Hôtes acceptés pour le spade (statistiques de Twitch) et pour son fichier de réglages.
 const SPADE_HOST_SUFFIXES = ["twitch.tv", "ttvnw.net", "twitchcdn.net", "twitchsvc.net", "jtvnw.net"];
+// Playlists des variantes d'un direct (« weaver ») : euw31.playlist.ttvnw.net,
+// et video-weaver.*.hls.ttvnw.net d'avant.
+const VARIANT_HOST_SUFFIXES = ["playlist.ttvnw.net", "hls.ttvnw.net"];
+// Segments et fichiers d'initialisation d'un direct, que la page lit elle-même
+// (*.hls.ttvnw.net aujourd'hui, CloudFront de Twitch compris).
+const SEGMENT_HOST_SUFFIXES = ["ttvnw.net", "twitchcdn.net", "jtvnw.net", "twitchsvc.net"];
+// Date d'une playlist (PROGRAM-DATE-TIME, DATERANGE) et durée décimale.
+const M3U8_DATE_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,9})?(Z|[+-]\d{2}:?\d{2})$/;
+const M3U8_DECIMAL_RE = /^\d{1,7}(\.\d{1,6})?$/;
 
 // --- Validation des demandes du site (même code dans content.js) ------------
 
@@ -150,7 +177,9 @@ const OP_ARGS = {
   "drops.claim": { dropInstanceId: "dropInstance" },
   "drops.pulse": { channel: "channel" },
   "rewards.get": { channel: "channel" },
-  "rewards.redeem": { channel: "channel", rewardId: "id", cost: "cost", title: "title", prompt: "prompt", input: "input" }
+  "rewards.redeem": { channel: "channel", rewardId: "id", cost: "cost", title: "title", prompt: "prompt", input: "input" },
+  "hq.master": { channel: "channel", codecs: "codecs" },
+  "hq.playlist": { id: "hqId" }
 };
 const SPEND_OPS = ["predictions.bet", "polls.vote", "rewards.redeem"];
 
@@ -159,6 +188,13 @@ function charCount(s) {
   let n = 0;
   for (const _ of s) n++;
   return n;
+}
+
+// Codecs annoncés : 1 à 3 de la liste fermée, sans doublon, H.264 compris.
+function codecsOk(v) {
+  return Array.isArray(v) && v.length >= 1 && v.length <= HQ_CODECS.length &&
+    v.every((c) => typeof c === "string" && HQ_CODECS.includes(c)) &&
+    new Set(v).size === v.length && v.includes("h264");
 }
 
 // Rend { args } (copie des seuls champs attendus) ou { bad: "<champ fautif>" }.
@@ -186,9 +222,12 @@ function checkArgs(op, raw) {
       kind === "prompt" ? v === null || (typeof v === "string" && v.length <= 1000) :
       kind === "input" ? v === null || (typeof v === "string" && v.length <= 800 && charCount(v) >= 1 && charCount(v) <= 200) :
       kind === "bool" ? typeof v === "boolean" :
+      kind === "codecs" ? codecsOk(v) :
+      kind === "hqId" ? typeof v === "string" && HQ_ID_RE.test(v) :
       false;
     if (!good) return { bad: k };
-    args[k] = v;
+    // Liste recopiée dans l'ordre de HQ_CODECS (pas la référence reçue).
+    args[k] = kind === "codecs" ? HQ_CODECS.filter((c) => v.includes(c)) : v;
   }
   return { args };
 }
@@ -296,7 +335,7 @@ function isTwitchPage(url) {
 // --- État de session (storage.session) --------------------------------------
 
 const mem = {
-  rl: { global: [], slots: {} }, // limites de débit
+  rl: { global: [], hq: [], slots: {} }, // limites de débit (hq : budget de hq.playlist)
   integrity: null,               // { token, deviceId, expiresAt, fp, via }
   mintFail: null,                // { at } dernier échec d'obtention
   mintTab: null,                 // { id, at } onglet temporaire ouvert
@@ -307,8 +346,10 @@ const mem = {
   pollVotes: {},                 // id de sondage → { choiceIds, votes, at } votes faits d'ici
   claimFails: {},                // id de coffre → { n, at } échecs du coffre automatique
   raidJoins: {},                 // id de raid → { res, at } réponse donnée pour ce raid
-  dropPulse: {}                  // chaîne → état de la pulsation des drops (adresse signée,
+  dropPulse: {},                 // chaîne → état de la pulsation des drops (adresse signée,
                                  // segments vus…) : ne sort jamais vers la page
+  hq: {}                         // identifiant donné à la page → { url, fp, channel, at } :
+                                 // adresse signée d'une variante, qui ne sort jamais d'ici
 };
 const MEM_KEYS = Object.keys(mem);
 let loading = null;
@@ -324,10 +365,11 @@ function loadState() {
       } catch (e) {
         // storage.session indisponible : mémoire seule
       }
-      if (!mem.rl || typeof mem.rl !== "object") mem.rl = { global: [], slots: {} };
+      if (!mem.rl || typeof mem.rl !== "object") mem.rl = { global: [], hq: [], slots: {} };
       if (!Array.isArray(mem.rl.global)) mem.rl.global = [];
+      if (!Array.isArray(mem.rl.hq)) mem.rl.hq = [];
       if (!mem.rl.slots || typeof mem.rl.slots !== "object") mem.rl.slots = {};
-      for (const k of ["predSeen", "predBets", "pollVotes", "claimFails", "raidJoins", "dropPulse"]) {
+      for (const k of ["predSeen", "predBets", "pollVotes", "claimFails", "raidJoins", "dropPulse", "hq"]) {
         if (!mem[k] || typeof mem[k] !== "object" || Array.isArray(mem[k])) mem[k] = {};
       }
     })();
@@ -373,15 +415,19 @@ async function getSettings() {
 
 // --- Limites de débit ----------------------------------------------------------
 
-function takeGlobal() {
+// Budget par minute : `global` (toutes les demandes), ou `hq` (hq.playlist,
+// que le lecteur demande toutes les quelques secondes pendant la lecture :
+// compté à part, il ne prive pas le site de ses autres opérations).
+function takeGlobal(bucket, max) {
+  const name = bucket || "global";
   const now = Date.now();
-  const recent = mem.rl.global.filter((t) => typeof t === "number" && t <= now && now - t < 60000);
-  if (recent.length >= LIMIT.perMinute) {
-    mem.rl.global = recent;
+  const recent = mem.rl[name].filter((t) => typeof t === "number" && t <= now && now - t < 60000);
+  if (recent.length >= (max || LIMIT.perMinute)) {
+    mem.rl[name] = recent;
     return false;
   }
   recent.push(now);
-  mem.rl.global = recent;
+  mem.rl[name] = recent;
   save("rl");
   return true;
 }
@@ -1609,11 +1655,25 @@ async function accountPlaybackToken(session, channel) {
   const pat = json.data && json.data.streamPlaybackAccessToken;
   if (!pat || typeof pat.value !== "string" || typeof pat.signature !== "string") return null;
   if (!/"user_id":\d/.test(pat.value)) return null;
-  return { value: pat.value, signature: pat.signature };
+  // Lecture refusée à ce compte (géoblocage…) : `authorization.forbidden`.
+  let forbidden = false;
+  try {
+    const v = JSON.parse(pat.value);
+    forbidden = !!(v && v.authorization && v.authorization.forbidden === true);
+  } catch (e) {
+    forbidden = false;
+  }
+  return { value: pat.value, signature: pat.signature, forbidden };
 }
 
 function hlsUrl(url) {
   return hostMatches(url, ["hls.ttvnw.net"]);
+}
+
+// Playlist d'une variante : euw31.playlist.ttvnw.net aujourd'hui (seul
+// hls.ttvnw.net était accepté : la pulsation des drops n'en trouvait plus).
+function variantUrl(url) {
+  return hostMatches(url, VARIANT_HOST_SUFFIXES);
 }
 
 // Plus petite qualité du direct (lowestVariant de l'app) : la dernière
@@ -1637,7 +1697,7 @@ async function lowestVariant(session, channel) {
   } catch (e) {
     return null;
   }
-  return hlsUrl(url) ? url : null;
+  return variantUrl(url) ? url : null;
 }
 
 // Relit la playlist et demande chaque nouveau segment en HEAD (poll de l'app).
@@ -1790,6 +1850,295 @@ async function opDropsPulse(args, session, settings) {
   return { active, claimed };
 }
 
+// --- Qualités supérieures (Enhanced Broadcasting) ----------------------------------------
+//
+// Twitch ne sert les variantes au-dessus de 1080p (1440p, 4K, parfois en HEVC
+// ou en AV1) qu'au jeton de lecture d'un compte : celui d'un jeton anonyme dit
+// `maximum_resolution: FULL_HD` (« AUTHZ_NOT_LOGGED_IN » au-delà). Comme l'app
+// iOS (TwitchAPI.swift : HigherQualities, usherLiveLinks), la liste du direct
+// est demandée avec le jeton du compte et `supported_codecs`.
+//
+// Ce qui va à la page (PROTOCOL.md, « Sécurité ») :
+// - hq.master : pour chaque variante, un identifiant tiré au hasard et ce que
+//   dit sa ligne #EXT-X-STREAM-INF (nom, taille, cadence, débit, codecs).
+//   Ni le jeton de lecture, ni l'adresse usher, ni celles des playlists des
+//   variantes : elles restent dans mem.hq (storage.session).
+// - hq.playlist : la playlist de cette variante, RÉÉCRITE balise par balise
+//   (cleanMediaPlaylist) : durées, numéros, dates, pauses pub (sans leurs
+//   attributs propres à Twitch), segments et fichier d'initialisation, en
+//   adresses absolues https du CDN de Twitch. Les balises propres à Twitch
+//   (session, déclencheurs signés…) et les inconnues ne passent pas.
+// La page lit les segments elle-même : leur CDN accepte toute origine. Les
+// playlists, non : refusées (403) dès qu'un en-tête Origin étranger est là
+// (celui du site, ou celui d'une extension sans accès à l'hôte), d'où
+// hq.playlist, et l'accès https://*.playlist.ttvnw.net/* du manifeste.
+
+// Attributs d'une balise (`NOM=valeur` ou `NOM="valeur"`).
+function m3u8Attrs(text) {
+  const out = {};
+  const re = /([A-Z0-9-]+)=("[^"\r\n]*"|[^,\r\n]*)/g;
+  let m;
+  while ((m = re.exec(text))) {
+    if (!has(out, m[1])) out[m[1]] = m[2].startsWith('"') ? m[2].slice(1, -1) : m[2];
+  }
+  return out;
+}
+
+// Nom d'une variante, comme worker.js (variantName) et l'app (parseMaster) :
+// VIDEO, STABLE-VARIANT-ID ou IVS-NAME (« 1440p60 », « 720p30 »), le nom du
+// groupe pour l'original (VIDEO="chunked", NAME="1440p60 (source)"), sinon
+// la taille et la cadence.
+function variantLabel(a, groupName, height, fps) {
+  const clean = (s) => (typeof s === "string" ? s.replace(/\s*\(source\)\s*$/i, "").trim() : "");
+  for (const raw of [a.VIDEO, a["STABLE-VARIANT-ID"], a["IVS-NAME"], groupName]) {
+    const s = clean(raw);
+    if (s !== "chunked" && /^[A-Za-z0-9_.-]{1,24}$/.test(s)) return s;
+  }
+  if (height > 0) return height + "p" + (fps >= 1 ? Math.round(fps) : "");
+  return "audio_only";
+}
+
+// Variantes de la liste maîtresse du compte (20 au plus) : adresse, gardée
+// ici, et ce que la page peut en savoir. `source` : l'original
+// (VIDEO="chunked", groupe « (source) », ou seule variante IVS marquée
+// source — en multi-encodage, IVS les marque toutes).
+function parseHqMaster(text, base) {
+  const lines = text.split("\n").map((l) => l.trim());
+  const groupNames = {};
+  const sourceGroups = new Set();
+  for (const l of lines) {
+    if (!l.startsWith("#EXT-X-MEDIA:")) continue;
+    const a = m3u8Attrs(l.slice(13));
+    if (a.TYPE !== "VIDEO" || !a["GROUP-ID"]) continue;
+    groupNames[a["GROUP-ID"]] = a.NAME || "";
+    if (/\(source\)/i.test(a.NAME || "")) sourceGroups.add(a["GROUP-ID"]);
+  }
+  const ivsSources = lines.filter((l) => {
+    if (!l.startsWith("#EXT-X-STREAM-INF:")) return false;
+    const a = m3u8Attrs(l.slice(18));
+    return a["IVS-VARIANT-SOURCE"] === "source" && !!a.RESOLUTION;
+  }).length;
+  const out = [];
+  for (let i = 0; i < lines.length && out.length < 20; i++) {
+    if (!lines[i].startsWith("#EXT-X-STREAM-INF:")) continue;
+    const a = m3u8Attrs(lines[i].slice(18));
+    let uri = "";
+    for (let j = i + 1; j < lines.length; j++) {
+      if (!lines[j] || lines[j].startsWith("#EXT-X-STREAM-INF:")) break;
+      if (!lines[j].startsWith("#")) {
+        uri = lines[j];
+        break;
+      }
+    }
+    let url = null;
+    try {
+      url = uri ? new URL(uri, base).href : null;
+    } catch (e) {
+      url = null;
+    }
+    const codecs = /^[A-Za-z0-9.,]{1,120}$/.test(a.CODECS || "") ? a.CODECS : "";
+    if (!url || !variantUrl(url) || !codecs) continue;
+    const size = /^(\d{1,5})x(\d{1,5})$/.exec(a.RESOLUTION || "");
+    const width = size ? Number(size[1]) : 0;
+    const height = size ? Number(size[2]) : 0;
+    const rate = Number(a["FRAME-RATE"]);
+    const fps = Number.isFinite(rate) && rate > 0 && rate <= 300 ? Math.round(rate * 1000) / 1000 : 0;
+    const bandwidth = /^\d{1,10}$/.test(a.BANDWIDTH || "") ? Number(a.BANDWIDTH) : 0;
+    const group = a.VIDEO || "";
+    const source = group === "chunked" || sourceGroups.has(group) ||
+      (ivsSources === 1 && a["IVS-VARIANT-SOURCE"] === "source" && height > 0);
+    out.push({ url, name: variantLabel(a, groupNames[group], height, fps), source, width, height, fps, bandwidth, codecs });
+  }
+  return out;
+}
+
+// Adresse d'un segment (ou d'un fichier d'initialisation) que la page peut
+// lire : absolue, https, sur le CDN de Twitch ; jamais usher, une playlist,
+// un déclencheur, ni une adresse qui porterait un jeton de lecture.
+function segmentUrl(uri, base) {
+  let u;
+  try {
+    u = new URL(uri, base);
+  } catch (e) {
+    return null;
+  }
+  const host = u.hostname;
+  if (u.protocol !== "https:" || u.username || u.password || u.port) return null;
+  if (!SEGMENT_HOST_SUFFIXES.some((s) => host === s || host.endsWith("." + s))) return null;
+  if (host === "usher.ttvnw.net" || host === "playlist.ttvnw.net" || host.endsWith(".playlist.ttvnw.net")) return null;
+  if (/\/(playlist|trigger|api)\//i.test(u.pathname) || /\.m3u8$/i.test(u.pathname)) return null;
+  if (/[?&](sig|token|nauth|nauthsig)=/i.test(u.search)) return null;
+  const href = u.href;
+  return href.length <= 4000 && !/[\s"]/.test(href) ? href : null;
+}
+
+// Pause pub (classe « twitch-stitched-ad ») : ID, classe, début, fin ou
+// durée — ce que lit le lecteur du site (player.js, readAdBreaks). Ses
+// attributs X-TV-TWITCH-* (suivi publicitaire, adresses signées) restent ici,
+// comme les autres classes de Twitch (session, déclencheurs…).
+function adDateRange(value) {
+  const a = m3u8Attrs(value);
+  if (a.CLASS !== "twitch-stitched-ad") return null;
+  if (!/^[A-Za-z0-9_.:-]{1,100}$/.test(a.ID || "") || !M3U8_DATE_RE.test(a["START-DATE"] || "")) return null;
+  let s = '#EXT-X-DATERANGE:ID="' + a.ID + '",CLASS="twitch-stitched-ad",START-DATE="' + a["START-DATE"] + '"';
+  if (M3U8_DATE_RE.test(a["END-DATE"] || "")) s += ',END-DATE="' + a["END-DATE"] + '"';
+  if (M3U8_DECIMAL_RE.test(a.DURATION || "")) s += ",DURATION=" + a.DURATION;
+  if (M3U8_DECIMAL_RE.test(a["PLANNED-DURATION"] || "")) s += ",PLANNED-DURATION=" + a["PLANNED-DURATION"];
+  return s;
+}
+
+// Playlist d'une variante, réécrite pour la page (liste blanche de balises,
+// valeurs vérifiées). null si elle est illisible : la page n'en reçoit rien.
+// Un segment hors du CDN de Twitch devient un trou (#EXT-X-GAP, adresse
+// factice jamais demandée), sans décaler les numéros des suivants.
+function cleanMediaPlaylist(text, base) {
+  const lines = text.split("\n");
+  if (!lines.length || lines[0].trim() !== "#EXTM3U") return null;
+  const out = ["#EXTM3U"];
+  let gaps = 0;
+  for (let i = 1; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (!line) continue;
+    if (!line.startsWith("#")) {
+      const url = segmentUrl(line, base);
+      if (url) out.push(url);
+      else out.push("#EXT-X-GAP", "https://gap.invalid/" + (++gaps) + ".ts");
+      continue;
+    }
+    const colon = line.indexOf(":");
+    const tag = colon < 0 ? line : line.slice(0, colon);
+    const value = colon < 0 ? "" : line.slice(colon + 1);
+    switch (tag) {
+      case "#EXT-X-VERSION":
+      case "#EXT-X-TARGETDURATION":
+      case "#EXT-X-MEDIA-SEQUENCE":
+      case "#EXT-X-DISCONTINUITY-SEQUENCE":
+        if (!/^\d{1,12}$/.test(value)) return null;
+        out.push(tag + ":" + value);
+        break;
+      case "#EXT-X-PLAYLIST-TYPE":
+        if (value === "EVENT" || value === "VOD") out.push(tag + ":" + value);
+        break;
+      case "#EXT-X-INDEPENDENT-SEGMENTS":
+      case "#EXT-X-DISCONTINUITY":
+      case "#EXT-X-GAP":
+      case "#EXT-X-ENDLIST":
+        out.push(tag);
+        break;
+      case "#EXT-X-PROGRAM-DATE-TIME":
+        if (M3U8_DATE_RE.test(value)) out.push(tag + ":" + value);
+        break;
+      case "#EXTINF": {
+        const m = /^(\d{1,7}(?:\.\d{1,6})?)\s*(?:,(.*))?$/.exec(value);
+        if (!m) return null;
+        const title = m[2] && /^[A-Za-z0-9 _.|:-]{1,64}$/.test(m[2]) ? m[2] : "";
+        out.push("#EXTINF:" + m[1] + "," + title);
+        break;
+      }
+      case "#EXT-X-BYTERANGE":
+        if (!/^\d{1,12}(@\d{1,12})?$/.test(value)) return null;
+        out.push(tag + ":" + value);
+        break;
+      case "#EXT-X-MAP": {
+        // Fichier d'initialisation (fMP4 : HEVC, AV1) : indispensable.
+        const a = m3u8Attrs(value);
+        const url = a.URI ? segmentUrl(a.URI, base) : null;
+        if (!url) return null;
+        const range = /^\d{1,12}(@\d{1,12})?$/.test(a.BYTERANGE || "") ? ',BYTERANGE="' + a.BYTERANGE + '"' : "";
+        out.push('#EXT-X-MAP:URI="' + url + '"' + range);
+        break;
+      }
+      case "#EXT-X-KEY":
+        // Pas de chiffrement chez Twitch ; un autre : rien de lisible ici.
+        if (m3u8Attrs(value).METHOD !== "NONE") return null;
+        break;
+      case "#EXT-X-TWITCH-PREFETCH": {
+        // Prochains segments annoncés d'avance (direct au plus près, player.js).
+        const url = segmentUrl(value, base);
+        if (url) out.push(tag + ":" + url);
+        break;
+      }
+      case "#EXT-X-DATERANGE": {
+        const range = adDateRange(value);
+        if (range) out.push(range);
+        break;
+      }
+      default:
+        break;
+    }
+  }
+  return out.join("\n") + "\n";
+}
+
+// Liste du direct au nom du compte (usherLiveLinks de l'app, avec
+// `supported_codecs`) : la même réponse, mêmes identifiants, pendant 10 s.
+function opHqMaster(args, session) {
+  const channel = args.channel;
+  const codecs = args.codecs.join(",");
+  return cachedRead(session.fp + ":hqmaster:" + channel + ":" + codecs, LIMIT.hqMasterMs, async () => {
+    const pat = await accountPlaybackToken(session, channel);
+    // Jeton refusé, anonyme (session ignorée) ou sans jeton d'intégrité.
+    if (!pat) throw new TuError("twitch", "playback_token");
+    if (pat.forbidden) throw new TuError("twitch", "forbidden");
+    const params = new URLSearchParams({
+      allow_source: "true",
+      allow_audio_only: "true",
+      allow_spectre: "true",
+      fast_bread: "true",
+      player_backend: "mediaplayer",
+      playlist_include_framerate: "true",
+      segment_preference: "4",
+      supported_codecs: codecs,
+      sig: pat.signature,
+      token: pat.value
+    });
+    const master = "https://usher.ttvnw.net/api/channel/hls/" + channel + ".m3u8?" + params.toString();
+    const { status, body } = await fetchWith(master, { method: "GET" }, (res) => res.text());
+    if (status === 404) throw new TuError("offline");
+    if (status !== 200 || typeof body !== "string") throw new TuError("twitch", "http_" + status);
+    const variants = parseHqMaster(body.slice(0, LIMIT.hqMasterBytes), master);
+    if (!variants.length) throw new TuError("twitch", "bad_response");
+    await loadState();
+    const now = Date.now();
+    for (const k of Object.keys(mem.hq)) {
+      const v = mem.hq[k];
+      if (!v || typeof v.at !== "number" || v.at > now || now - v.at >= LIMIT.hqKeepMs) delete mem.hq[k];
+    }
+    const out = [];
+    for (const v of variants) {
+      const id = randomId(22);
+      mem.hq[id] = { url: v.url, fp: session.fp, channel, at: now };
+      out.push({ id, name: v.name, source: v.source, width: v.width, height: v.height, fps: v.fps, bandwidth: v.bandwidth, codecs: v.codecs });
+    }
+    pruneMap(mem.hq, LIMIT.hqMax);
+    save("hq");
+    return { variants: out };
+  });
+}
+
+// Playlist d'une variante donnée par hq.master, réécrite. Relue chez Twitch
+// au plus chaque seconde (le lecteur la redemande toutes les 2 à 6 s).
+async function opHqPlaylist(args, session) {
+  await loadState();
+  const v = mem.hq[args.id];
+  const now = Date.now();
+  // Inconnue, trop ancienne, ou donnée pour un autre compte : le site
+  // redemande hq.master, ou revient à la source habituelle.
+  if (!v || typeof v.url !== "string" || v.fp !== session.fp || typeof v.at !== "number" ||
+      v.at > now || now - v.at >= LIMIT.hqKeepMs || !variantUrl(v.url)) {
+    throw new TuError("bad_args", "expired");
+  }
+  const playlist = await cachedRead("hqpl:" + args.id, LIMIT.hqPlaylistMs, async () => {
+    const { status, body } = await fetchWith(v.url, { method: "GET" }, (res) => res.text());
+    if (status === 404) throw new TuError("offline");
+    if (status !== 200 || typeof body !== "string") throw new TuError("twitch", "http_" + status);
+    const text = cleanMediaPlaylist(body.slice(0, LIMIT.hqPlaylistBytes), v.url);
+    if (!text) throw new TuError("twitch", "bad_response");
+    return text;
+  });
+  return { playlist };
+}
+
 // --- Récompenses de chaîne (ChannelPointsService.swift de l'app) -------------------------
 
 function normalizeReward(r) {
@@ -1922,7 +2271,9 @@ const OPS = {
   "drops.claim": opDropsClaim,
   "drops.pulse": opDropsPulse,
   "rewards.get": opRewardsGet,
-  "rewards.redeem": opRewardsRedeem
+  "rewards.redeem": opRewardsRedeem,
+  "hq.master": opHqMaster,
+  "hq.playlist": opHqPlaylist
 };
 
 function asResponse(promise) {
@@ -1933,7 +2284,9 @@ function asResponse(promise) {
 
 async function handleSiteRequest(msg) {
   await loadState();
-  if (!takeGlobal()) return fail("rate_limited");
+  // hq.playlist (le lecteur, toutes les quelques secondes) : budget à part.
+  const budget = msg.op === "hq.playlist" ? takeGlobal("hq", LIMIT.hqPerMinute) : takeGlobal();
+  if (!budget) return fail("rate_limited");
   if (typeof msg.id !== "string" || msg.id.length < 1 || msg.id.length > 64) return fail("bad_args", "id");
   const op = msg.op;
   if (typeof op !== "string" || !has(OP_ARGS, op)) return fail("unknown_op");

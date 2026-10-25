@@ -48,6 +48,8 @@
   const TWITCH_ID_RE = /^[A-Za-z0-9._:-]{1,64}$/;
   const RAID_ID_RE = /^[A-Za-z0-9-]{1,64}$/;
   const DROP_INSTANCE_RE = /^[A-Za-z0-9#._:-]{1,200}$/;
+  const HQ_ID_RE = /^[A-Za-z0-9]{22}$/;
+  const HQ_CODECS = ["av1", "h265", "h264"];
 
   const OP_ARGS = {
     "hello": {},
@@ -64,7 +66,9 @@
     "drops.claim": { dropInstanceId: "dropInstance" },
     "drops.pulse": { channel: "channel" },
     "rewards.get": { channel: "channel" },
-    "rewards.redeem": { channel: "channel", rewardId: "id", cost: "cost", title: "title", prompt: "prompt", input: "input" }
+    "rewards.redeem": { channel: "channel", rewardId: "id", cost: "cost", title: "title", prompt: "prompt", input: "input" },
+    "hq.master": { channel: "channel", codecs: "codecs" },
+    "hq.playlist": { id: "hqId" }
   };
   const SPEND_OPS = ["predictions.bet", "polls.vote", "rewards.redeem"];
 
@@ -73,6 +77,13 @@
     let n = 0;
     for (const _ of s) n++;
     return n;
+  }
+
+  // Codecs annoncés : 1 à 3 de la liste fermée, sans doublon, H.264 compris.
+  function codecsOk(v) {
+    return Array.isArray(v) && v.length >= 1 && v.length <= HQ_CODECS.length &&
+      v.every((c) => typeof c === "string" && HQ_CODECS.includes(c)) &&
+      new Set(v).size === v.length && v.includes("h264");
   }
 
   // Rend { args } (copie des seuls champs attendus) ou { bad: "<champ fautif>" }.
@@ -100,9 +111,12 @@
         kind === "prompt" ? v === null || (typeof v === "string" && v.length <= 1000) :
         kind === "input" ? v === null || (typeof v === "string" && v.length <= 800 && charCount(v) >= 1 && charCount(v) <= 200) :
         kind === "bool" ? typeof v === "boolean" :
+        kind === "codecs" ? codecsOk(v) :
+        kind === "hqId" ? typeof v === "string" && HQ_ID_RE.test(v) :
         false;
       if (!good) return { bad: k };
-      args[k] = v;
+      // Liste recopiée dans l'ordre de HQ_CODECS (pas la référence reçue).
+      args[k] = kind === "codecs" ? HQ_CODECS.filter((c) => v.includes(c)) : v;
     }
     return { args };
   }

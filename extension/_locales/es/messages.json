@@ -64,7 +64,7 @@
     "message": "Conexión con el sitio TwitchUnblock"
   },
   "setSiteHelp": {
-    "message": "El sitio puede leer tus puntos, drops, recompensas, predicciones y encuestas, y usar tu sesión para las acciones de abajo."
+    "message": "El sitio puede leer tus puntos, drops, recompensas, predicciones y encuestas, reproducir directos en 1440p o más con tu cuenta y usar tu sesión para las acciones de abajo."
   },
   "setClaim": {
     "message": "Reclamar automáticamente (cofres y drops)"
@@ -192,7 +192,7 @@
     "message": "Seguridad"
   },
   "securityText": {
-    "message": "Tu sesión de Twitch y tus tokens nunca salen de la extensión. El sitio solo puede pedir una lista cerrada de acciones; las apuestas, los votos y las recompensas exigen un clic real. Solo se envía información a Twitch."
+    "message": "Tu sesión de Twitch y tus tokens nunca salen de la extensión. El sitio solo puede pedir una lista cerrada de acciones; las apuestas, los votos y las recompensas exigen un clic real. Solo se envía información a Twitch. Para el 1440p, el sitio solo recibe las playlists del directo, reescritas: las direcciones de los fragmentos de vídeo, nunca tu token de reproducción."
   },
   "versionLabel": {
     "message": "Versión $VERSION$",
