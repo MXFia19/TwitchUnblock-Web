@@ -441,9 +441,10 @@ async function handleGetLive(url, workerOrigin) {
     let m3u8Content = "";
     let masterUrl = "";
     let source = "";
+    const seen = {};
     for (const id of steps) {
         try {
-            const got = id === 'twitch' ? await usherLiveMaster(login) : await proxyLiveMaster(LIVE_PROXIES[id](login));
+            const got = id === 'twitch' ? await usherLiveMaster(login, seen) : await proxyLiveMaster(LIVE_PROXIES[id](login));
             if (!got) continue;
             m3u8Content = got.text;
             masterUrl = got.url;
@@ -451,6 +452,10 @@ async function handleGetLive(url, workerOrigin) {
             break;
         } catch (err) { /* source suivante */ }
     }
+    // Twitch réserve ce direct à certains pays (droits de diffusion) et aucune
+    // source n'y a accès : dit tel quel (`code`, que le site affiche), en 404
+    // comme avant pour les clients qui ne le connaissent pas.
+    if (!m3u8Content && seen.geo) return jsonError("Direct réservé à certains pays", 404, { code: "geo_blocked" });
     if (!m3u8Content) return jsonError("Offline ou introuvable", 404);
 
     // Découpage du fichier M3U8 avec notre Proxy
@@ -704,12 +709,32 @@ async function proxyLiveMaster(c) {
     return text.includes('#EXT-X-STREAM-INF') ? { text, url: r.url } : null;
 }
 
-/** Liste maîtresse officielle de Twitch (usher), avec ses pubs. */
-async function usherLiveMaster(login) {
+/** Liste maîtresse officielle de Twitch (usher), avec ses pubs. `seen.geo` :
+ *  noté si Twitch réserve ce direct à certains pays (jeton ou refus d'usher). */
+async function usherLiveMaster(login, seen = {}) {
     const token = await getAccessToken(login, true);
     if (!token) return null;
+    const geo = tokenGeoBlock(token.value);
+    if (geo) seen.geo = geo;
     const r = await fetch(`https://usher.ttvnw.net/api/channel/hls/${login}.m3u8?allow_source=true&allow_audio_only=true&allow_spectre=true&fast_bread=true&player=twitchweb&playlist_include_framerate=true&segment_preference=4&sig=${encodeURIComponent(token.signature)}&token=${encodeURIComponent(token.value)}`, { headers: REQUEST_HEADERS });
-    return r.ok ? { text: await r.text(), url: r.url } : null;
+    if (r.ok) return { text: await r.text(), url: r.url };
+    // [{"error":"Content Restricted In Region","error_code":"content_geoblocked",…}]
+    const body = await r.text().catch(() => '');
+    if (/geoblock|geo_blocked|restricted in region/i.test(body)) seen.geo = seen.geo || `usher ${r.status}`;
+    return null;
+}
+
+/** Blocage par pays écrit par Twitch dans un jeton de lecture
+ *  (`geoblock_reason`, ou une lecture refusée dont la raison parle de pays) ;
+ *  vide sinon. Le jeton vaut pour l'adresse qui l'a demandé (ici le Worker). */
+function tokenGeoBlock(value) {
+    try {
+        const v = JSON.parse(value);
+        if (typeof v.geoblock_reason === 'string' && v.geoblock_reason) return v.geoblock_reason;
+        const a = v.authorization;
+        if (a?.forbidden === true && /geo|region/i.test(a.reason || '')) return String(a.reason);
+    } catch (e) { /* jeton illisible : rien à dire */ }
+    return '';
 }
 /** Adresse que le proxy peut demander : https, port par défaut, hôte de
  *  PROXY_HOSTS ou distribution CloudFront de Twitch. `who` : adresse du

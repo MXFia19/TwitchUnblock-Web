@@ -225,6 +225,9 @@ export async function workerJson(path, { timeout = 0, avoid = null } = {}) {
       if (res.status !== 404) logError('worker', `${path.split('?')[0]} → HTTP ${res.status}`)
       const err = new Error(`HTTP ${res.status}`)
       err.status = res.status
+      // Raison donnée par le Worker (« geo_blocked » : direct réservé à
+      // certains pays par Twitch).
+      err.code = await res.json().then((j) => (typeof j?.code === 'string' ? j.code : null), () => null)
       throw err
     }
     return res.json()

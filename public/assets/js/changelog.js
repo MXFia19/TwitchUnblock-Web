@@ -6,6 +6,31 @@
 
 export const CHANGELOG = [
   {
+    version: '2026.10.26a',
+    items: {
+      fr: [
+        'Direct réservé à certains pays : quand Twitch limite un live à quelques pays (droits de diffusion, comme un match de NFL) et qu’aucune de nos sources n’y a accès, le site le dit clairement au lieu de « aucune source ne répond ».',
+        'Son déformé après une pause pub : sur certaines chaînes, la voix du streamer revenait comme passée dans un « voice changer » après l’écran « Commercial break in progress ». Quand le son change de format entre l’écran de Twitch et le direct, le lecteur repart à neuf, au bon format.',
+      ],
+      en: [
+        'Lives kept to some countries: when Twitch limits a live to a few countries (broadcast rights, like an NFL game) and none of our sources can reach it, the site now says so clearly instead of “no source is answering”.',
+        'Distorted sound after an ad break: on some channels, the streamer’s voice came back as if through a voice changer after the “Commercial break in progress” screen. When the sound changes format between Twitch’s screen and the live, the player now starts afresh in the right format.',
+      ],
+      es: [
+        'Directos limitados a algunos países: cuando Twitch limita un directo a unos pocos países (derechos de emisión, como un partido de la NFL) y ninguna de nuestras fuentes tiene acceso, el sitio ahora lo dice claramente en lugar de «ninguna fuente responde».',
+        'Sonido distorsionado tras una pausa publicitaria: en algunos canales, la voz del streamer volvía como si pasara por un modulador de voz tras la pantalla «Commercial break in progress». Cuando el sonido cambia de formato entre la pantalla de Twitch y el directo, el reproductor ahora vuelve a empezar en el formato correcto.',
+      ],
+      ru: [
+        'Трансляции только для некоторых стран: когда Twitch ограничивает трансляцию несколькими странами (права на трансляцию, например матч НФЛ) и ни один из наших источников не имеет к ней доступа, сайт теперь прямо говорит об этом вместо «ни один источник не отвечает».',
+        'Искажённый звук после рекламной паузы: на некоторых каналах голос стримера после экрана «Commercial break in progress» звучал будто через модулятор голоса. Когда звук меняет формат между экраном Twitch и трансляцией, плеер теперь перезапускается в правильном формате.',
+      ],
+      'zh-Hant': [
+        '限定部分國家的直播：當 Twitch 只在少數國家開放某場直播（轉播權，例如 NFL 比賽），而我們的來源都無法存取時，網站現在會清楚說明，而不是顯示「沒有來源回應」。',
+        '廣告時段後聲音失真：在某些頻道，「Commercial break in progress」畫面結束後，實況主的聲音聽起來像經過變聲器。當 Twitch 畫面與直播之間的聲音格式不同時，播放器現在會以正確的格式重新開始。',
+      ],
+    },
+  },
+  {
     version: '2026.10.25c',
     items: {
       fr: [

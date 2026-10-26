@@ -96,6 +96,7 @@ export const ZH_HANT = {
   err_vod: '這部 VOD 無法觀看。',
   err_live: '這台直播無法觀看。',
   err_live_sources: '頻道正在直播，但目前沒有來源回應。',
+  err_geo_blocked: '這場直播在你所在的地區無法觀看：Twitch 因轉播權只開放給部分國家，我們的來源也都無法存取。',
   err_network: '網路錯誤。',
   viewers: '位觀眾',
   latency: '延遲',

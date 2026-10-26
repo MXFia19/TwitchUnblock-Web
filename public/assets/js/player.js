@@ -461,6 +461,7 @@ const HLS_ISSUES = {
 const HEALTH_FIXES = {
   recover: ['sur place', 'sur place'], rebuild: ['relance', 'relances'], retry: ['nouvel essai', 'nouveaux essais'],
   swap: ['autre relais', 'autres relais'], missing: ['segment absent', 'segments absents'],
+  audio: ['son remis à neuf', 'sons remis à neuf'],
 }
 /** « 1 coup de pouce », « 3 trous sautés ». */
 const counted = (n, [one, many]) => `${n} ${n > 1 ? many : one}`
@@ -601,6 +602,45 @@ export function adBreakEnd(breaks, at) {
   }
   return end
 }
+
+// ── Format du son (direct) ──────────────────────────────────────────────
+// L'écran « Commercial break in progress » de Twitch n'a pas forcément le
+// son de la chaîne (48 kHz contre 44,1 kHz, par exemple) : la vidéo garde le
+// même tampon d'un format à l'autre, et Chrome rejouait ensuite la voix du
+// streamer à la mauvaise vitesse, comme passée dans un « voice changer »
+// (signalement du 25/10 sur Tumblurr, une seule chaîne). Le format de chaque
+// init segment est noté (audioFormatOf) par rupture du flux (`cc` :
+// EXT-X-DISCONTINUITY, autour des pauses pub ; le même d'une qualité à
+// l'autre) — en TS, hls.js en fabrique un par rupture, en fMP4 c'est celui de
+// l'EXT-X-MAP (sn « initSegment », vu sur mortenroyale le 26/10). Quand
+// l'image passe à une autre rupture dont le son n'a pas le même format, la
+// vidéo est rattachée à neuf (recoverMediaError), au plus une fois par
+// AUDIO_RESET_MS. Un autre format sans rupture, c'est une autre qualité en
+// « Auto » : rien, la remise à neuf ferait caler à chaque changement de débit.
+const AUDIO_RESET_MS = 8_000
+
+/** Format du son d'un init segment fMP4 (boîte « mp4a » : canaux, fréquence,
+ *  et toute la boîte comme clé, configuration AAC comprise) ; null sans elle. */
+export function audioFormatOf(init) {
+  if (!(init instanceof Uint8Array)) return null
+  for (let i = 4; i + 32 <= init.length; i++) {
+    // « mp4a », précédé de la taille de la boîte.
+    if (init[i] !== 0x6d || init[i + 1] !== 0x70 || init[i + 2] !== 0x34 || init[i + 3] !== 0x61) continue
+    const at = i - 4
+    const size = ((init[at] << 24) | (init[at + 1] << 16) | (init[at + 2] << 8) | init[at + 3]) >>> 0
+    if (size < 36 || at + size > init.length) continue
+    const box = init.subarray(at, at + size)
+    return {
+      key: Array.from(box, (b) => b.toString(16).padStart(2, '0')).join(''),
+      channels: (box[24] << 8) | box[25],
+      rate: (box[32] << 8) | box[33],
+    }
+  }
+  return null
+}
+
+/** « 44,1 kHz stéréo », pour le journal. */
+const audioLabel = (f) => `${(f.rate / 1000).toLocaleString('fr-FR')} kHz ${f.channels === 1 ? 'mono' : f.channels === 2 ? 'stéréo' : `${f.channels} canaux`}`
 
 /** Passages d'une VOD en fMP4 listés « N-unmuted.mp4 » : contrairement à
  *  « N-unmuted.ts » (refusé par le CDN), ce fichier a le son d'origine
@@ -876,6 +916,11 @@ export class Player {
     this.adMuted = false
     this.adKeepSound = false
     this.adTimer = null
+    // Format du son du direct : par rupture du flux (cc → format), celui qui
+    // joue, dernière remise à neuf (voir AUDIO_RESET_MS).
+    this.audioFormats = new Map()
+    this.audioPlaying = null
+    this.audioResetAt = 0
     // Passages « -unmuted.mp4 » de la VOD : le son y est (soundSpansOf).
     this.soundSpans = []
     // Santé de la lecture de la vidéo en cours (PlaybackHealth).
@@ -1238,6 +1283,9 @@ export class Player {
       })
       this.hls = hls
       this.directFails = 0
+      // Nouvelle instance, nouveau tampon : le format du son repart de zéro.
+      this.audioFormats = new Map()
+      this.audioPlaying = null
       // iPhone (il n'a que ManagedMediaSource) : arrêts de Safari tenus en bride.
       if (usesManagedMediaSource(hls.config)) guardManagedMediaSource(Hls, hls, v, (name) => this.health?.add(name))
       hls.loadSource(url)
@@ -1289,6 +1337,14 @@ export class Player {
         this.autoLevel = h ? `${h}p` : ''
         this.updateQualityLabel()
       })
+      // Format du son d'un direct : noté à chaque init segment, comparé quand
+      // l'image change de segment (voir AUDIO_RESET_MS).
+      hls.on(Hls.Events.FRAG_PARSING_INIT_SEGMENT, (_e, d) => {
+        if (token === this.attachToken && this.kind === 'live') this.noteAudioFormat(d)
+      })
+      hls.on(Hls.Events.FRAG_CHANGED, (_e, d) => {
+        if (token === this.attachToken && this.kind === 'live') this.checkAudioFormat(hls, d?.frag)
+      })
       hls.on(Hls.Events.ERROR, (_e, data) => {
         // Segments jamais arrivés (code 0 : bloqués avant d'atteindre
         // Twitch), trois de suite et appareil en ligne : les prochaines
@@ -1319,6 +1375,8 @@ export class Player {
         // nouvelle instance (voir MEDIA_FIX_MS).
         if (data.type === Hls.ErrorTypes.MEDIA_ERROR && mediaFixAllowed(this)) {
           this.health?.add('recover')
+          // Tampon neuf : il prend le format du son qui arrive.
+          this.audioPlaying = null
           recoverMedia(hls, v, this.kind === 'vod' ? this.resumeAt() : -1)
         } else this.rebuild(token)
       })
@@ -2179,6 +2237,38 @@ export class Player {
   forgetAdBreaks() {
     this.endAdBreak()
     this.adBreaks.clear()
+  }
+
+  // ── Format du son (direct) ─────────────────────────────────────────────
+  /** Init segment produit par hls.js : son format, noté pour sa rupture du
+   *  flux (voir AUDIO_RESET_MS). */
+  noteAudioFormat(d) {
+    const tracks = d?.tracks || {}
+    const fmt = audioFormatOf(tracks.audio?.initSegment || tracks.audiovideo?.initSegment)
+    const cc = d?.frag?.cc
+    if (!fmt || !Number.isFinite(cc)) return
+    this.audioFormats.set(cc, { cc, ...fmt })
+    // Les ruptures passées depuis longtemps ne servent plus.
+    while (this.audioFormats.size > 8) this.audioFormats.delete(this.audioFormats.keys().next().value)
+  }
+
+  /** L'image passe au segment `frag` : d'une autre rupture du flux, avec un
+   *  autre format de son que celui qui jouait, la vidéo est rattachée à neuf
+   *  un peu après le début du segment (le lecteur repart bien dans celui-ci,
+   *  pas dans le précédent). */
+  checkAudioFormat(hls, frag) {
+    if (!Number.isFinite(frag?.cc)) return
+    const fmt = this.audioFormats.get(frag.cc)
+    if (!fmt) return
+    const was = this.audioPlaying
+    this.audioPlaying = fmt
+    if (!was || was.cc === fmt.cc || was.key === fmt.key) return
+    const now = Date.now()
+    if (now - this.audioResetAt < AUDIO_RESET_MS) return
+    this.audioResetAt = now
+    this.health?.add('audio')
+    logError('lecteur', `son du direct : ${audioLabel(was)} → ${audioLabel(fmt)}, lecteur remis à neuf`)
+    setTimeout(() => { if (this.hls === hls) recoverMedia(hls, this.video, -1) }, 400)
   }
 
   // ── Passages coupés ────────────────────────────────────────────────────

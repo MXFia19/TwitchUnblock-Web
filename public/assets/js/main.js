@@ -4094,8 +4094,10 @@ async function openLive(rawLogin) {
   const hqAsk = askHq(login)
   const [links, info] = await Promise.all([
     // « missing » : aucune source n'a de direct (404) ou nom refusé (400) ;
-    // « failed » : une autre erreur du Worker (5xx).
-    api.getLive(login).catch((e) => ({ error: e?.status === 404 || e?.status === 400 ? 'missing' : e?.status ? 'failed' : 'network' })),
+    // « geo » : Twitch réserve ce direct à certains pays, aucune source n'y a
+    // accès ; « failed » : une autre erreur du Worker (5xx).
+    api.getLive(login).catch((e) => ({ error: e?.code === 'geo_blocked' ? 'geo'
+      : e?.status === 404 || e?.status === 400 ? 'missing' : e?.status ? 'failed' : 'network' })),
     api.getChannelInfo(login).catch(() => null),
   ])
   if (state.watch !== token) return
@@ -4116,6 +4118,7 @@ async function openLive(rawLogin) {
     // à portée dans le panneau du chat.
     if (offline) chat.openOffline(login)
     return showWatchError(links?.error === 'network' ? t('err_network')
+      : links?.error === 'geo' ? t('err_geo_blocked')
       : sourcesDown ? t('err_live_sources')
       : offline ? t('offline') : t('err_live'))
   }
