@@ -1215,7 +1215,9 @@ const actions = {
     if (w?.kind !== 'vod' || w.recovered || !/^\d{6,20}$/.test(w.id)) return
     const cur = player.video?.currentTime || 0
     if (cur > 0) { store.setProgress(w.id, cur); pushSync() }
-    multi.addVod(w.id, { name: w.info?.owner?.displayName || '', title: w.info?.title || '', channel: w.login || '' })
+    // L'instant passe aussi directement : « Reprendre les VODs » coupé,
+    // setProgress ne retient rien et la tuile repartait de 0:00.
+    multi.addVod(w.id, { name: w.info?.owner?.displayName || '', title: w.info?.title || '', channel: w.login || '', at: cur })
   },
   logout,
   settings: () => openSettings(),

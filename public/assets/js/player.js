@@ -612,7 +612,8 @@ export function adBreakEnd(breaks, at) {
 // init segment est noté (audioFormatOf) par rupture du flux (`cc` :
 // EXT-X-DISCONTINUITY, autour des pauses pub ; le même d'une qualité à
 // l'autre) — en TS, hls.js en fabrique un par rupture, en fMP4 c'est celui de
-// l'EXT-X-MAP (sn « initSegment », vu sur mortenroyale le 26/10). Quand
+// l'EXT-X-MAP (sn « initSegment », vu sur mortenroyale le 26/10 ; sa rupture
+// est retrouvée par initSegmentCc). Quand
 // l'image passe à une autre rupture dont le son n'a pas le même format, la
 // vidéo est rattachée à neuf (recoverMediaError), au plus une fois par
 // AUDIO_RESET_MS. Un autre format sans rupture, c'est une autre qualité en
@@ -643,6 +644,26 @@ export function audioFormatOf(init) {
     }
   }
   return null
+}
+
+/** Rupture du flux (`cc`) à laquelle appartient un init segment. En TS, hls.js
+ *  passe le segment lui-même. En fMP4, il passe le fragment de l'EXT-X-MAP,
+ *  numéroté avant l'EXT-X-DISCONTINUITY qui le précède (m3u8-parser de hls.js
+ *  1.5.20) : l'init de la rupture N+1 portait N, et la remise à neuf tombait
+ *  au milieu de la pub au lieu de son retour. On prend le `cc` des segments
+ *  qui utilisent cet init : le même objet, sinon la même adresse (le plus
+ *  récent, une playlist relue a d'autres objets). NaN si aucun. */
+export function initSegmentCc(levels, frag) {
+  if (!frag) return NaN
+  if (frag.sn !== 'initSegment') return frag.cc
+  let byUrl = null
+  for (const level of levels ?? []) {
+    for (const f of level?.details?.fragments ?? []) {
+      if (f.initSegment === frag) return f.cc
+      if (frag.relurl && f.initSegment?.relurl === frag.relurl) byUrl = f
+    }
+  }
+  return byUrl ? byUrl.cc : NaN
 }
 
 /** « 44,1 kHz stéréo », pour le journal. */
@@ -1346,7 +1367,7 @@ export class Player {
       // Format du son d'un direct : noté à chaque init segment, comparé quand
       // l'image change de segment (voir AUDIO_RESET_MS).
       hls.on(Hls.Events.FRAG_PARSING_INIT_SEGMENT, (_e, d) => {
-        if (token === this.attachToken && this.kind === 'live') this.noteAudioFormat(d)
+        if (token === this.attachToken && this.kind === 'live') this.noteAudioFormat(hls, d)
       })
       hls.on(Hls.Events.FRAG_CHANGED, (_e, d) => {
         if (token === this.attachToken && this.kind === 'live') this.checkAudioFormat(hls, d?.frag)
@@ -2248,15 +2269,18 @@ export class Player {
 
   // ── Format du son (direct) ─────────────────────────────────────────────
   /** Init segment produit par hls.js : son format, noté pour sa rupture du
-   *  flux (voir AUDIO_RESET_MS). */
-  noteAudioFormat(d) {
+   *  flux (voir AUDIO_RESET_MS et initSegmentCc). */
+  noteAudioFormat(hls, d) {
     const tracks = d?.tracks || {}
     const fmt = audioFormatOf(tracks.audio?.initSegment || tracks.audiovideo?.initSegment)
-    const cc = d?.frag?.cc
+    const cc = initSegmentCc(hls.levels, d?.frag)
     if (!fmt || !Number.isFinite(cc)) return
     this.audioFormats.set(cc, { cc, ...fmt })
     // Les ruptures passées depuis longtemps ne servent plus.
     while (this.audioFormats.size > 8) this.audioFormats.delete(this.audioFormats.keys().next().value)
+    // Init de la rupture suivante arrivé pendant un calage : le garde-fou des
+    // 3 s s'arme maintenant (il ne regardait qu'au premier « waiting »).
+    if (this.stalledAt) this.watchFormatStall()
   }
 
   /** L'image passe au segment `frag` : d'une autre rupture du flux, avec un

@@ -718,10 +718,21 @@ async function usherLiveMaster(login, seen = {}) {
     if (geo) seen.geo = geo;
     const r = await fetch(`https://usher.ttvnw.net/api/channel/hls/${login}.m3u8?allow_source=true&allow_audio_only=true&allow_spectre=true&fast_bread=true&player=twitchweb&playlist_include_framerate=true&segment_preference=4&sig=${encodeURIComponent(token.signature)}&token=${encodeURIComponent(token.value)}`, { headers: REQUEST_HEADERS });
     if (r.ok) return { text: await r.text(), url: r.url };
-    // [{"error":"Content Restricted In Region","error_code":"content_geoblocked",…}]
-    const body = await r.text().catch(() => '');
-    if (/geoblock|geo_blocked|restricted in region/i.test(body)) seen.geo = seen.geo || `usher ${r.status}`;
+    if (usherGeoBlocked(await r.text().catch(() => ''))) seen.geo = seen.geo || `usher ${r.status}`;
     return null;
+}
+
+/** Refus d'usher pour cause de pays :
+ *  [{"url":"…","error":"Content Restricted In Region","error_code":"content_geoblocked",…}].
+ *  Seuls `error_code` et `error` comptent : `url` recopie l'adresse demandée,
+ *  jeton compris, et le jeton contient toujours `geoblock_reason` (même
+ *  vide) — un refus de signature ou de jeton (403 nauth_…) passait pour un
+ *  blocage par pays (vu le 26/10). */
+function usherGeoBlocked(body) {
+    let list;
+    try { list = JSON.parse(body); } catch (e) { return false; }
+    return (Array.isArray(list) ? list : [list]).some((e) => e && typeof e === 'object' && (
+        /geo/i.test(String(e.error_code || '')) || /restricted in region/i.test(String(e.error || ''))));
 }
 
 /** Blocage par pays écrit par Twitch dans un jeton de lecture
