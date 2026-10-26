@@ -11,7 +11,7 @@ guide: Developer Hub → **Submit a New Add-on** → **On this site**.
 - **Add-on:** the Firefox package — the contents of `extension-firefox/` (built by
   `node extension/dev/build-firefox.mjs`), `manifest.json` at the root of the zip. The
   release's `twitchunblock-connect-firefox.zip` is the same package.
-- **Source code** (see [After submitting](#after-submitting)): a zip of the repository's `extension/` folder,
+- **Source code** (asked on the page after the upload): a zip of the repository's `extension/` folder,
   with [BUILD.md](BUILD.md) at its root. It is needed because `build-firefox.mjs` generates
   the Firefox manifest; every JavaScript file is shipped as written.
 
@@ -22,9 +22,9 @@ with its own source code zip. Upload it from the add-on's page in the Developer 
 ## Upload
 
 - **Compatible platforms:** Firefox (desktop) only. Firefox for Android has not been tried.
-- **Do you need to submit source code?** Yes → the source code zip. On 2026-10-26 the form
-  did not ask (it went straight from the upload to **Describe Add-on**): the source code is
-  then added after submitting, see [After submitting](#after-submitting).
+- **Do you need to submit source code?** (the page after the upload, before **Describe
+  Add-on**) Yes → the source code zip. If it was skipped, add it after submitting, see
+  [After submitting](#after-submitting).
 
 ## Describe Add-on
 
@@ -127,10 +127,10 @@ create a dedicated test account for them.
 
 ## After submitting
 
-Right after **Submit Version**: Developer Hub → **My Add-ons** → TwitchUnblock Connect →
-**Manage Status & Versions** → open the version → at the bottom, next to **Source code**,
-**Browse** → the source code zip. Fill in **Release notes** on the same page, then
-**Save changes**. Release notes for 0.2.0:
+After **Submit Version**: Developer Hub → **My Add-ons** → TwitchUnblock Connect →
+**Manage Status & Versions** → open the version. Fill in **Release notes** and, if the source
+code was not given during the submission, add it at the bottom (next to **Source code**,
+**Browse**), then **Save changes**. Release notes for 0.2.0:
 
 > First version on addons.mozilla.org: channel points and bonus chests, watch streaks,
 > drops, predictions, polls, raids and channel rewards for the TwitchUnblock website, plus
