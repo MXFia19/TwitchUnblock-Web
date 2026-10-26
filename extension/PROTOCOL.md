@@ -7,7 +7,10 @@ in `extension/PROTOCOL.md`.
 The protocol stays at version 1: extension 0.2.0 adds two operations to it
 (`hq.master`, `hq.playlist`, higher qualities). The site only asks for them from an
 extension that announces 0.2.0 or later (`version` of `hello`); 0.1.0 would answer
-`unknown_op`.
+`unknown_op`. Extension 0.3.0 adds `follow.get` and `follow.set`, tells in `hq.master`
+whether Twitch serves ads to the account (`account`), and marks in `drops.get` the
+campaigns whose game account isn't linked (`needsLink`, `linkUrl`); the site only relies on
+them with 0.3.0 or later.
 
 ## Security principles
 
@@ -43,9 +46,17 @@ extension that announces 0.2.0 or later (`version` of `hello`); 0.1.0 would answ
   `sender.url` in the list above, `sender.frameId === 0`, types and bounds of every
   argument.
 - Operations that spend points (`predictions.bet`, `polls.vote`, `rewards.redeem`):
-  refused if the “Bets, votes and rewards from the site” setting is off, or if
-  `navigator.userActivation.isActive` is false when the content script receives the
-  request (it must follow a real click by the user). The site also shows its own
+  refused if the “Bets, votes and rewards from the site” setting is off, or without a
+  real click. Since 0.3.0, ONE real click per request: the content script listens to
+  `click` events in the capture phase and keeps only trusted ones (`isTrusted`, which a
+  page script can't fake); a spend needs `navigator.userActivation.isActive`, a trusted
+  click less than 5 s old, and that click not already used by another request (before,
+  the browser's activation, true for a few seconds after any click, let several spends
+  through). `follow.set` (an account action, not a spend) needs the same click, but not
+  that setting.
+- The site itself refuses spends and `follow.set` when the extension's twitch.tv account
+  isn't the one logged in on the site (error `account_mismatch`, never sent to the
+  extension): they would go to another account than the site's follows and chat. The site also shows its own
   confirmation (amount, choice) before sending. A spend is never sent to Twitch more
   than 30 s after the request (beyond that: `timeout`), so that the answer arrives
   before the site's 45 s.
@@ -114,10 +125,13 @@ longer answers.
    (`raid_update_v2`, `raid.id` field) on the watched channel, before following the raid.
 
 11. `drops.get` `{ channel }` →
-   `{ channelHasDrops: bool, campaigns: [ { id, name, gameName: string | null, endsAt: string | null, drops: [ { id, name, imageUrl: string | null, requiredMinutes, currentMinutes, claimed: bool, dropInstanceId: string | null } ] } ] }`
+   `{ channelHasDrops: bool, campaigns: [ { id, name, gameName: string | null, endsAt: string | null, drops: [ { id, name, imageUrl: string | null, requiredMinutes, currentMinutes, claimed: bool, dropInstanceId: string | null } ], needsLink?: true, linkUrl?: string | null } ] }`
    Active drops campaigns on this channel with the account's progress (taken from iOS
    `Sources/Services/Drops.swift`: `refresh`, `refreshAvailable`, `refreshSession`,
-   `campaign(_:)`). Non-null `dropInstanceId` = claimable drop.
+   `campaign(_:)`). Non-null `dropInstanceId` = claimable drop. 0.3.0: a campaign whose
+   game account isn't linked gets `needsLink: true` and `linkUrl` (https, or null), and
+   none of its drops has a `dropInstanceId` (claiming it could lose the reward; automatic
+   claiming and the app already skip it).
 12. `drops.claim` `{ dropInstanceId }` → `{ claimed: bool }`
    `DropsPage_ClaimDropRewards` mutation (`claimHash` hash from Drops.swift), with the
    integrity token. Not a spend: no real click required. `dropInstanceId`:
@@ -142,7 +156,11 @@ longer answers.
    required if `requiresInput` (1 to 200 characters) and forbidden otherwise. Twitch
    error → `twitch` with its code.
 16. `hq.master` `{ channel, codecs }` (0.2.0) →
-   `{ variants: [ { id, name, source: bool, width, height, fps, bandwidth, codecs } ] }`
+   `{ variants: [ { id, name, source: bool, width, height, fps, bandwidth, codecs } ], account: { adFree: bool, subscriber: bool } }`
+   (`account` since 0.3.0: what Twitch wrote in the account's playback token — `adFree`
+   when `hide_ads` is true or `show_ads` false, never from `turbo` alone, which a channel
+   can refuse; `subscriber` from `subscriber`. The site then plays the whole live through
+   the account when it is ad-free.)
    The live's list ON BEHALF OF THE ACCOUNT with the higher qualities (Enhanced
    Broadcasting: 1440p and above, sometimes in HEVC or AV1), like the iOS app
    (`TwitchAPI.swift`: `HigherQualities`, `usherLiveLinks`): the account's playback
@@ -178,6 +196,19 @@ longer answers.
    file gets the whole playlist refused (`twitch` `bad_response`). Unknown id, older
    than 6 h, or given for another session → `bad_args` `expired`; playlist 404 →
    `offline`; other status → `twitch` `http_<status>`.
+
+18. `follow.get` `{ channel }` (0.3.0) → `{ following: bool, followedAt: string | null }`
+   Whether the account follows the channel (query of iOS `FollowButton_User`,
+   `TwitchGQL.swift`, sent in clear: `user(login) { id self { follower { followedAt } } }`).
+   Unknown channel → `twitch` `channel_not_found`.
+19. `follow.set` `{ channel, follow: bool }` (0.3.0, real click, not subject to the spend
+   setting) → `{ following }`
+   `FollowButton_FollowUser` (`input: { disableNotifications: false, targetID }`) or
+   `FollowButton_UnfollowUser` (`input: { targetID }`), the app's hashes, with the
+   integrity token. Status read again first: already in the wanted state, nothing is
+   sent. Done only if the mutation's field is an object without `error` and, for a follow,
+   with a non-null `follow`; otherwise `twitch` with Twitch's code (`UNKNOWN` without
+   one). The site asks for a confirmation before unfollowing.
 
 Unknown Twitch fields: `null`, never made up.
 
@@ -220,14 +251,17 @@ cleaned-up Twitch message (80 characters at most).
 Reads (`*.get`, `status`): at most one Twitch request per 3 s per channel (otherwise a
 cached answer); `points.claim`: 1 per 10 s; `watch.beat`: 1 per 50 s per channel;
 `raid.join`: 1 per 30 s per channel; `drops.claim`: 1 per 5 s; `drops.pulse`: 1 per
-8 s per channel; spends: 1 per 3 s; `hq.master`: one list asked from Twitch per 10 s,
+8 s per channel; spends: 1 per 3 s; `follow.set`: 1 per 3 s; `hq.master`: one list asked from Twitch per 10 s,
 per channel and per choice of codecs (otherwise the same answer, same ids); all
 together: 60 requests a minute, beyond that `rate_limited`.
 
 `hq.playlist` has its own budget, outside the 60: the player re-reads the live's
 playlist every 2 to 6 s during playback, and must not starve the site of its other
 operations. At most one read from Twitch per second per variant (otherwise the same
-playlist), and 240 requests a minute, beyond that `rate_limited`.
+playlist), and 240 requests a minute, beyond that `rate_limited`. Variant ids are kept
+6 h at most, 48 in all; beyond 48, the least recently READ go first (0.3.0: not the
+oldest, which could be the ones the player is reading). On `expired`, the site asks for
+`hq.master` again and plays the new ids.
 
 ## Settings (extension's window, local storage, no secret)
 

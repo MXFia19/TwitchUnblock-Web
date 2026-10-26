@@ -66,6 +66,9 @@ export const DEFAULT_PREFS = {
   // Qualités supérieures (1440p et plus) par l'extension TwitchUnblock
   // Connect 0.2.0 (hq.js) : coupé par défaut, comme dans l'app.
   higherQualities: false,
+  // Sans pub avec mon abonnement (ou Turbo) : tout le direct par le compte
+  // de l'extension 0.3.0 quand Twitch ne lui sert pas de pub (hq.js).
+  subAdFree: true,
   vodSpeed: 1,       // vitesse des VODs, retenue d'une VOD à l'autre
   // Masqués du top et des catégories, plus récents d'abord ; `at` en
   // millisecondes, comme l'app iOS (sauvegarde : clé racine `hidden`).

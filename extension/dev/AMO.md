@@ -135,3 +135,12 @@ code was not given during the submission, add it at the bottom (next to **Source
 > First version on addons.mozilla.org: channel points and bonus chests, watch streaks,
 > drops, predictions, polls, raids and channel rewards for the TwitchUnblock website, plus
 > higher qualities (1440p and above).
+
+**Next versions**: Developer Hub → TwitchUnblock Connect → **Upload New Version** (the
+Firefox zip of the release), then the source zip and these notes. Release notes for 0.3.0:
+
+> Follow or unfollow a channel from the TwitchUnblock website, ad-free lives through your
+> account when you're subscribed (or have Turbo), and your account's stream as a last
+> resort when no other source answers. Drops whose game account isn't linked now show a
+> link instead of Claim. Spending points now takes one real click per spend. No new
+> permission.

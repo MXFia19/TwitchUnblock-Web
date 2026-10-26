@@ -5,7 +5,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  ABSENT_AFTER, ConnectError, HELLO_AT, MAX_BET, MAX_REWARD_INPUT, OPS, cleanArgs, connect, createConnect, normalize, timeoutFor,
+  ABSENT_AFTER, ConnectError, HELLO_AT, MAX_BET, MAX_REWARD_INPUT, OPS, accountMismatch, canFollow, cleanArgs, connect, createConnect,
+  normalize, timeoutFor,
 } from '../public/assets/js/connect.js'
 import { ConnectLive, errorText, isRepeatClick } from '../public/assets/js/chat/connect-live.js'
 import { t } from '../public/assets/js/i18n.js'
@@ -280,7 +281,7 @@ test('identifiants de demande uniques', () => {
 })
 
 test('délais d’attente : 15 s, et 45 s pour ce qui peut demander un jeton d’intégrité', async () => {
-  const slow = ['points.claim', 'watch.beat', 'predictions.bet', 'polls.vote', 'raid.join', 'drops.claim', 'drops.pulse', 'rewards.redeem', 'hq.master']
+  const slow = ['points.claim', 'watch.beat', 'predictions.bet', 'polls.vote', 'raid.join', 'drops.claim', 'drops.pulse', 'rewards.redeem', 'hq.master', 'follow.set']
   for (const op of OPS) assert.equal(timeoutFor(op), slow.includes(op) ? 45_000 : 15_000, op)
   // Pulsation : le jeton de lecture du compte peut demander un jeton
   // d'intégrité (jusqu'à ~40 s) ; à 15 s, la réponse et ses drops réclamés
@@ -295,6 +296,7 @@ test('délais d’attente : 15 s, et 45 s pour ce qui peut demander un jeton d�
     'drops.get': { channel: 'a' }, 'drops.pulse': { channel: 'a' }, 'drops.claim': { dropInstanceId: '1#2#3' },
     'rewards.get': { channel: 'a' }, 'rewards.redeem': { channel: 'a', rewardId: 'r', cost: 10, title: 'T', prompt: null, input: null },
     'hq.master': { channel: 'a', codecs: ['h264'] }, 'hq.playlist': { id: 'A'.repeat(22) },
+    'follow.get': { channel: 'a' }, 'follow.set': { channel: 'a', follow: true },
   }
   for (const op of OPS) {
     const { client, clock } = setup({ ext: null })
@@ -682,4 +684,60 @@ test('lecteur : carte du sondage retirée → son compte à rebours arrêté', (
   live.renderPoll()
   clearInterval(timer)
   assert.equal(live.pollTimer, null)
+})
+
+// ── Extension 0.3.0 ──────────────────────────────────────────────────────────
+test('0.3.0 : garde-fou de compte, suivi, drops à lier, compte sans pub', async () => {
+  assert.equal(accountMismatch({ session: { login: 'Viewer_1' } }, 'viewer_1'), null)
+  assert.deepEqual(accountMismatch({ session: { login: 'Alt_Account' } }, 'Viewer_1'), { ext: 'alt_account', site: 'viewer_1' })
+  assert.equal(accountMismatch({ session: null }, 'viewer_1'), null)
+  assert.equal(accountMismatch({ session: { login: 'x' } }, null), null)
+  assert.equal(canFollow({ availability: 'on', session: { login: 'x' }, version: '0.2.0' }), false)
+  assert.equal(canFollow({ availability: 'on', session: { login: 'x' }, version: '0.3.0' }), true)
+  assert.equal(canFollow({ availability: 'off', session: { login: 'x' }, version: '0.3.0' }), false)
+
+  const ext = {
+    ...GOOD,
+    status: () => ({ enabled: true, session: { login: 'alt_account', userId: '9' }, settings: { autoClaim: false, allowSpend: true } }),
+    'follow.get': () => ({ following: true, followedAt: '2026-01-02T03:04:05Z' }),
+    'follow.set': (a) => ({ following: a.follow }),
+  }
+  const { client, clock, reqs } = setup({ ext })
+  const st = client.refreshStatus()
+  await clock.advance(10)
+  await st
+  client.setSiteLogin('Viewer_1')
+  assert.deepEqual(client.mismatch(), { ext: 'alt_account', site: 'viewer_1' })
+  // Autre compte : ni dépense ni suivi ne partent.
+  for (const [op, args] of [
+    ['follow.set', { channel: 'a', follow: true }],
+    ['predictions.bet', { channel: 'a', eventId: 'e', outcomeId: 'o', points: 1 }],
+    ['polls.vote', { channel: 'a', pollId: 'p', choiceId: 'c', withPoints: true }],
+    ['rewards.redeem', { channel: 'a', rewardId: 'r', cost: 10, title: 'T', prompt: null, input: null }],
+  ]) {
+    await assert.rejects(client.request(op, args), (e) => e instanceof ConnectError && e.code === 'account_mismatch', op)
+    assert.equal(reqs(op).length, 0, op)
+  }
+  // Lectures et gains : permis.
+  const g = client.request('follow.get', { channel: 'a' })
+  await clock.advance(10)
+  assert.deepEqual(await g, { following: true, followedAt: Date.parse('2026-01-02T03:04:05Z') })
+  // Même compte des deux côtés : le suivi part.
+  client.setSiteLogin('ALT_ACCOUNT')
+  assert.equal(client.mismatch(), null)
+  const f = client.request('follow.set', { channel: 'a', follow: false })
+  await clock.advance(10)
+  assert.deepEqual(await f, { following: false, followedAt: null })
+  assert.deepEqual(reqs('follow.set')[0].data.args, { channel: 'a', follow: false })
+  assert.equal(cleanArgs('follow.set', { channel: 'a', follow: 'yes' }), null)
+  client.destroy()
+
+  // Drops à lier : rien de réclamable, adresse https seulement.
+  const linked = normalize('drops.get', { channelHasDrops: true, campaigns: [
+    { id: 'c1', name: 'n', gameName: null, endsAt: null, needsLink: true, linkUrl: 'https://game.example/link', drops: [] },
+    { id: 'c2', name: 'n', gameName: null, endsAt: null, needsLink: true, linkUrl: 'javascript:alert(1)', drops: [] },
+    { id: 'c3', name: 'n', gameName: null, endsAt: null, linkUrl: 'https://x.example', drops: [] },
+  ] })
+  assert.deepEqual(linked.campaigns.map((c) => [c.needsLink, c.linkUrl]), [[true, 'https://game.example/link'], [true, null], [false, null]])
+  assert.equal(errorText(new ConnectError('account_mismatch')), t('connect_err_account_mismatch'))
 })

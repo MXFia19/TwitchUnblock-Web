@@ -68,9 +68,27 @@
     "rewards.get": { channel: "channel" },
     "rewards.redeem": { channel: "channel", rewardId: "id", cost: "cost", title: "title", prompt: "prompt", input: "input" },
     "hq.master": { channel: "channel", codecs: "codecs" },
-    "hq.playlist": { id: "hqId" }
+    "hq.playlist": { id: "hqId" },
+    "follow.get": { channel: "channel" },
+    "follow.set": { channel: "channel", follow: "bool" }
   };
   const SPEND_OPS = ["predictions.bet", "polls.vote", "rewards.redeem"];
+  // Action du compte sans dépense : un vrai clic aussi.
+  const CLICK_OPS = ["follow.set"];
+
+  // Vrai clic de l'utilisateur sur la page (isTrusted, en capture ; Entrée ou
+  // Espace sur un bouton en donnent un aussi) : un seul par dépense ou action
+  // du compte. navigator.userActivation reste vrai quelques secondes après
+  // n'importe quel clic : assez, avant, pour plusieurs dépenses à la file.
+  const CLICK_MS = 5000;
+  let clickAt = 0;
+  let clickUsed = true;
+  window.addEventListener("click", (e) => {
+    if (e && e.isTrusted === true) {
+      clickAt = Date.now();
+      clickUsed = false;
+    }
+  }, true);
 
   // Longueur en caractères (points de code), pas en unités UTF-16.
   function charCount(s) {
@@ -185,14 +203,17 @@
       reply(id, failure("bad_args", checked.bad));
       return;
     }
-    // Dépense : seulement juste après un vrai clic de l'utilisateur sur la page.
-    const spend = SPEND_OPS.includes(op);
+    // Dépense, action du compte : seulement juste après un vrai clic de
+    // l'utilisateur sur la page, et un seul clic par demande.
+    const needsClick = SPEND_OPS.includes(op) || CLICK_OPS.includes(op);
     const ua = navigator.userActivation;
-    const activation = spend && !!ua && ua.isActive === true;
-    if (spend && !activation) {
+    const activation = needsClick && !!ua && ua.isActive === true &&
+      !clickUsed && Date.now() - clickAt < CLICK_MS;
+    if (needsClick && !activation) {
       reply(id, failure("needs_activation"));
       return;
     }
+    if (needsClick) clickUsed = true;
     if (inFlight >= MAX_IN_FLIGHT) {
       reply(id, failure("rate_limited"));
       return;

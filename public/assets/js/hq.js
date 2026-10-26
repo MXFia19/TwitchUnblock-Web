@@ -113,20 +113,25 @@ let masterSeq = 0
  * « 1080p60 HEVC » quand deux variantes portent le même nom —, avec la liste
  * maîtresse d'« Auto » (vidéo seulement). null si aucune vidéo lisible ici
  * ne dépasse 1080p : la source habituelle suffit, sans pub risquée pour rien.
+ * `any` : gardée quelle que soit la hauteur (compte sans pub : tout le
+ * direct par lui, extension 0.3.0 ; dernier recours quand aucune source ne
+ * répond). `maxHeight` : variantes plus hautes écartées (réglage « Qualités
+ * supérieures » coupé) ; 0 : aucune limite.
  * @param {Array<{id:string,name:string,source:boolean,width:number,height:number,fps:number,bandwidth:number,codecs:string}>} variants
  * @param {string[]} codecs  familles annoncées (browserCodecs)
  */
-export function buildHq(variants, codecs, { canPlay = defaultCanPlay } = {}) {
+export function buildHq(variants, codecs, { canPlay = defaultCanPlay, any = false, maxHeight = 0 } = {}) {
   const kept = []
   for (const v of variants ?? []) {
     const fam = videoFamily(v?.codecs)
     if (!fam) continue
     if (fam === 'audio' ? !canPlay(`audio/mp4; codecs="${v.codecs}"`)
-      : !codecs.includes(fam) || !(v.height > 0) || !canPlay(`video/mp4; codecs="${v.codecs}"`)) continue
+      : !codecs.includes(fam) || !(v.height > 0) || (maxHeight > 0 && v.height > maxHeight) ||
+        !canPlay(`video/mp4; codecs="${v.codecs}"`)) continue
     kept.push({ ...v, fam })
   }
   const video = kept.filter((v) => v.fam !== 'audio').sort((a, b) => b.height - a.height || b.fps - a.fps || b.bandwidth - a.bandwidth)
-  if (!(video.length && video[0].height > 1080)) return null
+  if (!video.length || (!any && !(video[0].height > 1080))) return null
   const base = (v) => v.name || (v.fam === 'audio' ? 'audio_only' : `${v.height}p${v.fps >= 1 ? Math.round(v.fps) : ''}`)
   const count = new Map()
   for (const v of kept) count.set(base(v), (count.get(base(v)) ?? 0) + 1)
@@ -216,6 +221,9 @@ export class HqLive {
    * @param {(key: string) => string} [o.qualityText]  nom affiché d'une qualité
    * @param {() => Promise<{links: object, variants?: object, source?: string}|null>} [o.refreshAdFree]
    * @param {() => void} [o.onSettle]  plus de flux du compte pour cette lecture
+   * @param {() => Promise<ReturnType<typeof buildHq>>} [o.renew]  nouvelle
+   *   liste du compte (hq.master), quand l'extension ne connaît plus ses
+   *   identifiants (6 h passées, autre session, élagués)
    */
   constructor(o) {
     this.o = o
@@ -236,6 +244,8 @@ export class HqLive {
     this.waitingPlay = false
     this.refreshing = false
     this.refreshFailedAt = 0
+    this.renewing = false
+    this.renewedAt = 0
   }
 
   setAdFree(set) {
@@ -254,8 +264,32 @@ export class HqLive {
   text(url) {
     if (this.destroyed) return Promise.reject(new Error('hq: closed'))
     if (url === this.hq.links.Auto) return Promise.resolve(this.hq.master)
-    if (typeof url === 'string' && url.startsWith(VARIANT_PREFIX)) return this.o.playlist(url.slice(VARIANT_PREFIX.length))
+    if (typeof url === 'string' && url.startsWith(VARIANT_PREFIX)) {
+      return this.o.playlist(url.slice(VARIANT_PREFIX.length)).catch((e) => {
+        // Identifiant que l'extension ne connaît plus : une nouvelle liste.
+        if (e?.code === 'bad_args' && e?.detail === 'expired') this.renew()
+        throw e
+      })
+    }
     return Promise.reject(new Error('hq: unknown'))
+  }
+
+  /** Nouvelle liste du compte (o.renew), lue à la place de l'ancienne si le
+   *  flux du compte joue. Une fois par minute au plus. */
+  renew() {
+    if (this.renewing || this.destroyed || typeof this.o.renew !== 'function') return
+    if (this.renewedAt && this.clock() - this.renewedAt < 60_000) return
+    this.renewing = true
+    Promise.resolve().then(() => this.o.renew()).then((hq) => {
+      this.renewing = false
+      this.renewedAt = this.clock()
+      if (!hq || this.destroyed) return
+      this.hq = hq
+      if (this.onHq) this.play(this.hq, { keepAds: true })
+    }, () => {
+      this.renewing = false
+      this.renewedAt = this.clock()
+    })
   }
 
   /** Playlist de la meilleure variante (pubs au bord), `timeoutMs` au plus
@@ -317,7 +351,9 @@ export class HqLive {
    *  pour de bon (true : réglé ici). Sur la source sans pub : ses relances
    *  et secours habituels (false). */
   onFatal() {
-    if (!this.onHq) return false
+    // Sans source habituelle où aller (flux du compte en dernier recours) :
+    // les relances et la carte « Réessayer » du lecteur, comme ailleurs.
+    if (!this.onHq || !this.canFallback) return false
     this.settle()
     return true
   }
@@ -346,7 +382,7 @@ export class HqLive {
     this.adFreeBreakEnd = 0
     this.checks = 0
     this.play(this.adFree)
-    this.o.notify?.(this.o.t('hq_ad_fallback', { q: this.label() }))
+    this.o.notify?.(this.o.t('hq_ad_fallback', { q: this.label() }), 'hq_ad_fallback')
     if (this.quickAds >= 2) this.settle()
     else this.schedule((left + 2) * 1000)
   }
@@ -399,7 +435,7 @@ export class HqLive {
     this.adFreeBreakEnd = 0
     this.lastReturn = this.clock()
     this.play(this.hq)
-    this.o.notify?.(this.o.t('hq_ad_back', { q: this.label() }))
+    this.o.notify?.(this.o.t('hq_ad_back', { q: this.label() }), 'hq_ad_back')
   }
 
   /** Plus de flux du compte pour cette lecture (pubs répétées, flux du

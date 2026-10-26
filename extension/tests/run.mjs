@@ -39,7 +39,9 @@ const HASHES = {
   ChannelPollContext_GetViewablePoll: "e83188a3836c636393df3191665e543a03733d7c51d3ade3d85e42aa46c2bf55",
   ChannelPollContext_VoteInPoll: "1280e27b0f3c7ae60b5714bd569771ea50635778473182e6e959e2dcfcc16e3c",
   JoinRaid: "c6a332a86d1087fbbb1a8623aa01bd1313d2386e7c63be60fdb2d1901f01a4ae",
-  DropsPage_ClaimDropRewards: "a455deea71bdc9015b78eb49f4acfbce8baa7ccbedd28e549bb025bd0f751930"
+  DropsPage_ClaimDropRewards: "a455deea71bdc9015b78eb49f4acfbce8baa7ccbedd28e549bb025bd0f751930",
+  FollowButton_FollowUser: "800e7346bdf7e5278a3c1d3f21b2b56e2639928f86815677a7126b093b2fdd08",
+  FollowButton_UnfollowUser: "f7dae976ebf41c755ae2d758546bfd176b4eeb856656098bb40e0a672ca0d880"
 };
 
 // Qualités supérieures : liste du compte (usher avec supported_codecs) et
@@ -213,7 +215,11 @@ function makeTwitch() {
     ],
     cooldowns: {},
     redeemError: null,
-    lastRedeem: null
+    lastRedeem: null,
+    // Suivi de la chaîne
+    following: false,
+    followError: null,      // code d'erreur rendu par followUser / unfollowUser
+    followCalls: []
   };
 }
 
@@ -394,6 +400,18 @@ function persistedOp(tw, op, headers) {
       }
       return { data: { claimDropRewards: { status: tw.dropClaimStatus } } };
     }
+    case "FollowButton_FollowUser":
+    case "FollowButton_UnfollowUser": {
+      const bad = needIntegrity(tw, headers);
+      if (bad) return bad[0];
+      const follow = name === "FollowButton_FollowUser";
+      assert.deepEqual(v, follow ? { input: { disableNotifications: false, targetID: CHANNEL_ID } } : { input: { targetID: CHANNEL_ID } });
+      tw.followCalls.push(follow ? "follow" : "unfollow");
+      const field = follow ? "followUser" : "unfollowUser";
+      if (tw.followError) return { data: { [field]: { error: { code: tw.followError } } } };
+      tw.following = follow;
+      return { data: { [field]: follow ? { follow: { followedAt: "2026-10-27T10:00:00Z" }, error: null } : { follow: null, error: null } } };
+    }
     default:
       throw new Error("opération inconnue : " + name);
   }
@@ -435,6 +453,11 @@ function rawQuery(tw, body, headers) {
     const cost = Number(/cost: (\d+),/.exec(q)[1]);
     tw.balance -= cost;
     return { data: { redeemCommunityPointsCustomReward: { redemption: { id: "rd-1" }, error: null } } };
+  }
+  if (q.includes("self { follower { followedAt } }")) {
+    assert.equal(headers.Authorization, "OAuth " + AUTH_TOKEN, "suivi lu avec la session");
+    if (body.variables.l !== CHANNEL) return { data: { user: null } };
+    return { data: { user: { id: CHANNEL_ID, self: { follower: tw.following ? { followedAt: "2026-01-02T03:04:05Z" } : null } } } };
   }
   if (q.includes("viewerDropCampaigns")) {
     assert.equal(headers.Authorization, undefined, "campagnes de la chaîne : lecture publique");
@@ -675,11 +698,15 @@ function loadBackground(opts = {}) {
 function loadContent(opts = {}) {
   const origin = opts.origin || SITE;
   const listeners = [];
+  const clicks = [];
   const posted = [];
   const sent = [];
   const nav = { userActivation: { isActive: false } };
   const win = {
-    addEventListener: (type, fn) => { if (type === "message") listeners.push(fn); },
+    addEventListener: (type, fn) => {
+      if (type === "message") listeners.push(fn);
+      if (type === "click") clicks.push(fn);
+    },
     removeEventListener: (type, fn) => { const i = listeners.indexOf(fn); if (type === "message" && i >= 0) listeners.splice(i, 1); },
     postMessage: (msg, targetOrigin) => {
       posted.push({ data: clone(msg), targetOrigin });
@@ -702,6 +729,8 @@ function loadContent(opts = {}) {
   let n = 0;
   return {
     posted, sent, nav, win, listeners,
+    // Clic sur la page : vrai (isTrusted), ou fabriqué par un script.
+    click: (trusted = true) => { nav.userActivation.isActive = true; clicks.forEach((fn) => fn({ isTrusted: trusted })); },
     // Nouvelle injection dans le même monde isolé (runtime.onInstalled).
     inject,
     // Mise à jour sous Chrome : le script en place devient orphelin, le
@@ -1468,7 +1497,8 @@ test("hq.master : jeton du compte, supported_codecs, variantes sans aucune adres
     { name: "1080p60", source: false, width: 1920, height: 1080, fps: 60, bandwidth: 6000000, codecs: "avc1.64002A,mp4a.40.2" },
     { name: "audio_only", source: false, width: 0, height: 0, fps: 0, bandwidth: 160000, codecs: "mp4a.40.2" }
   ], "720p (hôte inconnu) écartée ; ni IP ni données de séance");
-  assert.deepEqual(Object.keys(res.data), ["variants"]);
+  assert.deepEqual(Object.keys(res.data), ["variants", "account"]);
+  assert.deepEqual(res.data.account, { adFree: false, subscriber: false }, "jeton sans hide_ads ni show_ads faux : des pubs");
   // Les adresses restent dans storage.session, liées à la session.
   const fp = await fingerprintOf(AUTH_TOKEN);
   assert.equal(h.session.hq[ids[0]].url, HQ_HOST + "HQ1440secret.m3u8");
@@ -1739,6 +1769,78 @@ test("dépense : rien n'est envoyé plus de 30 s après la demande (le site aban
 
 // --- Content script --------------------------------------------------------------------------------------
 
+test("follow.get / follow.set : mutations de l'app, vrai clic, jeton d'intégrité", async () => {
+  const h = loadBackground({ tabs: [liveTab()] });
+  assert.deepEqual(await h.op("follow.get", { channel: CHANNEL }), { ok: true, data: { following: false, followedAt: null } });
+  // Sans vrai clic : refusé, sans requête.
+  const before = h.tw.log.length;
+  assert.equal(code(await h.op("follow.set", { channel: CHANNEL, follow: true })), "needs_activation");
+  assert.equal(h.tw.log.length, before);
+  // Suivre, puis ne plus suivre (le réglage des dépenses n'y fait rien).
+  assert.deepEqual(await h.spend("follow.set", { channel: CHANNEL, follow: true }), { ok: true, data: { following: true } });
+  h.clock.now += 3001;
+  assert.deepEqual((await h.op("follow.get", { channel: CHANNEL })).data, { following: true, followedAt: "2026-01-02T03:04:05Z" });
+  assert.deepEqual(await h.spend("follow.set", { channel: CHANNEL, follow: false }), { ok: true, data: { following: false } });
+  assert.deepEqual(h.tw.followCalls, ["follow", "unfollow"]);
+  // Déjà dans l'état voulu : rien d'envoyé.
+  h.clock.now += 3001;
+  assert.deepEqual(await h.spend("follow.set", { channel: CHANNEL, follow: false }), { ok: true, data: { following: false } });
+  assert.equal(h.tw.followCalls.length, 2);
+  // Refus de Twitch (limite de suivis…) : son code.
+  h.clock.now += 3001;
+  h.tw.followError = "TOO_MANY_FOLLOWS";
+  const refused = await h.spend("follow.set", { channel: CHANNEL, follow: true });
+  assert.equal(code(refused), "twitch");
+  assert.equal(refused.error.message, "TOO_MANY_FOLLOWS");
+  // Chaîne inconnue.
+  h.clock.now += 3001;
+  assert.equal((await h.op("follow.get", { channel: "nobody_here" })).error.message, "channel_not_found");
+  const off = loadBackground({ local: { settings: { siteEnabled: true, autoClaim: true, allowSpend: false } }, tabs: [liveTab()] });
+  assert.equal(code(await off.spend("follow.set", { channel: CHANNEL, follow: true })), "ok", "pas une dépense");
+  assertNoLeaks(h, "follow");
+});
+
+test("drops.get : campagne à compte de jeu non lié, rien de réclamable et lien pour le lier", async () => {
+  const h = loadBackground({ tabs: [liveTab()] });
+  h.tw.channelCampaigns = ["camp-linked"];
+  const res = await h.op("drops.get", { channel: CHANNEL });
+  assert.equal(code(res), "ok");
+  assert.deepEqual(res.data.campaigns, [{
+    id: "camp-linked", name: "Needs a game account", gameName: "Other Game", endsAt: "2026-10-25T00:00:00Z",
+    drops: [{ id: "drop-l1", name: "Skin", imageUrl: null, requiredMinutes: 10, currentMinutes: 10, claimed: false, dropInstanceId: null }],
+    needsLink: true, linkUrl: "https://game.example/link"
+  }]);
+});
+
+test("hq.master : compte sans pub (hide_ads, show_ads faux), abonné ; jamais turbo seul", async () => {
+  for (const [value, expected] of [
+    ['{"authorization":{"forbidden":false},"user_id":1,"hide_ads":true,"subscriber":true}', { adFree: true, subscriber: true }],
+    ['{"authorization":{"forbidden":false},"user_id":1,"show_ads":false,"turbo":true}', { adFree: true, subscriber: false }],
+    ['{"authorization":{"forbidden":false},"user_id":1,"show_ads":true,"turbo":true,"hide_ads":false}', { adFree: false, subscriber: false }]
+  ]) {
+    const h = loadBackground({ tabs: [liveTab()] });
+    h.tw.patValue = value;
+    const res = await h.op("hq.master", { channel: CHANNEL, codecs: ["h264"] });
+    assert.deepEqual(res.data.account, expected, value);
+  }
+});
+
+test("hq : identifiants élagués selon leur dernier usage, pas leur âge", async () => {
+  const h = loadBackground({ tabs: [liveTab()] });
+  const ask = () => h.op("hq.master", { channel: CHANNEL, codecs: ["h264", "h265"] });
+  const first = (await ask()).data.variants[0].id;
+  // 17 listes de 3 variantes : 51 identifiants pour 48 places. Celui que le
+  // lecteur lit encore reste, les plus vieux inutilisés partent.
+  for (let i = 0; i < 17; i++) {
+    h.clock.now += 10001;
+    assert.equal(code(await h.op("hq.playlist", { id: first })), "ok");
+    await ask();
+  }
+  assert.equal(Object.keys(h.session.hq).length, 48);
+  assert.ok(h.session.hq[first], "lu à chaque fois : gardé");
+  assert.equal(code(await h.op("hq.playlist", { id: first })), "ok");
+});
+
 test("content script : annonce hello au chargement", async () => {
   const bg = loadBackground();
   const page = loadContent({ sendMessage: (m) => bg.deliver(m, bg.siteSender()) });
@@ -1782,6 +1884,7 @@ test("content script et arrière-plan : même validation", async () => {
   page.nav.userActivation.isActive = true;
   await ticks(5);
   for (const [op, args, expected] of ARG_CASES) {
+    page.click();
     const id = page.request(op, args);
     const res = await page.reply(id);
     const fromPage = res.ok ? "ok" : res.error.code;
@@ -1803,10 +1906,28 @@ test("content script : dépense seulement après un vrai clic", async () => {
   assert.equal(page.sent.length, before, "rien transmis sans clic");
   // raid.join n'est pas une dépense : pas de clic exigé.
   assert.equal((await page.reply(page.request("raid.join", { channel: CHANNEL, raidId: "abcd-1" }))).ok, true);
-  page.nav.userActivation.isActive = true;
+  // Activation du navigateur sans clic reçu ici (clic fabriqué par un script) : refusé.
+  page.click(false);
+  assert.equal((await page.reply(page.request("predictions.bet", bet))).error.code, "needs_activation");
+  page.click();
   assert.equal((await page.reply(page.request("predictions.bet", bet))).ok, true);
   const last = page.sent[page.sent.length - 1];
-  assert.deepEqual(last, { tuConnect: 1, kind: "op", id: "q4", op: "predictions.bet", args: bet, activation: true });
+  assert.deepEqual(last, { tuConnect: 1, kind: "op", id: "q5", op: "predictions.bet", args: bet, activation: true });
+  // Un clic, une dépense : la seconde, même dans la foulée, en veut un autre.
+  assert.ok(page.nav.userActivation.isActive, "le navigateur garde l'activation");
+  assert.equal((await page.reply(page.request("polls.vote", { channel: CHANNEL, pollId: "p1", choiceId: "c1", withPoints: true }))).error.code, "needs_activation");
+  page.click();
+  assert.equal((await page.reply(page.request("polls.vote", { channel: CHANNEL, pollId: "p1", choiceId: "c1", withPoints: true }))).ok, true);
+});
+
+test("content script : suivre une chaîne seulement après un vrai clic", async () => {
+  const page = loadContent({ sendMessage: async () => ({ ok: true, data: { following: true } }) });
+  await ticks(5);
+  assert.equal((await page.reply(page.request("follow.get", { channel: CHANNEL }))).ok, true, "lecture : pas de clic");
+  assert.equal((await page.reply(page.request("follow.set", { channel: CHANNEL, follow: true }))).error.code, "needs_activation");
+  page.click();
+  assert.equal((await page.reply(page.request("follow.set", { channel: CHANNEL, follow: true }))).ok, true);
+  assert.equal((await page.reply(page.request("follow.set", { channel: CHANNEL, follow: "yes" }))).error.code, "bad_args");
 });
 
 test("content script : au plus 16 demandes en cours", async () => {
@@ -1899,8 +2020,9 @@ test("manifeste : origines, permissions et arrière-plan attendus", () => {
   assert.deepEqual(MANIFEST.content_scripts, [{ matches: [SITE + "/*", PREVIEW + "/*"], js: ["content.js"], run_at: "document_start", all_frames: false }]);
   // 0.2.0 (qualités supérieures) : aucune permission de plus — pas de
   // declarativeNetRequest ni de webRequest : la page ne lit pas les playlists
-  // de Twitch elle-même, l'extension les lui rend (hq.playlist).
-  assert.equal(MANIFEST.version, "0.2.0");
+  // de Twitch elle-même, l'extension les lui rend (hq.playlist). 0.3.0
+  // (suivre, compte sans pub) : rien de plus non plus.
+  assert.equal(MANIFEST.version, "0.3.0");
   assert.deepEqual([...MANIFEST.permissions].sort(), ["cookies", "scripting", "storage", "tabs"]);
   assert.equal(MANIFEST.declarative_net_request, undefined);
   assert.equal(MANIFEST.optional_permissions, undefined);

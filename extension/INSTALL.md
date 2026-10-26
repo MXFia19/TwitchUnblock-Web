@@ -10,7 +10,9 @@ browser, so that while you watch a live on the site you can:
 - bet on predictions and vote in polls,
 - redeem channel rewards,
 - move your drops forward and claim them,
-- watch in **1440p and above** on the channels that offer it (new in 0.2.0).
+- watch in **1440p and above** on the channels that offer it (new in 0.2.0),
+- follow or unfollow channels, and watch **without ads** when you're subscribed or have
+  Turbo (new in 0.3.0).
 
 Your Twitch session never leaves the extension: nothing goes through TwitchUnblock's servers,
 and spending points always needs a click from you. For 1440p, the site only gets the live's

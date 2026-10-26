@@ -55,7 +55,9 @@ const HASH = {
   viewablePoll: "e83188a3836c636393df3191665e543a03733d7c51d3ade3d85e42aa46c2bf55",      // ChannelPollContext_GetViewablePoll
   voteInPoll: "1280e27b0f3c7ae60b5714bd569771ea50635778473182e6e959e2dcfcc16e3c",        // ChannelPollContext_VoteInPoll
   dropsClaim: "a455deea71bdc9015b78eb49f4acfbce8baa7ccbedd28e549bb025bd0f751930",        // DropsPage_ClaimDropRewards (Drops.swift)
-  joinRaid: "c6a332a86d1087fbbb1a8623aa01bd1313d2386e7c63be60fdb2d1901f01a4ae"           // JoinRaid (non vérifié)
+  joinRaid: "c6a332a86d1087fbbb1a8623aa01bd1313d2386e7c63be60fdb2d1901f01a4ae",          // JoinRaid (non vérifié)
+  follow: "800e7346bdf7e5278a3c1d3f21b2b56e2639928f86815677a7126b093b2fdd08",            // FollowButton_FollowUser (TwitchGQL.swift)
+  unfollow: "f7dae976ebf41c755ae2d758546bfd176b4eeb856656098bb40e0a672ca0d880"           // FollowButton_UnfollowUser
 };
 
 // Requêtes GQL en clair. Celles de l'app iOS, avec le login en variable au
@@ -87,7 +89,10 @@ const Q = {
   rewards: "query($l: String!) { channel(name: $l) { communityPointsSettings { isEnabled customRewards { " +
     "id title cost isEnabled isPaused isInStock isUserInputRequired prompt backgroundColor " +
     "image { url2x } defaultImage { url2x } } } } }",
-  rewardCooldowns: "query($l: String!) { channel(name: $l) { communityPointsSettings { customRewards { id cooldownExpiresAt } } } }"
+  rewardCooldowns: "query($l: String!) { channel(name: $l) { communityPointsSettings { customRewards { id cooldownExpiresAt } } } }",
+  // FollowButton_User de l'app (TwitchGQL.swift), en clair : `self.follower`
+  // non nul si le compte suit la chaîne.
+  follow: "query($l: String!) { user(login: $l) { id self { follower { followedAt } } } }"
 };
 
 const LIMIT = {
@@ -179,9 +184,13 @@ const OP_ARGS = {
   "rewards.get": { channel: "channel" },
   "rewards.redeem": { channel: "channel", rewardId: "id", cost: "cost", title: "title", prompt: "prompt", input: "input" },
   "hq.master": { channel: "channel", codecs: "codecs" },
-  "hq.playlist": { id: "hqId" }
+  "hq.playlist": { id: "hqId" },
+  "follow.get": { channel: "channel" },
+  "follow.set": { channel: "channel", follow: "bool" }
 };
 const SPEND_OPS = ["predictions.bet", "polls.vote", "rewards.redeem"];
+// Action du compte sans dépense : un vrai clic aussi, pas le réglage des dépenses.
+const CLICK_OPS = ["follow.set"];
 
 // Longueur en caractères (points de code), pas en unités UTF-16.
 function charCount(s) {
@@ -389,10 +398,12 @@ function save(key) {
   }
 }
 
-function pruneMap(map, max) {
+// `stamp` : date de chaque entrée pour l'élagage (par défaut `at`).
+function pruneMap(map, max, stamp) {
   const keys = Object.keys(map);
   if (keys.length <= max) return;
-  keys.sort((a, b) => ((map[a] && map[a].at) || 0) - ((map[b] && map[b].at) || 0));
+  const at = (k) => (stamp ? stamp(map[k]) : map[k] && map[k].at) || 0;
+  keys.sort((a, b) => at(a) - at(b));
   for (const k of keys.slice(0, keys.length - max)) delete map[k];
 }
 
@@ -1521,7 +1532,8 @@ function normalizeCampaign(c) {
       endsAt: str(c.endAt, 40),
       drops
     },
-    needsLink: !connected && !link.includes("twitch.tv")
+    needsLink: !connected && !link.includes("twitch.tv"),
+    linkUrl: httpsUrl(link)
   };
 }
 
@@ -1607,6 +1619,14 @@ async function opDropsGet(args, session) {
   }
   const campaigns = found.concat(extra).map((c) => {
     const campaign = Object.assign({}, c.campaign);
+    // Compte de jeu à lier : rien de réclamable d'ici (la récompense pouvait
+    // être perdue ; la réclamation automatique et l'app les écartent déjà),
+    // et l'adresse pour le lier.
+    if (c.needsLink) {
+      campaign.drops = campaign.drops.map((d) => (d.dropInstanceId ? Object.assign({}, d, { dropInstanceId: null }) : d));
+      campaign.needsLink = true;
+      campaign.linkUrl = c.linkUrl;
+    }
     // Minutes du drop en cours : celles de la session si l'inventaire est en retard.
     if (current && current.currentMinutes !== null) {
       campaign.drops = campaign.drops.map((d) => (d.id === current.dropId && current.currentMinutes > d.currentMinutes
@@ -1656,14 +1676,21 @@ async function accountPlaybackToken(session, channel) {
   if (!pat || typeof pat.value !== "string" || typeof pat.signature !== "string") return null;
   if (!/"user_id":\d/.test(pat.value)) return null;
   // Lecture refusée à ce compte (géoblocage…) : `authorization.forbidden`.
+  // Sans pub (abonné à la chaîne, ou Turbo qu'elle accepte) : `hide_ads`, ou
+  // `show_ads` faux — jamais `turbo` seul, une chaîne peut le refuser
+  // (TwitchAPI.swift, accountPlaybackToken).
   let forbidden = false;
+  let adFree = false;
+  let subscriber = false;
   try {
     const v = JSON.parse(pat.value);
     forbidden = !!(v && v.authorization && v.authorization.forbidden === true);
+    adFree = !!v && (v.hide_ads === true || v.show_ads === false);
+    subscriber = !!v && v.subscriber === true;
   } catch (e) {
     forbidden = false;
   }
-  return { value: pat.value, signature: pat.signature, forbidden };
+  return { value: pat.value, signature: pat.signature, forbidden, adFree, subscriber };
 }
 
 function hlsUrl(url) {
@@ -2115,9 +2142,10 @@ function opHqMaster(args, session) {
       mem.hq[id] = { url: v.url, fp: session.fp, channel, at: now };
       out.push({ id, name: v.name, source: v.source, width: v.width, height: v.height, fps: v.fps, bandwidth: v.bandwidth, codecs: v.codecs });
     }
-    pruneMap(mem.hq, LIMIT.hqMax);
+    pruneMap(mem.hq, LIMIT.hqMax, (v) => v && (v.used || v.at));
     save("hq");
-    return { variants: out };
+    // 0.3.0 : le site lit tout le direct par le compte s'il est sans pub.
+    return { variants: out, account: { adFree: pat.adFree === true, subscriber: pat.subscriber === true } };
   });
 }
 
@@ -2133,6 +2161,10 @@ async function opHqPlaylist(args, session) {
       v.at > now || now - v.at >= LIMIT.hqKeepMs || !variantUrl(v.url)) {
     throw new TuError("bad_args", "expired");
   }
+  // Dernier usage : l'élagage (pruneMap) garde celles que le lecteur lit
+  // encore, même plus anciennes que des listes demandées depuis. En mémoire
+  // seulement : gardé au prochain enregistrement de la liste.
+  v.used = now;
   const playlist = await cachedRead("hqpl:" + args.id, LIMIT.hqPlaylistMs, async () => {
     const { status, body } = await fetchWith(v.url, { method: "GET" }, (res) => res.text());
     if (status === 404) throw new TuError("offline");
@@ -2263,6 +2295,49 @@ async function opRewardsRedeem(args, session) {
   return { balance: Math.max(0, pts.balance - r.cost) };
 }
 
+// Suivi de la chaîne par le compte (FollowButton de l'app, TwitchGQL.swift).
+function readFollow(session, channel, fresh) {
+  return cachedRead(session.fp + ":follow:" + channel, LIMIT.readMs, async () => {
+    const json = await gql({ query: Q.follow, variables: { l: channel } }, session);
+    const data = json.data;
+    if (!data || typeof data !== "object") {
+      throwGqlErrors(json);
+      throw new TuError("twitch", "bad_response");
+    }
+    const user = data.user;
+    if (!user || typeof user.id !== "string" || !NUMERIC_ID_RE.test(user.id)) throw new TuError("twitch", "channel_not_found");
+    const f = user.self && user.self.follower;
+    return { channelId: user.id, following: !!f && typeof f === "object", followedAt: f && typeof f === "object" ? str(f.followedAt, 40) : null };
+  }, fresh);
+}
+
+async function opFollowGet(args, session) {
+  const f = await readFollow(session, args.channel);
+  return { following: f.following, followedAt: f.followedAt };
+}
+
+// Suivre ou ne plus suivre (vrai clic ; le site confirme avant de ne plus
+// suivre). Réussi seulement si le champ de la mutation est un objet sans
+// `error`, et, pour un suivi, avec `follow` non nul (refusal de l'app).
+async function opFollowSet(args, session) {
+  const f = await readFollow(session, args.channel, true);
+  if (f.following === args.follow) return { following: f.following };
+  const body = args.follow
+    ? persisted("FollowButton_FollowUser", { input: { disableNotifications: false, targetID: f.channelId } }, HASH.follow)
+    : persisted("FollowButton_UnfollowUser", { input: { targetID: f.channelId } }, HASH.unfollow);
+  const res = await mutation(body, session, { auto: false });
+  if (gqlErrors(res).length) throwGqlErrors(res);
+  const field = args.follow ? "followUser" : "unfollowUser";
+  const payload = res.data && res.data[field];
+  const error = payload && typeof payload === "object" ? payload.error : null;
+  if (!payload || typeof payload !== "object" || (error && typeof error === "object") ||
+      (args.follow && payload.follow === null)) {
+    throw new TuError("twitch", error && typeof error.code === "string" ? safeCode(error.code) : "UNKNOWN");
+  }
+  readCache.delete(session.fp + ":follow:" + args.channel);
+  return { following: args.follow };
+}
+
 const OPS = {
   "points.get": opPointsGet,
   "points.claim": opPointsClaim,
@@ -2278,7 +2353,9 @@ const OPS = {
   "rewards.get": opRewardsGet,
   "rewards.redeem": opRewardsRedeem,
   "hq.master": opHqMaster,
-  "hq.playlist": opHqPlaylist
+  "hq.playlist": opHqPlaylist,
+  "follow.get": opFollowGet,
+  "follow.set": opFollowSet
 };
 
 function asResponse(promise) {
@@ -2315,6 +2392,8 @@ async function handleSiteRequest(msg) {
     if (!settings.allowSpend) return fail("spend_disabled");
     if (msg.activation !== true) return fail("needs_activation");
   }
+  if (CLICK_OPS.includes(op) && msg.activation !== true) return fail("needs_activation");
+  if (op === "follow.set" && !takeSlot("follow", LIMIT.spendMs)) return fail("rate_limited");
   if (op === "raid.join") {
     const prev = mem.raidJoins[args.raidId];
     const now = Date.now();

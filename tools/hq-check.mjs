@@ -74,7 +74,10 @@ test('connect.js : arguments de hq.* vérifiés et remis dans l’ordre', () => 
 
 test('connect.js : réponses de hq.* relues, jamais d’adresse gardée', () => {
   const m = normalize('hq.master', { variants: [{ ...VARIANTS[0], url: 'https://euw31.playlist.ttvnw.net/v1/playlist/x.m3u8', extra: 1 }] })
-  assert.deepEqual(m, { variants: [{ ...VARIANTS[0] }] })
+  assert.deepEqual(m, { variants: [{ ...VARIANTS[0] }], account: null }, 'extension 0.2.0 : rien sur le compte')
+  // 0.3.0 : sans pub et abonné, des booléens, rien d'autre.
+  assert.deepEqual(normalize('hq.master', { variants: [VARIANTS[0]], account: { adFree: true, subscriber: 'yes', token: 'x' } }).account,
+    { adFree: true, subscriber: false })
   assert.deepEqual(Object.keys(m.variants[0]).sort(), ['bandwidth', 'codecs', 'fps', 'height', 'id', 'name', 'source', 'width'])
   assert.equal(normalize('hq.master', { variants: [] }), null)
   assert.equal(normalize('hq.master', { variants: [{ ...VARIANTS[0], id: 'x' }] }), null)
@@ -428,4 +431,52 @@ test('playlists du lecteur : Auto d’ici, variantes par l’extension ; fermé,
   s.live.onAdState(0)
   s.live.onPlay()
   assert.equal(s.player.swaps.length, 1)
+})
+
+// ── Extension 0.3.0 : compte sans pub, dernier recours, identifiants ───────
+test('compte sans pub (0.3.0) : liste gardée même sans 1440p ; plafond quand les qualités supérieures sont coupées', () => {
+  // Rien au-dessus de 1080p : gardée quand même pour un compte sans pub.
+  const low = buildHq(VARIANTS.slice(2), ALL, { canPlay: yes, any: true })
+  assert.deepEqual(Object.keys(low.links), ['Auto', '1080p60', '720p60', 'audio_only'])
+  assert.equal(low.top, 1080)
+  // Qualités supérieures coupées : la 1440p écartée, le reste gardé.
+  const capped = buildHq(VARIANTS, ALL, { canPlay: yes, any: true, maxHeight: 1080 })
+  assert.equal(capped.top, 1080)
+  assert.ok(!Object.keys(capped.links).some((k) => k.startsWith('1440')))
+  // Sans `any`, le plafond laisse la règle habituelle : rien au-dessus de 1080p, null.
+  assert.equal(buildHq(VARIANTS, ALL, { canPlay: yes, maxHeight: 1080 }), null)
+  // Aucune vidéo lisible : null même avec `any`.
+  assert.equal(buildHq([VARIANTS[4]], ALL, { canPlay: yes, any: true }), null)
+})
+
+test('identifiants périmés (expired) : nouvelle liste demandée, une fois par minute au plus, lue à la place', async () => {
+  const s = setup()
+  await s.start()
+  let renews = 0
+  const fresh = buildHq(VARIANTS.map((v, i) => ({ ...v, id: ID(10 + i) })), ALL, { canPlay: yes })
+  s.live.o.renew = async () => { renews++; return fresh }
+  s.state.edge = Object.assign(new Error('bad_args'), { code: 'bad_args', detail: 'expired' })
+  await assert.rejects(s.live.text(`tuhq://v/${ID(1)}`))
+  await s.clock.advance(1)
+  assert.equal(renews, 1)
+  assert.equal(s.live.hq, fresh)
+  assert.equal(s.player.swaps.length, 1, 'le flux du compte joue : nouvelles adresses au lecteur')
+  await assert.rejects(s.live.text(`tuhq://v/${ID(10)}`))
+  await s.clock.advance(1)
+  assert.equal(renews, 1, 'une fois par minute au plus')
+  // Une autre erreur : pas de nouvelle liste.
+  await s.clock.advance(61_000)
+  s.state.edge = Object.assign(new Error('offline'), { code: 'offline' })
+  await assert.rejects(s.live.text(`tuhq://v/${ID(10)}`))
+  await s.clock.advance(1)
+  assert.equal(renews, 1)
+})
+
+test('dernier recours (aucune source habituelle) : une erreur fatale reste au lecteur, aucune bascule', async () => {
+  const s = setup({ adFree: { links: {} } })
+  assert.equal(await s.start(), true)
+  assert.equal(s.live.onFatal(), false)
+  s.player.ad = 30
+  s.live.onAdState(30)
+  assert.equal(s.player.swaps.length, 0, 'pub du compte : rien vers quoi basculer')
 })

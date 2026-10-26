@@ -23,7 +23,10 @@ export const INSTALL_URL = 'https://github.com/MXFia19/TwitchUnblock-Web/release
  *  (extension/dev/check-site-version.mjs le vérifie en CI). Installée à la
  *  main depuis GitHub, l'extension ne se met jamais à jour seule : plus
  *  ancienne, le site le dit (connect-update.js). */
-export const CONNECT_LATEST = '0.2.0'
+export const CONNECT_LATEST = '0.3.0'
+/** Première version qui suit une chaîne (follow.*) et dit si le compte est
+ *  sans pub (hq.master `account`). */
+export const ACCOUNT_MIN_VERSION = '0.3.0'
 /** Version comptée par /stats : trois nombres (« 0.1.0 »), comme le Worker. */
 export const USAGE_VERSION_RE = /^\d{1,4}\.\d{1,4}\.\d{1,4}$/
 
@@ -63,16 +66,34 @@ export function usageFields(st, ua = globalThis.navigator?.userAgent ?? '') {
   return { ext: st.version, extBrowser: browser }
 }
 /** Liste fermée du protocole : rien d'autre ne part. `hq.*` : extension
- *  0.2.0 et plus seulement (qualités supérieures, hq.js). */
+ *  0.2.0 et plus seulement (qualités supérieures, hq.js) ; `follow.*` : 0.3.0. */
 export const OPS = Object.freeze(['hello', 'status', 'points.get', 'points.claim', 'watch.beat',
   'predictions.get', 'predictions.bet', 'polls.get', 'polls.vote', 'raid.join',
   'drops.get', 'drops.claim', 'drops.pulse', 'rewards.get', 'rewards.redeem',
-  'hq.master', 'hq.playlist'])
+  'hq.master', 'hq.playlist', 'follow.get', 'follow.set'])
 /** Peuvent devoir obtenir un jeton d'intégrité Twitch : 45 s au lieu de 15.
  *  `drops.pulse` et `hq.master` aussi : le jeton de lecture du compte peut en
  *  demander un. */
 const SLOW_OPS = new Set(['points.claim', 'watch.beat', 'predictions.bet', 'polls.vote',
-  'raid.join', 'drops.claim', 'drops.pulse', 'rewards.redeem', 'hq.master'])
+  'raid.join', 'drops.claim', 'drops.pulse', 'rewards.redeem', 'hq.master', 'follow.set'])
+/** Dépenses et actions du compte : refusées ici quand le compte twitch.tv de
+ *  l'extension n'est pas celui du site (accountMismatch). Les points gagnés
+ *  en regardant, les coffres et les drops vont au compte de l'extension :
+ *  permis. */
+const GUARDED_OPS = new Set(['predictions.bet', 'polls.vote', 'rewards.redeem', 'follow.set'])
+
+/** Comptes différents : { ext, site } quand l'extension a une session à un
+ *  autre pseudo que le compte connecté sur le site ; null sinon (pas de
+ *  compte d'un côté ou de l'autre, ou le même). */
+export function accountMismatch(st, siteLogin) {
+  const ext = typeof st?.session?.login === 'string' ? st.session.login.toLowerCase() : ''
+  const site = typeof siteLogin === 'string' ? siteLogin.toLowerCase() : ''
+  return ext && site && ext !== site ? { ext, site } : null
+}
+
+/** Suivre une chaîne par l'extension : 0.3.0, branchée, avec une session. */
+export const canFollow = (st) => st?.availability === 'on' && Boolean(st.session) &&
+  compareVersions(st.version, ACCOUNT_MIN_VERSION) >= 0
 export const timeoutFor = (op) => (SLOW_OPS.has(op) ? 45_000 : 15_000)
 
 /** Détection : `hello` à 0 ; 0,5 ; 1,5 et 3 s, tant que rien n'a répondu. */
@@ -292,7 +313,10 @@ function normDrops(d) {
         dropInstanceId: dropInstance(x.dropInstanceId),
       })
     }
-    campaigns.push({ id: c.id, name: text(c.name, 200) ?? '', gameName: text(c.gameName, 200) || null, endsAt: time(c.endsAt), drops })
+    // 0.3.0 : compte de jeu à lier (rien de réclamable), et son adresse.
+    const needsLink = c.needsLink === true
+    campaigns.push({ id: c.id, name: text(c.name, 200) ?? '', gameName: text(c.gameName, 200) || null, endsAt: time(c.endsAt), drops,
+      needsLink, linkUrl: needsLink ? httpsUrl(c.linkUrl) : null })
   }
   return { channelHasDrops: d.channelHasDrops, campaigns }
 }
@@ -361,7 +385,16 @@ function normHqMaster(d) {
       codecs: v.codecs,
     })
   }
-  return { variants }
+  // 0.3.0 : ce que Twitch a écrit dans le jeton du compte (sans pub : abonné,
+  // ou Turbo que la chaîne accepte) ; null avant.
+  const account = isObj(d.account) ? { adFree: d.account.adFree === true, subscriber: d.account.subscriber === true } : null
+  return { variants, account }
+}
+
+/** Suivi de la chaîne par le compte de l'extension. */
+function normFollow(d) {
+  if (typeof d.following !== 'boolean') return null
+  return { following: d.following, followedAt: time(d.followedAt) }
 }
 
 /** Playlist d'une variante, réécrite par l'extension (texte HLS). */
@@ -387,6 +420,8 @@ const NORMALIZE = {
   'rewards.redeem': normRedeem,
   'hq.master': normHqMaster,
   'hq.playlist': normHqPlaylist,
+  'follow.get': normFollow,
+  'follow.set': normFollow,
 }
 
 /** Relit une réponse `data` d'une opération : sa forme propre, ou null. */
@@ -425,6 +460,7 @@ export function cleanArgs(op, a) {
     if (!isStr(a.raidId) || !RAID_ID_RE.test(a.raidId)) return null
     return { channel, raidId: a.raidId }
   }
+  if (op === 'follow.set') return typeof a.follow === 'boolean' ? { channel, follow: a.follow } : null
   if (op === 'rewards.redeem') {
     const { rewardId, cost, title, prompt = null, input = null } = a
     if (!ident(rewardId) || !Number.isInteger(cost) || cost < 1 || cost > 1e9 || !isStr(title) || title.length > 200) return null
@@ -468,6 +504,8 @@ export function createConnect(win, timers = {}) {
    *  connexion au site coupée), on. session : undefined tant que `status`
    *  n'a pas répondu, null sans session Twitch dans ce navigateur. */
   let st = Object.freeze({ availability: 'idle', version: null, browser: null, session: undefined, settings: null })
+  /** Pseudo du compte connecté sur le site (main.js), pour accountMismatch. */
+  let siteLogin = null
 
   function set(patch) {
     const next = { ...st, ...patch }
@@ -542,6 +580,8 @@ export function createConnect(win, timers = {}) {
     if (!OPS.includes(op)) return Promise.reject(new ConnectError('unknown_op'))
     const clean = cleanArgs(op, args)
     if (!clean) return Promise.reject(new ConnectError('bad_args'))
+    // Autre compte que celui du site : rien ne part sur le mauvais compte.
+    if (GUARDED_OPS.has(op) && accountMismatch(st, siteLogin)) return Promise.reject(new ConnectError('account_mismatch'))
     if (!win) return Promise.reject(new ConnectError('internal', 'no window'))
     listen()
     const id = newId()
@@ -601,7 +641,24 @@ export function createConnect(win, timers = {}) {
     listeners.clear()
   }
 
-  return { start, request, refreshStatus, onChange, destroy, state: () => st, pendingCount: () => pending.size }
+  /** Compte connecté sur le site (null sans) : les dépenses le comparent à
+   *  celui de l'extension. */
+  function setSiteLogin(login) {
+    const next = typeof login === 'string' && login ? login.toLowerCase() : null
+    if (next === siteLogin) return
+    siteLogin = next
+    // Les abonnés repeignent leurs avis (garde-fou de compte).
+    for (const fn of [...listeners]) {
+      try { fn(st) } catch { /* un abonné en erreur ne prive pas les autres */ }
+    }
+  }
+
+  return {
+    start, request, refreshStatus, onChange, destroy, setSiteLogin,
+    state: () => st,
+    mismatch: () => accountMismatch(st, siteLogin),
+    pendingCount: () => pending.size,
+  }
 }
 
 /** Le client de la page (aucun effet avant connect.start()). */

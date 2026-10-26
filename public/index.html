@@ -2,6 +2,9 @@
 <html lang="fr">
 <head>
   <meta charset="UTF-8">
+  <!-- Scripts permis : ceux du site, hls.js, et, par empreinte, les scripts
+       en ligne et gestionnaires en attribut (tools/csp-check.mjs --fix). -->
+  <meta http-equiv="Content-Security-Policy" content="script-src 'self' 'sha256-Hv0vQcp8TrRUpi/ecJHAKvoFMsFksRISRV5owPXr1sE=' 'sha256-28J724Wk1DHkRQjNwaP43BnhR4FVnfOsXlPcMqz0U5g=' 'unsafe-hashes' 'sha256-QmnStxqso8h8q+Lzomn4sgX3wbb3qV2kCVbXCao+LKo=' 'sha256-9f8ZK5epjuMsYtXFjPqrgJI0L4QOAUYmJdHtT+RSH/c=' 'sha256-HEtgAEnR39SNMgVKr/R3ondtleYyoCfgCR4MmOCP4KU=' https://cdn.jsdelivr.net/npm/hls.js@1.5.20/dist/hls.min.js https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.5.20/hls.min.js; worker-src 'self' blob:; object-src 'none'; base-uri 'none'">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#0e0e10">
   <link rel="manifest" href="/manifest.webmanifest">

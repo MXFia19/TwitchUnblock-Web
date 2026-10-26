@@ -6,6 +6,56 @@
 
 export const CHANGELOG = [
   {
+    version: '2026.10.26c',
+    items: {
+      fr: [
+        'Lecteur : réglage « Faible latence » (coupé, le direct reste ~10 s derrière, sans saccades), et plus de marge toute seule quand le direct passe par le relais.',
+        'Minuteur de veille dans le menu du lecteur, et le titre, la chaîne et les commandes sur l’écran verrouillé et les touches multimédia.',
+        'VODs de direct : l’heure réelle de chaque instant à côté du compteur, et « Aller à une heure » dans le menu du lecteur.',
+        'Clips : « VOD complète » s’ouvre au moment du clip, et « Télécharger » enregistre le clip.',
+        'Téléchargement : un morceau déjà effacé par Twitch est sauté au lieu de faire échouer tout le fichier.',
+        'Extension Connect 0.3.0 : suivre une chaîne, tout le direct sans pub avec ton abonnement, ton compte en dernier recours quand aucune source ne répond, et un clic par dépense.',
+        'Deux onglets ouverts ne s’écrasent plus leurs réglages, et changer de compte ne mélange plus les listes des deux comptes.',
+      ],
+      en: [
+        'Player: “Low latency” setting (off, the live stays ~10 s behind, without stutters), and more margin on its own when the live goes through the relay.',
+        'Sleep timer in the player’s menu, and the title, channel and controls on the lock screen and media keys.',
+        'Stream VODs: the real time of each moment next to the timer, and “Go to a time of day” in the player’s menu.',
+        'Clips: “Full VOD” opens at the clip’s moment, and “Download” saves the clip.',
+        'Downloads: a piece Twitch already deleted is skipped instead of failing the whole file.',
+        'Connect extension 0.3.0: follow a channel, the whole live ad-free with your sub, your account as a last resort when no source answers, and one click per spend.',
+        'Two open tabs no longer overwrite each other’s settings, and switching accounts no longer mixes both accounts’ lists.',
+      ],
+      es: [
+        'Reproductor: ajuste «Baja latencia» (desactivado, el directo va ~10 s por detrás, sin tirones), y más margen solo cuando el directo pasa por el relé.',
+        'Temporizador de apagado en el menú del reproductor, y el título, el canal y los controles en la pantalla de bloqueo y las teclas multimedia.',
+        'VODs de directos: la hora real de cada momento junto al contador, e «Ir a una hora» en el menú del reproductor.',
+        'Clips: «VOD completo» se abre en el momento del clip, y «Descargar» guarda el clip.',
+        'Descargas: un fragmento que Twitch ya borró se salta en lugar de hacer fallar todo el archivo.',
+        'Extensión Connect 0.3.0: seguir un canal, todo el directo sin anuncios con tu suscripción, tu cuenta como último recurso si ninguna fuente responde, y un clic por gasto.',
+        'Dos pestañas abiertas ya no se pisan los ajustes, y cambiar de cuenta ya no mezcla las listas de ambas cuentas.',
+      ],
+      ru: [
+        'Плеер: настройка «Низкая задержка» (если выключить, трансляция отстаёт ~10 с, без рывков), и сам добавляет запас, когда трансляция идёт через ретранслятор.',
+        'Таймер сна в меню плеера, а также название, канал и управление на экране блокировки и мультимедийных клавишах.',
+        'Записи трансляций: реальное время каждого момента рядом со счётчиком и «Перейти ко времени» в меню плеера.',
+        'Клипы: «Полная запись» открывается на моменте клипа, а «Скачать» сохраняет клип.',
+        'Загрузки: фрагмент, уже удалённый Twitch, пропускается, а не обрушивает весь файл.',
+        'Расширение Connect 0.3.0: отслеживание каналов, вся трансляция без рекламы по вашей подписке, ваш аккаунт как последний вариант, если ни один источник не отвечает, и один клик на одну трату.',
+        'Две открытые вкладки больше не перезаписывают настройки друг друга, а смена аккаунта больше не смешивает списки двух аккаунтов.',
+      ],
+      'zh-Hant': [
+        '播放器：新增「低延遲」設定（關閉時直播約落後 10 秒，不會卡頓），直播經由中繼時也會自動多留緩衝。',
+        '播放器選單新增睡眠計時器，鎖定畫面與多媒體鍵也會顯示標題、頻道與控制項。',
+        '直播 VOD：計時器旁顯示每一刻的實際時間，播放器選單新增「跳到某個時刻」。',
+        '剪輯：「完整 VOD」會在剪輯的時間點開啟，「下載」可儲存剪輯。',
+        '下載：Twitch 已刪除的片段會被略過，不再讓整個檔案失敗。',
+        'Connect 擴充功能 0.3.0：追隨頻道、用你的訂閱讓整場直播免廣告、沒有來源回應時改用你的帳號，且每次花費都需要一次點擊。',
+        '開著兩個分頁時不再互相覆蓋設定，切換帳號也不再混合兩個帳號的清單。',
+      ],
+    },
+  },
+  {
     version: '2026.10.26b',
     items: {
       fr: [

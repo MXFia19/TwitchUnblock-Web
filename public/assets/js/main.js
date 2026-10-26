@@ -15,7 +15,8 @@ import * as usage from './usage.js'
 import * as multi from './multi.js'
 import * as dl from './download.js'
 import { CHANGELOG } from './changelog.js'
-import { INSTALL_URL as CONNECT_INSTALL_URL, connect } from './connect.js'
+import { ACCOUNT_MIN_VERSION, INSTALL_URL as CONNECT_INSTALL_URL, canFollow, compareVersions, connect } from './connect.js'
+import { errorText as connectErrorText } from './chat/connect-live.js'
 import { captureGlobalErrors, clearErrors, errorCount, errorLines, logError } from './errlog.js'
 import { initConnectUpdate } from './connect-update.js'
 import {
@@ -486,6 +487,8 @@ window.addEventListener('message', (e) => {
 })
 
 function renderAccount() {
+  // Dépenses et suivis par l'extension : seulement au compte du site.
+  connect.setSiteLogin(session.login)
   const btn = $('#account-btn')
   if (session.login) {
     btn.innerHTML = session.avatar
@@ -3781,7 +3784,7 @@ function setupPlayer() {
   initMediaSession()
   // L'extension change d'état (installée, mise à jour, session) : le réglage
   // des qualités supérieures suit, si les réglages sont ouverts.
-  connect.onChange(() => refreshHqSetting())
+  connect.onChange(() => { refreshHqSetting(); paintFollowButton() })
   chat = new ChatView($('#chat'), {
     prefs: store.prefs,
     // Retard de l'image sur le direct, pour le chat synchronisé (le chat lit
@@ -4117,16 +4120,22 @@ const HQ_WAIT_MS = 6000
  *  cet appareil (ceux du compte n'y passent jamais). { deadline, result } :
  *  promesse de { variants, codecs } ou de null, rendue avant `deadline`. */
 function askHq(login) {
-  if (!store.prefs.higherQualities || segmentProxyOn()) return null
+  const wantsHq = store.prefs.higherQualities
+  // Sans pub avec l'abonnement : l'extension 0.3.0 dit si le compte en a.
+  const wantsAdFree = store.prefs.subAdFree !== false
+  if ((!wantsHq && !wantsAdFree) || segmentProxyOn()) return null
   const deadline = Date.now() + HQ_WAIT_MS
   const work = (async () => {
     // Page ouverte sur la chaîne : l'extension est peut-être encore en cours
     // de détection (jusqu'à 4,5 s, connect.js).
-    if (!hqCanAsk(await connectSettled(2500))) return null
+    const st = await connectSettled(2500)
+    if (!hqCanAsk(st)) return null
+    // 0.2.0 ne dit rien du compte : seulement pour les qualités supérieures.
+    if (!wantsHq && !(compareVersions(st.version, ACCOUNT_MIN_VERSION) >= 0)) return null
     const [Hls, codecs] = await Promise.all([loadHls(), browserCodecs()])
     if (!Hls?.isSupported()) return null
     const res = await connect.request('hq.master', { channel: login, codecs })
-    return { variants: res.variants, codecs }
+    return { variants: res.variants, codecs, account: res.account }
   })().catch((e) => {
     console.info('[TwitchUnblock] Qualités supérieures indisponibles :', e?.code || e?.message || 'erreur')
     return null
@@ -4156,7 +4165,14 @@ function connectSettled(ms) {
 async function startHq(token, ask) {
   const got = await ask.result
   if (!got || state.watch !== token) return null
-  const hq = buildHq(got.variants, got.codecs)
+  // Compte sans pub (abonné, ou Turbo que la chaîne accepte) et réglage : tout
+  // le direct par lui, comme l'app ; sinon seulement au-dessus de 1080p
+  // (réglage « Qualités supérieures »), avec la source sans pub pendant les
+  // pauses. Qualités supérieures coupées : rien au-dessus de 1080p.
+  const adFree = store.prefs.subAdFree !== false && got.account?.adFree === true
+  if (!adFree && !store.prefs.higherQualities) return null
+  const opts = { any: adFree, maxHeight: store.prefs.higherQualities ? 0 : 1080 }
+  const hq = buildHq(got.variants, got.codecs, opts)
   if (!hq) {
     console.info('[TwitchUnblock] Rien au-dessus de 1080p par le compte : source habituelle.')
     return null
@@ -4166,7 +4182,10 @@ async function startHq(token, ask) {
     adFree: { links: token.links, variants: token.variants, source: token.source },
     player,
     playlist: (id) => connect.request('hq.playlist', { id }).then((d) => d.playlist),
-    notify: (text) => toast(text, 'info'),
+    // Avis des pauses pub : une seule fois chacun (on sait ensuite ce qu'ils disent).
+    notify: (text, key) => (key ? noticeOnce(key, text) : toast(text, 'info')),
+    renew: () => connect.request('hq.master', { channel: token.login, codecs: got.codecs })
+      .then((r) => buildHq(r.variants, got.codecs, opts)),
     t,
     qualityText,
     // Liens de la source habituelle trop anciens, au moment d'une pause pub.
@@ -4186,8 +4205,56 @@ async function startHq(token, ask) {
     console.info('[TwitchUnblock] Flux du compte injoignable : source habituelle.')
     return null
   }
-  console.info(`[TwitchUnblock] Qualités supérieures par le compte : ${hq.top}p.`)
+  if (adFree) noticeOnce('hq_account_adfree', t('hq_account_adfree'))
+  console.info(adFree ? '[TwitchUnblock] Direct par le compte, sans pub.' : `[TwitchUnblock] Qualités supérieures par le compte : ${hq.top}p.`)
   return live
+}
+
+/** Avis montré une seule fois dans ce navigateur, comme dans l'app : on sait
+ *  ensuite ce qu'il dit. */
+function noticeOnce(key, text) {
+  let seen = []
+  try { seen = JSON.parse(localStorage.getItem('tu_seen_notices') || '[]') } catch {}
+  if (!Array.isArray(seen)) seen = []
+  if (seen.includes(key)) return
+  toast(text, 'info')
+  try { localStorage.setItem('tu_seen_notices', JSON.stringify([...seen, key].slice(-50))) } catch {}
+}
+
+/** Dernier recours quand aucune source ne répond (ou pas de réponse du tout)
+ *  alors que la chaîne peut être en direct : le flux du compte par
+ *  l'extension (0.2.0 et plus), avec ses pubs — sans pub pour un abonné.
+ *  null si l'extension ne peut pas le donner à temps. */
+async function accountFallback(token) {
+  if (!hqCanAsk(await connectSettled(1500))) return null
+  try {
+    const [Hls, codecs] = await Promise.all([loadHls(), browserCodecs()])
+    if (!Hls?.isSupported() || state.watch !== token) return null
+    const res = await Promise.race([
+      connect.request('hq.master', { channel: token.login, codecs }),
+      new Promise((resolve) => setTimeout(() => resolve(null), HQ_WAIT_MS + 4000)),
+    ])
+    if (!res || state.watch !== token) return null
+    const opts = { any: true, maxHeight: store.prefs.higherQualities ? 0 : 1080 }
+    const hq = buildHq(res.variants, codecs, opts)
+    if (!hq) return null
+    toast(t(res.account?.adFree ? 'hq_account_adfree' : 'live_account_fallback'), 'info')
+    console.info('[TwitchUnblock] Aucune source : direct par le compte.')
+    return new HqLive({
+      hq,
+      adFree: { links: {} },
+      player,
+      playlist: (id) => connect.request('hq.playlist', { id }).then((d) => d.playlist),
+      notify: (text) => toast(text, 'info'),
+      t,
+      qualityText,
+      renew: () => connect.request('hq.master', { channel: token.login, codecs })
+        .then((r) => buildHq(r.variants, codecs, opts)),
+    })
+  } catch (e) {
+    console.info('[TwitchUnblock] Flux du compte indisponible :', e?.code || e?.message || 'erreur')
+    return null
+  }
 }
 
 async function openLive(rawLogin) {
@@ -4202,7 +4269,8 @@ async function openLive(rawLogin) {
   // Qualités supérieures (réglage) : la liste du compte, par l'extension, en
   // même temps que la source habituelle.
   const hqAsk = askHq(login)
-  const [links, info] = await Promise.all([
+  // `links` : remplacé par le flux du compte en dernier recours (accountFallback).
+  let [links, info] = await Promise.all([
     // « missing » : aucune source n'a de direct (404) ou nom refusé (400) ;
     // « geo » : Twitch réserve ce direct à certains pays, aucune source n'y a
     // accès ; « failed » : une autre erreur du Worker (5xx), ou aucune
@@ -4224,15 +4292,27 @@ async function openLive(rawLogin) {
   if (!liveOk && (links?.error !== 'missing' || sourcesDown)) {
     logError('direct', `${login} : ${sourcesDown ? 'toutes les sources ont échoué' : links?.error || 'aucun lien'}`)
   }
+  let fallback = null
   if (!liveOk) {
     const offline = links?.error === 'missing' && Boolean(info) && !sourcesDown
-    // Hors ligne : pas de chat en direct, mais ses commandes de bots restent
-    // à portée dans le panneau du chat.
-    if (offline) chat.openOffline(login)
-    return showWatchError(links?.error === 'network' ? t('err_network')
-      : links?.error === 'geo' ? t('err_geo_blocked')
-      : sourcesDown ? t('err_live_sources')
-      : offline ? t('offline') : t('err_live'))
+    // Aucune source (ou aucune réponse) alors que la chaîne peut être en
+    // direct : le flux du compte, par l'extension, en dernier recours.
+    if (!offline && (sourcesDown || links?.error === 'failed' || links?.error === 'network')) {
+      fallback = await accountFallback(token)
+      if (state.watch !== token) { fallback?.destroy(); return }
+    }
+    if (!fallback) {
+      // Hors ligne : pas de chat en direct, mais ses commandes de bots restent
+      // à portée dans le panneau du chat.
+      if (offline) chat.openOffline(login)
+      return showWatchError(links?.error === 'network' ? t('err_network')
+        : links?.error === 'geo' ? t('err_geo_blocked')
+        : sourcesDown ? t('err_live_sources')
+        : offline ? t('offline') : t('err_live'))
+    }
+    // Rien de la source habituelle : « Ouvrir dans… » et le multi-live n'ont
+    // pas de liens, le lecteur lit le compte.
+    links = { links: {}, variants: {}, source: 'account' }
   }
   token.links = links.links
   // Hauteur, cadence et débit de chaque qualité (Worker à jour seulement) :
@@ -4243,7 +4323,7 @@ async function openLive(rawLogin) {
   // Le compte si sa liste dépasse 1080p et répond à temps ; sinon la source
   // habituelle, comme sans le réglage. `token.links` reste la source
   // habituelle : « Ouvrir dans… », le multi-live et les secours s'en servent.
-  const hq = hqAsk ? await startHq(token, hqAsk) : null
+  const hq = fallback ?? (hqAsk ? await startHq(token, hqAsk) : null)
   if (state.watch !== token) { hq?.destroy(); return }
   token.hq = hq
   $('#watch-loading').hidden = true
@@ -4252,6 +4332,7 @@ async function openLive(rawLogin) {
   player.setLiveSource(hq ? hq.sourceId() : links.source)
   chat.openLive({ channel: login, channelId: info?.id ?? null })
   renderLiveInfo(info, links)
+  loadFollowState(token)
   if (info?.id) startHermes(token, login, info.id)
 
   store.addHistory(login, 'channel', info?.displayName || login, { avatar: info?.profileImageURL || links.avatar || '' })
@@ -4385,11 +4466,77 @@ function renderLiveInfo(info, links) {
       ${tagsHtml((s?.freeformTags ?? []).map((x) => x?.name).filter(Boolean))}
     </div>
     <div class="wi-actions">
+      <span id="watch-follow">${followButtonHtml()}</span>
       <button class="btn ghost sm" type="button" data-action="multi-add-current" title="${esc(t('multi_add'))}">${icon('grid', 16)}<span>${esc(t('multi_title'))}</span></button>
       <button class="btn ghost sm" type="button" data-action="see-vods">${icon('film', 16)}<span>${esc(t('see_vods'))}</span></button>
       ${shareButton()}
       <button class="btn ghost sm" type="button" data-action="open-in">${icon('external', 16)}<span>${esc(t('open_in'))}</span></button>
     </div>`
+}
+
+// ── Suivre la chaîne (extension 0.3.0) ─────────────────────────────────────
+// Le site ne peut plus suivre par Helix (Twitch l'a retiré) : l'extension le
+// fait avec la session twitch.tv, comme le cœur de l'app (FollowButton).
+/** Bouton « Suivre » / « Suivi » du direct ; rien sans l'extension 0.3.0 et
+ *  une session, ni avec un autre compte que celui du site. */
+function followButtonHtml(w = state.watch) {
+  const f = w?.follow
+  if (!f || typeof f.following !== 'boolean' || connect.mismatch()) return ''
+  return `<button class="btn ${f.following ? 'ghost' : 'primary'} sm follow-btn" type="button" data-action="follow-toggle"${f.busy ? ' disabled' : ''} aria-pressed="${f.following}">${icon('heart', 16)}<span>${esc(t(f.following ? 'following' : 'follow'))}</span></button>`
+}
+
+function paintFollowButton() {
+  const box = $('#watch-follow')
+  if (box) box.innerHTML = followButtonHtml()
+}
+
+async function loadFollowState(token) {
+  if (!canFollow(connect.state()) || connect.mismatch() || !token.login) return
+  const r = await connect.request('follow.get', { channel: token.login }).catch(() => null)
+  if (!r || state.watch !== token) return
+  token.follow = { following: r.following, busy: false }
+  paintFollowButton()
+}
+
+/** Suivre tout de suite (dans le clic : l'extension veut un vrai clic
+ *  récent) ; ne plus suivre, après confirmation, comme dans l'app. */
+actions['follow-toggle'] = () => {
+  const w = state.watch
+  const f = w?.follow
+  if (!w?.login || !f || f.busy || typeof f.following !== 'boolean') return
+  if (!f.following) return setFollow(w, true)
+  const name = w.info?.displayName || w.login
+  openSheet(`
+    <div class="sheet-head"><h2>${esc(t('unfollow_title', { c: name }))}</h2><button class="icon-btn" type="button" data-sheet-close>${icon('x', 20)}</button></div>
+    <p class="muted sheet-sub">${esc(t('unfollow_sub'))}</p>
+    <div class="sheet-section confirm-actions">
+      <button class="btn danger" type="button" data-action="follow-off">${esc(t('unfollow'))}</button>
+      <button class="btn ghost" type="button" data-sheet-close>${esc(t('cancel'))}</button>
+    </div>`)
+}
+actions['follow-off'] = () => {
+  closeSheet()
+  const w = state.watch
+  if (w?.follow) setFollow(w, false)
+}
+
+function setFollow(w, want) {
+  const f = w.follow
+  f.busy = true
+  paintFollowButton()
+  connect.request('follow.set', { channel: w.login, follow: want }).then((r) => {
+    if (state.watch !== w) return
+    f.following = r.following
+    toast(t(r.following ? 'follow_done' : 'unfollow_done', { c: w.info?.displayName || w.login }), 'success')
+    // Le même compte que le site (garde-fou) : ses suivis sont relus.
+    state.loaded.followed = 0
+    if (state.tab === 'discover') loadFollowed({ silent: true })
+  }, (e) => {
+    if (state.watch === w) toast(connectErrorText(e), 'error')
+  }).finally(() => {
+    f.busy = false
+    if (state.watch === w) paintFollowButton()
+  })
 }
 
 // ── Clips ────────────────────────────────────────────────────────────────
@@ -5353,8 +5500,12 @@ function connectSectionInner() {
   const opts = s.availability === 'on' && s.session && s.settings
     ? `<p class="muted small">${esc(t(s.settings.autoClaim ? 'connect_autoclaim_on' : 'connect_autoclaim_off'))} · ${esc(t(s.settings.allowSpend ? 'connect_spend_on' : 'connect_spend_off'))}</p>`
     : ''
+  // Compte twitch.tv de l'extension ≠ compte du site : dépenses et suivis bloqués.
+  const mismatch = connect.mismatch()
+  const warn = mismatch ? `<p class="cx-state" data-tone="warn" role="alert"><i></i><span>${esc(t('cx_mismatch', { e: mismatch.ext, s: mismatch.site }))}</span></p>` : ''
   return `<h3>${esc(t('connect_title'))}</h3>
     <p class="cx-state" data-tone="${tone}" role="status"><i></i><span>${esc(line)}</span></p>
+    ${warn}
     ${opts}
     <p class="muted small cx-about">${esc(t('connect_about'))}</p>
     <p class="muted small cx-about">${esc(t('connect_privacy'))}</p>
@@ -5379,7 +5530,14 @@ function hqSettingInner() {
       refreshHqSetting()
     })
   }
-  return `<label class="setting">
+  // Sans pub avec l'abonnement : l'extension 0.3.0 dit si le compte en a.
+  const adFree = compareVersions(connect.state().version, ACCOUNT_MIN_VERSION) >= 0
+    ? `<label class="setting">
+      <span class="setting-text"><span>${esc(t('sub_adfree'))}</span><small>${esc(t('sub_adfree_sub'))}</small></span>
+      <input type="checkbox" class="switch" id="set-subadfree" ${store.prefs.subAdFree !== false ? 'checked' : ''}>
+    </label>`
+    : ''
+  return `${adFree}<label class="setting">
       <span class="setting-text"><span>${esc(t('hq_setting'))}</span><small>${esc(t('hq_setting_sub', { c: hqCodecsText || '…' }))}</small></span>
       <input type="checkbox" class="switch" id="set-hq" ${store.prefs.higherQualities ? 'checked' : ''}>
     </label>`
@@ -5636,8 +5794,10 @@ function openSettings() {
     if (id === 'set-lowlatency') p.lowLatency = e.target.checked
     // Vaut pour le prochain direct ou la prochaine VOD.
     if (id === 'set-quality') p.qualityPref = validQualityPref(e.target.value) ? e.target.value : 'auto'
-    // Qualités supérieures : pour le prochain direct lancé.
+    // Qualités supérieures, sans pub avec l'abonnement : pour le prochain
+    // direct lancé.
     if (id === 'set-hq') p.higherQualities = e.target.checked
+    if (id === 'set-subadfree') p.subAdFree = e.target.checked
     if (id === 'set-worker-all') {
       p.customWorkerAll = e.target.checked
       store.savePrefs()
@@ -5737,6 +5897,7 @@ const BACKUP_SETTINGS = {
   theatre: okBool,
   qualityPref: (v) => (validQualityPref(v) ? v : undefined),
   higherQualities: okBool,
+  subAdFree: okBool,
   vodSpeed: (v) => (typeof v === 'number' ? validSpeed(v) : undefined),
   liveSourceOrder: (v) => (Array.isArray(v) ? [...new Set(v.filter((id) => api.LIVE_SOURCES.includes(id)))] : undefined),
   liveSource: (v) => (v === null || api.LIVE_SOURCES.includes(v) ? v : undefined),

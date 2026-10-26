@@ -3,9 +3,10 @@
 > **Summary.** A small Manifest V3 browser extension (one code base for Chrome,
 > Edge, Brave and Firefox 140+) that lets the TwitchUnblock site use the Twitch session of
 > *this* browser — channel points, bonus chests, watch presence, drops, channel rewards,
-> predictions, polls, raids, and since 0.2.0 lives in 1440p and above (Enhanced
-> Broadcasting, served by Twitch to logged-in accounts only) — without the session ever
-> leaving the extension. The site can only ask for a closed list of actions (see
+> predictions, polls, raids, since 0.2.0 lives in 1440p and above (Enhanced
+> Broadcasting, served by Twitch to logged-in accounts only), and since 0.3.0 following
+> channels and ad-free lives for subscribers — without the session ever leaving the
+> extension. The site can only ask for a closed list of actions (see
 > [PROTOCOL.md](PROTOCOL.md)); spending points needs a real click; for 1440p the page only
 > gets the account's live playlists rewritten by the extension (segment addresses, no
 > token, no playlist address); nothing is sent anywhere but Twitch.
@@ -19,8 +20,12 @@ Browser extension that links the TwitchUnblock site to the Twitch session of thi
 browser. The site can then show the points balance, claim chests, get watch time counted
 (passive points), move drops forward and claim them, redeem channel rewards, bet on
 predictions, vote in polls and join raids, as on twitch.tv, and, since 0.2.0, play lives
-in 1440p and above (see “Higher qualities”). The Twitch session never leaves the
-extension.
+in 1440p and above (see “Higher qualities”). Since 0.3.0: follow or unfollow the channel
+(button next to the live's title), play the whole live through your account when you're
+subscribed (or have Turbo) — no ads at all —, and, when no source answers, the live
+through your account as a last resort. Drops whose game account isn't linked show a link
+instead of “Claim”. Spending points takes one real click per spend. The Twitch session
+never leaves the extension.
 
 Updating an existing install (0.1.0 → 0.2.0): new zip in place of the old files, then ↻
 on the extension's card (Chrome, Edge, Brave), or a new temporary add-on (Firefox, which

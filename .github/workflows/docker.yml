@@ -59,6 +59,11 @@ jobs:
       - name: CONNECT_LATEST matches the extension
         run: node extension/dev/check-site-version.mjs
 
+      # Scripts en ligne et gestionnaires onerror : leurs empreintes dans la
+      # balise CSP de public/index.html (sinon le navigateur les bloque).
+      - name: Content-Security-Policy matches the inline scripts
+        run: node tools/csp-check.mjs
+
   image:
     name: Build and push
     runs-on: ubuntu-latest

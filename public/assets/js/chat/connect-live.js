@@ -29,7 +29,7 @@ const GAIN_SHOWN = 2500         // « +50 » à la place du solde
 const NOTE_SHOWN = 4000         // « Mise enregistrée », « A voté »
 const QUICK = [10, 100, 1000]
 const TWITCH_LOGIN = 'https://www.twitch.tv/login'
-const ERR_KEYS = ['disabled', 'no_session', 'needs_activation', 'spend_disabled', 'rate_limited', 'integrity', 'offline', 'no_claim', 'timeout']
+const ERR_KEYS = ['disabled', 'no_session', 'needs_activation', 'spend_disabled', 'rate_limited', 'integrity', 'offline', 'no_claim', 'timeout', 'account_mismatch']
 
 /** « Connecte-toi à twitch.tv » fermé : plus montré jusqu'au rechargement. */
 let loginNoteClosed = false
@@ -659,7 +659,14 @@ export class ConnectLive {
     const camp = list.find((c) => c.id === card.id)
       ?? list.find((c) => c.name && card.name && c.name.toLowerCase() === card.name.toLowerCase())
     if (!camp?.drops.length) { slot.hidden = true; slot.innerHTML = ''; return }
-    slot.innerHTML = camp.drops.slice().sort((a, b) => a.requiredMinutes - b.requiredMinutes).map((x) => {
+    // Compte de jeu à lier (extension 0.3.0) : rien de réclamable d'ici, le
+    // lien pour le faire (adresse https relue par connect.js).
+    const link = camp.needsLink
+      ? `<p class="drop-link">${icon('link', 12)} ${camp.linkUrl
+        ? `<a href="${esc(camp.linkUrl)}" target="_blank" rel="noopener noreferrer">${esc(t('drops_link_account'))}</a>`
+        : esc(t('drops_link_account'))}</p>`
+      : ''
+    slot.innerHTML = link + camp.drops.slice().sort((a, b) => a.requiredMinutes - b.requiredMinutes).map((x) => {
       const cur = Math.min(x.currentMinutes, x.requiredMinutes)
       const pct = x.claimed || !x.requiredMinutes ? 100 : Math.round((cur / x.requiredMinutes) * 100)
       const state = x.claimed

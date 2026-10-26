@@ -1452,6 +1452,11 @@ button.cx-bal:hover { border-color: var(--purple); background: var(--card); }
 .drop-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
 .drop-min { flex: none; color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
 .drop-ok { flex: none; display: inline-flex; align-items: center; gap: 3px; color: var(--success); font-size: 11px; font-weight: 700; }
+/* Compte de jeu à lier (extension 0.3.0) : au-dessus des drops de la campagne. */
+.drop-link { display: flex; align-items: center; gap: 4px; margin: 0 0 4px; font-size: 12px; color: var(--muted); }
+.drop-link a { color: var(--purple); font-weight: 600; }
+/* Confirmation dans une feuille (ne plus suivre) : action, puis Annuler. */
+.confirm-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .cx-chip.drop-claim { height: 22px; padding: 0 8px; font-size: 11px; }
 /* Réglages → TwitchUnblock Connect */
 .cx-state { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-size: 14px; font-weight: 600; }
