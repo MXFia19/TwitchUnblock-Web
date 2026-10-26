@@ -199,6 +199,17 @@ const PREFETCH_TAG = '#EXT-X-TWITCH-PREFETCH:'
 // (holdLiveFloor), et un passage sous le seuil recule (une fois par minute
 // au plus).
 const MIN_LIVE_DELAY = 4
+// Marges en plus de la cible (Player.extraBehind). Réglage « Faible latence »
+// coupé : la stabilité d'abord, environ 10 s de retard (Twitch en latence
+// normale). Playlists par le relais ou un Worker : chaque relecture fait un
+// aller-retour de plus, le lecteur apprend les segments plus tard et le
+// tampon tombait à 1 s, d'où des saccades (fb_mvo6n4t5). Segments par le
+// proxy aussi (après des ratés du CDN) : encore un peu plus.
+const LIVE_RELAXED_EXTRA = 6
+const LIVE_PROXY_EXTRA = 2
+const LIVE_SEGMENT_PROXY_EXTRA = 2
+// Minuteur de veille (menu du lecteur), en minutes ; 0 : coupé.
+const SLEEP_CHOICES = [0, 15, 30, 60, 90]
 // Rattrapage du direct : jamais en changeant la vitesse — hls.js passait à
 // ×1,05-×1,1 plusieurs fois par minute, et le son finissait décalé de
 // l'image jusqu'au prochain saut (+10 s ou Direct, retours du 14/10). On
@@ -1165,6 +1176,8 @@ export class Player {
     this.root.dataset.kind = kind
     this.el.progress.hidden = kind !== 'vod'
     this.setChapters([])
+    // Heure réelle : celle de la VOD d'avant oubliée (setBroadcastStart).
+    this.broadcastStart = null
     this.soundSpans = []
     // Passages rétablis (unmuteLoader) : ceux de la vidéo d'avant oubliés
     // ici, plus dans setMuted — appelé après load(), quand la liste des
@@ -1293,7 +1306,7 @@ export class Player {
         // Quand Twitch annonce ses prochains segments (fast_bread) et que la
         // qualité est fixe, la cible passe à LIVE_BEHIND_COMPLETE derrière le
         // dernier segment complet (withPrefetch).
-        liveSyncDuration: LIVE_BEHIND_PLAIN,
+        liveSyncDuration: LIVE_BEHIND_PLAIN + this.extraBehind(),
         // Une VOD part du début (ou de la reprise) même si sa playlist n'a
         // pas de fin déclarée : sinon hls.js la prend pour un direct et part
         // du bord (VOD reconstruite encore en cours d'écriture, par exemple).
@@ -1976,7 +1989,13 @@ export class Player {
    *  hls.js vise de toute façon bord − 6 s au plus près (voir plus haut) :
    *  les 4 s ne bornent alors que l'avance à la main (+10 s). */
   minBehind() {
-    return this.prefetchAhead ? LIVE_BEHIND_COMPLETE : LIVE_BEHIND_PLAIN
+    return (this.prefetchAhead ? LIVE_BEHIND_COMPLETE : LIVE_BEHIND_PLAIN) + this.extraBehind()
+  }
+
+  /** Marge en plus de la cible : voir LIVE_RELAXED_EXTRA. */
+  extraBehind() {
+    if (this.o.prefs?.lowLatency === false) return LIVE_RELAXED_EXTRA
+    return (this.proxyName() ? LIVE_PROXY_EXTRA : 0) + (segmentProxyOn() ? LIVE_SEGMENT_PROXY_EXTRA : 0)
   }
 
   /** Retard sur la position visée par hls.js (cible relevée comprise), en
@@ -2048,7 +2067,7 @@ export class Player {
     // Délai de publication de Twitch = retard total − distance au bord.
     const publish = Math.max(0, total - behind)
     const min = this.minBehind()
-    const want = Math.min(8, Math.max(min, MIN_LIVE_DELAY + 0.5 - publish))
+    const want = Math.min(8 + this.extraBehind(), Math.max(min, MIN_LIVE_DELAY + 0.5 - publish))
     if (Math.abs(want - (this.behindTarget ?? min)) > 0.4) {
       this.behindTarget = want
       this.hls.config.liveSyncDuration = (this.prefetchAhead || 0) + want
@@ -2120,7 +2139,7 @@ export class Player {
       // aussitôt l'instant visé.
       if (!this.dragging) {
         if (Number.isFinite(d) && d > 0) {
-          this.el.time.textContent = `${formatClock(cur)} / ${formatClock(d)}`
+          this.el.time.textContent = `${formatClock(cur)} / ${formatClock(d)}${this.clockSuffix(cur)}`
           this.drawPosition(cur / d)
         } else this.el.time.textContent = formatClock(cur)
       }
@@ -2164,7 +2183,7 @@ export class Player {
       this.prefetchAhead = ahead
       // Cible comptée depuis le bord annoncé, segments d'avance compris
       // (relevée par holdLiveFloor si le retard affiché passait sous 4 s).
-      this.hls.config.liveSyncDuration = ahead + (this.behindTarget ?? LIVE_BEHIND_COMPLETE)
+      this.hls.config.liveSyncDuration = ahead + (this.behindTarget ?? this.minBehind())
     }
     return out.join('\n')
   }
@@ -2451,7 +2470,7 @@ export class Player {
     const target = this.positionFrom(e)
     if (target === null) return
     this.drawPosition(target / this.video.duration)
-    this.el.time.textContent = `${formatClock(target)} / ${formatClock(this.video.duration)}`
+    this.el.time.textContent = `${formatClock(target)} / ${formatClock(this.video.duration)}${this.clockSuffix(target)}`
     this.hoverTip(e)
   }
 
@@ -2486,7 +2505,8 @@ export class Player {
     if (target === null) return
     const rect = this.el.progress.getBoundingClientRect()
     const chap = this.chapters?.length > 1 ? this.chapters.findLast((c) => c.start <= target) : null
-    this.el.tip.textContent = chap ? `${formatClock(target)} · ${chap.title}` : formatClock(target)
+    const time = `${formatClock(target)}${this.clockSuffix(target)}`
+    this.el.tip.textContent = chap ? `${time} · ${chap.title}` : time
     this.el.tip.hidden = false
     // Bornée par sa propre largeur, mesurée une fois le texte posé : avec un
     // nom de chapitre, l'infobulle centrée sur le curseur sortait du lecteur
@@ -2596,6 +2616,18 @@ export class Player {
       html += SPEEDS.map((s) => `<button type="button" data-s="${s}" class="${s === rate ? 'on' : ''}"${s === 1 ? ` title="${esc(t('normal'))}"` : ''}>${speedText(s)}</button>`).join('')
       html += '</div>'
     }
+    // Archive d'un direct : aller à une heure de la diffusion (« 22:15 »).
+    if (this.kind === 'vod' && this.broadcastStart && this.video.duration > 0) {
+      const at = new Date(this.broadcastStart + this.video.currentTime * 1000)
+      const hhmm = `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`
+      html += `<div class="p-menu-title">${esc(t('vod_goto_time'))}</div>
+        <div class="p-goto"><input type="time" class="text-input p-goto-time" value="${hhmm}" aria-label="${esc(t('vod_goto_time'))}"><button type="button" data-goto="1">${esc(t('vod_goto_btn'))}</button></div>`
+    }
+    // Minuteur de veille : la lecture s'arrête, et le lecteur se ferme.
+    const left = this.sleepLeft()
+    html += `<div class="p-menu-title">${esc(t('sleep_timer'))}${left ? ` · ${esc(t('sleep_left', { m: left }))}` : ''}</div><div class="p-speeds">`
+    html += SLEEP_CHOICES.map((m) => `<button type="button" data-sleep="${m}" class="${(m ? left && m === this.sleepMinutes : !left) ? 'on' : ''}">${m ? `${m} min` : esc(t('sleep_off'))}</button>`).join('')
+    html += '</div>'
     // Un souci pendant la lecture : le signaler d'ici, avec ce qui se lit.
     html += `<button type="button" class="p-menu-report" data-report="1">${icon('bug', 15)}<span>${esc(t('report_problem'))}</span></button>`
     this.el.menu.innerHTML = html
@@ -2633,11 +2665,67 @@ export class Player {
 
   closeMenu() { this.el.menu.hidden = true; delete this.el.menu.dataset.kind; this.scheduleHide() }
 
+  /** Début de la diffusion d'une archive (ms, null sinon) : l'heure réelle
+   *  de chaque instant, et « Aller à une heure ». */
+  setBroadcastStart(ms) {
+    this.broadcastStart = this.kind === 'vod' && Number.isFinite(ms) ? ms : null
+  }
+
+  /** « · 22:15 » : l'heure réelle d'un instant d'une archive ; vide sinon. */
+  clockSuffix(t0) {
+    if (!this.broadcastStart || this.kind !== 'vod' || !Number.isFinite(t0)) return ''
+    return ` · ${new Date(this.broadcastStart + Math.max(0, t0) * 1000).toLocaleTimeString(lang(), { hour: '2-digit', minute: '2-digit' })}`
+  }
+
+  /** « Aller à 22:15 » : l'instant de l'archive diffusé à cette heure-là — le
+   *  lendemain si l'heure précède le début (diffusion passée minuit). */
+  gotoClock(hhmm) {
+    const m = /^(\d{1,2}):(\d{2})/.exec(hhmm || '')
+    const d = this.video.duration
+    if (!m || !this.broadcastStart || !(d > 0)) return false
+    const target = new Date(this.broadcastStart)
+    target.setHours(Number(m[1]), Number(m[2]), 0, 0)
+    let at = (target.getTime() - this.broadcastStart) / 1000
+    // La minute du début : son début ; plus tôt encore : le lendemain.
+    if (at < -60) at += 86_400
+    at = Math.max(0, at)
+    if (at > d) { this.flash(t('vod_goto_out')); return false }
+    this.video.currentTime = at
+    return true
+  }
+
+  /** Minuteur de veille : la lecture s'arrête au bout de `minutes` (0 :
+   *  coupé), et le parent ferme le lecteur (onSleep) — plus rien ne se
+   *  charge, par le relais non plus. Il continue d'une vidéo à l'autre. */
+  setSleep(minutes) {
+    clearTimeout(this.sleepTimer)
+    this.sleepMinutes = minutes > 0 ? minutes : 0
+    this.sleepUntil = this.sleepMinutes ? Date.now() + this.sleepMinutes * 60_000 : 0
+    if (!this.sleepUntil) return
+    this.sleepTimer = setTimeout(() => {
+      this.sleepUntil = 0
+      this.sleepMinutes = 0
+      this.video.pause()
+      this.o.onSleep?.()
+    }, this.sleepMinutes * 60_000)
+  }
+
+  /** Minutes restantes du minuteur de veille (arrondies au-dessus), 0 sans. */
+  sleepLeft() {
+    return this.sleepUntil > Date.now() ? Math.ceil((this.sleepUntil - Date.now()) / 60_000) : 0
+  }
+
   onMenuClick(e) {
     e.stopPropagation()
     const b = e.target.closest('button')
     if (!b) return
     if (b.dataset.report) { this.closeMenu(); this.o.onReport?.(); return }
+    if (b.dataset.goto) {
+      // Hors de la VOD : le menu reste ouvert, avec l'avis.
+      if (!this.gotoClock(this.el.menu.querySelector('.p-goto-time')?.value)) return
+      this.closeMenu()
+      return
+    }
     if (b.dataset.src) {
       this.closeMenu()
       // Rien à faire seulement pour celle qui sert le direct et qui est déjà
@@ -2649,6 +2737,7 @@ export class Player {
     }
     if (b.dataset.q) this.setQuality(b.dataset.q)
     if (b.dataset.s) this.setSpeed(Number(b.dataset.s))
+    if (b.dataset.sleep !== undefined) this.setSleep(Number(b.dataset.sleep))
     if (b.dataset.c) { this.video.currentTime = Number(b.dataset.c); this.updateChapterLabel() }
     this.closeMenu()
   }

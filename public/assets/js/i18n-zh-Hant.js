@@ -205,7 +205,7 @@ export const ZH_HANT = {
   dl_failed_msg: '下載已停止：請再試一次。',
   dl_cancelled: '已取消下載',
   dl_restored: '已還原 {d} 的聲音',
-  dl_muted: '已消音 {d}', dl_skipped: '{d} 已被 Twitch 刪除', dl_done_gaps: '下載完成，缺少已被 Twitch 刪除的 {d}',
+  dl_muted: '已消音 {d}', dl_skipped: '{d} 已被 Twitch 刪除', dl_done_gaps: '下載完成，缺少已被 Twitch 刪除的 {d}', upd_title: '更新 iPhone App', upd_sub: '你的 TwitchUnblock 版本已過時。依照安裝 App 所用的工具，以下是安裝最新版的方法：', upd_altstore: '加入 TwitchUnblock 來源（按鈕），再從該工具更新 App。之後的版本會自動出現在那裡。', upd_esign: '用來源網址加入來源（Sources 或 Repos 分頁），再從中安裝 TwitchUnblock。或者下載 IPA，用該工具開啟。', upd_ipa_tools: '下載最新版的 IPA，直接覆蓋安裝舊版。', upd_add_source: '加入來源', upd_copy_source: '複製網址', upd_ipa: '下載 IPA', upd_source_label: '來源網址：', low_latency: '低延遲', low_latency_sub: '盡量貼近直播（約落後 4 秒）。關閉：約 10 秒，連線較慢時不會卡頓。', sleep_timer: '睡眠計時器', sleep_off: '關閉', sleep_left: '剩 {m} 分鐘', vod_goto_time: '跳到某個時刻', vod_goto_btn: '前往', vod_goto_out: '這個時刻不在 VOD 內', clip_dl_started: '正在下載剪輯…', clip_dl_failed: '無法下載剪輯',
   dl_another: '再下載另一段',
   multi_chat: '多直播中的聊天室',
   multi_chat_sub: '你正在聽的那部影片的聊天室（VOD 會同步重播），位於拼貼畫面旁（大螢幕）。',

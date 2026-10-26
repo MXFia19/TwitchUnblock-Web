@@ -41,6 +41,9 @@ export const DEFAULT_PREFS = {
   multiChat: true,   // multi-live : chat du direct qui a le son (grand écran)
   autoRaid: true,
   clickPause: true,  // un clic sur la vidéo met en pause (ordinateur)
+  // Faible latence : le direct au plus près (4 s environ). Coupé, ~10 s de
+  // retard, sans saccades sur une connexion lente (Player.extraBehind).
+  lowLatency: true,
   showRecent: true,  // raccourcis vers les chaînes ouvertes récemment (onglet Streamer)
   // « Reprendre les VODs » : position retenue dans chaque VOD, rangée
   // « Reprendre » de l'accueil, barre violette des vignettes. Coupé : rien

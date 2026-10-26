@@ -215,6 +215,9 @@ const routeFromLocation = () => routeFrom(location.pathname, location.search)
 /** Une adresse (d'ici ou de twitch.tv) lue comme une page à ouvrir. */
 function routeFrom(pathname, search = '') {
   const q = new URLSearchParams(search)
+  // « ?update=ios » : mettre à jour l'app iPhone (bouton de l'app sans
+  // Feather, SideStore ni AltStore ; annonce aux versions pas à jour).
+  if (q.has('update')) return { update: true }
   const clip = q.get('clip')
   const vod = q.get('id') ?? q.get('vod')
   const channel = api.cleanLogin(q.get('channel'))
@@ -261,6 +264,7 @@ async function applyRoute(r, { initial = false } = {}) {
     // Mosaïque de directs : ouverte par son adresse, fermée par toute autre.
     if (r.multi) { multi.openWith(r.multi); return }
     multi.close({ url: false })
+    if (r.update) { openAppUpdate(); return }
     // « /xqc » : son direct au premier chargement (comme sur Twitch), ensuite
     // seulement si cette entrée d'historique était celle du lecteur.
     const live = r.channel && r.live && (initial || Boolean(history.state?.watch))
@@ -1902,6 +1906,38 @@ actions['install-app'] = () => {
   Promise.resolve(shown).then(() => e.userChoice).catch(() => {}).finally(refreshInstallUi)
 }
 actions['install-how'] = () => $('#install-card')?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+
+// ── Mettre à jour l'app iPhone (?update=ios) ───────────────────────────────
+// Ouverte par « Mettre à jour » dans l'app quand elle ne trouve ni Feather,
+// ni SideStore, ni AltStore, et par l'annonce visant les versions pas à jour
+// (/stats) : quoi faire selon l'outil qui a installé l'app.
+const APP_SOURCE_URL = 'https://raw.githubusercontent.com/MXFia19/TwitchUnblock/master/apps.json'
+const APP_IPA_URL = 'https://github.com/MXFia19/TwitchUnblock/releases/latest/download/TwitchUnblock.ipa'
+
+function openAppUpdate() {
+  const step = (tools, text, buttons) => `
+    <div class="update-step">
+      <b>${esc(tools)}</b>
+      <p class="muted small">${esc(text)}</p>
+      <div class="update-actions">${buttons}</div>
+    </div>`
+  const sourceBtn = `<a class="btn primary sm" href="https://altdirect.app/?url=${encodeURIComponent(APP_SOURCE_URL)}" target="_blank" rel="noopener">${icon('plus', 15)}<span>${esc(t('upd_add_source'))}</span></a>`
+  const copyBtn = `<button class="btn sm" type="button" data-action="copy-app-source">${icon('copy', 15)}<span>${esc(t('upd_copy_source'))}</span></button>`
+  const ipaBtn = `<a class="btn sm" href="${APP_IPA_URL}" rel="noopener">${icon('download', 15)}<span>${esc(t('upd_ipa'))}</span></a>`
+  openSheet(`
+    <div class="sheet-head"><h2>${esc(t('upd_title'))}</h2><button class="icon-btn" type="button" data-sheet-close>${icon('x', 20)}</button></div>
+    <p class="muted sheet-sub">${esc(t('upd_sub'))}</p>
+    <div class="sheet-section">
+      ${step('AltStore, SideStore, Feather, LiveContainer, StikStore, TrollApps', t('upd_altstore'), sourceBtn)}
+      ${step('ESign, GBox, Scarlet, KSign', t('upd_esign'), copyBtn + ipaBtn)}
+      ${step('TrollStore, Sideloadly', t('upd_ipa_tools'), ipaBtn)}
+      <p class="muted small">${esc(t('upd_source_label'))}<code class="update-source">${esc(APP_SOURCE_URL)}</code></p>
+    </div>`)
+}
+actions['copy-app-source'] = () => {
+  if (!navigator.clipboard?.writeText) return toast(APP_SOURCE_URL)
+  navigator.clipboard.writeText(APP_SOURCE_URL).then(() => toast(t('copied'), 'success'), () => toast(APP_SOURCE_URL))
+}
 
 /** Grille de cartes ou liste façon Twitch, au choix (bouton + réglage). */
 function applyLayout() {
@@ -3722,6 +3758,8 @@ function setupPlayer() {
       showWatchError(t(kind === 'live' ? 'err_live' : kind === 'clip' ? 'err_clip' : 'err_vod'))
     },
     onWorkerDown: (base) => switchWorker(base),
+    // Minuteur de veille écoulé (menu du lecteur) : le lecteur se ferme.
+    onSleep: () => closeWatch(),
     // Pause pub de la chaîne affichée (une fois par pause) : comptée pour
     // /stats, comme la source qui sert le direct.
     onAdBreak: () => usage.count('live_ad_break', store.prefs.shareUsage),
@@ -3740,6 +3778,7 @@ function setupPlayer() {
   // Lecture reprise : un retour au flux du compte, ou une bascule pour une
   // pause pub arrivée pendant la pause, peut avoir attendu.
   player.video.addEventListener('play', () => state.watch?.hq?.onPlay())
+  initMediaSession()
   // L'extension change d'état (installée, mise à jour, session) : le réglage
   // des qualités supérieures suit, si les réglages sont ouverts.
   connect.onChange(() => refreshHqSetting())
@@ -4389,9 +4428,46 @@ async function openClip(slug) {
     </div>
     <div class="wi-actions">
       ${token.login ? `<button class="btn ghost sm" type="button" data-action="see-vods">${icon('film', 16)}<span>${esc(t('see_vods'))}</span></button>` : ''}
-      ${clip.video?.id ? `<button class="btn ghost sm" type="button" data-vod="${esc(clip.video.id)}">${icon('play', 16)}<span>${esc(t('full_vod'))}</span></button>` : ''}
+      ${clip.video?.id ? `<button class="btn ghost sm" type="button" data-action="clip-vod">${icon('play', 16)}<span>${esc(t('full_vod'))}</span></button>` : ''}
+      <button class="btn ghost sm" type="button" data-action="clip-download">${icon('download', 16)}<span>${esc(t('dl_download'))}</span></button>
       ${shareButton()}
     </div>`
+}
+
+// Clip → VOD d'origine, à l'instant lu dans le clip (comme sur Twitch) ;
+// sans décalage connu, la VOD s'ouvre comme d'habitude.
+actions['clip-vod'] = () => {
+  const w = state.watch
+  const vodId = w?.kind === 'clip' ? w.info?.video?.id : null
+  if (!vodId) return
+  const at = Number.isFinite(w.offset) ? Math.max(0, Math.floor(w.offset + (player.video.currentTime || 0))) : null
+  openVod(vodId, undefined, at != null ? { at } : undefined)
+}
+
+// Télécharger un clip : le MP4 de la qualité lue (le CDN des clips accepte
+// la lecture par la page, CORS ouvert), enregistré sous son titre.
+actions['clip-download'] = async () => {
+  const w = state.watch
+  if (w?.kind !== 'clip' || !w.links) return
+  const url = w.links[player.quality] ?? Object.values(w.links)[0]
+  if (!url) return
+  const name = `${String(w.info?.title || 'clip').replace(/[\\/:*?"<>|\r\n]+/g, ' ').trim().slice(0, 80) || 'clip'}.mp4`
+  toast(t('clip_dl_started'))
+  try {
+    const res = await fetch(url)
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    const blob = new Blob([await res.blob()], { type: 'video/mp4' })
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(blob)
+    a.download = name
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    setTimeout(() => URL.revokeObjectURL(a.href), 60_000)
+  } catch (e) {
+    logError('clip', `téléchargement ${w.id} : ${e?.message || e}`)
+    toast(t('clip_dl_failed'), 'error')
+  }
 }
 
 function clipCard(c) {
@@ -4537,6 +4613,7 @@ async function openVod(id, preset, { keepPlaylist = false, at = null } = {}) {
     if (state.watch !== token) return
     player.setChapters(m.chapters)
     player.setMuted(m.muted)
+    player.setBroadcastStart(m.broadcastStart)
   }).catch(() => {})
   chat.openVod({ videoId: vodId, channelId: meta?.owner?.id ?? null, channelLogin: meta?.owner?.login ?? null, startAt })
   if (startAt && !at) toast(t('resume_at', { t: formatClock(startAt) }))
@@ -4570,6 +4647,43 @@ async function openVod(id, preset, { keepPlaylist = false, at = null } = {}) {
 function setAvatar(url) {
   const img = $('#watch-avatar')
   if (url) { img.src = url; img.hidden = false } else img.hidden = true
+  // Dernier posé de l'en-tête du lecteur (direct, VOD, clip) : l'écran
+  // verrouillé le reprend.
+  updateMediaSession()
+}
+
+// ── Écran verrouillé, touches multimédia (Media Session) ──────────────────
+// Titre, chaîne et image du lecteur sur l'écran verrouillé d'un téléphone et
+// dans les commandes multimédia de l'ordinateur ; lecture, pause et ±10 s
+// depuis ces commandes, et la position d'une VOD ou d'un clip.
+function updateMediaSession() {
+  if (!('mediaSession' in navigator) || !state.watch) return
+  const artist = $('#watch-title')?.textContent || ''
+  let title = $('#mini-title')?.textContent || artist
+  // Direct : « chaîne · titre » dans la mini-barre ; la chaîne est déjà l'artiste.
+  if (artist && title.startsWith(`${artist} · `)) title = title.slice(artist.length + 3)
+  const img = $('#watch-avatar')
+  try {
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title, artist, album: 'TwitchUnblock',
+      artwork: img && !img.hidden && img.src ? [{ src: img.src, sizes: '300x300' }] : [],
+    })
+  } catch { /* navigateur sans MediaMetadata */ }
+}
+
+function initMediaSession() {
+  if (!('mediaSession' in navigator)) return
+  const set = (action, fn) => {
+    try { navigator.mediaSession.setActionHandler(action, fn) } catch { /* action inconnue de ce navigateur */ }
+  }
+  set('play', () => { player.video.play().catch(() => {}) })
+  set('pause', () => player.video.pause())
+  set('seekbackward', (d) => player.seekBy(-(d?.seekOffset || 10)))
+  set('seekforward', (d) => player.seekBy(d?.seekOffset || 10))
+  set('seekto', (d) => {
+    if (state.watch && state.watch.kind !== 'live' && Number.isFinite(d?.seekTime)) player.video.currentTime = d.seekTime
+  })
+  set('stop', () => { if (state.watch) closeWatch() })
 }
 
 function onPlaybackTime(cur, duration) {
@@ -4635,6 +4749,7 @@ function closeWatch({ url = true } = {}) {
   stopPlayback()
   flushSync({ force: true })
   state.watch = null
+  if ('mediaSession' in navigator) navigator.mediaSession.metadata = null
   watch.classList.remove('open')
   document.documentElement.classList.remove('watching')
   setTimeout(() => { if (!state.watch) { watch.hidden = true; watch.classList.remove('minimized') } }, 220)
@@ -5344,6 +5459,7 @@ function openSettings() {
       </label>
       <div id="set-hq-box">${hqSettingInner()}</div>
       ${toggle('set-clickpause', t('click_pause'), p.clickPause !== false, t('click_pause_sub'))}
+      ${toggle('set-lowlatency', t('low_latency'), p.lowLatency !== false, t('low_latency_sub'))}
       <div class="setting setting-col">
         <span class="setting-text"><span>${esc(t('live_source_order'))}</span><small>${esc(t('live_source_order_sub'))}</small></span>
         <ol class="src-order" id="src-order">${sourceOrderHtml()}</ol>
@@ -5515,6 +5631,9 @@ function openSettings() {
     }
     if (id === 'import-file') { importData(e.target.files?.[0]); e.target.value = ''; return }
     if (id === 'set-clickpause') p.clickPause = e.target.checked
+    // Marge du direct (Player.extraBehind) : suivie par le lecteur en cours,
+    // et entière au prochain direct.
+    if (id === 'set-lowlatency') p.lowLatency = e.target.checked
     // Vaut pour le prochain direct ou la prochaine VOD.
     if (id === 'set-quality') p.qualityPref = validQualityPref(e.target.value) ? e.target.value : 'auto'
     // Qualités supérieures : pour le prochain direct lancé.
@@ -5614,6 +5733,7 @@ const BACKUP_SETTINGS = {
   blockedUsers: okLogins(500),
   hiddenEmotes: okEmoteCodes(HIDDEN_EMOTES_MAX),
   clickPause: okBool,
+  lowLatency: okBool,
   theatre: okBool,
   qualityPref: (v) => (validQualityPref(v) ? v : undefined),
   higherQualities: okBool,
@@ -5814,7 +5934,8 @@ let annCurrent = null
 async function loadAnnouncement(force = false) {
   if (!force && Date.now() - annFetchedAt < 5 * 60_000) return renderAnnouncement()
   try {
-    const res = await fetch(`${api.API_URL}/api/announcement`, { cache: 'no-store' })
+    // `p=web` : une annonce réservée au site ou à l'app (Worker, announcementFor).
+    const res = await fetch(`${api.API_URL}/api/announcement?p=web`, { cache: 'no-store' })
     if (!res.ok) return
     annCurrent = (await res.json()).announcement ?? null
     annFetchedAt = Date.now()

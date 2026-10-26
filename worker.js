@@ -82,7 +82,7 @@ export default {
                 case '/api/admin/forget': return await handleAdminForget(request, env, ctx);
 
                 // Annonces affichées dans l'app (lecture publique, écriture admin)
-                case '/api/announcement': return await handleAnnouncementGet(env);
+                case '/api/announcement': return await handleAnnouncementGet(request, env);
                 case '/api/announcement/react': return await handleAnnouncementReact(request, env);
                 // Sondages (lecture et vote publics, création admin ou bot)
                 case '/api/poll': return await handlePollState(request, env);
@@ -1908,11 +1908,43 @@ function cleanAnnounceTemplates(list) {
 }
 
 // GET /api/announcement — { announcement: null | { id, title, message, link, until } }
-async function handleAnnouncementGet(env) {
+async function handleAnnouncementGet(request, env) {
     if (!env.DB) return jsonResponse({ announcement: null });
-    return new Response(JSON.stringify({ announcement: await readAnnouncement(env) }), {
+    const announcement = announcementFor(await readAnnouncement(env), request);
+    return new Response(JSON.stringify({ announcement }), {
         headers: { ...RESPONSE_HEADERS, 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }
     });
+}
+
+/** Public d'une annonce (/stats) : tout le monde (rien), l'app iPhone ou le
+ *  site seulement, ou les versions de l'app d'avant tel build — celles qui
+ *  ne sont pas à jour. null si rien ne restreint. */
+function cleanAudience(a) {
+    if (!a || typeof a !== 'object') return null;
+    const beforeBuild = Number.isInteger(a.beforeBuild) && a.beforeBuild > 0 && a.beforeBuild < 1e6 ? a.beforeBuild : null;
+    const only = beforeBuild ? 'ios' : ['ios', 'web'].includes(a.only) ? a.only : null;
+    return only ? { only, beforeBuild } : null;
+}
+
+/** Build de l'app iPhone qui demande : son User-Agent par défaut
+ *  (« TwitchUnblock/352 CFNetwork/… Darwin/… », 352 = CFBundleVersion, le
+ *  numéro de la CI). Les versions d'avant cette option ne disent rien
+ *  d'autre d'elles. null pour le site et les autres clients. */
+function appBuildOf(request) {
+    const m = /^TwitchUnblock\/(\d+)\s+CFNetwork\//.exec(request.headers.get('User-Agent') || '');
+    return m ? Number(m[1]) : null;
+}
+
+/** L'annonce, si celui qui demande fait partie de son public ; sinon null. */
+function announcementFor(a, request) {
+    if (!a?.audience) return a;
+    const build = appBuildOf(request);
+    const web = new URL(request.url).searchParams.get('p') === 'web';
+    const { only, beforeBuild } = a.audience;
+    if (only === 'ios' && build === null) return null;
+    if (only === 'web' && !web) return null;
+    if (beforeBuild && !(build < beforeBuild)) return null;
+    return a;
 }
 
 // GET : annonce en cours. POST { title, message, link?, hours } : publier.
@@ -1960,12 +1992,15 @@ async function handleAdminAnnouncement(request, env) {
         const hours = Math.min(24 * 30, Math.max(1 / 60, Number(body.hours) || 24));
         ttl = Math.round(hours * 3600);
     }
+    // Public : celui envoyé, sinon (modification sans lui) celui d'avant.
+    const audience = Object.hasOwn(body, 'audience') ? cleanAudience(body.audience) : (prev?.audience ?? null);
     const announcement = {
         id: prev && body.renotify !== true ? prev.id : Date.now().toString(36),
         title, message, link: link || null,
         until: prev && body.keepUntil === true ? prev.until : Date.now() + ttl * 1000,
         createdAt: prev ? prev.createdAt : Date.now(),
         ...(prev ? { editedAt: Date.now() } : {}),
+        ...(audience ? { audience } : {}),
     };
     // expirationTtl : 60 s minimum chez Cloudflare.
     await store(env).put(ANNOUNCEMENT_KEY, JSON.stringify(announcement), { expirationTtl: Math.max(60, ttl) });

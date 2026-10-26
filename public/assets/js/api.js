@@ -1346,6 +1346,7 @@ export function clipSlugFrom(url) {
  */
 export async function getVodMarkers(id) {
   const data = await gql(`query($id: ID!) { video(id: $id) {
+    createdAt broadcastType
     moments(first: 50, momentRequestType: VIDEO_CHAPTER_MARKERS) {
       edges { node { positionMilliseconds durationMilliseconds description } }
     }
@@ -1366,5 +1367,8 @@ export async function getVodMarkers(id) {
     if (last && r.start <= last.end + 1) last.end = Math.max(last.end, r.end)
     else muted.push({ ...r })
   }
-  return { chapters, muted }
+  // Début de la diffusion (archives seulement, pas un highlight ni un
+  // upload) : l'heure réelle de chaque instant de la VOD.
+  const started = data?.video?.broadcastType === 'ARCHIVE' ? Date.parse(data.video.createdAt) : NaN
+  return { chapters, muted, broadcastStart: Number.isFinite(started) ? started : null }
 }
