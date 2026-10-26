@@ -1909,7 +1909,7 @@ test("manifeste : origines, permissions et arrière-plan attendus", () => {
   // Version Firefox (dev/build-firefox.mjs) : script d'arrière-plan et identifiant.
   const firefox = firefoxManifest(MANIFEST);
   assert.deepEqual(firefox.background, { scripts: ["background.js"] });
-  assert.equal(firefox.browser_specific_settings.gecko.id, "connect@twitchunblock.app");
+  assert.equal(firefox.browser_specific_settings.gecko.id, "twitchunblock-connect@mxfia19.github.io");
   assert.deepEqual(firefox.content_scripts, MANIFEST.content_scripts);
   assert.deepEqual(firefox.host_permissions, MANIFEST.host_permissions);
   assert.deepEqual(MANIFEST.host_permissions, [
