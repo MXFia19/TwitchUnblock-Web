@@ -19,7 +19,16 @@ import { fileURLToPath } from "node:url";
 const SRC = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const OUT = resolve(SRC, "..", "extension-firefox");
 
-/** Manifeste Chrome → manifeste Firefox. */
+/** Manifeste Chrome → manifeste Firefox.
+ *
+ *  Données déclarées (consentement intégré de Firefox, exigé par AMO pour
+ *  toute nouvelle extension) : pour Mozilla, est une transmission toute
+ *  donnée traitée hors de l'extension ou du navigateur — y compris vers
+ *  Twitch. L'extension envoie à Twitch la session du compte (authentification)
+ *  et les actions faites par le site, plus la présence de visionnage
+ *  (activité sur le site) ; rien d'autre, et rien vers le développeur
+ *  (PRIVACY.md). Ce consentement n'existe qu'à partir de Firefox 140 : en
+ *  dessous, il faudrait un écran de consentement propre à l'extension. */
 export function firefoxManifest(m) {
   const { service_worker: worker, ...background } = m.background || {};
   return {
@@ -28,8 +37,8 @@ export function firefoxManifest(m) {
     browser_specific_settings: {
       gecko: {
         id: "connect@twitchunblock.app",
-        strict_min_version: "128.0",
-        data_collection_permissions: { required: ["none"] }
+        strict_min_version: "140.0",
+        data_collection_permissions: { required: ["authenticationInfo", "websiteActivity"] }
       }
     }
   };

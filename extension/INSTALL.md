@@ -39,7 +39,7 @@ on the extension's card in the extensions page. Your settings are kept, and the 
 shows the new version. Tabs of the site that were already open get the new version by
 themselves; reload them if the site doesn't see it.
 
-## Firefox (version 128 or later)
+## Firefox (version 140 or later)
 
 Until the extension is signed by Mozilla, Firefox can only load it as a temporary add-on,
 which goes away when Firefox closes (load it again the next time).

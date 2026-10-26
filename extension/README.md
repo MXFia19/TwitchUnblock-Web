@@ -1,7 +1,7 @@
 # TwitchUnblock Connect
 
 > **Summary.** A small Manifest V3 browser extension (one code base for Chrome,
-> Edge, Brave and Firefox 128+) that lets the TwitchUnblock site use the Twitch session of
+> Edge, Brave and Firefox 140+) that lets the TwitchUnblock site use the Twitch session of
 > *this* browser — channel points, bonus chests, watch presence, drops, channel rewards,
 > predictions, polls, raids, and since 0.2.0 lives in 1440p and above (Enhanced
 > Broadcasting, served by Twitch to logged-in accounts only) — without the session ever
@@ -44,7 +44,7 @@ of the document shared by both sides).
 4. Click **Load unpacked** and select the folder (the one that contains
    `manifest.json`).
 
-### Firefox 128 and later (temporary add-on)
+### Firefox 140 and later (temporary add-on)
 
 The `extension/` folder is the Chrome version (Chrome, Edge and Brave refuse a background
 given as a script, which Firefox requires). The Firefox version is built separately:
@@ -113,7 +113,12 @@ from Mozilla (AMO), which the project's owner will take care of later (ID
   page gets no right to read Twitch by itself.
 - Rate limits in the background (60 requests a minute in all, reads cached for 3 s;
   `hq.playlist` on a separate budget of 240 a minute, etc.: see PROTOCOL.md).
-- Nothing is sent anywhere but Twitch: no server of ours, no statistics.
+- Nothing is sent anywhere but Twitch: no server of ours, no statistics. Firefox (140 and
+  later) shows it at install with its built-in data consent: the Firefox version declares
+  `authenticationInfo` (the Twitch session sent to Twitch with each request) and
+  `websiteActivity` (the actions taken through the site and the watch presence, sent to
+  Twitch), as Mozilla counts anything handled outside the browser — Twitch included. Full
+  policy: [PRIVACY.md](PRIVACY.md); license: [MIT](LICENSE).
 - Permissions: `cookies` (read the session), `scripting` + `tabs` (get the integrity
   token in a twitch.tv page), `storage` (settings and session state). Hosts:
   `*.twitch.tv`, `static.twitchcdn.net` (twitch.tv's settings file, which holds the

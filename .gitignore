@@ -3,3 +3,5 @@ extension-firefox/
 
 # Photos des retours téléchargées par tools/reports.mjs --photos (données d’utilisateurs)
 report-photos/
+# Paquets pour addons.mozilla.org (extension/dev/AMO.md), refaits à la demande
+amo-upload/
