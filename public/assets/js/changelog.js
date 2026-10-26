@@ -6,6 +6,36 @@
 
 export const CHANGELOG = [
   {
+    version: '2026.10.26b',
+    items: {
+      fr: [
+        'Réglages → « Reprendre les VODs » : coupé, le site ne retient plus où tu t’es arrêté dans une VOD (elles partent du début), et la rangée « Reprendre » comme la barre violette des vignettes disparaissent. Ce qui était gardé revient si tu le réactives.',
+        'Direct bloqué après l’écran de pub de Twitch : quand l’image reste figée juste au moment où le son change de format, le lecteur repart au bout de 3 s au lieu de 30.',
+        'Auto-hébergement (Docker) : la variable SITE_DEFAULTS fixe les réglages par défaut de tes visiteurs (langue, accueil, qualité…), un objet JSON avec les noms de la sauvegarde.',
+      ],
+      en: [
+        'Settings → “Continue watching”: turned off, the site no longer remembers where you stopped in a VOD (they start from the beginning), and the Continue watching row and the purple bar on thumbnails go away. What was kept comes back if you turn it on again.',
+        'Live stuck after Twitch’s ad screen: when the picture freezes right where the sound changes format, the player starts again after 3 s instead of 30.',
+        'Self-hosting (Docker): the SITE_DEFAULTS variable sets your visitors’ default settings (language, home, quality…), as a JSON object with the backup’s names.',
+      ],
+      es: [
+        'Ajustes → «Seguir viendo»: desactivado, el sitio ya no recuerda dónde te quedaste en un VOD (empiezan desde el principio), y desaparecen la fila «Seguir viendo» y la barra morada de las miniaturas. Lo guardado vuelve si lo reactivas.',
+        'Directo atascado tras la pantalla de anuncios de Twitch: cuando la imagen se congela justo donde el sonido cambia de formato, el reproductor vuelve a empezar a los 3 s en lugar de 30.',
+        'Autoalojamiento (Docker): la variable SITE_DEFAULTS fija los ajustes por defecto de tus visitantes (idioma, portada, calidad…), como un objeto JSON con los nombres de la copia de seguridad.',
+      ],
+      ru: [
+        'Настройки → «Продолжить просмотр»: если выключить, сайт больше не запоминает, где вы остановились в записи (записи начинаются с начала), а ряд «Продолжить просмотр» и фиолетовая полоска на превью исчезают. Сохранённое вернётся, если включить снова.',
+        'Трансляция зависает после рекламного экрана Twitch: если изображение застывает ровно там, где меняется формат звука, плеер перезапускается через 3 с вместо 30.',
+        'Самостоятельный хостинг (Docker): переменная SITE_DEFAULTS задаёт настройки по умолчанию для ваших посетителей (язык, главная, качество…) — JSON-объект с названиями из резервной копии.',
+      ],
+      'zh-Hant': [
+        '設定 →「繼續觀看」：關閉後，網站不再記住你在 VOD 停下的位置（VOD 會從頭開始），「繼續觀看」列與縮圖上的紫色進度條也會消失。重新開啟後，先前保留的紀錄會回來。',
+        'Twitch 廣告畫面後直播卡住：若畫面剛好在聲音格式改變的地方凍結，播放器會在 3 秒後重新開始，而不是 30 秒。',
+        '自行架設（Docker）：SITE_DEFAULTS 變數可設定訪客的預設設定（語言、首頁、畫質…），格式為使用備份名稱的 JSON 物件。',
+      ],
+    },
+  },
+  {
     version: '2026.10.26a',
     items: {
       fr: [

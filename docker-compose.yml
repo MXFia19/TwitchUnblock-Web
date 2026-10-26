@@ -43,6 +43,11 @@ services:
       # Vide : le tien (PUBLIC_URL) et le site officiel (« Worker personnel »
       # de ses réglages) ; "*" : tout le monde. Les apps ne sont pas touchées.
       ALLOWED_ORIGINS: ""
+      # Réglages par défaut de tes visiteurs (facultatif) : un objet JSON, mêmes
+      # noms que la sauvegarde du site (README, Docker). Chacun peut encore les
+      # changer dans son navigateur. Exemple :
+      # '{"lang":"en","homeList":true,"vodProgress":false,"qualityPref":"1080"}'
+      SITE_DEFAULTS: ""
     # Journaux bornés à 3 × 10 Mo : sans cela, ils grandissent sans fin.
     logging:
       driver: json-file

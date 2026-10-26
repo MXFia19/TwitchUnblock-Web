@@ -79,6 +79,8 @@ lightScheme.addEventListener?.('change', () => { if (themeBg() === 'auto') apply
 document.addEventListener('DOMContentLoaded', boot)
 
 async function boot() {
+  // Avant tout rendu : la langue et le thème en dépendent.
+  applySiteDefaults()
   applyTheme()
   initLang(store.prefs.lang)
   loadHls()   // prêt avant le premier clic
@@ -1413,7 +1415,10 @@ function retryState(text, attrs) {
 
 // ── Accueil ────────────────────────────────────────────────────────────────
 function renderContinue() {
-  const vods = store.history.filter((h) => h.type === 'vod').slice(0, 12)
+  // « Reprendre les VODs » coupé (Réglages) : pas de rangée, même si
+  // l'historique du compte en apporte d'un autre appareil.
+  const vods = store.prefs.vodProgress === false ? []
+    : store.history.filter((h) => h.type === 'vod').slice(0, 12)
   const block = $('#continue-block')
   block.hidden = vods.length === 0
   if (!vods.length) return
@@ -5244,6 +5249,7 @@ function openSettings() {
       </label>
       ${toggle('set-homelist', t('home_list'), p.homeList, t('home_list_sub'))}
       ${toggle('set-recent', t('show_recent'), p.showRecent !== false, t('show_recent_sub'))}
+      ${toggle('set-vodprogress', t('vod_progress'), p.vodProgress !== false, t('vod_progress_sub'))}
       ${toggle('set-pinsort', t('pinned_by_viewers'), p.pinnedByViewers !== false, t('pinned_by_viewers_sub'))}
     </div>
     <div class="sheet-section" id="set-hidden">${hiddenSectionInner()}</div>
@@ -5462,6 +5468,7 @@ function openSettings() {
     }
     if (id === 'set-homelist') { p.homeList = e.target.checked; store.savePrefs(); applyLayout(); return }
     if (id === 'set-recent') { p.showRecent = e.target.checked; store.savePrefs(); renderRecentChannels(); return }
+    if (id === 'set-vodprogress') { p.vodProgress = e.target.checked; store.savePrefs(); renderContinue(); return }
     if (id === 'set-pinsort') { p.pinnedByViewers = e.target.checked; store.savePrefs(); paintFollowed(); return }
     if (id === 'set-toplang') {
       p.topLang = e.target.value === 'auto' ? null : e.target.value
@@ -5519,6 +5526,7 @@ const BACKUP_SETTINGS = {
   homeList: okBool,
   homeTab: (v) => (HOME_TABS.includes(v) ? v : undefined),
   showRecent: okBool,
+  vodProgress: okBool,
   pinned: okLogins(300),
   pinnedByViewers: okBool,
   themeBg: (v) => (THEME_BGS.includes(v) ? v : undefined),
@@ -5544,6 +5552,17 @@ const BACKUP_SETTINGS = {
   vodSpeed: (v) => (typeof v === 'number' ? validSpeed(v) : undefined),
   liveSourceOrder: (v) => (Array.isArray(v) ? [...new Set(v.filter((id) => api.LIVE_SOURCES.includes(id)))] : undefined),
   liveSource: (v) => (v === null || api.LIVE_SOURCES.includes(v) ? v : undefined),
+}
+
+// Réglages par défaut d'une instance auto-hébergée : SITE_DEFAULTS (Docker),
+// écrit dans config.js par docker/entrypoint.sh (`defaultPrefs`). Mêmes noms
+// et mêmes contrôles que la sauvegarde (une valeur invalide est ignorée),
+// plus le comptage d'usage, qu'elle ne garde pas. Pris pour les réglages que
+// ce navigateur n'a jamais enregistrés : le choix de chacun l'emporte.
+const SITE_DEFAULT_SETTINGS = { ...BACKUP_SETTINGS, shareUsage: okBool }
+function applySiteDefaults() {
+  const d = window.TU_CONFIG?.defaultPrefs
+  if (d && typeof d === 'object' && !Array.isArray(d)) store.applyDefaults(d, SITE_DEFAULT_SETTINGS)
 }
 
 function exportData() {

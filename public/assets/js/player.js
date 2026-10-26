@@ -618,6 +618,12 @@ export function adBreakEnd(breaks, at) {
 // AUDIO_RESET_MS. Un autre format sans rupture, c'est une autre qualité en
 // « Auto » : rien, la remise à neuf ferait caler à chaque changement de débit.
 const AUDIO_RESET_MS = 8_000
+// Image figée juste avant une rupture dont le son a un autre format (fin de
+// l'écran de pub ; signalement du 26/10 sur Tamblr : « le direct ne reprend
+// pas après le compte à rebours ») : nouvelle instance au bout de
+// FORMAT_STALL_MS, au lieu des STALL_REBUILD_MS d'un calage ordinaire. Elle
+// repart au bord du direct, après la rupture.
+const FORMAT_STALL_MS = 3_000
 
 /** Format du son d'un init segment fMP4 (boîte « mp4a » : canaux, fréquence,
  *  et toute la boîte comme clé, configuration AAC comprise) ; null sans elle. */
@@ -1003,7 +1009,7 @@ export class Player {
       if (this.kind === 'live' && !v.paused && !v.seeking && !this.stalledAt) {
         this.stalledAt = Date.now()
         this.stallPos = v.currentTime
-        if (this.hls) this.watchStall()
+        if (this.hls) { this.watchStall(); this.watchFormatStall() }
       }
       this.noteStall()
     })
@@ -1617,6 +1623,7 @@ export class Player {
 
   clearRebuild() {
     clearTimeout(this.stallTimer)
+    clearTimeout(this.formatStallTimer)
     clearTimeout(this.rebuildTimer)
     this.rebuildTimer = null
     // Attente d'une coupure de la chaîne abandonnée aussi : les prochains
@@ -2269,6 +2276,34 @@ export class Player {
     this.health?.add('audio')
     logError('lecteur', `son du direct : ${audioLabel(was)} → ${audioLabel(fmt)}, lecteur remis à neuf`)
     setTimeout(() => { if (this.hls === hls) recoverMedia(hls, this.video, -1) }, 400)
+  }
+
+  /** Format du son qui attend après la rupture en cours, s'il diffère de
+   *  celui qui joue (fin d'un écran de pub) ; null sinon. */
+  audioFormatAhead() {
+    const now = this.audioPlaying
+    if (!now) return null
+    for (const f of this.audioFormats.values()) if (f.cc > now.cc && f.key !== now.key) return f
+    return null
+  }
+
+  /** Direct calé (« waiting ») avant une rupture dont le son change de
+   *  format : nouvelle instance au bout de FORMAT_STALL_MS si l'image n'a pas
+   *  bougé (le cas général : watchStall). */
+  watchFormatStall() {
+    const ahead = this.audioFormatAhead()
+    if (!ahead) return
+    clearTimeout(this.formatStallTimer)
+    const token = this.attachToken
+    const was = this.audioPlaying
+    this.formatStallTimer = setTimeout(() => {
+      const v = this.video
+      if (token !== this.attachToken || !this.hls || !this.stalledAt || v.paused || v.currentTime !== this.stallPos) return
+      if (document.hidden || navigator.onLine === false) return
+      this.health?.add('audio')
+      logError('lecteur', `son du direct : image figée avant ${audioLabel(ahead)} (après ${audioLabel(was)}), relance`)
+      this.rebuild(token)
+    }, FORMAT_STALL_MS)
   }
 
   // ── Passages coupés ────────────────────────────────────────────────────

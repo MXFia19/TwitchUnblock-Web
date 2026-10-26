@@ -288,6 +288,8 @@ export const ZH_HANT = {
   unlisted_unavailable: '未公開的 VOD：用來尋找它們的來源目前沒有回應，請稍後再試。',
   show_recent: '最近的頻道',
   show_recent_sub: '在「實況主」分頁中顯示你最近開啟過的頻道捷徑。',
+  vod_progress: '繼續觀看',
+  vod_progress_sub: '記住你在每部 VOD 停下的位置：首頁的「繼續觀看」與縮圖上的紫色進度條。關閉後，這個瀏覽器不會保留任何紀錄，VOD 會從頭開始播放。',
   followers: '位追隨者',
   about_channel: '關於 {u}',
   about_empty: '尚無說明。',

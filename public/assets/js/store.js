@@ -42,6 +42,10 @@ export const DEFAULT_PREFS = {
   autoRaid: true,
   clickPause: true,  // un clic sur la vidéo met en pause (ordinateur)
   showRecent: true,  // raccourcis vers les chaînes ouvertes récemment (onglet Streamer)
+  // « Reprendre les VODs » : position retenue dans chaque VOD, rangée
+  // « Reprendre » de l'accueil, barre violette des vignettes. Coupé : rien
+  // n'est lu ni écrit (ce qui était gardé reste, pour le jour où il revient).
+  vodProgress: true,
   highlightWords: [],
   hideBots: false,
   hideCommands: false,
@@ -107,6 +111,18 @@ export const store = {
 
   // ── Préférences ─────────────────────────────────────────────────────────
   prefs: { ...DEFAULT_PREFS, ...readPrefs() },
+  /** Réglages par défaut d'une instance auto-hébergée (SITE_DEFAULTS, voir
+   *  applySiteDefaults dans main.js) : pris pour ceux que ce navigateur n'a
+   *  jamais enregistrés. `validators` : un contrôle par réglage ; une valeur
+   *  refusée (undefined) est ignorée. */
+  applyDefaults(defaults, validators) {
+    const saved = readPrefs()
+    for (const [k, valid] of Object.entries(validators)) {
+      if (!Object.hasOwn(defaults, k) || Object.hasOwn(saved, k)) continue
+      const v = valid(defaults[k])
+      if (v !== undefined) this.prefs[k] = v
+    }
+  },
   /** Appelé après chaque enregistrement des réglages (synchro, main.js). */
   onPrefsSaved: null,
   savePrefs() {
@@ -119,6 +135,8 @@ export const store = {
   saveHistory() { write('twitch_vod_history', this.history) },
 
   addHistory(term, type, display, extra = {}) {
+    // « Reprendre les VODs » coupé : aucune VOD dans l'historique.
+    if (type === 'vod' && this.prefs.vodProgress === false) return
     const key = String(term).toLowerCase()
     this.history = this.history.filter((h) => String(h.term).toLowerCase() !== key)
     // `addedAt` : l'app iOS l'exige pour relire l'historique ; sans lui, un
@@ -141,12 +159,16 @@ export const store = {
   // ── Progression des VODs ────────────────────────────────────────────────
   // Stockage bloqué (cookies refusés) : localStorage lève une erreur, et la
   // grille des VODs comme l'ouverture d'une VOD plantaient.
+  // « Reprendre les VODs » coupé : rien n'est lu (les VODs partent du début,
+  // ou du ?t= du lien) ni écrit.
   getProgress(vodId) {
+    if (this.prefs.vodProgress === false) return 0
     let v = NaN
     try { v = Number.parseFloat(localStorage.getItem(`vod_progress_${vodId}`)) } catch {}
     return Number.isFinite(v) ? v : 0
   },
   setProgress(vodId, seconds) {
+    if (this.prefs.vodProgress === false) return
     try { localStorage.setItem(`vod_progress_${vodId}`, String(seconds)) } catch {}
   },
   /** Durées connues, pour dessiner la barre de progression des cartes. */

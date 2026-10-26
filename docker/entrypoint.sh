@@ -5,10 +5,19 @@ set -e
 # public/config.js : le site parle à ce serveur (« same-origin ») et, si on
 # l'a fournie, à sa propre application Twitch pour la connexion. Valeurs
 # encodées en JSON par Node : pas d'injection possible dans le script.
+# SITE_DEFAULTS : réglages par défaut des visiteurs, un objet JSON (mêmes noms
+# que la sauvegarde du site) ; le site contrôle chaque valeur et ignore les
+# autres (applySiteDefaults, main.js). Illisible : ignoré, avec un message.
 node -e '
   const cfg = { apiUrl: "same-origin" };
   if (process.env.TWITCH_CLIENT_ID) cfg.twitchClientId = process.env.TWITCH_CLIENT_ID;
   if (process.env.PUBLIC_URL) cfg.redirectUri = process.env.PUBLIC_URL.replace(/\/?$/, "/");
+  if (process.env.SITE_DEFAULTS) {
+    let d = null;
+    try { d = JSON.parse(process.env.SITE_DEFAULTS); } catch (e) {}
+    if (d && typeof d === "object" && !Array.isArray(d)) cfg.defaultPrefs = d;
+    else console.error("SITE_DEFAULTS ignoré : un objet JSON est attendu, par exemple {\"homeList\":true}");
+  }
   require("fs").writeFileSync("/app/public/config.js",
     "// Écrit par docker/entrypoint.sh au démarrage du conteneur.\nwindow.TU_CONFIG = " + JSON.stringify(cfg) + "\n");
 '
