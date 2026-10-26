@@ -36,7 +36,9 @@ export function firefoxManifest(m) {
     background: { ...background, scripts: [worker || "background.js"] },
     browser_specific_settings: {
       gecko: {
-        id: "connect@twitchunblock.app",
+        // « connect@twitchunblock.app » est refusé par AMO (« Duplicate add-on
+        // ID found ») : un identifiant déjà pris ne se réutilise jamais.
+        id: "twitchunblock-connect@mxfia19.github.io",
         strict_min_version: "140.0",
         data_collection_permissions: { required: ["authenticationInfo", "websiteActivity"] }
       }

@@ -61,8 +61,9 @@ repository, which writes it to `extension-firefox/`.
    twitch.tv and the site's two addresses).
 
 A temporary add-on goes away when Firefox closes. A lasting install needs a signature
-from Mozilla (AMO), which the project's owner will take care of later (ID
-`connect@twitchunblock.app`).
+from Mozilla (AMO): the extension is being submitted there (ID
+`twitchunblock-connect@mxfia19.github.io`; checklist and texts in
+[dev/AMO.md](dev/AMO.md)).
 
 ### Then
 
