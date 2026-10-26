@@ -12,7 +12,7 @@
 //  taille limite.
 // ═══════════════════════════════════════════════════════════════════════════
 
-import { fixProxiedUrl } from './api.js'
+import { RELAY_BASE, fixProxiedUrl, proxyBaseOf, withoutRelay } from './api.js'
 import { lang, t } from './i18n.js'
 import { qualityLabel, qualityText, sortQualities } from './player.js'
 import { $, esc, formatClock, icon, isMobile, toast } from './util.js'
@@ -107,6 +107,9 @@ async function loadPlan() {
   let plan = setup.plans.get(quality)
   if (!plan) {
     plan = await fetchPlan(ctx.links[quality]).catch(() => null)
+    // Relais vidéo en panne : la même playlist par le Worker.
+    const alt = plan ? null : offRelay(ctx.links[quality])
+    if (alt) plan = await fetchPlan(alt).catch(() => null)
     if (plan) setup.plans.set(quality, plan)
   }
   // Feuille fermée, autre qualité ou autre VOD entre-temps : rien à afficher.
@@ -215,6 +218,7 @@ async function start() {
   const controller = new AbortController()
   job = {
     name, total: segs.length + (plan.map ? 1 : 0), done: 0, bytes: 0, restored: 0, muted: 0,
+    skipped: 0, skippedCount: 0, offRelay: false,
     state: 'running', controller, error: null,
   }
   renderProgress(true)
@@ -222,9 +226,11 @@ async function start() {
     if (plan.map) await writer.write(await fetchPart(plan.map, controller.signal))
     if (plan.map) job.done++
     await fetchAll(segs, setup.restore, writer, controller.signal)
+    // Rien de la VOD n'existe plus sur le CDN : pas de fichier vide.
+    if (job.skippedCount === segs.length) throw new Error('segments absents')
     await writer.close()
     job.state = 'done'
-    toast(t('dl_done_notif'), 'success')
+    toast(t(job.skipped > 0 ? 'dl_done_gaps' : 'dl_done_notif', { d: formatClock(job.skipped) }), 'success')
   } catch (e) {
     job.state = controller.signal.aborted ? 'cancelled' : 'failed'
     job.error = e?.tooBig ? 'too-big' : null
@@ -260,7 +266,16 @@ async function fetchAll(segs, restore, writer, signal) {
       }
     }
     if (s.original) job.muted += s.duration
-    return fetchPart(s.url, signal)
+    try {
+      return await fetchPart(s.url, signal)
+    } catch (e) {
+      // Segment purgé du CDN (404, 410) : sauté, et dit à la fin. Tout le
+      // fichier était perdu, parfois après des Go.
+      if (signal.aborted || (e.status !== 404 && e.status !== 410)) throw e
+      job.skipped += s.duration
+      job.skippedCount++
+      return null
+    }
   }
 
   await new Promise((resolve, reject) => {
@@ -270,9 +285,12 @@ async function fetchAll(segs, restore, writer, signal) {
         const part = ready.get(written)
         ready.delete(written)
         written++
-        await writer.write(part)
+        // Segment sauté (null) : rien à écrire.
+        if (part) {
+          await writer.write(part)
+          job.bytes += part.size
+        }
         job.done++
-        job.bytes += part.size
         renderProgress()
         // Assemblé en mémoire : arrêté, avec un message, passé la marge.
         if (!canStream && job.bytes > MEMORY_HARD_LIMIT) throw Object.assign(new Error('trop gros'), { tooBig: true })
@@ -306,7 +324,22 @@ async function fetchAll(segs, restore, writer, signal) {
  *  mémoire de la page (sur le disque au besoin pour Chrome), et le fichier
  *  final les réunit sans les recopier — le pic à deux fois la taille de la
  *  vidéo, au moment d'assembler, faisait planter les téléphones. */
-async function fetchPart(url, signal, { retries = 2 } = {}) {
+async function fetchPart(url, signal, opts = {}) {
+  // Relais déjà tombé pendant ce téléchargement : directement par le Worker.
+  if (job?.offRelay) url = offRelay(url) ?? url
+  try {
+    return await fetchTries(url, signal, opts)
+  } catch (e) {
+    // Relais vidéo injoignable (erreur réseau, pas un refus) : le même
+    // segment par le Worker, et les suivants aussi.
+    const alt = signal.aborted || e.status !== undefined ? null : offRelay(url)
+    if (!alt) throw e
+    if (job) job.offRelay = true
+    return fetchTries(alt, signal, opts)
+  }
+}
+
+async function fetchTries(url, signal, { retries = 2 } = {}) {
   for (let attempt = 0; ; attempt++) {
     try {
       const res = await fetch(url, { signal })
@@ -315,10 +348,17 @@ async function fetchPart(url, signal, { retries = 2 } = {}) {
       err.status = res.status
       throw err
     } catch (e) {
-      if (signal.aborted || e.status === 403 || e.status === 404 || attempt >= retries) throw e
+      if (signal.aborted || [403, 404, 410].includes(e.status) || attempt >= retries) throw e
       await new Promise((r) => setTimeout(r, 1000 * (attempt + 1)))
     }
   }
+}
+
+/** Adresse passée par le relais vidéo → la même par un Worker ; null sinon. */
+function offRelay(url) {
+  if (!RELAY_BASE || !url || proxyBaseOf(url) !== RELAY_BASE) return null
+  const moved = withoutRelay({ u: url }).u
+  return moved !== url ? moved : null
 }
 
 async function makeWriter(name, mime, ext) {
@@ -373,6 +413,7 @@ function renderProgress(force = false) {
   const sound = [
     job.restored > 0 ? t('dl_restored', { d: formatClock(job.restored) }) : '',
     job.muted > 0 ? t('dl_muted', { d: formatClock(job.muted) }) : '',
+    job.skipped > 0 ? t('dl_skipped', { d: formatClock(job.skipped) }) : '',
   ].filter(Boolean).join(' · ')
   box.innerHTML = `
     <div class="dl-bar"><span style="width:${(ratio * 100).toFixed(1)}%"></span></div>

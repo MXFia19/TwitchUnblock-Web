@@ -761,13 +761,77 @@ function commonOnlyGrew(sum) {
  *  (première rencontre). Gardées pour la première connexion, un réglage
  *  changé avant elle faisait passer la section d'ici, presque toute aux
  *  valeurs par défaut, devant celle du compte (mots masqués, personnes
- *  masquées… effacés partout). */
+ *  masquées… effacés partout).
+ *  Un autre compte s'est déjà connecté ici : ses réglages synchronisés sont
+ *  rangés à son nom (swapAccountPrefs). Réunis à ceux du nouveau compte, ils
+ *  partaient à son compte et à son iPhone. Seul un navigateur jamais
+ *  connecté réunit ce qui a été réglé sans compte. */
 function adoptPrefsOwner(st, userId) {
   if (st.owner !== userId) {
-    for (const n of PREFS_SECTIONS) Object.assign(st.sec[n], { at: 0, srv: 0, base: null })
+    if (st.owner) swapAccountPrefs(st.owner, userId)
+    for (const n of PREFS_SECTIONS) {
+      // Listes changées par l'échange de comptes : pas un changement fait ici.
+      Object.assign(st.sec[n], { at: 0, srv: 0, base: null, sum: prefsSum(prefsSection(n)) })
+    }
   }
   st.owner = userId
 }
+
+/** Réglages des sections synchronisées (common, pinned, hidden). */
+const PREFS_SYNCED_KEYS = [...PREFS_COMMON, 'pinned', 'hiddenChannels', 'hiddenCategories']
+const prefsStashKey = (id) => `tu_prefs_acct_${id}`
+
+/** Changement de compte sur ce navigateur : les réglages synchronisés du
+ *  compte précédent sont rangés à son nom, et ceux du nouveau reviennent
+ *  (rangés à sa dernière visite), ou les valeurs par défaut. La première
+ *  rencontre avec le serveur (prefsFirstMerge) y ajoute ensuite les siens. */
+function swapAccountPrefs(from, to) {
+  const p = store.prefs
+  try {
+    localStorage.setItem(prefsStashKey(from), JSON.stringify(Object.fromEntries(PREFS_SYNCED_KEYS.map((k) => [k, p[k]]))))
+  } catch {}
+  let saved = null
+  try { saved = JSON.parse(localStorage.getItem(prefsStashKey(to)) || 'null') } catch {}
+  const has = (k) => saved && typeof saved === 'object' && Object.hasOwn(saved, k)
+  for (const k of PREFS_SYNCED_KEYS) {
+    let v
+    if (k === 'hiddenChannels') v = has(k) ? mergeHidden([], saved[k], cleanHiddenChannel, (x) => x.login, HIDDEN_MAX_CHANNELS) : undefined
+    else if (k === 'hiddenCategories') v = has(k) ? mergeHidden([], saved[k], cleanHiddenCat, (x) => x.id, HIDDEN_MAX_CATS) : undefined
+    else v = has(k) ? BACKUP_SETTINGS[k](saved[k]) : undefined
+    p[k] = v !== undefined ? v : structuredClone(DEFAULT_PREFS[k] ?? null)
+  }
+  try { localStorage.removeItem(prefsStashKey(to)) } catch {}
+  store.savePrefs()
+  repaintPrefs()
+}
+
+/** Réglages changés d'un coup (autre onglet, autre compte) : ce qui en
+ *  dépend est repeint. */
+function repaintPrefs() {
+  chat?.applyPrefs()
+  multiChat?.applyPrefs()
+  renderRecentChannels()
+  renderContinue()
+  paintFollowed()
+  refreshHidden()
+}
+
+// Autre onglet du site : réglages et historique relus en place
+// (store.reloadFrom), puis repeints une fois les écritures passées.
+let storageRepaint = 0
+let storagePrefs = false
+let storageHistory = false
+window.addEventListener('storage', (e) => {
+  if (e.storageArea !== localStorage || !store.reloadFrom(e.key)) return
+  if (e.key === 'tu_prefs') storagePrefs = true
+  else storageHistory = true
+  clearTimeout(storageRepaint)
+  storageRepaint = setTimeout(() => {
+    if (storagePrefs) repaintPrefs()
+    else if (storageHistory) { renderContinue(); renderRecentChannels() }
+    storagePrefs = storageHistory = false
+  }, 300)
+})
 
 /** De la liste du serveur, ce que la fusion doit retenir : les pseudos
  *  épinglés, ou la date de chaque masqué (paires [clé, at]). */
@@ -4102,9 +4166,11 @@ async function openLive(rawLogin) {
   const [links, info] = await Promise.all([
     // « missing » : aucune source n'a de direct (404) ou nom refusé (400) ;
     // « geo » : Twitch réserve ce direct à certains pays, aucune source n'y a
-    // accès ; « failed » : une autre erreur du Worker (5xx).
+    // accès ; « failed » : une autre erreur du Worker (5xx), ou aucune
+    // réponse dans les temps (api.getLive).
     api.getLive(login).catch((e) => ({ error: e?.code === 'geo_blocked' ? 'geo'
-      : e?.status === 404 || e?.status === 400 ? 'missing' : e?.status ? 'failed' : 'network' })),
+      : e?.status === 404 || e?.status === 400 ? 'missing'
+      : e?.status || e?.name === 'AbortError' ? 'failed' : 'network' })),
     api.getChannelInfo(login).catch(() => null),
   ])
   if (state.watch !== token) return

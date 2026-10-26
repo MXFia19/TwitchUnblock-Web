@@ -700,10 +700,14 @@ function liveSourceSteps(order, wanted) {
     return [...first, ...LIVE_SOURCE_IDS.filter((id) => !first.includes(id))];
 }
 
+/** Délai d'une source du direct. Une source qui acceptait la connexion sans
+ *  répondre retenait toutes les suivantes, jusqu'à ~100 s. */
+const LIVE_SOURCE_TIMEOUT = 6000;
+
 /** Liste maîtresse d'un proxy ; null s'il ne répond pas ou si la
  *  chaîne y est hors ligne (pas de « #EXT-X-STREAM-INF »). */
 async function proxyLiveMaster(c) {
-    const r = await fetch(c.url, { headers: c.headers });
+    const r = await fetch(c.url, { headers: c.headers, signal: AbortSignal.timeout(LIVE_SOURCE_TIMEOUT) });
     if (!r.ok) return null;
     const text = await r.text();
     return text.includes('#EXT-X-STREAM-INF') ? { text, url: r.url } : null;
@@ -716,7 +720,7 @@ async function usherLiveMaster(login, seen = {}) {
     if (!token) return null;
     const geo = tokenGeoBlock(token.value);
     if (geo) seen.geo = geo;
-    const r = await fetch(`https://usher.ttvnw.net/api/channel/hls/${login}.m3u8?allow_source=true&allow_audio_only=true&allow_spectre=true&fast_bread=true&player=twitchweb&playlist_include_framerate=true&segment_preference=4&sig=${encodeURIComponent(token.signature)}&token=${encodeURIComponent(token.value)}`, { headers: REQUEST_HEADERS });
+    const r = await fetch(`https://usher.ttvnw.net/api/channel/hls/${login}.m3u8?allow_source=true&allow_audio_only=true&allow_spectre=true&fast_bread=true&player=twitchweb&playlist_include_framerate=true&segment_preference=4&sig=${encodeURIComponent(token.signature)}&token=${encodeURIComponent(token.value)}`, { headers: REQUEST_HEADERS, signal: AbortSignal.timeout(LIVE_SOURCE_TIMEOUT) });
     if (r.ok) return { text: await r.text(), url: r.url };
     if (usherGeoBlocked(await r.text().catch(() => ''))) seen.geo = seen.geo || `usher ${r.status}`;
     return null;
@@ -1133,7 +1137,10 @@ async function twitchGQL(query, variables = {}) {
     const res = await fetch('https://gql.twitch.tv/gql', {
         method: 'POST',
         headers: { 'Client-ID': CLIENT_ID, 'Content-Type': 'application/json', 'User-Agent': REQUEST_HEADERS['User-Agent'], 'Device-ID': 'MkMq8a9' + Math.random().toString(36).substring(2, 15) },
-        body: JSON.stringify({ query, variables })
+        body: JSON.stringify({ query, variables }),
+        // GQL répond en moins d'une seconde : au-delà de 10 s, il ne répondra
+        // plus (le jeton du direct attendait sans fin).
+        signal: AbortSignal.timeout(10000)
     });
     if (!res.ok) throw new Error(`GQL ${res.status}`);
     return await res.json();

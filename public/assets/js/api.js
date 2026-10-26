@@ -669,12 +669,16 @@ export async function getVodMeta(id) {
 // bloqué — chargement infini et « CORS error » dans la console. Le réglage
 // « proxy » ne concerne plus que les liens donnés aux applis externes
 // (VLC, Infuse…), voir `directUrl`.
-/** `avoid` : Worker en panne en pleine lecture (voir workerJson). */
+/** `avoid` : Worker en panne en pleine lecture (voir workerJson).
+ *  Délai : le Worker donne 6 s à chaque source (quatre) et 10 s à GQL ; un
+ *  Worker d'avant ces délais (Docker pas à jour) faisait attendre ~100 s
+ *  quand une source acceptait la connexion sans répondre. */
+const LIVE_TIMEOUT = 45_000
 export async function getLive(login, { avoid = null } = {}) {
   // Ordre des sources (réglages) : le Worker les essaie l'une après l'autre.
   // `source` (la première) pour un Worker d'avant l'ordre.
   const order = liveSourceOrder()
-  return viaRelay(await workerJson(`/api/get-live?name=${encodeURIComponent(login)}&proxy=true&source=${order[0]}&order=${order.join(',')}`, { avoid }))
+  return viaRelay(await workerJson(`/api/get-live?name=${encodeURIComponent(login)}&proxy=true&source=${order[0]}&order=${order.join(',')}`, { avoid, timeout: LIVE_TIMEOUT }))
 }
 
 /** Sources du direct, dans l'ordre automatique : Luminous Asie, proxy

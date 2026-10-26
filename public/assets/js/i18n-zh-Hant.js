@@ -205,7 +205,7 @@ export const ZH_HANT = {
   dl_failed_msg: '下載已停止：請再試一次。',
   dl_cancelled: '已取消下載',
   dl_restored: '已還原 {d} 的聲音',
-  dl_muted: '已消音 {d}',
+  dl_muted: '已消音 {d}', dl_skipped: '{d} 已被 Twitch 刪除', dl_done_gaps: '下載完成，缺少已被 Twitch 刪除的 {d}',
   dl_another: '再下載另一段',
   multi_chat: '多直播中的聊天室',
   multi_chat_sub: '你正在聽的那部影片的聊天室（VOD 會同步重播），位於拼貼畫面旁（大螢幕）。',

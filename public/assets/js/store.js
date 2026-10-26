@@ -134,6 +134,26 @@ export const store = {
   history: read('twitch_vod_history', []),
   saveHistory() { write('twitch_vod_history', this.history) },
 
+  /** Réglages ou historique réécrits par un autre onglet (événement
+   *  `storage`, main.js) : relus en place. L'onglet resté ouvert réécrivait
+   *  sinon les réglages entiers au moindre changement (le volume suffit),
+   *  avec ses valeurs d'avant, et la perte partait au serveur et à l'iPhone.
+   *  @returns {boolean} vrai si quelque chose a été relu. */
+  reloadFrom(key) {
+    if (key === 'tu_prefs') {
+      const fresh = { ...DEFAULT_PREFS, ...readPrefs() }
+      for (const k of Object.keys(this.prefs)) if (!Object.hasOwn(fresh, k)) delete this.prefs[k]
+      Object.assign(this.prefs, fresh)
+      return true
+    }
+    if (key === 'twitch_vod_history') {
+      const h = read('twitch_vod_history', [])
+      this.history = Array.isArray(h) ? h : []
+      return true
+    }
+    return false
+  },
+
   addHistory(term, type, display, extra = {}) {
     // « Reprendre les VODs » coupé : aucune VOD dans l'historique.
     if (type === 'vod' && this.prefs.vodProgress === false) return
