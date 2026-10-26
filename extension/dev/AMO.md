@@ -11,7 +11,7 @@ guide: Developer Hub → **Submit a New Add-on** → **On this site**.
 - **Add-on:** the Firefox package — the contents of `extension-firefox/` (built by
   `node extension/dev/build-firefox.mjs`), `manifest.json` at the root of the zip. The
   release's `twitchunblock-connect-firefox.zip` is the same package.
-- **Source code** (asked after the upload): a zip of the repository's `extension/` folder,
+- **Source code** (see [After submitting](#after-submitting)): a zip of the repository's `extension/` folder,
   with [BUILD.md](BUILD.md) at its root. It is needed because `build-firefox.mjs` generates
   the Firefox manifest; every JavaScript file is shipped as written.
 
@@ -22,7 +22,9 @@ with its own source code zip. Upload it from the add-on's page in the Developer 
 ## Upload
 
 - **Compatible platforms:** Firefox (desktop) only. Firefox for Android has not been tried.
-- **Do you need to submit source code?** Yes → the source code zip.
+- **Do you need to submit source code?** Yes → the source code zip. On 2026-10-26 the form
+  did not ask (it went straight from the upload to **Describe Add-on**): the source code is
+  then added after submitting, see [After submitting](#after-submitting).
 
 ## Describe Add-on
 
@@ -111,9 +113,25 @@ with its own source code zip. Upload it from the add-on's page in the Developer 
 > How to test: log in on https://www.twitch.tv in Firefox, then open
 > https://twitchunblock.vercel.app and a live channel: the channel points button shows the
 > balance read by the extension. Settings → Player → "Higher qualities" uses hq.master and
-> hq.playlist. A Twitch account is required.
+> hq.playlist. A Twitch account is required: any free account works (sign up on
+> https://www.twitch.tv); the extension only uses the session of the browser it runs in.
 >
 > Source code: the Firefox package is generated from the Chrome folder by
 > extension/dev/build-firefox.mjs (only manifest.json is rewritten; every other file is
-> copied unchanged, without the dev/ and tests/ folders). Build: Node.js 22 or later, no npm
-> dependencies — see BUILD.md. Tests: node extension/tests/run.mjs.
+> copied unchanged, without the dev/ and tests/ folders). The source package is attached to
+> this version, with BUILD.md at its root. Build: Node.js 22 or later, no npm dependencies,
+> then node extension/dev/build-firefox.mjs. Tests: node extension/tests/run.mjs.
+
+Never put the developer's own Twitch login in these notes. If reviewers ask for an account,
+create a dedicated test account for them.
+
+## After submitting
+
+Right after **Submit Version**: Developer Hub → **My Add-ons** → TwitchUnblock Connect →
+**Manage Status & Versions** → open the version → at the bottom, next to **Source code**,
+**Browse** → the source code zip. Fill in **Release notes** on the same page, then
+**Save changes**. Release notes for 0.2.0:
+
+> First version on addons.mozilla.org: channel points and bonus chests, watch streaks,
+> drops, predictions, polls, raids and channel rewards for the TwitchUnblock website, plus
+> higher qualities (1440p and above).
