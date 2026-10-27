@@ -444,7 +444,7 @@ async function handleGetLive(url, workerOrigin) {
     const seen = {};
     for (const id of steps) {
         try {
-            const got = id === 'twitch' ? await usherLiveMaster(login, seen) : await groupLiveMaster(LIVE_PROXIES[id](login));
+            const got = id === 'twitch' ? await usherLiveMaster(login, seen) : await proxyLiveMaster(LIVE_PROXIES[id](login));
             if (!got) continue;
             m3u8Content = got.text;
             masterUrl = got.url;
@@ -681,65 +681,54 @@ const ttvlolUrl = (host, login) =>
 // format des serveurs IVS, où « Source » donnait un écran noir chez des
 // utilisateurs. Twitch officiel, avec ses pubs, vient en dernier — ou en
 // premier si on le choisit.
-// Chaque source est un groupe de proxys essayés dans l'ordre, le second en
-// secours (sondés le 27/10 sur trois directs, sans pré-roll) : Asie =
-// Luminous (Ouzbékistan) puis PerfProd Asie (Maurice) ; Albanie = nadeko
-// Albanie (format TTV.LOL) puis twitch.nadeko.net (format Luminous ;
-// twitch.zzls.xyz n'est qu'une redirection 301 vers lui) ; Europe =
-// Luminous Europe puis Europe 2.
+// Une source = un serveur (sondés le 27/10 sur trois directs, sans
+// pré-roll) : as = Luminous Asie (Ouzbékistan), pp = PerfProd Asie
+// (Maurice), al = nadeko Albanie (format TTV.LOL), al2 = twitch.nadeko.net
+// (l'autre serveur de nadeko, format Luminous ; twitch.zzls.xyz n'est
+// qu'une redirection 301 vers lui), eu / eu2 = Luminous Europe et Europe 2.
 const LIVE_QUERY = 'allow_source=true&allow_audio_only=true&fast_bread=true';
-const liveUrl = (host, login) => `https://${host}/live/${login}?${LIVE_QUERY}`;
+const luminousSource = (host) => (login) => ({ url: `https://${host}/live/${login}?${LIVE_QUERY}`, headers: getRequestHeaders(login) });
 const LIVE_PROXIES = {
-    as: (login) => [
-        { url: liveUrl('as.luminous.dev', login), headers: getRequestHeaders(login) },
-        { url: liveUrl('lb-as.cdn-perfprod.com', login), headers: getRequestHeaders(login) },
-    ],
-    al: (login) => [
-        { url: ttvlolUrl(TTVLOL_HOSTS[0], login), headers: { 'X-Donate-To': 'https://ttv.lol/donate' } },
-        { url: liveUrl('twitch.nadeko.net', login), headers: getRequestHeaders(login) },
-    ],
-    eu: (login) => [
-        { url: liveUrl('eu.luminous.dev', login), headers: getRequestHeaders(login) },
-        { url: liveUrl('eu2.luminous.dev', login), headers: getRequestHeaders(login) },
-    ],
+    as: luminousSource('as.luminous.dev'),
+    pp: luminousSource('lb-as.cdn-perfprod.com'),
+    al: (login) => ({ url: ttvlolUrl(TTVLOL_HOSTS[0], login), headers: { 'X-Donate-To': 'https://ttv.lol/donate' } }),
+    al2: luminousSource('twitch.nadeko.net'),
+    eu: luminousSource('eu.luminous.dev'),
+    eu2: luminousSource('eu2.luminous.dev'),
 };
-const LIVE_PROXY_ORDER = ['as', 'al', 'eu'];
+const LIVE_PROXY_ORDER = ['as', 'pp', 'al', 'al2', 'eu', 'eu2'];
 const LIVE_SOURCE_IDS = [...LIVE_PROXY_ORDER, 'twitch'];
+// Source ajoutée → celle qu'elle secourt : un ordre d'avant elle (réglages
+// enregistrés, app pas à jour) la reçoit juste après.
+const LIVE_SOURCE_BACKUP_OF = { pp: 'as', al2: 'al', eu2: 'eu' };
 
 /** Sources à essayer, dans l'ordre demandé (`order=eu,as,…`) ; une source
- *  inconnue est ignorée, une oubliée ajoutée à la fin : toutes restent
- *  essayées. Les clients d'avant l'ordre n'envoient que leur préférée
- *  (`source=`) : elle passe en tête de l'ordre automatique. */
+ *  inconnue est ignorée, une oubliée ajoutée juste après celle qu'elle
+ *  secourt, sinon à la fin : toutes restent essayées. Les clients d'avant
+ *  l'ordre n'envoient que leur préférée (`source=`) : elle passe en tête de
+ *  l'ordre automatique. */
 function liveSourceSteps(order, wanted) {
     const asked = String(order || '').split(',').map((s) => s.trim())
         .filter((id, i, all) => LIVE_SOURCE_IDS.includes(id) && all.indexOf(id) === i);
-    const first = asked.length ? asked : (LIVE_SOURCE_IDS.includes(wanted) ? [wanted] : []);
-    return [...first, ...LIVE_SOURCE_IDS.filter((id) => !first.includes(id))];
+    const steps = asked.length ? asked : (LIVE_SOURCE_IDS.includes(wanted) ? [wanted] : []);
+    for (const id of LIVE_SOURCE_IDS) {
+        if (steps.includes(id)) continue;
+        const i = steps.indexOf(LIVE_SOURCE_BACKUP_OF[id]);
+        if (i >= 0) steps.splice(i + 1, 0, id);
+        else steps.push(id);
+    }
+    return steps;
 }
 
 /** Délai d'une source du direct. Une source qui acceptait la connexion sans
- *  répondre retenait toutes les suivantes, jusqu'à ~100 s. */
-const LIVE_SOURCE_TIMEOUT = 6000;
-/** Délai d'un groupe de proxys : un premier muet (6 s) laisse encore 2 s
- *  au secours ; un premier en erreur lui en laisse presque 6. */
-const LIVE_GROUP_TIMEOUT = 8000;
-
-/** Liste maîtresse du premier proxy du groupe qui répond ; null si aucun. */
-async function groupLiveMaster(candidates) {
-    const deadline = Date.now() + LIVE_GROUP_TIMEOUT;
-    for (const c of candidates) {
-        const left = deadline - Date.now();
-        if (left < 1000) break;
-        const got = await proxyLiveMaster(c, Math.min(LIVE_SOURCE_TIMEOUT, left)).catch(() => null);
-        if (got) return got;
-    }
-    return null;
-}
+ *  répondre retenait toutes les suivantes, jusqu'à ~100 s. 5 s : les six
+ *  proxys et Twitch tiennent dans les 45 s du site. */
+const LIVE_SOURCE_TIMEOUT = 5000;
 
 /** Liste maîtresse d'un proxy ; null s'il ne répond pas ou si la
  *  chaîne y est hors ligne (pas de « #EXT-X-STREAM-INF »). */
-async function proxyLiveMaster(c, ms = LIVE_SOURCE_TIMEOUT) {
-    const r = await fetch(c.url, { headers: c.headers, signal: AbortSignal.timeout(ms) });
+async function proxyLiveMaster(c) {
+    const r = await fetch(c.url, { headers: c.headers, signal: AbortSignal.timeout(LIVE_SOURCE_TIMEOUT) });
     if (!r.ok) return null;
     const text = await r.text();
     return text.includes('#EXT-X-STREAM-INF') ? { text, url: r.url } : null;
@@ -1268,7 +1257,7 @@ const USAGE_EXT_VERSION = /^\d{1,4}\.\d{1,4}\.\d{1,4}$/;
 const USAGE_EXT_BROWSERS = ['chrome', 'firefox', 'other'];
 // live_account : direct de l'app servi par le compte d'un abonné sans pub ;
 // live_ad_break : pause pub de la chaîne affichée (une fois par pause).
-const USAGE_EVENTS = ['live_as', 'live_al', 'live_eu', 'live_twitch', 'live_account', 'live_worker', 'live_unknown',
+const USAGE_EVENTS = ['live_as', 'live_pp', 'live_al', 'live_al2', 'live_eu', 'live_eu2', 'live_twitch', 'live_account', 'live_worker', 'live_unknown',
     'live_fail', 'live_play_fail', 'live_ad_break', 'vod', 'vod_fail', 'vod_play_fail'];
 
 // POST /api/ping — { id, version, platform } enregistre ; { id, forget: true } efface.

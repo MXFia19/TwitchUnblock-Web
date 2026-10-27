@@ -670,7 +670,7 @@ export async function getVodMeta(id) {
 // « proxy » ne concerne plus que les liens donnés aux applis externes
 // (VLC, Infuse…), voir `directUrl`.
 /** `avoid` : Worker en panne en pleine lecture (voir workerJson).
- *  Délai : le Worker donne 6 s à chaque source (quatre) et 10 s à GQL ; un
+ *  Délai : le Worker donne 5 s à chaque source (sept) et 10 s à GQL ; un
  *  Worker d'avant ces délais (Docker pas à jour) faisait attendre ~100 s
  *  quand une source acceptait la connexion sans répondre. */
 const LIVE_TIMEOUT = 45_000
@@ -681,18 +681,29 @@ export async function getLive(login, { avoid = null } = {}) {
   return viaRelay(await workerJson(`/api/get-live?name=${encodeURIComponent(login)}&proxy=true&source=${order[0]}&order=${order.join(',')}`, { avoid, timeout: LIVE_TIMEOUT }))
 }
 
-/** Sources du direct, dans l'ordre automatique : Luminous Asie, proxy
- *  albanais (TTV.LOL), Luminous Europe, Twitch officiel (avec ses pubs). */
-export const LIVE_SOURCES = ['as', 'al', 'eu', 'twitch']
+/** Sources du direct, dans l'ordre automatique : Luminous Asie, PerfProd
+ *  Asie, proxy albanais (TTV.LOL) et son second serveur, Luminous Europe
+ *  et Europe 2, Twitch officiel (avec ses pubs). */
+export const LIVE_SOURCES = ['as', 'pp', 'al', 'al2', 'eu', 'eu2', 'twitch']
+/** Source ajoutée → celle qu'elle secourt : un ordre enregistré avant elle
+ *  la reçoit juste après (comme le Worker). */
+const LIVE_SOURCE_BACKUP_OF = { pp: 'as', al2: 'al', eu2: 'eu' }
 
 /** Ordre choisi dans les réglages ; avant lui, une seule source préférée
  *  (`liveSource`), mise en tête. Une source inconnue est ignorée, une
- *  oubliée ajoutée à la fin : toutes restent essayées. */
+ *  oubliée ajoutée juste après celle qu'elle secourt, sinon à la fin :
+ *  toutes restent essayées. */
 export function liveSourceOrder(prefs = store.prefs) {
   const saved = Array.isArray(prefs.liveSourceOrder) ? prefs.liveSourceOrder
     : LIVE_SOURCES.includes(prefs.liveSource) ? [prefs.liveSource] : []
   const order = saved.filter((id, i) => LIVE_SOURCES.includes(id) && saved.indexOf(id) === i)
-  return [...order, ...LIVE_SOURCES.filter((id) => !order.includes(id))]
+  for (const id of LIVE_SOURCES) {
+    if (order.includes(id)) continue
+    const i = order.indexOf(LIVE_SOURCE_BACKUP_OF[id])
+    if (i >= 0) order.splice(i + 1, 0, id)
+    else order.push(id)
+  }
+  return order
 }
 
 export async function getVodLinks(id, { avoid = null } = {}) {
