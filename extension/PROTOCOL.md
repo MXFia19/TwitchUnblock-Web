@@ -7,10 +7,11 @@ in `extension/PROTOCOL.md`.
 The protocol stays at version 1: extension 0.2.0 adds two operations to it
 (`hq.master`, `hq.playlist`, higher qualities). The site only asks for them from an
 extension that announces 0.2.0 or later (`version` of `hello`); 0.1.0 would answer
-`unknown_op`. Extension 0.3.0 adds `follow.get` and `follow.set`, tells in `hq.master`
-whether Twitch serves ads to the account (`account`), and marks in `drops.get` the
-campaigns whose game account isn't linked (`needsLink`, `linkUrl`); the site only relies on
-them with 0.3.0 or later.
+`unknown_op`. Extension 0.3.0 adds `follow.get`, `follow.set`, `clips.create`,
+`drops.inventory` and `events.keep` (with the account's events, a new message from the
+extension to the page), tells in `hq.master` whether Twitch serves ads to the account
+(`account`), and marks in `drops.get` the campaigns whose game account isn't linked
+(`needsLink`, `linkUrl`); the site only relies on them with 0.3.0 or later.
 
 ## Security principles
 
@@ -40,8 +41,16 @@ them with 0.3.0 or later.
   (`all_frames: false`):
   - `https://twitchunblock.vercel.app/*` (production)
   - `https://test2-git-test-17d298-mxfia19s-projects.vercel.app/*` (Vercel preview of
-    the test branch, protected by Vercel login)
+    the test branch, protected by Vercel login) — ONLY in the repository's `extension/`
+    folder, loaded by hand for tests. Since 0.3.0 the published packages (releases,
+    AMO) are built without it (`dev/release.mjs`): content script, host permissions,
+    and therefore the origins the background and the window read from the manifest.
   Nothing else: no `*.vercel.app`, no localhost.
+- Since 0.3.0, the session also goes to `wss://hermes.twitch.tv` — Twitch's own
+  WebSocket, the one twitch.tv uses — in the `authenticate` message, to receive the
+  account's events (`events.keep`). Nothing else is sent there: subscriptions to the
+  account's topics only. What comes back is reduced to a closed list of numbers and
+  ids before it reaches the page (see Events).
 - The background checks everything again: `sender.id === runtime.id`, origin of
   `sender.url` in the list above, `sender.frameId === 0`, types and bounds of every
   argument.
@@ -52,9 +61,9 @@ them with 0.3.0 or later.
   page script can't fake); a spend needs `navigator.userActivation.isActive`, a trusted
   click less than 5 s old, and that click not already used by another request (before,
   the browser's activation, true for a few seconds after any click, let several spends
-  through). `follow.set` (an account action, not a spend) needs the same click, but not
-  that setting.
-- The site itself refuses spends and `follow.set` when the extension's twitch.tv account
+  through). `follow.set` and `clips.create` (account actions, not spends) need the same
+  click, but not that setting.
+- The site itself refuses spends, `follow.set` and `clips.create` when the extension's twitch.tv account
   isn't the one logged in on the site (error `account_mismatch`, never sent to the
   extension): they would go to another account than the site's follows and chat. The site also shows its own
   confirmation (amount, choice) before sending. A spend is never sent to Twitch more
@@ -76,12 +85,17 @@ message where `event.source !== window`, `event.origin !== location.origin`, or
 - Announcement (extension → page), sent by the content script when it loads, and again
   when a setting changes in the extension's window:
   `{ tuConnect: 1, dir: "hello", protocol: 1, version: "<extension version>", enabled: <bool> }`
+- Event (extension → page, 0.3.0), while the site keeps asking for them (`events.keep`):
+  `{ tuConnect: 1, dir: "event", event: { type, … } }`. The background sends it to the
+  site's tabs (`tabs.sendMessage`, top frame only); the content script only relays one
+  coming from its own background (no `sender.tab`), field by field, after checking it
+  against the closed list below; the site checks it again.
 
 Detection on the site's side: listen for announcements, and send `hello` at 0 s, 0.5 s,
 1.5 s and 3 s as long as no answer has arrived. Timeout per request: 15 s (45 s for an
 operation that may have to get an integrity token: `points.claim`, `watch.beat`,
 `predictions.bet`, `polls.vote`, `raid.join`, `drops.claim`, `drops.pulse`,
-`rewards.redeem`, `hq.master`).
+`rewards.redeem`, `hq.master`, `follow.set`, `clips.create`).
 
 After an install or an update of the extension, the content script is injected again
 into the site's tabs that are already open; the old one (orphaned under Chrome) no
@@ -209,6 +223,49 @@ longer answers.
    sent. Done only if the mutation's field is an object without `error` and, for a follow,
    with a non-null `follow`; otherwise `twitch` with Twitch's code (`UNKNOWN` without
    one). The site asks for a confirmation before unfollowing.
+20. `clips.create` `{ channel, at }` (0.3.0, real click, not subject to the spend
+   setting) → `{ slug, url }`
+   Clips the live at the instant `at` (integer, milliseconds since 1970, between 1.5e12
+   and 4.1e12: the date of the image the site shows, a few seconds behind Twitch), like
+   the iOS app (`ClipCreator.swift`): the live's broadcast is read publicly
+   (`user(login) { id stream { id createdAt } }`), `offsetSeconds` = `at` − `createdAt`
+   (0 at least), then the `CreateClip` mutation in clear with
+   `{ broadcasterID, broadcastID, offsetSeconds }` and the integrity token — or, when
+   Twitch's schema refuses that form (unknown field), `{ broadcasterID, offsetSeconds }`;
+   never two clips for one request. `slug`: `^[A-Za-z0-9_-]{3,120}$`, `url`:
+   `https://clips.twitch.tv/<slug>`. Not live → `offline`; Twitch's refusal read by
+   words: not live → `offline`, rate → `rate_limited`, clips turned off or restricted
+   → `twitch` `CLIPS_DISABLED`, otherwise `twitch` with the code. 1 per 10 s.
+21. `drops.inventory` `{}` (0.3.0) →
+   `{ campaigns: [ { <campaign of drops.get>, started: bool, startsAt: string | null, gameBoxArt: string | null } ], available: bool }`
+   The account's Drops page (iOS `DropsView`): all its campaigns, started ones first
+   (inventory, with progress), then the open campaigns not started yet (dashboard),
+   ordered by end date, 50 at most. The dashboard needs an integrity token, and a read
+   never opens a tab to get one: without a kept token, `available` is false and only the
+   started campaigns are there. A campaign whose game account isn't linked has
+   `needsLink`, `linkUrl` and no `dropInstanceId`, as in `drops.get`.
+22. `events.keep` `{}` (0.3.0) → `{ connected: bool }`
+   The site wants the account's events: the background opens (or keeps) its connection
+   to Hermes for 90 s more after this request. The site asks every 25 s while a tab of
+   it is visible or plays a live. `connected`: authenticated and subscribed to the
+   topics `community-points-user-v1`, `predictions-user-v1` and `user-drop-events`
+   (`<topic>.<user id>`). Hermes refusing the session → no new attempt for 10 min;
+   connection lost → new attempts (2 s, then doubled up to 60 s); session changed or
+   gone, or connection to the site turned off → closed. With “Claim automatically”,
+   a chest announced by Hermes is claimed right away (`ClaimCommunityPoints`), and so is
+   a drop that becomes claimable — never one whose game account isn't linked.
+
+Events (`dir: "event"`, closed list; unknown Twitch fields → `null`):
+
+- `{ type: "points", channelId, balance, gain: number | null, reason: string | null }`
+  (points earned or spent; `reason`: Twitch's `reason_code`, `WATCH`, `CLAIM`…)
+- `{ type: "chest", channelId, claimed: bool, balance: number | null }` (chest available:
+  claimed by the extension, or left to claim)
+- `{ type: "prediction", channelId, eventId: string | null, result: "WIN" | "LOSE" | "REFUND", points }`
+  (points won, or the bet given back)
+- `{ type: "drop", dropId, channelId: string | null, current: number | null, required: number | null, ready: bool, claimed: bool, needsLink: bool, dropInstanceId: string | null }`
+  (progress; or a drop that became claimable: claimed by the extension, ready to claim
+  with its `dropInstanceId`, or waiting for its game account to be linked)
 
 Unknown Twitch fields: `null`, never made up.
 
@@ -251,7 +308,7 @@ cleaned-up Twitch message (80 characters at most).
 Reads (`*.get`, `status`): at most one Twitch request per 3 s per channel (otherwise a
 cached answer); `points.claim`: 1 per 10 s; `watch.beat`: 1 per 50 s per channel;
 `raid.join`: 1 per 30 s per channel; `drops.claim`: 1 per 5 s; `drops.pulse`: 1 per
-8 s per channel; spends: 1 per 3 s; `follow.set`: 1 per 3 s; `hq.master`: one list asked from Twitch per 10 s,
+8 s per channel; spends: 1 per 3 s; `follow.set`: 1 per 3 s; `clips.create`: 1 per 10 s; `hq.master`: one list asked from Twitch per 10 s,
 per channel and per choice of codecs (otherwise the same answer, same ids); all
 together: 60 requests a minute, beyond that `rate_limited`.
 
@@ -266,7 +323,8 @@ oldest, which could be the ones the player is reading). On `expired`, the site a
 ## Settings (extension's window, local storage, no secret)
 
 - “Connection to the TwitchUnblock site” (on by default)
-- “Claim automatically (chests and drops)” (on by default; key `autoClaim`)
+- “Claim automatically (chests and drops)” (on by default; key `autoClaim`; also for
+  the chests and drops announced by Hermes, 0.3.0)
 - “Bets, votes and rewards from the site” (on by default, always subject to the real
   click; key `allowSpend`)
 

@@ -12,7 +12,9 @@ browser, so that while you watch a live on the site you can:
 - move your drops forward and claim them,
 - watch in **1440p and above** on the channels that offer it (new in 0.2.0),
 - follow or unfollow channels, and watch **without ads** when you're subscribed or have
-  Turbo (new in 0.3.0).
+  Turbo (new in 0.3.0),
+- clip the live with your account, see all your drops campaigns on one page, and get your
+  points, chests, predictions and drops live (new in 0.3.0).
 
 Your Twitch session never leaves the extension: nothing goes through TwitchUnblock's servers,
 and spending points always needs a click from you. For 1440p, the site only gets the live's
@@ -64,7 +66,9 @@ access**.
 2. Open [twitchunblock.vercel.app](https://twitchunblock.vercel.app) → **Settings →
    TwitchUnblock Connect**: it should show the extension as installed, with your account.
 3. Watch a live: your points balance shows above the chat, chests are claimed for you, and
-   predictions, polls, rewards and drops get their buttons.
+   predictions, polls, rewards and drops get their buttons. With 0.3.0: **Clip** next to
+   the live's title, and **Settings → TwitchUnblock Connect → My drops** for all your
+   campaigns.
 4. For 1440p and above: **Settings → Player → Higher qualities (1440p and above)** (needs
    version 0.2.0). Only channels streaming above 1080p (Enhanced Broadcasting) have them;
    the player's quality menu then lists them (“1440p60 (Source)”…). HEVC and AV1 qualities

@@ -21,7 +21,7 @@ import { API_URL } from './api.js'
 import { uid } from './util.js'
 import { connect, usageFields } from './connect.js'
 
-export const SITE_VERSION = '2026.10.26c'
+export const SITE_VERSION = '2026.10.27a'
 const ID_KEY = 'tu_install_id'
 const LAST_KEY = 'tu_last_ping'
 const EV_KEY = 'tu_usage_ev'

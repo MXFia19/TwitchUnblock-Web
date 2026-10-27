@@ -12,22 +12,21 @@
 const api = globalThis.browser || globalThis.chrome;
 
 // Accès d'hôte du manifeste (accordables et retirables un à un sous Firefox,
-// dans about:addons, ou sous Chrome par « Accès au site »). Les deux origines
-// du site servent au content script et à sa réinjection après une mise à jour.
-// *.playlist.ttvnw.net (0.2.0) : sans cet accès, Twitch refuse la lecture des
-// playlists du direct à l'extension (en-tête Origin) — drops et 1440p.
-const HOST_ORIGINS = [
-  "https://*.twitch.tv/*",
-  "https://static.twitchcdn.net/*",
-  "https://usher.ttvnw.net/*",
-  "https://*.hls.ttvnw.net/*",
-  "https://*.playlist.ttvnw.net/*"
-];
-const SITE_ORIGINS = [
-  "https://twitchunblock.vercel.app/*",
-  "https://test2-git-test-17d298-mxfia19s-projects.vercel.app/*"
-];
-const NEEDED_ORIGINS = HOST_ORIGINS.concat(SITE_ORIGINS);
+// dans about:addons, ou sous Chrome par « Accès au site ») : tous ceux qu'il
+// déclare. Les origines du site servent au content script et à sa
+// réinjection après une mise à jour ; *.playlist.ttvnw.net (0.2.0) : sans cet
+// accès, Twitch refuse la lecture des playlists du direct à l'extension
+// (en-tête Origin) — drops et 1440p. Lus dans le manifeste : le paquet publié
+// n'a pas l'aperçu Vercel de la branche de test (dev/release.mjs), et en
+// demander un absent du manifeste échouerait.
+const NEEDED_ORIGINS = (() => {
+  try {
+    const list = api.runtime.getManifest().host_permissions;
+    return Array.isArray(list) ? list.filter((p) => typeof p === "string") : [];
+  } catch (e) {
+    return [];
+  }
+})();
 const DEFAULT_SETTINGS = { siteEnabled: true, autoClaim: true, allowSpend: true };
 
 const $ = (id) => document.getElementById(id);

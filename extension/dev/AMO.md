@@ -35,7 +35,7 @@ with its own source code zip. Upload it from the add-on's page in the Developer 
 **Summary** (250 characters at most):
 
 > Lets the TwitchUnblock website use your Twitch session in this browser: channel points and
-> bonus chests, watch streaks, drops, predictions, polls, raids, rewards and lives in 1440p+.
+> chests, drops, predictions, polls, raids, rewards, follows, clips and lives in 1440p+.
 > Your session never leaves the extension.
 
 **Description:**
@@ -49,6 +49,9 @@ with its own source code zip. Upload it from the add-on's page in the Developer 
 > • show your drops and claim them;
 > • let you bet on predictions, vote in polls, join raids and redeem channel rewards — always
 > with a real click on the website;
+> • follow channels and clip the live with your account (a real click each time);
+> • show all your drops campaigns on one page, and your points, chests, predictions and
+> drops live;
 > • play lives in higher qualities (1440p and above) when the streamer offers them, with the
 > usual ad-free source during Twitch ad breaks.
 >
@@ -81,13 +84,19 @@ with its own source code zip. Upload it from the add-on's page in the Developer 
 
 > What it does: a bridge between https://twitchunblock.vercel.app (our website, a Twitch
 > viewer) and the user's Twitch session in this browser. The website talks to a content
-> script (top frame only, only on the website's two origins: production and its test
-> preview, test2-git-test-17d298-mxfia19s-projects.vercel.app). The background checks the
-> sender, origin, frame and arguments, and only performs a closed list of operations
-> (PROTOCOL.md): hello, status, points.get, points.claim, watch.beat, predictions.get,
-> predictions.bet, polls.get, polls.vote, raid.join, drops.get, drops.claim, drops.pulse,
-> rewards.get, rewards.redeem, hq.master, hq.playlist. No generic request relay, no
-> externally_connectable, no web_accessible_resources, no remote code, no analytics.
+> script (top frame only, only on the website's origin, https://twitchunblock.vercel.app).
+> The background checks the sender, origin, frame and arguments, and only performs a closed
+> list of operations (PROTOCOL.md): hello, status, points.get, points.claim, watch.beat,
+> predictions.get, predictions.bet, polls.get, polls.vote, raid.join, drops.get,
+> drops.claim, drops.pulse, rewards.get, rewards.redeem, hq.master, hq.playlist,
+> follow.get, follow.set, clips.create, drops.inventory, events.keep. No generic request
+> relay, no externally_connectable, no web_accessible_resources, no remote code, no
+> analytics.
+>
+> Account events (events.keep): while a website tab asks for them, the background keeps one
+> WebSocket to wss://hermes.twitch.tv (Twitch's own, as on twitch.tv), authenticated with
+> the session, subscribed only to the account's points, predictions and drops topics; the
+> page gets reduced events (numbers and ids). Closed 90 s after the last request.
 >
 > Data: requests go only to Twitch, with the user's existing session (the auth-token
 > cookie, read on each use, never copied, never given to the page). Nothing is sent to the
@@ -97,18 +106,19 @@ with its own source code zip. Upload it from the add-on's page in the Developer 
 > Permissions:
 > - cookies: read the Twitch session;
 > - storage: settings (local) and session state (storage.session);
-> - scripting + tabs: Twitch requires a Client-Integrity token for mutations. The extension
->   has a www.twitch.tv page make Twitch's own POST https://gql.twitch.tv/integrity with
+> - scripting: Twitch requires a Client-Integrity token for mutations. The extension has a
+>   www.twitch.tv page make Twitch's own POST https://gql.twitch.tv/integrity with
 >   scripting.executeScript (world MAIN, a function bundled in background.js), using a
->   twitch.tv tab that is already open, or an inactive, muted tab it opens and closes;
+>   twitch.tv tab that is already open, or an inactive, muted tab it opens and closes
+>   (tabs are found by their address through the host permissions: no "tabs" permission);
 > - hosts: *.twitch.tv; static.twitchcdn.net (twitch.tv's settings file, which holds the
 >   watch statistics address); usher.ttvnw.net and *.playlist.ttvnw.net (live playlists, for
 >   drops progress and 1440p); *.hls.ttvnw.net (HEAD requests on segments, for drops); the
->   website's two origins (content script).
+>   website's origin (content script).
 >
 > Spending points (bets, votes, rewards) needs a real click on the website
 > (navigator.userActivation is checked) and the website's confirmation; it can be turned off
-> in the extension's window.
+> in the extension's window. Following a channel and creating a clip need a real click too.
 >
 > How to test: log in on https://www.twitch.tv in Firefox, then open
 > https://twitchunblock.vercel.app and a live channel: the channel points button shows the
@@ -139,8 +149,10 @@ code was not given during the submission, add it at the bottom (next to **Source
 **Next versions**: Developer Hub → TwitchUnblock Connect → **Upload New Version** (the
 Firefox zip of the release), then the source zip and these notes. Release notes for 0.3.0:
 
-> Follow or unfollow a channel from the TwitchUnblock website, ad-free lives through your
-> account when you're subscribed (or have Turbo), and your account's stream as a last
-> resort when no other source answers. Drops whose game account isn't linked now show a
-> link instead of Claim. Spending points now takes one real click per spend. No new
-> permission.
+> Follow or unfollow a channel and clip the live from the TwitchUnblock website, a Drops
+> page with all your campaigns, your points, chests, predictions and drops live, ad-free
+> lives through your account when you're subscribed (or have Turbo), and your account's
+> stream as a last resort when no other source answers. Drops whose game account isn't
+> linked now show a link instead of Claim. Spending points now takes one real click per
+> spend. One permission less: "tabs" is no longer requested, and the package no longer
+> includes the website's test preview.

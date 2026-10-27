@@ -9,6 +9,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import vm from "node:vm";
 import { firefoxManifest } from "../dev/build-firefox.mjs";
+import { PREVIEW_ORIGIN, publishedManifest } from "../dev/release.mjs";
 
 const DIR = join(dirname(fileURLToPath(import.meta.url)), "..");
 const BACKGROUND = readFileSync(join(DIR, "background.js"), "utf8");
@@ -123,6 +124,17 @@ const HQ_PLAYLIST_CLEAN = [
 
 const clone = (v) => (v === undefined ? undefined : JSON.parse(JSON.stringify(v)));
 const ticks = async (n = 1) => { for (let i = 0; i < n; i++) await new Promise((r) => setImmediate(r)); };
+// Attente d'un état produit hors d'une demande (messages Hermes) : l'empreinte
+// de la session (crypto.subtle) ne finit pas en un nombre fixe de tours.
+async function until(pred, label) {
+  for (let i = 0; i < 300; i++) {
+    if (pred()) return;
+    await new Promise((r) => setTimeout(r, 2));
+  }
+  assert.fail("toujours pas : " + label);
+}
+// Rien de plus ne doit arriver : laisser finir ce qui tourne.
+const settle = () => new Promise((r) => setTimeout(r, 40));
 // Empreinte d'un jeton, comme fingerprint() de l'arrière-plan.
 async function fingerprintOf(token) {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(token));
@@ -219,7 +231,12 @@ function makeTwitch() {
     // Suivi de la chaîne
     following: false,
     followError: null,      // code d'erreur rendu par followUser / unfollowUser
-    followCalls: []
+    followCalls: [],
+    // Clips
+    streamStart: "2026-10-25T16:00:00Z",
+    clipError: null,        // code rendu par createClip
+    clipSchemaFull: false,  // forme complète refusée par le schéma (champ error)
+    clips: []               // createClip reçus
   };
 }
 
@@ -418,6 +435,15 @@ function persistedOp(tw, op, headers) {
 }
 
 function rawMutation(tw, op, headers) {
+  if (op.operationName === "CreateClip") {
+    const bad = needIntegrity(tw, headers);
+    if (bad) return bad[0];
+    const full = op.query.includes("error { code }");
+    if (full && tw.clipSchemaFull) return { errors: [{ message: "Cannot query field \"error\" on type \"CreateClipPayload\"." }] };
+    tw.clips.push({ full, input: op.variables.input });
+    if (tw.clipError) return { data: { createClip: { clip: null, error: { code: tw.clipError } } } };
+    return { data: { createClip: full ? { clip: { slug: "FunnySlug-abc123" }, error: null } : { clip: { slug: "FunnySlug-abc123" } } } };
+  }
   assert.equal(op.operationName, "JoinRaid");
   assert.match(op.query, /^mutation JoinRaid\(\$input: JoinRaidInput!\) \{ joinRaid\(input: \$input\) \{ raidID \} \}$/);
   const bad = needIntegrity(tw, headers);
@@ -472,6 +498,10 @@ function rawQuery(tw, body, headers) {
       return { errors: [{ message: "failed integrity check" }], data: null };
     }
     return { data: { streamPlaybackAccessToken: { value: tw.patValue, signature: tw.patSignature } } };
+  }
+  if (q.includes("user(login: $l) { id stream { id createdAt } }")) {
+    assert.equal(headers.Authorization, undefined, "diffusion : lecture publique");
+    return { data: { user: { id: CHANNEL_ID, stream: tw.live ? { id: tw.streamId, createdAt: tw.streamStart } : null } } };
   }
   if (q.includes("cooldownExpiresAt")) {
     return { data: { channel: { communityPointsSettings: { customRewards: tw.rewards.map((r) => ({ id: r.id, cooldownExpiresAt: tw.cooldowns[r.id] || null })) } } } };
@@ -553,7 +583,7 @@ function loadBackground(opts = {}) {
     runtime: {
       id: EXT_ID,
       getURL: (p) => EXT_BASE + p,
-      getManifest: () => clone(MANIFEST),
+      getManifest: () => clone(opts.manifest || MANIFEST),
       onMessage,
       onInstalled: makeEvent()
     },
@@ -660,6 +690,8 @@ function loadBackground(opts = {}) {
     AbortController,
     Date: FakeDate,
     console: quietConsole,
+    // Hermes simulé (makeHermes) ; sans lui, pas de WebSocket.
+    WebSocket: opts.hermes ? opts.hermes.FakeWebSocket : undefined,
     // Attentes courtes immédiates ; délais de garde (10 s et plus) jamais déclenchés.
     setTimeout: (fn, ms) => (ms >= 10000 ? setTimeout(fn, 2 ** 31 - 1).unref() : setTimeout(fn, 0)),
     clearTimeout: (t) => clearTimeout(t)
@@ -684,7 +716,7 @@ function loadBackground(opts = {}) {
   const siteSender = (over = {}) => ({ id: EXT_ID, url: SITE + "/live/" + CHANNEL, origin: SITE, frameId: 0, tab: { id: 1, incognito: false }, ...over });
   let n = 0;
   return {
-    tw, clock, session, local, tabs, tabLog, consoleLines, responses, ops, chrome,
+    tw, clock, session, local, tabs, tabLog, consoleLines, responses, ops, chrome, cookies,
     deliver,
     op: (op, args, extra = {}) => deliver({ tuConnect: 1, kind: "op", id: "r" + (++n), op, args, activation: false, ...extra }, siteSender()),
     spend: (op, args) => deliver({ tuConnect: 1, kind: "op", id: "r" + (++n), op, args, activation: true }, siteSender()),
@@ -692,6 +724,28 @@ function loadBackground(opts = {}) {
     siteSender,
     gqlCount: (pred) => tw.log.filter((r) => r.url === "https://gql.twitch.tv/gql" && pred(JSON.parse(r.init.body))).length
   };
+}
+
+// Hermes simulé : chaque WebSocket ouvert par l'arrière-plan, ce qu'il
+// envoie, et de quoi lui répondre comme le serveur.
+function makeHermes() {
+  const sockets = [];
+  class FakeWebSocket {
+    constructor(url) {
+      this.url = url;
+      this.readyState = 0;
+      this.sent = [];
+      this.closed = false;
+      sockets.push(this);
+      setImmediate(() => { if (!this.closed) this.readyState = 1; });
+    }
+    send(text) { this.sent.push(JSON.parse(text)); }
+    close() { this.readyState = 3; this.closed = true; }
+    receive(obj) { if (this.onmessage) this.onmessage({ data: typeof obj === "string" ? obj : JSON.stringify(obj) }); }
+    // Coupure côté serveur.
+    drop() { this.readyState = 3; this.closed = true; if (this.onclose) this.onclose({}); }
+  }
+  return { FakeWebSocket, sockets };
 }
 
 // Fausse page du site, avec le content script dedans.
@@ -882,6 +936,17 @@ const ARG_CASES = [
   ["drops.claim", { dropInstanceId: "" }, "bad_args"],
   ["drops.claim", { channel: CHANNEL }, "bad_args"],
   ["drops.pulse", { channel: "Streamer" }, "bad_args"],
+  ["clips.create", { channel: CHANNEL, at: 1_800_000_000_000 }, "ok"],
+  ["clips.create", { channel: CHANNEL, at: 1.5 }, "bad_args"],
+  ["clips.create", { channel: CHANNEL, at: 1_800_000_000_000.5 }, "bad_args"],
+  ["clips.create", { channel: CHANNEL, at: "1800000000000" }, "bad_args"],
+  ["clips.create", { channel: CHANNEL, at: 1000 }, "bad_args"],
+  ["clips.create", { channel: CHANNEL, at: 5e12 }, "bad_args"],
+  ["clips.create", { channel: CHANNEL }, "bad_args"],
+  ["drops.inventory", undefined, "ok"],
+  ["drops.inventory", { channel: CHANNEL }, "bad_args"],
+  ["events.keep", undefined, "ok"],
+  ["events.keep", { x: 1 }, "bad_args"],
   ["rewards.get", { channel: CHANNEL, extra: true }, "bad_args"],
   ["rewards.redeem", { channel: CHANNEL, rewardId: "rw-hydrate", cost: 500, title: "Hydrate!", prompt: "Drink \"water\"\nnow", input: null }, "ok"],
   ["rewards.redeem", { channel: CHANNEL, rewardId: "rw-hydrate", cost: 0, title: "Hydrate!", prompt: null, input: null }, "bad_args"],
@@ -1841,6 +1906,245 @@ test("hq : identifiants élagués selon leur dernier usage, pas leur âge", asyn
   assert.equal(code(await h.op("hq.playlist", { id: first })), "ok");
 });
 
+test("paquet publié : l'arrière-plan ne connaît que le site, pas l'aperçu", async () => {
+  const h = loadBackground({ manifest: publishedManifest(MANIFEST) });
+  assert.equal(code(await h.op("hello", {})), "ok");
+  const preview = await h.deliver({ tuConnect: 1, kind: "op", id: "x", op: "hello", args: {} }, h.siteSender({ url: PREVIEW + "/", origin: PREVIEW }));
+  assert.equal(preview, undefined, "aperçu refusé sans réponse");
+});
+
+test("clips.create : instant compté depuis le début du direct, vrai clic, jeton d'intégrité", async () => {
+  const h = loadBackground({ tabs: [liveTab()] });
+  const at = Date.parse("2026-10-25T16:02:05.400Z");
+  assert.equal(code(await h.op("clips.create", { channel: CHANNEL, at })), "needs_activation");
+  assert.equal(h.tw.log.length, 0, "rien sans vrai clic");
+  assert.deepEqual(await h.spend("clips.create", { channel: CHANNEL, at }), { ok: true, data: { slug: "FunnySlug-abc123", url: "https://clips.twitch.tv/FunnySlug-abc123" } });
+  assert.deepEqual(h.tw.clips, [{ full: true, input: { broadcasterID: CHANNEL_ID, broadcastID: h.tw.streamId, offsetSeconds: 125 } }]);
+  // 1 par 10 s.
+  assert.equal(code(await h.spend("clips.create", { channel: CHANNEL, at })), "rate_limited");
+  assert.equal(h.tw.clips.length, 1);
+  // Forme complète refusée par le schéma : la réduite.
+  h.clock.now += 10001;
+  h.tw.clipSchemaFull = true;
+  assert.equal(code(await h.spend("clips.create", { channel: CHANNEL, at })), "ok");
+  assert.deepEqual(h.tw.clips[1], { full: false, input: { broadcasterID: CHANNEL_ID, offsetSeconds: 125 } });
+  // Clips coupés, trop de clips, autre refus, hors ligne.
+  h.tw.clipSchemaFull = false;
+  for (const [err, want] of [["CLIPS_RESTRICTED_TO_FOLLOWERS", ["twitch", "CLIPS_DISABLED"]], ["USER_RATE_LIMITED", ["rate_limited", undefined]], ["SOMETHING_ELSE", ["twitch", "SOMETHING_ELSE"]]]) {
+    h.clock.now += 10001;
+    h.tw.clipError = err;
+    const r = await h.spend("clips.create", { channel: CHANNEL, at });
+    assert.equal(r.error.code, want[0], err);
+    assert.equal(r.error.message, want[1], err);
+  }
+  h.clock.now += 10001;
+  h.tw.live = false;
+  const before = h.tw.clips.length;
+  assert.equal(code(await h.spend("clips.create", { channel: CHANNEL, at })), "offline");
+  assert.equal(h.tw.clips.length, before, "hors ligne : pas de mutation");
+  assertNoLeaks(h, "clips.create");
+});
+
+test("drops.inventory : campagnes commencées puis à commencer, compte de jeu à lier, jaquette", async () => {
+  const h = loadBackground({ tabs: [liveTab()] });
+  const first = await h.op("drops.inventory", {});
+  assert.equal(code(first), "ok");
+  assert.equal(first.data.available, false, "tableau de bord illisible sans jeton d'intégrité");
+  assert.equal(h.tabLog.scripts.length, 0, "une lecture n'obtient jamais de jeton");
+  assert.deepEqual(first.data.campaigns.map((c) => [c.id, c.started, c.needsLink]), [["camp-linked", true, true], ["camp-1", true, false]]);
+  const linked = first.data.campaigns[0];
+  assert.equal(linked.linkUrl, "https://game.example/link");
+  assert.deepEqual(linked.drops.map((d) => d.dropInstanceId), [null], "rien de réclamable");
+  const camp = first.data.campaigns[1];
+  assert.equal(camp.gameBoxArt, "https://static-cdn.jtvnw.net/ttv-boxart/1-144x192.jpg");
+  assert.equal(camp.startsAt, "2026-10-01T00:00:00Z");
+  assert.equal(camp.linkUrl, null);
+  assert.equal(camp.drops[1].dropInstanceId, "inst#drop-1b");
+  // Jeton gardé (après un coffre) : les campagnes pas encore commencées aussi.
+  assert.equal(code(await h.op("points.claim", { channel: CHANNEL })), "ok");
+  const again = await h.op("drops.inventory", {});
+  assert.equal(again.data.available, true);
+  assert.deepEqual(again.data.campaigns.map((c) => [c.id, c.started]), [["camp-linked", true], ["camp-1", true], ["camp-2", false]]);
+  assertNoLeaks(h, "drops.inventory");
+});
+
+/** Connexion Hermes ouverte par events.keep ; « welcome » du serveur. */
+async function hermesOpen(h, hermes) {
+  const count = hermes.sockets.length;
+  assert.deepEqual(await h.op("events.keep", {}), { ok: true, data: { connected: false } });
+  assert.equal(hermes.sockets.length, count + 1, "nouvelle connexion");
+  const ws = hermes.sockets[count];
+  assert.equal(ws.url, "wss://hermes.twitch.tv/v1?clientId=" + CLIENT_ID);
+  await hermesWelcome(ws);
+  return ws;
+}
+
+async function hermesWelcome(ws) {
+  await until(() => ws.readyState === 1, "connexion ouverte");
+  const before = ws.sent.length;
+  ws.receive({ id: "w1", type: "welcome", welcome: { keepaliveSec: 10, recoveryUrl: "wss://hermes.twitch.tv/v1/recover", sessionId: "s1" }, timestamp: "2026-10-25T17:00:00Z" });
+  await until(() => ws.sent.length > before, "authenticate envoyé");
+}
+
+/** Session acceptée : abonnements aux sujets du compte. */
+async function hermesAuthOk(ws) {
+  const auth = ws.sent[ws.sent.length - 1];
+  assert.equal(auth.type, "authenticate");
+  ws.receive({ id: "a1", parentId: auth.id, type: "authenticateResponse", authenticateResponse: { result: "ok" }, timestamp: "2026-10-25T17:00:00Z" });
+  await until(() => ws.sent.filter((m) => m.type === "subscribe").length === 3, "abonnements");
+}
+
+const notification = (ws, topic, message) => {
+  const sub = ws.sent.find((m) => m.type === "subscribe" && m.subscribe.pubsub.topic.startsWith(topic + "."));
+  ws.receive({ id: "n1", type: "notification", notification: { type: "pubsub", subscription: { id: sub.subscribe.id }, pubsub: JSON.stringify(message) }, timestamp: "2026-10-25T17:00:01Z" });
+};
+
+const sentEvents = (h) => h.tabLog.messages.filter((m) => m.msg.kind === "event").map((m) => [m.tabId, m.msg.event]);
+
+test("événements : Hermes authentifié avec la session, sujets du compte, événements réduits vers le site", async () => {
+  const hermes = makeHermes();
+  const h = loadBackground({ tabs: [liveTab(), { id: 3, url: SITE + "/" + CHANNEL }], hermes });
+  const ws = await hermesOpen(h, hermes);
+  // La session ne part qu'ici, vers Hermes.
+  assert.equal(ws.sent.length, 1);
+  assert.equal(ws.sent[0].type, "authenticate");
+  assert.match(ws.sent[0].id, /^[A-Za-z0-9]{21}$/);
+  assert.deepEqual(ws.sent[0].authenticate, { token: AUTH_TOKEN });
+  await hermesAuthOk(ws);
+  assert.deepEqual(ws.sent.slice(1).map((m) => [m.type, m.subscribe.type, m.subscribe.pubsub.topic]), [
+    ["subscribe", "pubsub", "community-points-user-v1." + h.tw.userId],
+    ["subscribe", "pubsub", "predictions-user-v1." + h.tw.userId],
+    ["subscribe", "pubsub", "user-drop-events." + h.tw.userId]
+  ]);
+  assert.deepEqual(await h.op("events.keep", {}), { ok: true, data: { connected: true } });
+  assert.equal(hermes.sockets.length, 1, "même connexion tant qu'elle vit");
+
+  // Points gagnés : solde et gain, vers l'onglet du site seulement.
+  notification(ws, "community-points-user-v1", { type: "points-earned", data: { timestamp: "t", channel_id: CHANNEL_ID, point_gain: { user_id: h.tw.userId, channel_id: CHANNEL_ID, total_points: 10, reason_code: "WATCH" }, balance: { user_id: h.tw.userId, channel_id: CHANNEL_ID, balance: 1010 } } });
+  await until(() => sentEvents(h).length === 1, "points");
+  assert.deepEqual(sentEvents(h)[0], [3, { type: "points", channelId: CHANNEL_ID, balance: 1010, gain: 10, reason: "WATCH" }]);
+  assert.deepEqual(h.tabLog.messages.at(-1).options, { frameId: 0 });
+  // Coffre disponible : réclamé tout de suite (« Réclamer automatiquement »).
+  notification(ws, "community-points-user-v1", { type: "claim-available", data: { timestamp: "t", claim: { id: h.tw.claimId, channel_id: CHANNEL_ID } } });
+  await until(() => sentEvents(h).length === 2, "coffre");
+  assert.equal(h.tw.claimId, null, "coffre réclamé");
+  assert.deepEqual(sentEvents(h)[1], [3, { type: "chest", channelId: CHANNEL_ID, claimed: true, balance: 1050 }]);
+  // Résultat d'un pari.
+  notification(ws, "predictions-user-v1", { type: "prediction-result", data: { prediction: { event_id: "ev-9", channel_id: CHANNEL_ID, points: 100, result: { type: "WIN", points_won: 250, is_acknowledged: false } } } });
+  await until(() => sentEvents(h).length === 3, "pari");
+  assert.deepEqual(sentEvents(h)[2], [3, { type: "prediction", channelId: CHANNEL_ID, eventId: "ev-9", result: "WIN", points: 250 }]);
+  // Drop prêt : réclamé ; drop d'une campagne à lier : jamais.
+  notification(ws, "user-drop-events", { type: "drop-claim", data: { drop_id: "drop-1b", channel_id: CHANNEL_ID, drop_instance_id: "inst#drop-1b" } });
+  await until(() => sentEvents(h).length === 4, "drop réclamé");
+  assert.deepEqual(h.tw.dropClaims, ["inst#drop-1b"]);
+  assert.deepEqual(sentEvents(h)[3], [3, { type: "drop", dropId: "drop-1b", channelId: CHANNEL_ID, current: null, required: null, ready: false, claimed: true, needsLink: false, dropInstanceId: null }]);
+  notification(ws, "user-drop-events", { type: "drop-claim", data: { drop_id: "drop-l1", channel_id: CHANNEL_ID, drop_instance_id: "inst#drop-l1" } });
+  await until(() => sentEvents(h).length === 5, "drop à lier");
+  assert.deepEqual(h.tw.dropClaims, ["inst#drop-1b"], "compte de jeu à lier : pas réclamé");
+  assert.deepEqual(sentEvents(h)[4], [3, { type: "drop", dropId: "drop-l1", channelId: CHANNEL_ID, current: null, required: null, ready: true, claimed: false, needsLink: true, dropInstanceId: null }]);
+  // Progression.
+  notification(ws, "user-drop-events", { type: "drop-progress", data: { drop_id: "drop-1a", channel_id: CHANNEL_ID, current_progress_min: 43, required_progress_min: 60 } });
+  await until(() => sentEvents(h).length === 6, "progression");
+  assert.deepEqual(sentEvents(h)[5], [3, { type: "drop", dropId: "drop-1a", channelId: CHANNEL_ID, current: 43, required: 60, ready: false, claimed: false, needsLink: false, dropInstanceId: null }]);
+  // Pari remboursé : la mise rendue ; message encodé deux fois (Hermes le fait).
+  const sub = ws.sent.find((m) => m.type === "subscribe" && m.subscribe.pubsub.topic.startsWith("predictions-user-v1."));
+  const refund = { type: "prediction-result", data: { prediction: { event_id: "ev-10", channel_id: CHANNEL_ID, points: 100, result: { type: "REFUND", points_won: null } } } };
+  ws.receive({ id: "n2", type: "notification", notification: { type: "pubsub", subscription: { id: sub.subscribe.id }, pubsub: JSON.stringify(JSON.stringify(refund)) } });
+  await until(() => sentEvents(h).length === 7, "remboursement");
+  assert.deepEqual(sentEvents(h)[6], [3, { type: "prediction", channelId: CHANNEL_ID, eventId: "ev-10", result: "REFUND", points: 100 }]);
+  // Inconnu, illisible, abonnement inconnu : rien.
+  notification(ws, "community-points-user-v1", { type: "reward-redeemed", data: {} });
+  ws.receive("{not json");
+  ws.receive({ id: "n9", type: "notification", notification: { type: "pubsub", subscription: { id: "unknown" }, pubsub: "{}" } });
+  await settle();
+  assert.equal(sentEvents(h).length, 7);
+  assertNoLeaks(h, "événements");
+  for (const m of h.tabLog.messages) assertNoSecret(m, "message vers l'onglet", h.tw);
+});
+
+test("événements : sans « Réclamer automatiquement », coffre et drop annoncés prêts", async () => {
+  const hermes = makeHermes();
+  const h = loadBackground({ tabs: [liveTab(), { id: 3, url: SITE + "/" + CHANNEL }], hermes, local: { settings: { siteEnabled: true, autoClaim: false, allowSpend: true } } });
+  const ws = await hermesOpen(h, hermes);
+  await hermesAuthOk(ws);
+  notification(ws, "community-points-user-v1", { type: "claim-available", data: { claim: { id: h.tw.claimId, channel_id: CHANNEL_ID } } });
+  await until(() => sentEvents(h).length === 1, "coffre");
+  notification(ws, "user-drop-events", { type: "drop-claim", data: { drop_id: "drop-1b", channel_id: CHANNEL_ID, drop_instance_id: "inst#drop-1b" } });
+  await until(() => sentEvents(h).length === 2, "drop");
+  const events = sentEvents(h).map(([, e]) => e);
+  assert.deepEqual(events[0], { type: "chest", channelId: CHANNEL_ID, claimed: false, balance: null });
+  assert.deepEqual(events[1], { type: "drop", dropId: "drop-1b", channelId: CHANNEL_ID, current: null, required: null, ready: true, claimed: false, needsLink: false, dropInstanceId: "inst#drop-1b" });
+  assert.ok(h.tw.claimId, "coffre laissé");
+  assert.deepEqual(h.tw.dropClaims, []);
+  assert.equal(h.tabLog.scripts.length, 0, "aucun jeton d'intégrité obtenu");
+});
+
+test("événements : session refusée par Hermes, coupure, déconnexion de twitch.tv", async () => {
+  const hermes = makeHermes();
+  const h = loadBackground({ tabs: [{ id: 3, url: SITE + "/" + CHANNEL }], hermes });
+  let ws = await hermesOpen(h, hermes);
+  ws.receive({ id: "a1", type: "authenticateResponse", authenticateResponse: { result: "error", error: "bad token", errorCode: "auth_failed" } });
+  await until(() => ws.closed, "connexion fermée après le refus");
+  assert.deepEqual(await h.op("events.keep", {}), { ok: true, data: { connected: false } });
+  assert.equal(hermes.sockets.length, 1, "pas de nouvel essai avant 10 min");
+  h.clock.now += 600001;
+  ws = await hermesOpen(h, hermes);
+  await hermesAuthOk(ws);
+  // Coupure : reconnexion avec un nouvel « authenticate ».
+  ws.drop();
+  await until(() => hermes.sockets.length === 3, "reconnexion");
+  ws = hermes.sockets[2];
+  await hermesWelcome(ws);
+  await hermesAuthOk(ws);
+  assert.deepEqual(await h.op("events.keep", {}), { ok: true, data: { connected: true } });
+  // Autre session dans le navigateur : plus rien de l'ancienne.
+  h.cookies["auth-token"] = "zq7otherauthtoken9876543210ab";
+  notification(ws, "community-points-user-v1", { type: "points-earned", data: { balance: { channel_id: CHANNEL_ID, balance: 5 } } });
+  await until(() => ws.closed, "connexion fermée au changement de session");
+  await settle();
+  assert.equal(sentEvents(h).length, 0);
+  assert.equal(code(await h.op("events.keep", {})), "no_session", "session inconnue de Twitch");
+  assert.equal(hermes.sockets.length, 3);
+  // Déconnecté de twitch.tv : no_session, rien ne se rouvre.
+  delete h.cookies["auth-token"];
+  assert.equal(code(await h.op("events.keep", {})), "no_session");
+  await settle();
+  assert.equal(hermes.sockets.length, 3);
+});
+
+test("événements : connexion coupée au site → Hermes fermé", async () => {
+  const hermes = makeHermes();
+  const h = loadBackground({ tabs: [{ id: 3, url: SITE + "/" + CHANNEL }], hermes });
+  const ws = await hermesOpen(h, hermes);
+  await hermesAuthOk(ws);
+  const settings = { siteEnabled: false, autoClaim: true, allowSpend: true };
+  h.local.settings = settings;
+  for (const f of h.chrome.storage.onChanged.listeners) f({ settings: { oldValue: { ...settings, siteEnabled: true }, newValue: settings } }, "local");
+  await until(() => ws.closed, "connexion fermée");
+  assert.equal(code(await h.op("events.keep", {})), "disabled");
+  assert.equal(hermes.sockets.length, 1);
+});
+
+test("content script : événements du compte relayés à la page, liste fermée relue", async () => {
+  const page = loadContent();
+  await ticks(5);
+  const before = page.posted.length;
+  const ext = { id: EXT_ID };
+  page.runtimeMessage({ tuConnect: 1, kind: "event", event: { type: "points", channelId: CHANNEL_ID, balance: 1010, gain: 10, reason: "WATCH", token: AUTH_TOKEN } }, ext);
+  page.runtimeMessage({ tuConnect: 1, kind: "event", event: { type: "evil", channelId: CHANNEL_ID } }, ext);
+  page.runtimeMessage({ tuConnect: 1, kind: "event", event: { type: "points", channelId: "x", balance: 1 } }, ext);
+  page.runtimeMessage({ tuConnect: 1, kind: "event", event: { type: "drop", dropId: "d1", channelId: null, ready: true, dropInstanceId: "bad instance" } }, ext);
+  // D'un onglet (un autre content script) ou d'une autre extension : ignoré.
+  page.runtimeMessage({ tuConnect: 1, kind: "event", event: { type: "chest", channelId: CHANNEL_ID, claimed: true } }, { id: EXT_ID, tab: { id: 1 } });
+  page.runtimeMessage({ tuConnect: 1, kind: "event", event: { type: "chest", channelId: CHANNEL_ID, claimed: true } }, { id: "otherextension" });
+  const got = page.posted.slice(before).map((p) => p.data);
+  assert.deepEqual(got, [
+    { tuConnect: 1, dir: "event", event: { type: "points", channelId: CHANNEL_ID, balance: 1010, gain: 10, reason: "WATCH" } },
+    { tuConnect: 1, dir: "event", event: { type: "drop", dropId: "d1", channelId: null, current: null, required: null, ready: true, claimed: false, needsLink: false, dropInstanceId: null } }
+  ]);
+  assert.ok(page.posted.slice(before).every((p) => p.targetOrigin === SITE), "vers l'origine du site seulement");
+});
+
 test("content script : annonce hello au chargement", async () => {
   const bg = loadBackground();
   const page = loadContent({ sendMessage: (m) => bg.deliver(m, bg.siteSender()) });
@@ -2023,7 +2327,17 @@ test("manifeste : origines, permissions et arrière-plan attendus", () => {
   // de Twitch elle-même, l'extension les lui rend (hq.playlist). 0.3.0
   // (suivre, compte sans pub) : rien de plus non plus.
   assert.equal(MANIFEST.version, "0.3.0");
-  assert.deepEqual([...MANIFEST.permissions].sort(), ["cookies", "scripting", "storage", "tabs"]);
+  // 0.3.0 : plus de « tabs » — les accès d'hôte suffisent pour chercher les
+  // onglets du site et de twitch.tv par leur adresse.
+  assert.deepEqual([...MANIFEST.permissions].sort(), ["cookies", "scripting", "storage"]);
+  // Paquet publié (releases, AMO) : le site seulement, ni l'aperçu ni ses accès.
+  const pub = publishedManifest(MANIFEST);
+  assert.equal(PREVIEW_ORIGIN, PREVIEW);
+  assert.deepEqual(pub.content_scripts[0].matches, [SITE + "/*"]);
+  assert.ok(!JSON.stringify(pub).includes("test2-git"));
+  assert.ok(pub.host_permissions.includes(SITE + "/*"));
+  assert.ok(!JSON.stringify(firefoxManifest(pub)).includes("test2-git"));
+  assert.deepEqual(MANIFEST.content_scripts[0].matches, [SITE + "/*", PREVIEW + "/*"], "le dépôt garde l'aperçu pour les essais");
   assert.equal(MANIFEST.declarative_net_request, undefined);
   assert.equal(MANIFEST.optional_permissions, undefined);
   assert.equal(MANIFEST.externally_connectable, undefined);
@@ -2038,9 +2352,13 @@ test("manifeste : origines, permissions et arrière-plan attendus", () => {
     "https://*.twitch.tv/*", "https://static.twitchcdn.net/*", "https://usher.ttvnw.net/*", "https://*.hls.ttvnw.net/*",
     "https://*.playlist.ttvnw.net/*", SITE + "/*", PREVIEW + "/*"
   ], "Twitch (playlists des directs comprises), et les deux origines du site (réinjection du content script)");
-  // La fenêtre de l'extension vérifie les mêmes accès (Firefox : accordables un à un).
+  // La fenêtre de l'extension vérifie les mêmes accès (Firefox : accordables
+  // un à un), lus dans le manifeste du paquet : aucune origine écrite en dur.
   const popup = readFileSync(join(DIR, "popup.js"), "utf8");
-  for (const origin of MANIFEST.host_permissions) assert.ok(popup.includes(JSON.stringify(origin)), "popup.js : " + origin);
+  assert.ok(popup.includes("api.runtime.getManifest().host_permissions"), "popup.js lit les accès dans le manifeste");
+  for (const origin of MANIFEST.host_permissions) assert.ok(!popup.includes(JSON.stringify(origin)), "popup.js : " + origin + " en dur");
+  const background = readFileSync(join(DIR, "background.js"), "utf8");
+  assert.ok(!background.includes("test2-git"), "background.js : origines lues dans le manifeste");
   const en = JSON.parse(readFileSync(join(DIR, "_locales", "en", "messages.json"), "utf8"));
   for (const lang of ["fr", "es", "ru", "it", "ja"]) {
     const other = JSON.parse(readFileSync(join(DIR, "_locales", lang, "messages.json"), "utf8"));

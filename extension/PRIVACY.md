@@ -1,6 +1,6 @@
 # TwitchUnblock Connect — Privacy policy
 
-_Last updated: 2026-10-26_
+_Last updated: 2026-10-27_
 
 TwitchUnblock Connect is a browser extension that lets the TwitchUnblock website
 (<https://twitchunblock.vercel.app>) use the Twitch session of this browser for a closed list
@@ -17,9 +17,9 @@ never does.
 
 ## Data sent to Twitch
 
-To work, the extension calls Twitch (`twitch.tv`, `gql.twitch.tv`, `usher.ttvnw.net`,
-`*.playlist.ttvnw.net`, `*.hls.ttvnw.net`, `static.twitchcdn.net`) with your existing Twitch
-session, the same way the twitch.tv website does. Firefox lists these data types when you
+To work, the extension calls Twitch (`twitch.tv`, `gql.twitch.tv`, `hermes.twitch.tv`,
+`usher.ttvnw.net`, `*.playlist.ttvnw.net`, `*.hls.ttvnw.net`, `static.twitchcdn.net`) with
+your existing Twitch session, the same way the twitch.tv website does. Firefox lists these data types when you
 install the extension:
 
 - **Authentication information.** Your Twitch session (the `auth-token` cookie that Twitch set
@@ -30,9 +30,14 @@ install the extension:
   open, or opening an inactive, muted one and closing it right after).
 - **Website activity.** The actions you take through the TwitchUnblock website — claiming
   bonus chests, betting on predictions, voting in polls, joining raids, redeeming channel
-  rewards, claiming drops (anything that spends points needs a real click) — and, while you
-  watch a live on the website, a watch-presence event about once a minute (the channel being
-  watched), so that Twitch credits your channel points, watch streak and drops.
+  rewards, claiming drops, following or unfollowing a channel, creating a clip (anything
+  that spends points, follows or clips needs a real click) — and, while you watch a live on
+  the website, a watch-presence event about once a minute (the channel being watched), so
+  that Twitch credits your channel points, watch streak and drops.
+- **Account events.** While a TwitchUnblock tab asks for them, the extension keeps a
+  connection to Twitch's `hermes.twitch.tv` (the one twitch.tv uses), authenticated with
+  your session, to receive your account's events: points earned, bonus chests, prediction
+  results and drops progress. The website only gets numbers and identifiers from them.
 - **Live playlists.** When you turn on higher qualities (1440p and above) on the website, the
   extension asks Twitch for that live's playlists with your account.
 
@@ -43,7 +48,8 @@ under its own privacy notice: <https://www.twitch.tv/p/legal/privacy-notice/>.
 
 The website can only ask for a closed list of operations (see [PROTOCOL.md](PROTOCOL.md)). It
 receives their results — for example your channel points balance, open predictions and
-polls, drops progress, channel rewards and, for higher qualities, the live's playlists
+polls, drops progress, channel rewards, the link of a clip you created, your account's
+events (numbers and identifiers) and, for higher qualities, the live's playlists
 rewritten without any token or playlist address. It never receives your Twitch session,
 cookies or tokens. This exchange happens inside your browser.
 

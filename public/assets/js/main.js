@@ -15,8 +15,8 @@ import * as usage from './usage.js'
 import * as multi from './multi.js'
 import * as dl from './download.js'
 import { CHANGELOG } from './changelog.js'
-import { ACCOUNT_MIN_VERSION, INSTALL_URL as CONNECT_INSTALL_URL, canFollow, compareVersions, connect } from './connect.js'
-import { errorText as connectErrorText } from './chat/connect-live.js'
+import { ACCOUNT_MIN_VERSION, EVENTS_KEEP_EVERY, INSTALL_URL as CONNECT_INSTALL_URL, canAccount, compareVersions, connect } from './connect.js'
+import { errorText as connectErrorText, freshDrop } from './chat/connect-live.js'
 import { captureGlobalErrors, clearErrors, errorCount, errorLines, logError } from './errlog.js'
 import { initConnectUpdate } from './connect-update.js'
 import {
@@ -98,6 +98,8 @@ async function boot() {
   // page elle-même, rien vers le Worker) ; les réglages suivent son état.
   connect.onChange(refreshConnectUi)
   connect.start()
+  // Points, coffres, paris et drops du compte en direct (extension 0.3.0).
+  startAccountEvents()
   setupPlayer()
   // Erreurs non rattrapées du site : dans le journal des erreurs.
   captureGlobalErrors()
@@ -3784,7 +3786,7 @@ function setupPlayer() {
   initMediaSession()
   // L'extension change d'état (installée, mise à jour, session) : le réglage
   // des qualités supérieures suit, si les réglages sont ouverts.
-  connect.onChange(() => { refreshHqSetting(); paintFollowButton() })
+  connect.onChange(() => { refreshHqSetting(); paintFollowButton(); paintClipButton() })
   chat = new ChatView($('#chat'), {
     prefs: store.prefs,
     // Retard de l'image sur le direct, pour le chat synchronisé (le chat lit
@@ -4441,6 +4443,7 @@ function liveEnded(token) {
   player.stop()
   // Extension : plus de minutes regardées ni de relectures pour ce direct.
   chat.stopConnect()
+  paintClipButton()
   $('#watch-sub').innerHTML = `<span class="pill sm">${esc(t('offline'))}</span>`
 }
 
@@ -4467,6 +4470,7 @@ function renderLiveInfo(info, links) {
     </div>
     <div class="wi-actions">
       <span id="watch-follow">${followButtonHtml()}</span>
+      <span id="watch-clip">${clipButtonHtml()}</span>
       <button class="btn ghost sm" type="button" data-action="multi-add-current" title="${esc(t('multi_add'))}">${icon('grid', 16)}<span>${esc(t('multi_title'))}</span></button>
       <button class="btn ghost sm" type="button" data-action="see-vods">${icon('film', 16)}<span>${esc(t('see_vods'))}</span></button>
       ${shareButton()}
@@ -4491,7 +4495,7 @@ function paintFollowButton() {
 }
 
 async function loadFollowState(token) {
-  if (!canFollow(connect.state()) || connect.mismatch() || !token.login) return
+  if (!canAccount(connect.state()) || connect.mismatch() || !token.login) return
   const r = await connect.request('follow.get', { channel: token.login }).catch(() => null)
   if (!r || state.watch !== token) return
   token.follow = { following: r.following, busy: false }
@@ -4537,6 +4541,244 @@ function setFollow(w, want) {
     f.busy = false
     if (state.watch === w) paintFollowButton()
   })
+}
+
+// ── Créer un clip (extension 0.3.0) ────────────────────────────────────────
+// Comme le bouton Clip de l'app (ClipCreator) : l'extension crée le clip avec
+// la session twitch.tv, à l'instant de l'image affichée (le direct a quelques
+// secondes de retard sur Twitch).
+/** Bouton « Clip » du direct ; rien sans l'extension 0.3.0 et une session,
+ *  ni avec un autre compte que celui du site, ni après la fin du direct. */
+function clipButtonHtml(w = state.watch) {
+  if (w?.kind !== 'live' || !w.login || w.ended || !canAccount(connect.state()) || connect.mismatch()) return ''
+  return `<button class="btn ghost sm" type="button" data-action="clip-create" title="${esc(t('clip_make_title'))}"${w.clipBusy ? ' disabled aria-busy="true"' : ''}>${icon('scissors', 16)}<span>${esc(t('clip_make'))}</span></button>`
+}
+
+function paintClipButton() {
+  const box = $('#watch-clip')
+  if (box) box.innerHTML = clipButtonHtml()
+}
+
+/** Refus de createClip → phrase. Un délai dépassé ne dit pas que rien n'est
+ *  parti : pas de « recommence » (deux clips). */
+function clipErrorText(e) {
+  if (e?.code === 'offline') return t('clip_err_offline')
+  if (e?.code === 'rate_limited') return t('clip_err_rate')
+  if (e?.code === 'twitch' && e.detail === 'CLIPS_DISABLED') return t('clip_err_disabled')
+  return connectErrorText(e, '', true)
+}
+
+// Demande partie dans le clic : l'extension veut un vrai clic récent.
+actions['clip-create'] = () => {
+  const w = state.watch
+  if (w?.kind !== 'live' || !w.login || w.clipBusy || w.ended) return
+  const at = Math.round(Date.now() - player.liveDelay() * 1000)
+  w.clipBusy = true
+  paintClipButton()
+  connect.request('clips.create', { channel: w.login, at }).then(openClipMade, (e) => toast(clipErrorText(e), 'error')).finally(() => {
+    w.clipBusy = false
+    if (state.watch === w) paintClipButton()
+  })
+}
+
+/** Clip créé : son lien à copier ou à ouvrir sur Twitch ; le direct continue. */
+function openClipMade(r) {
+  openSheet(`
+    <div class="sheet-head"><h2>${esc(t('clip_made_title'))}</h2><button class="icon-btn" type="button" data-sheet-close>${icon('x', 20)}</button></div>
+    <p class="muted sheet-sub">${esc(t('clip_made_sub'))}</p>
+    <div class="sheet-group">
+      <button class="sheet-row" type="button" data-sheet="copy">${icon('copy', 18)}<span>${esc(t('clip_copy'))}</span></button>
+      <a class="sheet-row" href="${esc(r.url)}" target="_blank" rel="noopener noreferrer">${icon('external', 18)}<span>${esc(t('clip_open_twitch'))}</span></a>
+    </div>
+    <input class="link-box" readonly value="${esc(r.url)}">`)
+  const sheet = $('#sheet')
+  sheet.onclick = async (e) => {
+    if (e.target.closest('[data-sheet-close]')) return closeSheet()
+    if (!e.target.closest('[data-sheet="copy"]')) return
+    try { await navigator.clipboard.writeText(r.url) } catch { $('.link-box', sheet).select(); document.execCommand('copy') }
+    toast(t('copied'), 'success')
+  }
+}
+
+// ── Page Drops (extension 0.3.0) ───────────────────────────────────────────
+// DropsView de l'app : toutes les campagnes du compte — commencées, puis
+// celles pas encore commencées —, progression, « Réclamer », compte de jeu à
+// lier. Ouverte depuis les réglages (TwitchUnblock Connect) ou la carte
+// drops du chat.
+const dropsPage = { data: null, busy: false, error: null, claiming: null }
+const fmtNum = (n) => Number(n).toLocaleString(lang())
+const dropsDate = (ms) => new Date(ms).toLocaleString(lang(), { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
+
+actions['drops-page'] = () => {
+  openSheet(`
+    <div class="sheet-head"><h2>${esc(t('dp_title'))}</h2><button class="icon-btn" type="button" data-sheet-close>${icon('x', 20)}</button></div>
+    <p class="muted sheet-sub">${esc(t('dp_sub'))}</p>
+    <div id="drops-page" class="dp-list" aria-live="polite">${dropsPageInner()}</div>`)
+  $('#sheet').onclick = (e) => {
+    if (e.target.closest('[data-sheet-close]')) return closeSheet()
+    if (e.target.closest('[data-dp-reload]')) return loadDropsPage()
+    const b = e.target.closest('[data-dp-claim]')
+    if (b) claimFromDropsPage(b.dataset.dpClaim)
+  }
+  loadDropsPage()
+}
+
+/** Page Drops affichée en ce moment (feuille ouverte, pas remplacée). */
+const dropsPageShown = () => Boolean($('#drops-page')) && !$('#sheet').hidden
+
+async function loadDropsPage() {
+  if (dropsPage.busy) return
+  dropsPage.busy = true
+  paintDropsPage()
+  try {
+    dropsPage.data = await connect.request('drops.inventory')
+    dropsPage.error = null
+  } catch (e) {
+    dropsPage.error = e
+  } finally {
+    dropsPage.busy = false
+    paintDropsPage()
+  }
+}
+
+function paintDropsPage() {
+  const box = $('#drops-page')
+  if (box) box.innerHTML = dropsPageInner()
+}
+
+function dropsPageInner() {
+  const d = dropsPage.data
+  const reload = `<button class="btn ghost sm dp-reload" type="button" data-dp-reload${dropsPage.busy ? ' disabled' : ''}>${icon('refresh', 16)}<span>${esc(t('refresh'))}</span></button>`
+  const err = dropsPage.error ? `<p class="cx-state" data-tone="warn" role="alert"><i></i><span>${esc(connectErrorText(dropsPage.error))}</span></p>` : ''
+  if (!d) return dropsPage.error ? err + reload : `<p class="muted dp-empty">${esc(t('loading'))}</p>`
+  // Campagnes finies : plus rien à y gagner.
+  const now = Date.now()
+  const camps = d.campaigns.filter((c) => !c.endsAt || c.endsAt > now)
+  const list = camps.length ? camps.map(dropsCampaignHtml).join('') : `<p class="muted dp-empty">${esc(t('dp_empty'))}</p>`
+  const partial = d.available ? '' : `<p class="muted small dp-note">${esc(t('dp_partial'))}</p>`
+  return err + list + partial + reload
+}
+
+function dropsCampaignHtml(c) {
+  const art = c.gameBoxArt ? `<img class="dp-art" src="${esc(c.gameBoxArt)}" alt="" loading="lazy">` : `<span class="dp-art">${icon('gift', 18)}</span>`
+  const soon = !c.started && c.startsAt && c.startsAt > Date.now()
+  const when = soon ? t('dp_starts', { d: dropsDate(c.startsAt) }) : c.endsAt ? t('drops_notice_ends', { d: dropsDate(c.endsAt) }) : ''
+  const meta = [c.gameName, when].filter(Boolean).join(' · ')
+  // Compte de jeu à lier : rien de réclamable d'ici, le lien pour le faire.
+  const link = c.needsLink
+    ? `<p class="drop-link">${icon('link', 12)} ${c.linkUrl
+      ? `<a href="${esc(c.linkUrl)}" target="_blank" rel="noopener noreferrer">${esc(t('drops_link_account'))}</a>`
+      : esc(t('drops_link_account'))}</p>`
+    : ''
+  const drops = c.drops.slice().sort((a, b) => a.requiredMinutes - b.requiredMinutes).map(dropsRowHtml).join('')
+  return `<article class="dp-camp">
+    <div class="dp-head">${art}<div class="dp-id">
+      <h3>${esc(c.name)} <span class="dp-tag${c.started ? ' on' : ''}">${esc(t(c.started ? 'dp_started' : 'dp_not_started'))}</span></h3>
+      ${meta ? `<p class="muted small">${esc(meta)}</p>` : ''}
+    </div></div>
+    ${link}${drops}
+  </article>`
+}
+
+function dropsRowHtml(x) {
+  const cur = Math.min(x.currentMinutes, x.requiredMinutes)
+  const pct = x.claimed || !x.requiredMinutes ? 100 : Math.round((cur / x.requiredMinutes) * 100)
+  const state = x.claimed
+    ? `<span class="drop-ok">${icon('check', 11)}${esc(t('drops_claimed_state'))}</span>`
+    : x.dropInstanceId
+      ? `<button class="cx-chip drop-claim" type="button" data-dp-claim="${esc(x.dropInstanceId)}"${dropsPage.claiming ? ' disabled' : ''}>${esc(t('drops_claim'))}</button>`
+      : `<span class="drop-min">${esc(t('drops_progress', { c: fmtNum(cur), r: fmtNum(x.requiredMinutes) }))}</span>`
+  return `<div class="dp-drop">
+    ${x.imageUrl ? `<img src="${esc(x.imageUrl)}" alt="" loading="lazy">` : `<span class="dp-ic">${icon('gift', 16)}</span>`}
+    <div class="drop-row">
+      <div class="drop-line"><span class="drop-name">${esc(x.name)}</span>${state}</div>
+      <div class="pred-bar"><i style="width:${pct}%;background:var(--purple)"></i></div>
+    </div>
+  </div>`
+}
+
+/** « Réclamer » sur la page (pas une dépense : pas de confirmation). */
+function claimFromDropsPage(id) {
+  if (dropsPage.claiming || !id) return
+  const drop = dropsPage.data?.campaigns.flatMap((c) => c.drops).find((x) => x.dropInstanceId === id)
+  dropsPage.claiming = id
+  paintDropsPage()
+  connect.request('drops.claim', { dropInstanceId: id }).then((d) => {
+    if (!d.claimed) return toast(t('drops_not_claimed'))
+    if (drop) Object.assign(drop, { claimed: true, dropInstanceId: null })
+    freshDrop(drop?.name || id)
+    toast(t('drops_claimed_toast', { n: drop?.name || '?' }), 'success')
+    chat?.cx?.dropsStale()
+  }, (e) => toast(connectErrorText(e), 'error')).finally(() => {
+    dropsPage.claiming = null
+    paintDropsPage()
+  })
+}
+
+/** Drop d'après son id : la carte du chat, sinon la page Drops. */
+function knownDrop(id) {
+  const lists = [chat?.cx?.drops?.campaigns, dropsPage.data?.campaigns]
+  for (const list of lists) {
+    const x = list?.flatMap((c) => c.drops).find((d) => d.id === id)
+    if (x) return x
+  }
+  return null
+}
+
+// ── Événements du compte (extension 0.3.0) ─────────────────────────────────
+// Points, coffres, paris et drops du compte arrivent en direct (Hermes, par
+// l'extension) tant que le site les demande : toutes les 25 s, onglet
+// visible ou direct en lecture. Sans eux (extension plus ancienne, Hermes
+// injoignable), le lecteur relit tout comme avant.
+let eventsAt = 0
+function keepAccountEvents() {
+  if (!canAccount(connect.state()) || (document.hidden && state.watch?.kind !== 'live')) return
+  if (Date.now() - eventsAt < EVENTS_KEEP_EVERY - 1000) return
+  eventsAt = Date.now()
+  connect.request('events.keep').catch(() => {})
+}
+
+function startAccountEvents() {
+  connect.onEvent((ev) => { onAccountEvent(ev).catch(() => {}) })
+  connect.onChange(keepAccountEvents)
+  document.addEventListener('visibilitychange', keepAccountEvents)
+  setInterval(keepAccountEvents, EVENTS_KEEP_EVERY)
+}
+
+async function onAccountEvent(ev) {
+  // Solde, coffre et gains de la chaîne regardée : le chat.
+  chat?.cx?.accountEvent(ev)
+  if (ev.type === 'prediction') {
+    // Résultat d'un pari du compte, fait ici ou sur twitch.tv.
+    if (ev.result === 'WIN') toast(t('pred_result_won', { n: fmtNum(ev.points) }), 'success')
+    else if (ev.result === 'LOSE') toast(t('pred_result_lost'))
+    else toast(t('pred_refunded', { n: fmtNum(ev.points) }))
+    return
+  }
+  if (ev.type !== 'drop') return
+  let drop = knownDrop(ev.dropId)
+  if (!ev.claimed && !ev.ready) {
+    // Progression : la page Drops suit, sans relecture.
+    if (drop && ev.current != null && ev.current > drop.currentMinutes) {
+      drop.currentMinutes = ev.current
+      if (dropsPageShown()) paintDropsPage()
+    }
+    return
+  }
+  // Drop réclamé par l'extension, prêt à réclamer, ou à lier : son nom (lu
+  // dans l'inventaire s'il n'est pas déjà connu), une fois.
+  if (!drop) {
+    const inv = await connect.request('drops.inventory').catch(() => null)
+    if (inv) dropsPage.data = inv
+    drop = knownDrop(ev.dropId)
+  }
+  const name = drop?.name
+  if (freshDrop(name || ev.dropId)) {
+    if (ev.claimed) toast(name ? t('drops_claimed_toast', { n: name }) : t('drops_claimed_generic'), 'success')
+    else if (ev.needsLink) toast(name ? t('drops_link_toast', { n: name }) : t('drops_link_generic'))
+    else toast(name ? t('drops_ready_toast', { n: name }) : t('drops_ready_generic'))
+  }
+  if (dropsPageShown()) loadDropsPage()
 }
 
 // ── Clips ────────────────────────────────────────────────────────────────
@@ -5503,13 +5745,19 @@ function connectSectionInner() {
   // Compte twitch.tv de l'extension ≠ compte du site : dépenses et suivis bloqués.
   const mismatch = connect.mismatch()
   const warn = mismatch ? `<p class="cx-state" data-tone="warn" role="alert"><i></i><span>${esc(t('cx_mismatch', { e: mismatch.ext, s: mismatch.site }))}</span></p>` : ''
+  // 0.3.0 : événements du compte en direct (ou relus chaque minute), page Drops.
+  const account = canAccount(s)
+  const events = account ? `<p class="muted small">${esc(t(s.events ? 'cx_events_on' : 'cx_events_off'))}</p>` : ''
+  const drops = account ? `<button class="sheet-row" type="button" data-action="drops-page">${icon('gift', 18)}<span>${esc(t('dp_title'))}</span>${icon('chevronRight', 16)}</button>` : ''
   return `<h3>${esc(t('connect_title'))}</h3>
     <p class="cx-state" data-tone="${tone}" role="status"><i></i><span>${esc(line)}</span></p>
     ${warn}
     ${opts}
+    ${events}
     <p class="muted small cx-about">${esc(t('connect_about'))}</p>
     <p class="muted small cx-about">${esc(t('connect_privacy'))}</p>
     <div class="sheet-group">
+      ${drops}
       <a class="sheet-row" href="${CONNECT_INSTALL_URL}" target="_blank" rel="noopener">${icon('github', 18)}<span>${esc(t(installed ? 'connect_page' : 'connect_install'))}</span>${icon('external', 16)}</a>
     </div>`
 }

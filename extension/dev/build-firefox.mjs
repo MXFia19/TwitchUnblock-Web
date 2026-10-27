@@ -11,10 +11,13 @@
 //   node extension/dev/build-firefox.mjs
 //
 // puis about:debugging → « Charger un module complémentaire temporaire… » →
-// extension-firefox/manifest.json.
+// extension-firefox/manifest.json. C'est le paquet publié (release, AMO) :
+// sans l'aperçu Vercel de la branche de test (release.mjs). Avec `--dev`, il
+// le garde, pour essayer la version Firefox sur l'aperçu.
 import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { publishedManifest } from "./release.mjs";
 
 const SRC = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const OUT = resolve(SRC, "..", "extension-firefox");
@@ -54,7 +57,8 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     recursive: true,
     filter: (p) => !/^[\\/](tests|dev)([\\/]|$)/.test(p.slice(SRC.length))
   });
-  const manifest = JSON.parse(readFileSync(join(SRC, "manifest.json"), "utf8"));
+  const source = JSON.parse(readFileSync(join(SRC, "manifest.json"), "utf8"));
+  const manifest = process.argv.includes("--dev") ? source : publishedManifest(source);
   writeFileSync(join(OUT, "manifest.json"), JSON.stringify(firefoxManifest(manifest), null, 2) + "\n");
   console.log("Version Firefox écrite dans " + OUT);
 }

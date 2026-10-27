@@ -1455,6 +1455,24 @@ button.cx-bal:hover { border-color: var(--purple); background: var(--card); }
 /* Compte de jeu à lier (extension 0.3.0) : au-dessus des drops de la campagne. */
 .drop-link { display: flex; align-items: center; gap: 4px; margin: 0 0 4px; font-size: 12px; color: var(--muted); }
 .drop-link a { color: var(--purple); font-weight: 600; }
+/* « Tous mes drops » sous la progression (extension 0.3.0). */
+.drop-all { align-self: flex-start; display: inline-flex; align-items: center; gap: 2px; margin-top: 2px; color: var(--purple); font-size: 12px; font-weight: 600; }
+/* Page Drops (extension 0.3.0) : toutes les campagnes du compte. */
+.dp-list { display: flex; flex-direction: column; gap: 10px; margin-top: 10px; }
+.dp-camp { display: flex; flex-direction: column; gap: 6px; padding: 12px; border-radius: var(--r-control); background: var(--surface); }
+.dp-head { display: flex; align-items: center; gap: 10px; }
+.dp-art { flex: none; display: grid; place-items: center; width: 40px; height: 53px; border-radius: 4px; object-fit: cover; background: var(--card); color: var(--muted); }
+.dp-id { min-width: 0; }
+.dp-id h3 { margin: 0; font-size: 14px; line-height: 1.3; overflow-wrap: anywhere; }
+.dp-id p { margin: 2px 0 0; }
+.dp-tag { display: inline-block; padding: 1px 7px; border-radius: 999px; background: var(--card); color: var(--muted); font-size: 10.5px; font-weight: 700; vertical-align: 1px; white-space: nowrap; }
+.dp-tag.on { background: color-mix(in srgb, var(--purple) 18%, transparent); color: var(--purple); }
+.dp-drop { display: flex; align-items: center; gap: 8px; }
+.dp-drop > img, .dp-ic { flex: none; display: grid; place-items: center; width: 32px; height: 32px; border-radius: 4px; object-fit: contain; background: var(--card); color: var(--muted); }
+.dp-drop .drop-row { flex: 1; min-width: 0; }
+.dp-empty { margin: 14px 0; text-align: center; }
+.dp-note { line-height: 1.45; }
+.dp-reload { align-self: flex-start; }
 /* Confirmation dans une feuille (ne plus suivre) : action, puis Annuler. */
 .confirm-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .cx-chip.drop-claim { height: 22px; padding: 0 8px; font-size: 11px; }

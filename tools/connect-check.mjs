@@ -5,10 +5,10 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  ABSENT_AFTER, ConnectError, HELLO_AT, MAX_BET, MAX_REWARD_INPUT, OPS, accountMismatch, canFollow, cleanArgs, connect, createConnect,
-  normalize, timeoutFor,
+  ABSENT_AFTER, ConnectError, HELLO_AT, MAX_BET, MAX_REWARD_INPUT, OPS, accountMismatch, canAccount, cleanArgs, connect, createConnect,
+  normAccountEvent, normalize, timeoutFor,
 } from '../public/assets/js/connect.js'
-import { ConnectLive, errorText, isRepeatClick } from '../public/assets/js/chat/connect-live.js'
+import { ConnectLive, errorText, freshDrop, isRepeatClick } from '../public/assets/js/chat/connect-live.js'
 import { t } from '../public/assets/js/i18n.js'
 // Version publiée : bandeau de mise à jour et comptage d'usage.
 import { CONNECT_LATEST, INSTALL_URL, compareVersions, updateFor, usageFields } from '../public/assets/js/connect.js'
@@ -281,7 +281,7 @@ test('identifiants de demande uniques', () => {
 })
 
 test('délais d’attente : 15 s, et 45 s pour ce qui peut demander un jeton d’intégrité', async () => {
-  const slow = ['points.claim', 'watch.beat', 'predictions.bet', 'polls.vote', 'raid.join', 'drops.claim', 'drops.pulse', 'rewards.redeem', 'hq.master', 'follow.set']
+  const slow = ['points.claim', 'watch.beat', 'predictions.bet', 'polls.vote', 'raid.join', 'drops.claim', 'drops.pulse', 'rewards.redeem', 'hq.master', 'follow.set', 'clips.create']
   for (const op of OPS) assert.equal(timeoutFor(op), slow.includes(op) ? 45_000 : 15_000, op)
   // Pulsation : le jeton de lecture du compte peut demander un jeton
   // d'intégrité (jusqu'à ~40 s) ; à 15 s, la réponse et ses drops réclamés
@@ -297,6 +297,7 @@ test('délais d’attente : 15 s, et 45 s pour ce qui peut demander un jeton d�
     'rewards.get': { channel: 'a' }, 'rewards.redeem': { channel: 'a', rewardId: 'r', cost: 10, title: 'T', prompt: null, input: null },
     'hq.master': { channel: 'a', codecs: ['h264'] }, 'hq.playlist': { id: 'A'.repeat(22) },
     'follow.get': { channel: 'a' }, 'follow.set': { channel: 'a', follow: true },
+    'clips.create': { channel: 'a', at: 1_800_000_000_000 }, 'drops.inventory': {}, 'events.keep': {},
   }
   for (const op of OPS) {
     const { client, clock } = setup({ ext: null })
@@ -692,9 +693,9 @@ test('0.3.0 : garde-fou de compte, suivi, drops à lier, compte sans pub', async
   assert.deepEqual(accountMismatch({ session: { login: 'Alt_Account' } }, 'Viewer_1'), { ext: 'alt_account', site: 'viewer_1' })
   assert.equal(accountMismatch({ session: null }, 'viewer_1'), null)
   assert.equal(accountMismatch({ session: { login: 'x' } }, null), null)
-  assert.equal(canFollow({ availability: 'on', session: { login: 'x' }, version: '0.2.0' }), false)
-  assert.equal(canFollow({ availability: 'on', session: { login: 'x' }, version: '0.3.0' }), true)
-  assert.equal(canFollow({ availability: 'off', session: { login: 'x' }, version: '0.3.0' }), false)
+  assert.equal(canAccount({ availability: 'on', session: { login: 'x' }, version: '0.2.0' }), false)
+  assert.equal(canAccount({ availability: 'on', session: { login: 'x' }, version: '0.3.0' }), true)
+  assert.equal(canAccount({ availability: 'off', session: { login: 'x' }, version: '0.3.0' }), false)
 
   const ext = {
     ...GOOD,
@@ -740,4 +741,110 @@ test('0.3.0 : garde-fou de compte, suivi, drops à lier, compte sans pub', async
   ] })
   assert.deepEqual(linked.campaigns.map((c) => [c.needsLink, c.linkUrl]), [[true, 'https://game.example/link'], [true, null], [false, null]])
   assert.equal(errorText(new ConnectError('account_mismatch')), t('connect_err_account_mismatch'))
+})
+
+test('0.3.0 : clip, page Drops, événements du compte', async () => {
+  // Arguments : instant entier en ms ; rien pour la page Drops et les événements.
+  assert.deepEqual(cleanArgs('clips.create', { channel: 'A', at: 1_800_000_000_000, extra: 1 }), { channel: 'a', at: 1_800_000_000_000 })
+  for (const at of [1.5, 1_800_000_000_000.5, '1800000000000', 1000, 5e12, undefined]) assert.equal(cleanArgs('clips.create', { channel: 'a', at }), null, String(at))
+  assert.deepEqual(cleanArgs('drops.inventory', { channel: 'a' }), {})
+  assert.deepEqual(cleanArgs('events.keep', null), {})
+  // Clip : adresse refaite d'après l'identifiant relu.
+  assert.deepEqual(normalize('clips.create', { slug: 'Funny-abc_1', url: 'https://evil.example/' }), { slug: 'Funny-abc_1', url: 'https://clips.twitch.tv/Funny-abc_1' })
+  assert.equal(normalize('clips.create', { slug: '../x' }), null)
+  // Page Drops : commencées ou non, jaquette en https, début.
+  const inv = normalize('drops.inventory', { available: false, campaigns: [
+    { id: 'c1', name: 'N', gameName: 'G', endsAt: '2026-11-01T00:00:00Z', started: true, startsAt: '2026-10-01T00:00:00Z', gameBoxArt: 'https://static-cdn.jtvnw.net/b.jpg', drops: [] },
+    { id: 'c2', name: 'N', started: 'yes', gameBoxArt: 'http://x.example/b.jpg', drops: [] },
+  ] })
+  assert.deepEqual(inv.campaigns.map((c) => [c.id, c.started, c.startsAt, c.gameBoxArt]),
+    [['c1', true, Date.parse('2026-10-01T00:00:00Z'), 'https://static-cdn.jtvnw.net/b.jpg'], ['c2', false, null, null]])
+  assert.equal(inv.available, false)
+  assert.equal(normalize('drops.inventory', { campaigns: [] }), null, 'available obligatoire')
+  assert.equal(normalize('drops.inventory', { available: true, campaigns: [{ id: 'c', drops: [{ id: 'x' }] }] }), null)
+  // Événements : liste fermée, champ par champ.
+  assert.deepEqual(normAccountEvent({ type: 'points', channelId: '42', balance: 10, gain: 5, reason: 'WATCH', token: 'x' }),
+    { type: 'points', channelId: '42', balance: 10, gain: 5, reason: 'WATCH' })
+  assert.equal(normAccountEvent({ type: 'points', channelId: 'abc', balance: 10 }), null)
+  assert.equal(normAccountEvent({ type: 'other', channelId: '42' }), null)
+  assert.equal(normAccountEvent({ type: 'prediction', channelId: '42', result: 'MAYBE' }), null)
+  assert.deepEqual(normAccountEvent({ type: 'drop', dropId: 'd', ready: true, dropInstanceId: 'bad id' }),
+    { type: 'drop', dropId: 'd', channelId: null, current: null, required: null, ready: true, claimed: false, needsLink: false, dropInstanceId: null })
+
+  // Client : événements aux abonnés ; état « events » d'après events.keep.
+  let keep = { connected: true }
+  const ext = { ...GOOD, 'events.keep': () => keep, 'clips.create': () => ({ slug: 'Clip-1' }) }
+  const { client, clock, deliver, reqs } = setup({ ext })
+  const got = []
+  const off = client.onEvent((e) => got.push(e))
+  deliver({ tuConnect: 1, dir: 'event', event: { type: 'chest', channelId: '42', claimed: true, balance: 50 } })
+  deliver({ tuConnect: 1, dir: 'event', event: { type: 'evil' } })
+  deliver({ tuConnect: 1, dir: 'event', event: { type: 'chest', channelId: '42' } }, { from: 'https://evil.example' })
+  deliver({ tuConnect: 2, dir: 'event', event: { type: 'chest', channelId: '42' } })
+  assert.deepEqual(got, [{ type: 'chest', channelId: '42', claimed: true, balance: 50 }])
+  const k = client.request('events.keep')
+  await clock.advance(10)
+  assert.deepEqual(await k, { connected: true })
+  assert.equal(client.state().events, true)
+  keep = { error: { code: 'no_session' } }
+  const k2 = track(client.request('events.keep'))
+  await clock.advance(10)
+  assert.equal(k2.error.code, 'no_session')
+  assert.equal(client.state().events, false)
+  // Clip : un compte d'extension différent de celui du site → rien ne part.
+  const st = client.refreshStatus()
+  await clock.advance(10)
+  await st
+  client.setSiteLogin('someone_else')
+  await assert.rejects(client.request('clips.create', { channel: 'a', at: 1_800_000_000_000 }), (e) => e.code === 'account_mismatch')
+  assert.equal(reqs('clips.create').length, 0)
+  client.setSiteLogin('viewer_1')
+  const c = client.request('clips.create', { channel: 'a', at: 1_800_000_000_000 })
+  await clock.advance(10)
+  assert.deepEqual(await c, { slug: 'Clip-1', url: 'https://clips.twitch.tv/Clip-1' })
+  off()
+  deliver({ tuConnect: 1, dir: 'event', event: { type: 'chest', channelId: '42', claimed: false } })
+  assert.equal(got.length, 1, 'désabonné')
+  client.destroy()
+})
+
+test('lecteur : événements du compte — solde, coffre, un seul « +50 », progression des drops', () => {
+  const { live } = fakeLive({
+    view: { el: { points: { querySelector: () => null }, rewards: { querySelector: () => null } } },
+    points: { channelId: '42', balance: 100, claimAvailable: true, name: null, icon: null, streak: null },
+    drops: { channelHasDrops: true, campaigns: [{ id: 'c', drops: [{ id: 'd1', currentMinutes: 10, requiredMinutes: 60 }] }] },
+  })
+  let dropsPainted = 0
+  live.renderPoints = () => {}
+  live.updateActBalance = () => {}
+  live.dropsChanged = () => { dropsPainted++ }
+  live.at = { status: 0, pred: 5, drops: 5 }
+  live.accountEvent({ type: 'points', channelId: '42', balance: 150, gain: 50, reason: 'CLAIM' })
+  assert.equal(live.points.balance, 150)
+  assert.equal(live.gain, 50)
+  // Le même gain redit tout de suite (réponse de watch.beat) : un seul « +50 ».
+  live.gain = null
+  live.gained(50)
+  assert.equal(live.gain, null)
+  // Autre chaîne : rien.
+  live.accountEvent({ type: 'points', channelId: '7', balance: 1, gain: 1, reason: null })
+  assert.equal(live.points.balance, 150)
+  // Coffre réclamé par l'extension, puis un coffre à réclamer ici.
+  live.accountEvent({ type: 'chest', channelId: '42', claimed: true, balance: 150 })
+  assert.equal(live.points.claimAvailable, false)
+  live.accountEvent({ type: 'chest', channelId: '42', claimed: false, balance: null })
+  assert.equal(live.points.claimAvailable, true)
+  // Drops : progression en place, puis relus après une réclamation.
+  live.accountEvent({ type: 'drop', dropId: 'd1', channelId: '42', current: 43, required: 60, ready: false, claimed: false, needsLink: false, dropInstanceId: null })
+  assert.equal(live.drops.campaigns[0].drops[0].currentMinutes, 43)
+  assert.equal(dropsPainted, 1)
+  live.accountEvent({ type: 'drop', dropId: 'd1', channelId: '42', current: null, required: null, ready: false, claimed: true, needsLink: false, dropInstanceId: null })
+  assert.equal(live.at.drops, 0)
+  live.accountEvent({ type: 'prediction', channelId: '42', eventId: 'e', result: 'WIN', points: 10 })
+  assert.equal(live.at.pred, 0)
+  clearTimeout(live.gainTimer)
+  // Un drop annoncé une fois, même dit par la pulsation et par l'événement.
+  assert.equal(freshDrop('Casque'), true)
+  assert.equal(freshDrop('Casque'), false)
+  assert.equal(freshDrop(''), false)
 })

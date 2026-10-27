@@ -33,11 +33,22 @@ const VERSION = api.runtime.getManifest().version;
 const EXTENSION_BASE = api.runtime.getURL("");
 const BROWSER = EXTENSION_BASE.startsWith("moz-extension:") ? "firefox" : "chrome";
 
-// Origines du site autorisées (PROTOCOL.md) : rien d'autre.
-const SITE_ORIGINS = [
-  "https://twitchunblock.vercel.app",
-  "https://test2-git-test-17d298-mxfia19s-projects.vercel.app"
-];
+// Origines du site autorisées (PROTOCOL.md) : celles du content script du
+// manifeste, rien d'autre. Le paquet publié n'a que le site
+// (dev/release.mjs) ; l'aperçu Vercel de la branche de test n'est que dans
+// le manifeste du dépôt, chargé à la main pour les essais.
+const SITE_ORIGINS = siteOriginsOf(api.runtime.getManifest());
+
+function siteOriginsOf(manifest) {
+  const out = [];
+  for (const cs of arr(manifest && manifest.content_scripts)) {
+    for (const p of arr(cs && cs.matches)) {
+      const m = /^(https:\/\/[a-z0-9.-]+)\/\*$/.exec(typeof p === "string" ? p : "");
+      if (m && !out.includes(m[1])) out.push(m[1]);
+    }
+  }
+  return out;
+}
 
 const TWITCH_WWW = "https://www.twitch.tv";
 const GQL_URL = "https://gql.twitch.tv/gql";
@@ -92,7 +103,12 @@ const Q = {
   rewardCooldowns: "query($l: String!) { channel(name: $l) { communityPointsSettings { customRewards { id cooldownExpiresAt } } } }",
   // FollowButton_User de l'app (TwitchGQL.swift), en clair : `self.follower`
   // non nul si le compte suit la chaîne.
-  follow: "query($l: String!) { user(login: $l) { id self { follower { followedAt } } } }"
+  follow: "query($l: String!) { user(login: $l) { id self { follower { followedAt } } } }",
+  // ClipCreator.swift : diffusion en cours (id, début), puis createClip,
+  // complète d'abord, réduite si Twitch ne reconnaît pas un de ses champs.
+  liveBroadcast: "query($l: String!) { user(login: $l) { id stream { id createdAt } } }",
+  createClipFull: "mutation CreateClip($input: CreateClipInput!) { createClip(input: $input) { clip { slug } error { code } } }",
+  createClipBare: "mutation CreateClip($input: CreateClipInput!) { createClip(input: $input) { clip { slug } } }"
 };
 
 const LIMIT = {
@@ -129,7 +145,12 @@ const LIMIT = {
   hqKeepMs: 21600000,        // adresse d'une variante gardée 6 h au plus
   hqMax: 48,                 // variantes gardées en tout (deux ou trois directs)
   hqMasterBytes: 1000000,    // liste maîtresse lue sur 1 Mo au plus
-  hqPlaylistBytes: 2000000   // playlist d'une variante : 2 Mo au plus
+  hqPlaylistBytes: 2000000,  // playlist d'une variante : 2 Mo au plus
+  clipMs: 10000,             // clips.create : 1 par 10 s
+  eventsKeepMs: 90000,       // événements du compte : connexion gardée 90 s après la dernière demande
+  eventsRetryMaxMs: 60000,   // reconnexion : 2 s, puis le double à chaque échec, 1 min au plus
+  eventsAuthRetryMs: 600000, // session refusée par Hermes : pas de nouvel essai avant 10 min
+  eventsMsgBytes: 65536      // message Hermes lu sur 64 Ko au plus
 };
 
 const ERROR_CODES = [
@@ -144,6 +165,8 @@ const TWITCH_ID_RE = /^[A-Za-z0-9._:-]{1,64}$/;
 const RAID_ID_RE = /^[A-Za-z0-9-]{1,64}$/;
 const DROP_INSTANCE_RE = /^[A-Za-z0-9#._:-]{1,200}$/;
 const NUMERIC_ID_RE = /^[0-9]{1,20}$/;
+// Clip créé (clips.create) : son identifiant dans clips.twitch.tv/<slug>.
+const CLIP_SLUG_RE = /^[A-Za-z0-9_-]{3,120}$/;
 const AUTH_TOKEN_RE = /^[A-Za-z0-9._~-]{8,256}$/;
 const DEVICE_ID_RE = /^[A-Za-z0-9_-]{8,64}$/;
 const INTEGRITY_RE = /^[\x21-\x7e]{16,8192}$/;
@@ -186,11 +209,14 @@ const OP_ARGS = {
   "hq.master": { channel: "channel", codecs: "codecs" },
   "hq.playlist": { id: "hqId" },
   "follow.get": { channel: "channel" },
-  "follow.set": { channel: "channel", follow: "bool" }
+  "follow.set": { channel: "channel", follow: "bool" },
+  "clips.create": { channel: "channel", at: "moment" },
+  "drops.inventory": {},
+  "events.keep": {}
 };
 const SPEND_OPS = ["predictions.bet", "polls.vote", "rewards.redeem"];
 // Action du compte sans dépense : un vrai clic aussi, pas le réglage des dépenses.
-const CLICK_OPS = ["follow.set"];
+const CLICK_OPS = ["follow.set", "clips.create"];
 
 // Longueur en caractères (points de code), pas en unités UTF-16.
 function charCount(s) {
@@ -233,6 +259,8 @@ function checkArgs(op, raw) {
       kind === "bool" ? typeof v === "boolean" :
       kind === "codecs" ? codecsOk(v) :
       kind === "hqId" ? typeof v === "string" && HQ_ID_RE.test(v) :
+      // Instant (ms depuis 1970) : entier, entre 2017 et 2099.
+      kind === "moment" ? typeof v === "number" && Number.isInteger(v) && v >= 1.5e12 && v <= 4.1e12 :
       false;
     if (!good) return { bad: k };
     // Liste recopiée dans l'ordre de HQ_CODECS (pas la référence reçue).
@@ -1533,7 +1561,10 @@ function normalizeCampaign(c) {
       drops
     },
     needsLink: !connected && !link.includes("twitch.tv"),
-    linkUrl: httpsUrl(link)
+    linkUrl: httpsUrl(link),
+    // Page Drops (drops.inventory) seulement : jaquette du jeu et début.
+    gameBoxArt: c.game && typeof c.game === "object" ? httpsUrl(c.game.boxArtURL) : null,
+    startsAt: str(c.startAt, 40)
   };
 }
 
@@ -1580,7 +1611,8 @@ function readDropsDashboard(session) {
     const body = { query: Q.dropsDashboard };
     let json = await gql(body, session);
     if (gqlErrors(json).some((m) => /integrity/i.test(m))) {
-      if (!it) return [];
+      // Pas lisible sans jeton : null (la page Drops le dit).
+      if (!it) return null;
       json = await gql(body, session, { integrity: it });
     }
     const user = json.data && json.data.currentUser;
@@ -1614,7 +1646,7 @@ async function opDropsGet(args, session) {
   const missing = wanted.filter((id) => !found.some((c) => c.campaign.id === id));
   let extra = [];
   if (missing.length) {
-    const dashboard = await readDropsDashboard(session).catch(() => []);
+    const dashboard = (await readDropsDashboard(session).catch(() => null)) || [];
     extra = dashboard.filter((c) => missing.includes(c.campaign.id));
   }
   const campaigns = found.concat(extra).map((c) => {
@@ -2338,6 +2370,402 @@ async function opFollowSet(args, session) {
   return { following: args.follow };
 }
 
+// Page Drops du site (DropsView de l'app) : toutes les campagnes du compte —
+// commencées (inventaire, progression), puis celles du tableau de bord pas
+// encore commencées, lisibles seulement avec un jeton d'intégrité déjà
+// gardé (une lecture n'ouvre jamais d'onglet) : `available` le dit.
+async function opDropsInventory(args, session) {
+  const [inventory, dashboard] = await Promise.all([
+    readDropsInventory(session),
+    readDropsDashboard(session).catch(() => null)
+  ]);
+  const seen = new Set();
+  const campaigns = [];
+  for (const [list, started] of [[inventory, true], [dashboard || [], false]]) {
+    for (const c of list) {
+      if (seen.has(c.campaign.id) || campaigns.length >= 50) continue;
+      seen.add(c.campaign.id);
+      const campaign = Object.assign({}, c.campaign, {
+        started,
+        startsAt: c.startsAt,
+        gameBoxArt: c.gameBoxArt,
+        needsLink: c.needsLink === true,
+        linkUrl: c.needsLink ? c.linkUrl : null
+      });
+      // Compte de jeu à lier : rien de réclamable d'ici (comme drops.get).
+      if (c.needsLink) {
+        campaign.drops = campaign.drops.map((d) => (d.dropInstanceId ? Object.assign({}, d, { dropInstanceId: null }) : d));
+      }
+      campaigns.push(campaign);
+    }
+  }
+  const end = (c) => Date.parse(c.endsAt || "") || Infinity;
+  campaigns.sort((a, b) => (Number(b.started) - Number(a.started)) || (end(a) - end(b)));
+  return { campaigns, available: dashboard !== null };
+}
+
+// Erreur de validation GraphQL : la requête n'a pas été exécutée
+// (ClipCreator.swift, isSchemaError).
+function isSchemaError(message) {
+  const m = String(message).toLowerCase();
+  return ["cannot query field", "unknown field", "unknown argument", "is not defined",
+    "invalid value", "unknown type", "expected type"].some((w) => m.includes(w));
+}
+
+// Refus de createClip rangé par cause (codes de l'API web non documentés :
+// on lit des mots, comme clipOutcome de l'app).
+function clipError(code, messages) {
+  const text = (code + " " + messages.join(" ")).toUpperCase();
+  const hasWord = (words) => words.some((w) => text.includes(w));
+  if (hasWord(["NOT_LIVE", "NOT LIVE", "OFFLINE", "NOT_BROADCASTING", "NO_BROADCAST", "BROADCAST_NOT_FOUND"])) return new TuError("offline");
+  // « RATE » en début de mot seulement (pas « MODERATED »).
+  if (/(^|[^A-Z])RATE|THROTTL|TOO[_ ]MANY/.test(text)) return new TuError("rate_limited");
+  if (hasWord(["DISABLED", "RESTRICT", "FORBIDDEN", "NOT_ALLOWED", "BANNED", "PERMISSION", "FOLLOW", "SUBSCRI", "INELIGIBLE"])) {
+    return new TuError("twitch", "CLIPS_DISABLED");
+  }
+  return new TuError("twitch", code ? safeCode(code) : "UNKNOWN");
+}
+
+// Clip du direct à l'instant `at` (date de l'image que montre le site),
+// compté depuis le début de la diffusion (ClipCreator.swift de l'app).
+// Vrai clic exigé ; jamais deux clips pour une demande.
+async function opClipsCreate(args, session) {
+  const json = await gql({ query: Q.liveBroadcast, variables: { l: args.channel } }, session, { auth: false });
+  const user = json.data && json.data.user;
+  if (!user || typeof user.id !== "string" || !NUMERIC_ID_RE.test(user.id)) {
+    throwGqlErrors(json);
+    throw new TuError("twitch", "channel_not_found");
+  }
+  const stream = user.stream;
+  if (!stream || typeof stream.id !== "string" || !NUMERIC_ID_RE.test(stream.id)) throw new TuError("offline");
+  const started = Date.parse(stream.createdAt || "");
+  if (!Number.isFinite(started)) throw new TuError("twitch", "createdAt");
+  const offsetSeconds = Math.max(0, Math.round((args.at - started) / 1000));
+  const attempt = async (query, input) => {
+    const res = await mutation([{ operationName: "CreateClip", query, variables: { input } }], session);
+    const payload = res.data && res.data.createClip;
+    const slug = payload && payload.clip && typeof payload.clip.slug === "string" ? payload.clip.slug : "";
+    if (CLIP_SLUG_RE.test(slug)) return { slug, url: "https://clips.twitch.tv/" + slug };
+    const code = payload && payload.error && typeof payload.error.code === "string" ? payload.error.code : "";
+    const messages = gqlErrors(res);
+    // Requête pas exécutée (champ inconnu) : la forme réduite.
+    if (!payload && !code && messages.some(isSchemaError)) return null;
+    throw clipError(code, messages);
+  };
+  const full = await attempt(Q.createClipFull, { broadcasterID: user.id, broadcastID: stream.id, offsetSeconds });
+  if (full) return full;
+  const bare = await attempt(Q.createClipBare, { broadcasterID: user.id, offsetSeconds });
+  if (bare) return bare;
+  throw new TuError("twitch", "schema");
+}
+
+// --- Événements du compte (Hermes, comme le site twitch.tv) -------------------------------
+//
+// Sujets du compte, avec la session (message « authenticate » de Hermes) :
+// points (gagnés, dépensés, coffre disponible), paris (résultat), drops
+// (progression, drop prêt). Coffre et drop prêts réclamés tout de suite avec
+// « Réclamer automatiquement » — un drop dont le compte de jeu n'est pas lié,
+// jamais. Le site reçoit des événements réduits (liste fermée : nombres et
+// identifiants, jamais de jeton) par son content script. Connexion ouverte
+// tant qu'un onglet du site la demande (events.keep, toutes les 25 s),
+// fermée 90 s après la dernière demande, ou quand la session change. La
+// session ne part qu'à hermes.twitch.tv, dans le message « authenticate ».
+const HERMES_URL = "wss://hermes.twitch.tv/v1?clientId=" + CLIENT_ID;
+const HERMES_TOPICS = ["community-points-user-v1", "predictions-user-v1", "user-drop-events"];
+const hermes = {
+  ws: null, fp: "", userId: "", open: false, keepUntil: 0, subs: {}, lastAt: 0,
+  keepaliveMs: 15000, retryMs: 2000, timer: 0, retryTimer: 0, badFp: "", badAt: 0
+};
+
+function hermesSend(obj) {
+  try {
+    if (hermes.ws && hermes.ws.readyState === 1) hermes.ws.send(JSON.stringify(obj));
+  } catch (e) {
+    // fermé entre-temps
+  }
+}
+
+function hermesDrop() {
+  const ws = hermes.ws;
+  hermes.ws = null;
+  hermes.open = false;
+  hermes.subs = {};
+  if (ws) {
+    try {
+      ws.onclose = ws.onmessage = ws.onerror = null;
+      ws.close();
+    } catch (e) {
+      // déjà fermé
+    }
+  }
+}
+
+function hermesClose() {
+  clearTimeout(hermes.timer);
+  clearTimeout(hermes.retryTimer);
+  hermes.timer = hermes.retryTimer = 0;
+  hermesDrop();
+  hermes.fp = "";
+  hermes.userId = "";
+  hermes.retryMs = 2000;
+}
+
+// Connexion pour cette session, ouverte au besoin ; rien n'attend (l'état
+// se lit dans `hermes.open`).
+async function ensureHermes(session) {
+  if (typeof WebSocket !== "function") return;
+  if (hermes.fp === session.fp && (hermes.ws || hermes.retryTimer)) return;
+  // Session refusée par Hermes il y a peu : pas de nouvel essai tout de suite.
+  if (hermes.badFp === session.fp && Date.now() - hermes.badAt < LIMIT.eventsAuthRetryMs) return;
+  hermesClose();
+  const user = await sessionUser(session);
+  hermes.fp = session.fp;
+  hermes.userId = user.userId;
+  hermesConnect(HERMES_URL);
+}
+
+function hermesConnect(url) {
+  let ws;
+  try {
+    ws = new WebSocket(url);
+  } catch (e) {
+    hermesRetry();
+    return;
+  }
+  hermes.ws = ws;
+  hermes.open = false;
+  hermes.subs = {};
+  hermes.lastAt = Date.now();
+  ws.onmessage = (ev) => {
+    if (hermes.ws === ws) onHermesMessage(ev && ev.data).catch(() => {});
+  };
+  ws.onclose = () => {
+    if (hermes.ws !== ws) return;
+    hermes.ws = null;
+    hermes.open = false;
+    hermesRetry();
+  };
+  ws.onerror = () => {
+    // la fermeture suit
+  };
+  hermesWatch();
+}
+
+// Plus de keepalive à temps : connexion morte, relancée. Plus de demande du
+// site depuis 90 s : fermée.
+function hermesWatch() {
+  clearTimeout(hermes.timer);
+  hermes.timer = setTimeout(() => {
+    const now = Date.now();
+    if (now > hermes.keepUntil) {
+      hermesClose();
+      return;
+    }
+    if (hermes.ws && now - hermes.lastAt > hermes.keepaliveMs * 2 + 10000) {
+      hermesDrop();
+      hermesRetry();
+      return;
+    }
+    hermesWatch();
+  }, 15000);
+}
+
+function hermesRetry() {
+  clearTimeout(hermes.retryTimer);
+  hermes.retryTimer = 0;
+  if (!hermes.fp || Date.now() > hermes.keepUntil) {
+    hermesClose();
+    return;
+  }
+  const delay = hermes.retryMs;
+  hermes.retryMs = Math.min(hermes.retryMs * 2, LIMIT.eventsRetryMaxMs);
+  hermes.retryTimer = setTimeout(async () => {
+    hermes.retryTimer = 0;
+    const session = await readSession().catch(() => null);
+    if (!session || session.fp !== hermes.fp || Date.now() > hermes.keepUntil) {
+      hermesClose();
+      return;
+    }
+    hermesConnect(HERMES_URL);
+  }, delay);
+}
+
+async function onHermesMessage(text) {
+  hermes.lastAt = Date.now();
+  if (typeof text !== "string" || text.length > LIMIT.eventsMsgBytes) return;
+  let m;
+  try {
+    m = JSON.parse(text);
+  } catch (e) {
+    return;
+  }
+  if (!m || typeof m !== "object") return;
+  const now = () => new Date().toISOString();
+  if (m.type === "welcome") {
+    const k = Number(m.welcome && m.welcome.keepaliveSec);
+    if (k >= 1 && k <= 600) hermes.keepaliveMs = k * 1000;
+    // Session relue dans le cookie : elle ne part qu'ici, vers Hermes.
+    const session = await readSession().catch(() => null);
+    if (!session || session.fp !== hermes.fp) {
+      hermesClose();
+      return;
+    }
+    hermesSend({ id: randomId(21), type: "authenticate", authenticate: { token: session.token }, timestamp: now() });
+  } else if (m.type === "authenticateResponse") {
+    const r = m.authenticateResponse;
+    if (!r || r.result !== "ok") {
+      hermes.badFp = hermes.fp;
+      hermes.badAt = Date.now();
+      hermesClose();
+      return;
+    }
+    hermes.open = true;
+    hermes.retryMs = 2000;
+    for (const topic of HERMES_TOPICS) {
+      const id = randomId(21);
+      hermes.subs[id] = topic;
+      hermesSend({ type: "subscribe", id: randomId(21), subscribe: { id, type: "pubsub", pubsub: { topic: topic + "." + hermes.userId } }, timestamp: now() });
+    }
+  } else if (m.type === "notification") {
+    const n = m.notification;
+    if (!n || n.type !== "pubsub" || !n.subscription || !has(hermes.subs, n.subscription.id)) return;
+    let msg = n.pubsub;
+    try {
+      if (typeof msg === "string") msg = JSON.parse(msg);
+      if (typeof msg === "string") msg = JSON.parse(msg);
+    } catch (e) {
+      return;
+    }
+    if (msg && typeof msg === "object") await onAccountEvent(hermes.subs[n.subscription.id], msg);
+  } else if (m.type === "reconnect") {
+    const url = m.reconnect && typeof m.reconnect.url === "string" ? m.reconnect.url : "";
+    hermesDrop();
+    hermesConnect(/^wss:\/\/hermes\.twitch\.tv\/[^\s]{0,500}$/.test(url) ? url : HERMES_URL);
+  }
+}
+
+const numericId = (v) => (typeof v === "string" && NUMERIC_ID_RE.test(v) ? v : null);
+const twitchId = (v) => (typeof v === "string" && TWITCH_ID_RE.test(v) ? v : null);
+
+// Coffre signalé par Hermes (ids de la chaîne et du coffre) : même mutation
+// que claimChest. Le gain arrive à part (points-earned, raison CLAIM).
+async function claimChestById(session, channelId, claimId) {
+  const body = persisted("ClaimCommunityPoints", { input: { channelID: channelId, claimID: claimId } }, HASH.claim);
+  const res = await mutation(body, session, { auto: true });
+  const claim = res.data && res.data.claimCommunityPoints;
+  if (!claim || typeof claim !== "object") {
+    throwGqlErrors(res);
+    throw new TuError("twitch", "bad_response");
+  }
+  if (claim.error && claim.error.code) throw new TuError("twitch", safeCode(claim.error.code));
+  return typeof claim.currentPoints === "number" && Number.isFinite(claim.currentPoints) ? Math.trunc(claim.currentPoints) : null;
+}
+
+// Un message d'un sujet du compte → réclamations automatiques, et
+// l'événement réduit pour le site.
+async function onAccountEvent(topic, msg) {
+  const type = typeof msg.type === "string" ? msg.type : "";
+  const d = msg.data && typeof msg.data === "object" ? msg.data : {};
+  const settings = await getSettings();
+  if (!settings.siteEnabled) return;
+  // Session changée dans le navigateur (déconnexion, autre compte) : plus
+  // rien de l'ancienne, connexion fermée.
+  const session = await readSession().catch(() => null);
+  if (!session || session.fp !== hermes.fp) {
+    hermesClose();
+    return;
+  }
+  if (topic === "community-points-user-v1") {
+    if (type === "points-earned" || type === "points-spent") {
+      const b = d.balance && typeof d.balance === "object" ? d.balance : {};
+      const channelId = numericId(b.channel_id);
+      const balance = int(b.balance);
+      if (!channelId || balance === null) return;
+      const g = type === "points-earned" && d.point_gain && typeof d.point_gain === "object" ? d.point_gain : null;
+      await emitEvent({
+        type: "points", channelId, balance,
+        gain: g ? int(g.total_points) : null,
+        reason: g && typeof g.reason_code === "string" && /^[A-Z_]{1,40}$/.test(g.reason_code) ? g.reason_code : null
+      });
+    } else if (type === "claim-available") {
+      const c = d.claim && typeof d.claim === "object" ? d.claim : {};
+      const channelId = numericId(c.channel_id);
+      const claimId = twitchId(c.id);
+      if (!channelId || !claimId) return;
+      let claimed = false;
+      let balance = null;
+      const fails = mem.claimFails[claimId];
+      if (settings.autoClaim && !(fails && fails.n >= 3) && takeSlot("claim", LIMIT.claimMs)) {
+        try {
+          balance = await claimChestById(session, channelId, claimId);
+          claimed = true;
+        } catch (e) {
+          mem.claimFails[claimId] = { n: (fails ? fails.n : 0) + 1, at: Date.now() };
+          pruneMap(mem.claimFails, 50);
+          save("claimFails");
+        }
+      }
+      await emitEvent({ type: "chest", channelId, claimed, balance });
+    }
+  } else if (topic === "predictions-user-v1") {
+    if (type !== "prediction-result") return;
+    const p = d.prediction && typeof d.prediction === "object" ? d.prediction : {};
+    const r = p.result && typeof p.result === "object" ? p.result : {};
+    const channelId = numericId(p.channel_id);
+    const result = ["WIN", "LOSE", "REFUND"].includes(r.type) ? r.type : null;
+    if (!channelId || !result) return;
+    // Gagné : les points reçus ; remboursé : la mise rendue.
+    const points = result === "REFUND" ? int(p.points) : int(r.points_won);
+    await emitEvent({ type: "prediction", channelId, eventId: twitchId(p.event_id), result, points: points || 0 });
+  } else if (topic === "user-drop-events") {
+    const dropId = twitchId(d.drop_id);
+    if (!dropId) return;
+    const channelId = numericId(d.channel_id);
+    if (type === "drop-progress") {
+      await emitEvent({
+        type: "drop", dropId, channelId, current: int(d.current_progress_min), required: int(d.required_progress_min),
+        ready: false, claimed: false, needsLink: false, dropInstanceId: null
+      });
+    } else if (type === "drop-claim") {
+      const instance = typeof d.drop_instance_id === "string" && DROP_INSTANCE_RE.test(d.drop_instance_id) ? d.drop_instance_id : null;
+      if (!instance) return;
+      let claimed = false;
+      // Compte de jeu à lier : jamais réclamé d'ici (la récompense pouvait
+      // être perdue), comme la pulsation et l'app.
+      const inventory = await readDropsInventory(session, true).catch(() => null);
+      const needsLink = !!(inventory && inventory.some((c) => c.needsLink && c.campaign.drops.some((x) => x.id === dropId)));
+      if (settings.autoClaim && !needsLink && takeSlot("dropsClaim", LIMIT.dropsClaimMs)) {
+        claimed = await claimDrop(session, instance, true).catch(() => false);
+      }
+      await emitEvent({
+        type: "drop", dropId, channelId, current: null, required: null,
+        ready: !claimed, claimed, needsLink, dropInstanceId: claimed || needsLink ? null : instance
+      });
+    }
+  }
+}
+
+// Événement du compte vers les onglets du site : leur content script le
+// relaie à la page.
+async function emitEvent(ev) {
+  for (const t of await siteTabs()) {
+    try {
+      const p = api.tabs.sendMessage(t.id, { tuConnect: 1, kind: "event", event: ev }, { frameId: 0 });
+      if (p && typeof p.catch === "function") p.catch(() => {});
+    } catch (e) {
+      // pas de content script dans cet onglet
+    }
+  }
+}
+
+// Le site veut les événements : connexion gardée 90 s de plus, ouverte au
+// besoin. `connected` : abonnée aux sujets du compte.
+async function opEventsKeep(args, session) {
+  hermes.keepUntil = Date.now() + LIMIT.eventsKeepMs;
+  await ensureHermes(session);
+  return { connected: hermes.open };
+}
+
 const OPS = {
   "points.get": opPointsGet,
   "points.claim": opPointsClaim,
@@ -2355,7 +2783,10 @@ const OPS = {
   "hq.master": opHqMaster,
   "hq.playlist": opHqPlaylist,
   "follow.get": opFollowGet,
-  "follow.set": opFollowSet
+  "follow.set": opFollowSet,
+  "clips.create": opClipsCreate,
+  "drops.inventory": opDropsInventory,
+  "events.keep": opEventsKeep
 };
 
 function asResponse(promise) {
@@ -2394,6 +2825,7 @@ async function handleSiteRequest(msg) {
   }
   if (CLICK_OPS.includes(op) && msg.activation !== true) return fail("needs_activation");
   if (op === "follow.set" && !takeSlot("follow", LIMIT.spendMs)) return fail("rate_limited");
+  if (op === "clips.create" && !takeSlot("clip", LIMIT.clipMs)) return fail("rate_limited");
   if (op === "raid.join") {
     const prev = mem.raidJoins[args.raidId];
     const now = Date.now();
@@ -2409,7 +2841,11 @@ async function handleSiteRequest(msg) {
   try {
     if (op === "status") return ok(await opStatus(settings));
     const session = await readSession();
-    if (!session) return fail("no_session");
+    if (!session) {
+      // Plus connecté à twitch.tv : plus d'événements du compte non plus.
+      hermesClose();
+      return fail("no_session");
+    }
     const res = await asResponse(OPS[op](args, session, settings));
     return op === "raid.join" ? rememberRaid(args.raidId, res) : res;
   } catch (e) {
@@ -2556,7 +2992,12 @@ api.runtime.onInstalled.addListener(() => {
 });
 
 api.storage.onChanged.addListener((changes, area) => {
-  if (area === "local" && changes && changes.settings) announceToSite().catch(() => {});
+  if (area === "local" && changes && changes.settings) {
+    announceToSite().catch(() => {});
+    // Connexion au site coupée : plus d'événements du compte.
+    const next = changes.settings.newValue;
+    if (next && next.siteEnabled === false) hermesClose();
+  }
 });
 
 // storage.session reste fermé aux content scripts (valeur par défaut sous

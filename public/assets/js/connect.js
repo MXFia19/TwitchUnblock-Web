@@ -66,21 +66,22 @@ export function usageFields(st, ua = globalThis.navigator?.userAgent ?? '') {
   return { ext: st.version, extBrowser: browser }
 }
 /** Liste fermée du protocole : rien d'autre ne part. `hq.*` : extension
- *  0.2.0 et plus seulement (qualités supérieures, hq.js) ; `follow.*` : 0.3.0. */
+ *  0.2.0 et plus seulement (qualités supérieures, hq.js) ; `follow.*`,
+ *  `clips.create`, `drops.inventory` et `events.keep` : 0.3.0. */
 export const OPS = Object.freeze(['hello', 'status', 'points.get', 'points.claim', 'watch.beat',
   'predictions.get', 'predictions.bet', 'polls.get', 'polls.vote', 'raid.join',
   'drops.get', 'drops.claim', 'drops.pulse', 'rewards.get', 'rewards.redeem',
-  'hq.master', 'hq.playlist', 'follow.get', 'follow.set'])
+  'hq.master', 'hq.playlist', 'follow.get', 'follow.set', 'clips.create', 'drops.inventory', 'events.keep'])
 /** Peuvent devoir obtenir un jeton d'intégrité Twitch : 45 s au lieu de 15.
  *  `drops.pulse` et `hq.master` aussi : le jeton de lecture du compte peut en
  *  demander un. */
 const SLOW_OPS = new Set(['points.claim', 'watch.beat', 'predictions.bet', 'polls.vote',
-  'raid.join', 'drops.claim', 'drops.pulse', 'rewards.redeem', 'hq.master', 'follow.set'])
+  'raid.join', 'drops.claim', 'drops.pulse', 'rewards.redeem', 'hq.master', 'follow.set', 'clips.create'])
 /** Dépenses et actions du compte : refusées ici quand le compte twitch.tv de
  *  l'extension n'est pas celui du site (accountMismatch). Les points gagnés
  *  en regardant, les coffres et les drops vont au compte de l'extension :
  *  permis. */
-const GUARDED_OPS = new Set(['predictions.bet', 'polls.vote', 'rewards.redeem', 'follow.set'])
+const GUARDED_OPS = new Set(['predictions.bet', 'polls.vote', 'rewards.redeem', 'follow.set', 'clips.create'])
 
 /** Comptes différents : { ext, site } quand l'extension a une session à un
  *  autre pseudo que le compte connecté sur le site ; null sinon (pas de
@@ -91,9 +92,13 @@ export function accountMismatch(st, siteLogin) {
   return ext && site && ext !== site ? { ext, site } : null
 }
 
-/** Suivre une chaîne par l'extension : 0.3.0, branchée, avec une session. */
-export const canFollow = (st) => st?.availability === 'on' && Boolean(st.session) &&
+/** Actions du compte par l'extension (suivre une chaîne, créer un clip, page
+ *  Drops, événements du compte) : 0.3.0, branchée, avec une session. */
+export const canAccount = (st) => st?.availability === 'on' && Boolean(st.session) &&
   compareVersions(st.version, ACCOUNT_MIN_VERSION) >= 0
+/** Événements du compte : `events.keep` toutes les 25 s tant qu'une page en
+ *  veut (l'extension garde la connexion 90 s après la dernière demande). */
+export const EVENTS_KEEP_EVERY = 25_000
 export const timeoutFor = (op) => (SLOW_OPS.has(op) ? 45_000 : 15_000)
 
 /** Détection : `hello` à 0 ; 0,5 ; 1,5 et 3 s, tant que rien n'a répondu. */
@@ -113,6 +118,12 @@ const HQ_ID_RE = /^[A-Za-z0-9]{22}$/
 export const HQ_CODECS = Object.freeze(['av1', 'h265', 'h264'])
 /** Texte d'une récompense qui en demande un : 1 à 200 caractères. */
 export const MAX_REWARD_INPUT = 200
+/** Clip créé : son identifiant dans clips.twitch.tv/<slug>. */
+const CLIP_SLUG_RE = /^[A-Za-z0-9_-]{3,120}$/
+/** Instant d'un clip (date de l'image affichée, en ms) : de 2017 à 2099. */
+const MOMENT_MIN = 1.5e12
+const MOMENT_MAX = 4.1e12
+const NUM_ID_RE = /^[0-9]{1,20}$/
 
 /** Erreur d'une demande : `code` du protocole (disabled, no_session,
  *  needs_activation, spend_disabled, bad_args, unknown_op, rate_limited,
@@ -292,33 +303,49 @@ function normRaid(d) {
 /** Drop réclamable : identifiant de son instance, ou null. */
 const dropInstance = (v) => (isStr(v) && DROP_INSTANCE_RE.test(v) ? v : null)
 
+/** Campagne de drops (drops.get, drops.inventory) ; null si mal formée. */
+function normCampaign(c) {
+  if (!isObj(c) || !ident(c.id) || !Array.isArray(c.drops)) return null
+  const drops = []
+  for (const x of c.drops.slice(0, 50)) {
+    if (!isObj(x) || !ident(x.id) || typeof x.claimed !== 'boolean') return null
+    const requiredMinutes = count(x.requiredMinutes)
+    const currentMinutes = count(x.currentMinutes)
+    if (requiredMinutes === null || currentMinutes === null) return null
+    drops.push({
+      id: x.id,
+      name: text(x.name, 200) ?? '',
+      imageUrl: httpsUrl(x.imageUrl),
+      requiredMinutes,
+      currentMinutes,
+      claimed: x.claimed,
+      dropInstanceId: dropInstance(x.dropInstanceId),
+    })
+  }
+  // 0.3.0 : compte de jeu à lier (rien de réclamable), et son adresse.
+  const needsLink = c.needsLink === true
+  return { id: c.id, name: text(c.name, 200) ?? '', gameName: text(c.gameName, 200) || null, endsAt: time(c.endsAt), drops,
+    needsLink, linkUrl: needsLink ? httpsUrl(c.linkUrl) : null }
+}
+
 function normDrops(d) {
   if (typeof d.channelHasDrops !== 'boolean' || !Array.isArray(d.campaigns)) return null
+  const campaigns = d.campaigns.slice(0, 20).map(normCampaign)
+  return campaigns.includes(null) ? null : { channelHasDrops: d.channelHasDrops, campaigns }
+}
+
+/** Page Drops : toutes les campagnes du compte, commencées ou non ;
+ *  `available` faux quand celles pas encore commencées n'ont pas pu être
+ *  lues (jeton d'intégrité pas encore obtenu par l'extension). */
+function normDropsInventory(d) {
+  if (!Array.isArray(d.campaigns) || typeof d.available !== 'boolean') return null
   const campaigns = []
-  for (const c of d.campaigns.slice(0, 20)) {
-    if (!isObj(c) || !ident(c.id) || !Array.isArray(c.drops)) return null
-    const drops = []
-    for (const x of c.drops.slice(0, 50)) {
-      if (!isObj(x) || !ident(x.id) || typeof x.claimed !== 'boolean') return null
-      const requiredMinutes = count(x.requiredMinutes)
-      const currentMinutes = count(x.currentMinutes)
-      if (requiredMinutes === null || currentMinutes === null) return null
-      drops.push({
-        id: x.id,
-        name: text(x.name, 200) ?? '',
-        imageUrl: httpsUrl(x.imageUrl),
-        requiredMinutes,
-        currentMinutes,
-        claimed: x.claimed,
-        dropInstanceId: dropInstance(x.dropInstanceId),
-      })
-    }
-    // 0.3.0 : compte de jeu à lier (rien de réclamable), et son adresse.
-    const needsLink = c.needsLink === true
-    campaigns.push({ id: c.id, name: text(c.name, 200) ?? '', gameName: text(c.gameName, 200) || null, endsAt: time(c.endsAt), drops,
-      needsLink, linkUrl: needsLink ? httpsUrl(c.linkUrl) : null })
+  for (const c of d.campaigns.slice(0, 50)) {
+    const camp = normCampaign(c)
+    if (!camp) return null
+    campaigns.push({ ...camp, started: c.started === true, startsAt: time(c.startsAt), gameBoxArt: httpsUrl(c.gameBoxArt) })
   }
-  return { channelHasDrops: d.channelHasDrops, campaigns }
+  return { campaigns, available: d.available }
 }
 
 function normDropClaim(d) {
@@ -402,6 +429,41 @@ function normHqPlaylist(d) {
   return isStr(d.playlist) && d.playlist.startsWith('#EXTM3U') && d.playlist.length <= 2_000_000 ? { playlist: d.playlist } : null
 }
 
+/** Clip créé : l'adresse est refaite d'après l'identifiant relu. */
+function normClip(d) {
+  return isStr(d.slug) && CLIP_SLUG_RE.test(d.slug) ? { slug: d.slug, url: `https://clips.twitch.tv/${d.slug}` } : null
+}
+
+function normEventsKeep(d) {
+  return typeof d.connected === 'boolean' ? { connected: d.connected } : null
+}
+
+const numId = (v) => (isStr(v) && NUM_ID_RE.test(v) ? v : null)
+const int = (v) => (Number.isFinite(v) ? Math.trunc(v) : null)
+
+/** Événement du compte (Hermes, relayé par l'extension 0.3.0) : liste
+ *  fermée, champ par champ ; null pour tout le reste. */
+export function normAccountEvent(e) {
+  if (!isObj(e)) return null
+  const channelId = numId(e.channelId)
+  if (e.type === 'points') {
+    if (!channelId || count(e.balance) === null) return null
+    return { type: 'points', channelId, balance: count(e.balance), gain: int(e.gain),
+      reason: isStr(e.reason) && /^[A-Z_]{1,40}$/.test(e.reason) ? e.reason : null }
+  }
+  if (e.type === 'chest') return channelId ? { type: 'chest', channelId, claimed: e.claimed === true, balance: count(e.balance) } : null
+  if (e.type === 'prediction') {
+    if (!channelId || !['WIN', 'LOSE', 'REFUND'].includes(e.result)) return null
+    return { type: 'prediction', channelId, eventId: ident(e.eventId), result: e.result, points: count(e.points) ?? 0 }
+  }
+  if (e.type === 'drop') {
+    if (!ident(e.dropId)) return null
+    return { type: 'drop', dropId: e.dropId, channelId, current: count(e.current), required: count(e.required),
+      ready: e.ready === true, claimed: e.claimed === true, needsLink: e.needsLink === true, dropInstanceId: dropInstance(e.dropInstanceId) }
+  }
+  return null
+}
+
 const NORMALIZE = {
   hello: normHello,
   status: normStatus,
@@ -422,6 +484,9 @@ const NORMALIZE = {
   'hq.playlist': normHqPlaylist,
   'follow.get': normFollow,
   'follow.set': normFollow,
+  'clips.create': normClip,
+  'drops.inventory': normDropsInventory,
+  'events.keep': normEventsKeep,
 }
 
 /** Relit une réponse `data` d'une opération : sa forme propre, ou null. */
@@ -432,7 +497,7 @@ export function normalize(op, data) {
 /** Arguments d'une demande, vérifiés comme le fera l'arrière-plan (le
  *  login de la chaîne en minuscules) : null s'ils ne passent pas. */
 export function cleanArgs(op, a) {
-  if (op === 'hello' || op === 'status') return {}
+  if (op === 'hello' || op === 'status' || op === 'drops.inventory' || op === 'events.keep') return {}
   if (!isObj(a)) return null
   // Sans chaîne : un drop se réclame par son instance, une playlist du
   // compte se demande par l'identifiant de sa variante.
@@ -461,6 +526,10 @@ export function cleanArgs(op, a) {
     return { channel, raidId: a.raidId }
   }
   if (op === 'follow.set') return typeof a.follow === 'boolean' ? { channel, follow: a.follow } : null
+  if (op === 'clips.create') {
+    // Instant du clip : date de l'image affichée (ms entières).
+    return Number.isInteger(a.at) && a.at >= MOMENT_MIN && a.at <= MOMENT_MAX ? { channel, at: a.at } : null
+  }
   if (op === 'rewards.redeem') {
     const { rewardId, cost, title, prompt = null, input = null } = a
     if (!ident(rewardId) || !Number.isInteger(cost) || cost < 1 || cost > 1e9 || !isStr(title) || title.length > 200) return null
@@ -497,13 +566,15 @@ export function createConnect(win, timers = {}) {
   const clearT = timers.clearTimeout ?? ((id) => clearTimeout(id))
   const pending = new Map()      // id → { op, resolve, reject, timer }
   const listeners = new Set()
+  const eventListeners = new Set()
   const detectTimers = []
   let started = false
   let answered = false
   /** availability : idle (pas lancée), detecting, absent, off (présente mais
    *  connexion au site coupée), on. session : undefined tant que `status`
-   *  n'a pas répondu, null sans session Twitch dans ce navigateur. */
-  let st = Object.freeze({ availability: 'idle', version: null, browser: null, session: undefined, settings: null })
+   *  n'a pas répondu, null sans session Twitch dans ce navigateur. events :
+   *  événements du compte reçus en direct (dernier `events.keep`). */
+  let st = Object.freeze({ availability: 'idle', version: null, browser: null, session: undefined, settings: null, events: false })
   /** Pseudo du compte connecté sur le site (main.js), pour accountMismatch. */
   let siteLogin = null
 
@@ -526,16 +597,19 @@ export function createConnect(win, timers = {}) {
       set({ availability: data.enabled ? 'on' : 'off', session: data.session, settings: data.settings })
     } else {
       answered = true
-      if (st.availability !== 'on') set({ availability: 'on' })
+      const patch = st.availability === 'on' ? {} : { availability: 'on' }
+      if (op === 'events.keep') patch.events = data.connected
+      set(patch)
     }
   }
 
   /** Erreur rendue par l'extension : ce qu'elle dit de son état. */
-  function failed(err) {
+  function failed(err, op) {
     answered = true
-    if (err.code === 'disabled') return set({ availability: 'off' })
+    if (err.code === 'disabled') return set({ availability: 'off', events: false })
     const patch = st.availability === 'on' ? {} : { availability: 'on' }
     if (err.code === 'no_session') patch.session = null
+    if (err.code === 'no_session' || op === 'events.keep') patch.events = false
     if (err.code === 'spend_disabled' && st.settings) patch.settings = { ...st.settings, allowSpend: false }
     set(patch)
   }
@@ -543,7 +617,16 @@ export function createConnect(win, timers = {}) {
   function onAnnounce(m) {
     if (m.protocol !== PROTOCOL || typeof m.enabled !== 'boolean') return
     answered = true
-    set({ availability: m.enabled ? 'on' : 'off', version: text(m.version, 40) ?? st.version })
+    set({ availability: m.enabled ? 'on' : 'off', version: text(m.version, 40) ?? st.version, ...(m.enabled ? {} : { events: false }) })
+  }
+
+  /** Événement du compte relayé par le content script : relu, puis aux abonnés. */
+  function onAccountEvent(raw) {
+    const ev = normAccountEvent(raw)
+    if (!ev) return
+    for (const fn of [...eventListeners]) {
+      try { fn(ev) } catch { /* un abonné en erreur ne prive pas les autres */ }
+    }
   }
 
   function onMessage(e) {
@@ -552,6 +635,7 @@ export function createConnect(win, timers = {}) {
     const m = e.data
     if (!isObj(m) || m.tuConnect !== 1) return
     if (m.dir === 'hello') return onAnnounce(m)
+    if (m.dir === 'event') return onAccountEvent(m.event)
     // Nos propres demandes (dir « req ») reviennent aussi à la page : ignorées.
     if (m.dir !== 'res' || !isStr(m.id)) return
     const p = pending.get(m.id)
@@ -563,7 +647,7 @@ export function createConnect(win, timers = {}) {
       if (data) { seen(p.op, data); p.resolve(data); return }
     } else if (m.ok === false && isObj(m.error) && isStr(m.error.code) && m.error.code) {
       const err = new ConnectError(m.error.code.slice(0, 40), text(m.error.message, 200) ?? '')
-      failed(err)
+      failed(err, p.op)
       p.reject(err)
       return
     }
@@ -588,6 +672,7 @@ export function createConnect(win, timers = {}) {
     return new Promise((resolve, reject) => {
       const timer = setT(() => {
         if (!pending.delete(id)) return
+        if (op === 'events.keep') set({ events: false })
         reject(new ConnectError('timeout'))
       }, timeoutFor(op))
       pending.set(id, { op, resolve, reject, timer })
@@ -632,6 +717,14 @@ export function createConnect(win, timers = {}) {
     return () => listeners.delete(fn)
   }
 
+  /** Abonnement aux événements du compte (normAccountEvent) ; rend la
+   *  fonction de désabonnement. Ils n'arrivent que pendant les `events.keep`. */
+  function onEvent(fn) {
+    listen()
+    eventListeners.add(fn)
+    return () => eventListeners.delete(fn)
+  }
+
   /** Vérifications : tout arrêter, sans laisser de minuteur. */
   function destroy() {
     for (const id of detectTimers.splice(0)) clearT(id)
@@ -639,6 +732,7 @@ export function createConnect(win, timers = {}) {
     if (started) win.removeEventListener('message', onMessage)
     started = false
     listeners.clear()
+    eventListeners.clear()
   }
 
   /** Compte connecté sur le site (null sans) : les dépenses le comparent à
@@ -654,7 +748,7 @@ export function createConnect(win, timers = {}) {
   }
 
   return {
-    start, request, refreshStatus, onChange, destroy, setSiteLogin,
+    start, request, refreshStatus, onChange, onEvent, destroy, setSiteLogin,
     state: () => st,
     mismatch: () => accountMismatch(st, siteLogin),
     pendingCount: () => pending.size,

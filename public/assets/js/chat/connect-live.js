@@ -9,9 +9,11 @@
 //  connexion coupée dans l'extension, rien de plus dans le lecteur ; sans
 //  session Twitch, une ligne dit de se connecter à twitch.tv. Le chat du
 //  multi-live et les VODs ne s'en servent pas (seul le chat principal reçoit
-//  `connect`, et openLive est réservé aux directs).
+//  `connect`, et openLive est réservé aux directs). Extension 0.3.0 : les
+//  événements du compte (main.js, accountEvent) mettent solde, coffre, gains
+//  et drops à jour en direct, et les relectures s'espacent.
 // ═══════════════════════════════════════════════════════════════════════════
-import { MAX_BET, MAX_REWARD_INPUT } from '../connect.js'
+import { MAX_BET, MAX_REWARD_INPUT, canAccount } from '../connect.js'
 import { lang, t } from '../i18n.js'
 import { $, esc, formatClock, icon, toast } from '../util.js'
 
@@ -20,6 +22,8 @@ const BEAT_EVERY = 60_000       // watch.beat, pendant la lecture seulement
 const PULSE_EVERY = 10_000      // drops.pulse, pendant la lecture d'une chaîne à drops
 const DROPS_EVERY = 60_000      // drops.get : campagnes et progression
 const POINTS_EVERY = 60_000     // points.get : solde, coffre disponible
+const EVENTS_READ_EVERY = 5 * 60_000 // … les deux, avec les événements du compte en direct
+const GAIN_SAME = 10_000        // le même gain dit deux fois (réponse, puis événement) : une fois
 const READ_VISIBLE = 15_000     // prédictions et sondages, onglet visible
 const READ_HIDDEN = 60_000      // … onglet caché
 const STATUS_EVERY = 5 * 60_000 // session et réglages de l'extension
@@ -33,6 +37,18 @@ const ERR_KEYS = ['disabled', 'no_session', 'needs_activation', 'spend_disabled'
 
 /** « Connecte-toi à twitch.tv » fermé : plus montré jusqu'au rechargement. */
 let loginNoteClosed = false
+
+/** Drops déjà annoncés (nom, ou id faute de nom) : la pulsation, « Réclamer »
+ *  et les événements du compte peuvent dire le même. Une fois par minute ;
+ *  faux si déjà dit. */
+const dropsSaid = new Map()
+export function freshDrop(key) {
+  const now = Date.now()
+  for (const [k, at] of dropsSaid) if (now - at > 60_000) dropsSaid.delete(k)
+  if (!key || dropsSaid.has(key)) return false
+  dropsSaid.set(key, now)
+  return true
+}
 
 const fmt = (n) => Number(n).toLocaleString(lang())
 const compact = (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e4 ? `${(n / 1e3).toFixed(1)}k` : fmt(n))
@@ -163,7 +179,7 @@ export class ConnectLive {
     // Un objet par chaîne : la demande en cours d'une chaîne quittée ne
     // bloque pas la suivante.
     this.busy = {}
-    this.points = null       // { balance, claimAvailable, name, icon, streak }
+    this.points = null       // { channelId, balance, claimAvailable, name, icon, streak }
     this.raidJoined = null   // raid rejoint : « Bonus de raid » dans son bandeau
     this.drops = null        // drops.get : { channelHasDrops, campaigns }
     this.rewards = null      // rewards.get : récompenses de la chaîne
@@ -271,8 +287,10 @@ export class ConnectLive {
     const playing = this.isPlaying()
     if (playing && now - this.at.beat >= BEAT_EVERY - 1000) this.beat()
     if (playing && this.drops?.channelHasDrops && now - this.at.pulse >= PULSE_EVERY - 1000) this.pulse()
-    if (now - this.at.drops >= DROPS_EVERY) this.readDrops()
-    if (now - this.at.points >= POINTS_EVERY) this.readPoints()
+    // Événements du compte en direct : solde et drops arrivent d'eux-mêmes.
+    const events = this.connect.state().events
+    if (now - this.at.drops >= (events ? EVENTS_READ_EVERY : DROPS_EVERY)) this.readDrops()
+    if (now - this.at.points >= (events ? EVENTS_READ_EVERY : POINTS_EVERY)) this.readPoints()
     if (now - this.at.pred >= every) this.readPred()
     if (now - this.at.poll >= every) this.readPoll()
   }
@@ -315,13 +333,13 @@ export class ConnectLive {
   async readPoints() {
     const d = await this.run('points', 'points.get')
     if (!d) return
-    this.points = { balance: d.balance, claimAvailable: d.claimAvailable, name: d.pointsName, icon: d.pointsIconUrl, streak: d.watchStreak }
+    this.points = { channelId: d.channelId, balance: d.balance, claimAvailable: d.claimAvailable, name: d.pointsName, icon: d.pointsIconUrl, streak: d.watchStreak }
     this.renderPoints()
   }
 
   setBalance(n) {
     if (this.points) this.points.balance = n
-    else this.points = { balance: n, claimAvailable: false, name: null, icon: null, streak: null }
+    else this.points = { channelId: null, balance: n, claimAvailable: false, name: null, icon: null, streak: null }
     this.renderPoints()
     this.updateActBalance()
     const rwBal = $('.cx-rw-bal span', this.view.el.rewards)
@@ -331,6 +349,11 @@ export class ConnectLive {
   /** « +N » quelques secondes à la place du solde (et dit au lecteur
    *  d'écran). */
   gained(n) {
+    // Coffre dit par watch.beat puis par l'événement du compte (ou
+    // l'inverse) : un seul « +50 ».
+    const now = Date.now()
+    if (this.lastGain?.n === n && now - this.lastGain.at < GAIN_SAME) return
+    this.lastGain = { n, at: now }
     if (this.points) this.points.claimAvailable = false
     this.gain = n
     clearTimeout(this.gainTimer)
@@ -628,8 +651,41 @@ export class ConnectLive {
   async pulse() {
     const d = await this.run('pulse', 'drops.pulse')
     if (!d?.claimed.length) return
-    toast(d.claimed.map((n) => t('drops_claimed_toast', { n })).join(' · '), 'success')
+    const names = d.claimed.filter((n) => freshDrop(n))
+    if (names.length) toast(names.map((n) => t('drops_claimed_toast', { n })).join(' · '), 'success')
     this.at.drops = 0   // progression relue au prochain tour
+  }
+
+  /** Drops à relire au prochain tour (réclamé ailleurs : page Drops). */
+  dropsStale() {
+    this.at.drops = 0
+  }
+
+  /** Événement du compte (Hermes, par l'extension 0.3.0) : solde, coffre et
+   *  gains en direct pour la chaîne regardée ; progression des drops ; carte
+   *  de la prédiction relue. Les annonces (drops, paris) : main.js. */
+  accountEvent(ev) {
+    if (!this.ready()) return
+    const p = this.points
+    const here = Boolean(p?.channelId) && ev.channelId === p.channelId
+    if (ev.type === 'points' && here) {
+      this.setBalance(ev.balance)
+      if (ev.gain > 0) this.gained(ev.gain)
+    } else if (ev.type === 'chest' && here) {
+      // Réclamé par l'extension (le gain arrive à part), ou à réclamer ici.
+      p.claimAvailable = !ev.claimed
+      if (ev.balance != null) this.setBalance(ev.balance)
+      else this.renderPoints()
+    } else if (ev.type === 'prediction' && here) {
+      this.at.pred = 0
+    } else if (ev.type === 'drop') {
+      const x = this.drops?.campaigns.flatMap((c) => c.drops).find((d) => d.id === ev.dropId)
+      if (x && ev.current != null && ev.current > x.currentMinutes) {
+        x.currentMinutes = ev.current
+        this.dropsChanged()
+      }
+      if (ev.claimed || ev.ready) this.at.drops = 0
+    }
   }
 
   /** Campagne de l'extension pour la carte, quand le GQL public n'en montre
@@ -666,6 +722,10 @@ export class ConnectLive {
         ? `<a href="${esc(camp.linkUrl)}" target="_blank" rel="noopener noreferrer">${esc(t('drops_link_account'))}</a>`
         : esc(t('drops_link_account'))}</p>`
       : ''
+    // Extension 0.3.0 : toutes les campagnes du compte (page Drops, main.js).
+    const all = canAccount(this.connect.state())
+      ? `<button class="drop-all" type="button" data-action="drops-page">${esc(t('dp_all'))}${icon('chevronRight', 12)}</button>`
+      : ''
     slot.innerHTML = link + camp.drops.slice().sort((a, b) => a.requiredMinutes - b.requiredMinutes).map((x) => {
       const cur = Math.min(x.currentMinutes, x.requiredMinutes)
       const pct = x.claimed || !x.requiredMinutes ? 100 : Math.round((cur / x.requiredMinutes) * 100)
@@ -678,7 +738,7 @@ export class ConnectLive {
         <div class="drop-line"><span class="drop-name">${esc(x.name)}</span>${state}</div>
         <div class="pred-bar"><i style="width:${pct}%;background:var(--purple)"></i></div>
       </div>`
-    }).join('')
+    }).join('') + all
     slot.hidden = false
   }
 
@@ -694,6 +754,7 @@ export class ConnectLive {
       if (gen !== this.gen) return
       if (d.claimed) {
         if (drop) Object.assign(drop, { claimed: true, dropInstanceId: null })
+        freshDrop(drop?.name)
         toast(t('drops_claimed_toast', { n: drop?.name || '?' }), 'success')
       } else toast(t('drops_not_claimed'))
       this.at.drops = 0

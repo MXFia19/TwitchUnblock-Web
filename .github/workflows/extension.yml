@@ -78,7 +78,18 @@ jobs:
           if [ -e "dist/$name/tests" ] || [ -e "dist/$name/dev" ]; then
             echo "::error::fichiers de dev dans le paquet"; exit 1
           fi
-          node extension/dev/build-firefox.mjs
+          # Paquets publiés (main : release, AMO) : manifeste sans l'aperçu
+          # Vercel de la branche de test. Sur la branche de test, les
+          # artefacts le gardent, pour essayer l'extension sur l'aperçu.
+          if [ "$GITHUB_REF" = "refs/heads/main" ]; then
+            node extension/dev/release.mjs "dist/$name"
+            node extension/dev/build-firefox.mjs
+            if grep -q "test2-git" "dist/$name/manifest.json" extension-firefox/manifest.json; then
+              echo "::error::aperçu Vercel dans un paquet publié"; exit 1
+            fi
+          else
+            node extension/dev/build-firefox.mjs --dev
+          fi
           mv extension-firefox "dist/$name-firefox"
           node -e 'const m = require(process.argv[1]); if (!m.background.scripts || !m.browser_specific_settings) process.exit(1)' "./dist/$name-firefox/manifest.json"
           if [ -e "dist/$name-firefox/tests" ] || [ -e "dist/$name-firefox/dev" ]; then

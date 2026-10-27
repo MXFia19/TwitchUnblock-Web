@@ -70,11 +70,14 @@
     "hq.master": { channel: "channel", codecs: "codecs" },
     "hq.playlist": { id: "hqId" },
     "follow.get": { channel: "channel" },
-    "follow.set": { channel: "channel", follow: "bool" }
+    "follow.set": { channel: "channel", follow: "bool" },
+    "clips.create": { channel: "channel", at: "moment" },
+    "drops.inventory": {},
+    "events.keep": {}
   };
   const SPEND_OPS = ["predictions.bet", "polls.vote", "rewards.redeem"];
   // Action du compte sans dépense : un vrai clic aussi.
-  const CLICK_OPS = ["follow.set"];
+  const CLICK_OPS = ["follow.set", "clips.create"];
 
   // Vrai clic de l'utilisateur sur la page (isTrusted, en capture ; Entrée ou
   // Espace sur un bouton en donnent un aussi) : un seul par dépense ou action
@@ -131,6 +134,7 @@
         kind === "bool" ? typeof v === "boolean" :
         kind === "codecs" ? codecsOk(v) :
         kind === "hqId" ? typeof v === "string" && HQ_ID_RE.test(v) :
+        kind === "moment" ? typeof v === "number" && Number.isInteger(v) && v >= 1.5e12 && v <= 4.1e12 :
         false;
       if (!good) return { bad: k };
       // Liste recopiée dans l'ordre de HQ_CODECS (pas la référence reçue).
@@ -246,12 +250,52 @@
       announce(res.data.enabled, res.data.version);
     }, () => {});
 
+  // --- Événements du compte (Hermes, arrière-plan) ---------------------------------
+
+  const NUM_ID_RE = /^[0-9]{1,20}$/;
+  const num = (v) => (typeof v === "number" && Number.isFinite(v) ? Math.trunc(v) : null);
+  const idOrNull = (v, re) => (typeof v === "string" && re.test(v) ? v : null);
+
+  // Liste fermée, champ par champ : rien d'autre ne passe à la page.
+  function cleanEvent(e) {
+    if (!e || typeof e !== "object") return null;
+    const channelId = idOrNull(e.channelId, NUM_ID_RE);
+    if (e.type === "points") {
+      if (!channelId || num(e.balance) === null) return null;
+      return { type: "points", channelId, balance: num(e.balance), gain: num(e.gain),
+        reason: idOrNull(e.reason, /^[A-Z_]{1,40}$/) };
+    }
+    if (e.type === "chest") {
+      if (!channelId) return null;
+      return { type: "chest", channelId, claimed: e.claimed === true, balance: num(e.balance) };
+    }
+    if (e.type === "prediction") {
+      if (!channelId || !["WIN", "LOSE", "REFUND"].includes(e.result)) return null;
+      return { type: "prediction", channelId, eventId: idOrNull(e.eventId, TWITCH_ID_RE), result: e.result, points: num(e.points) || 0 };
+    }
+    if (e.type === "drop") {
+      const dropId = idOrNull(e.dropId, TWITCH_ID_RE);
+      if (!dropId) return null;
+      return { type: "drop", dropId, channelId, current: num(e.current), required: num(e.required),
+        ready: e.ready === true, claimed: e.claimed === true, needsLink: e.needsLink === true,
+        dropInstanceId: idOrNull(e.dropInstanceId, DROP_INSTANCE_RE) };
+    }
+    return null;
+  }
+
   // Réglage changé dans la fenêtre de l'extension : l'arrière-plan redonne
-  // l'annonce (tabs.sendMessage), et le site suit tout de suite.
+  // l'annonce (tabs.sendMessage), et le site suit tout de suite. Événement du
+  // compte : relayé à la page.
   if (api.runtime.onMessage && typeof api.runtime.onMessage.addListener === "function") {
     api.runtime.onMessage.addListener((msg, sender) => {
       if (!sender || sender.id !== api.runtime.id || sender.tab) return;
-      if (!msg || msg.tuConnect !== 1 || msg.kind !== "announce" || typeof msg.enabled !== "boolean") return;
+      if (!msg || msg.tuConnect !== 1) return;
+      if (msg.kind === "event") {
+        const event = cleanEvent(msg.event);
+        if (event) post({ tuConnect: 1, dir: "event", event });
+        return;
+      }
+      if (msg.kind !== "announce" || typeof msg.enabled !== "boolean") return;
       announce(msg.enabled);
     });
   }
