@@ -444,7 +444,7 @@ async function handleGetLive(url, workerOrigin) {
     const seen = {};
     for (const id of steps) {
         try {
-            const got = id === 'twitch' ? await usherLiveMaster(login, seen) : await proxyLiveMaster(LIVE_PROXIES[id](login));
+            const got = id === 'twitch' ? await usherLiveMaster(login, seen) : await groupLiveMaster(LIVE_PROXIES[id](login));
             if (!got) continue;
             m3u8Content = got.text;
             masterUrl = got.url;
@@ -631,7 +631,8 @@ async function handleRecoverResolve(url, workerOrigin) {
 // distribution et y déposer une page, que le proxy resservait sous le domaine
 // du projet (en Docker, même origine que le site : elle lisait le jeton
 // Twitch). Seules passent les distributions de Twitch (TWITCH_CLOUDFRONT).
-const PROXY_HOSTS = ['ttvnw.net', 'jtvnw.net', 'twitch.tv', 'luminous.dev', 'twitchcdn.net', 'twitch-al.nadeko.net'];
+const PROXY_HOSTS = ['ttvnw.net', 'jtvnw.net', 'twitch.tv', 'luminous.dev', 'twitchcdn.net', 'twitch-al.nadeko.net',
+    'lb-as.cdn-perfprod.com', 'twitch.nadeko.net'];
 
 // Distributions CloudFront des VODs de Twitch (archives, highlights, uploads,
 // aperçus) : celles de RECOVER_HOSTS. Sondées le 15/10/2026 sur 200 chaînes
@@ -680,11 +681,27 @@ const ttvlolUrl = (host, login) =>
 // format des serveurs IVS, où « Source » donnait un écran noir chez des
 // utilisateurs. Twitch officiel, avec ses pubs, vient en dernier — ou en
 // premier si on le choisit.
+// Chaque source est un groupe de proxys essayés dans l'ordre, le second en
+// secours (sondés le 27/10 sur trois directs, sans pré-roll) : Asie =
+// Luminous (Ouzbékistan) puis PerfProd Asie (Maurice) ; Albanie = nadeko
+// Albanie (format TTV.LOL) puis twitch.nadeko.net (format Luminous ;
+// twitch.zzls.xyz n'est qu'une redirection 301 vers lui) ; Europe =
+// Luminous Europe puis Europe 2.
 const LIVE_QUERY = 'allow_source=true&allow_audio_only=true&fast_bread=true';
+const liveUrl = (host, login) => `https://${host}/live/${login}?${LIVE_QUERY}`;
 const LIVE_PROXIES = {
-    as: (login) => ({ url: `https://as.luminous.dev/live/${login}?${LIVE_QUERY}`, headers: getRequestHeaders(login) }),
-    al: (login) => ({ url: ttvlolUrl(TTVLOL_HOSTS[0], login), headers: { 'X-Donate-To': 'https://ttv.lol/donate' } }),
-    eu: (login) => ({ url: `https://eu.luminous.dev/live/${login}?${LIVE_QUERY}`, headers: getRequestHeaders(login) }),
+    as: (login) => [
+        { url: liveUrl('as.luminous.dev', login), headers: getRequestHeaders(login) },
+        { url: liveUrl('lb-as.cdn-perfprod.com', login), headers: getRequestHeaders(login) },
+    ],
+    al: (login) => [
+        { url: ttvlolUrl(TTVLOL_HOSTS[0], login), headers: { 'X-Donate-To': 'https://ttv.lol/donate' } },
+        { url: liveUrl('twitch.nadeko.net', login), headers: getRequestHeaders(login) },
+    ],
+    eu: (login) => [
+        { url: liveUrl('eu.luminous.dev', login), headers: getRequestHeaders(login) },
+        { url: liveUrl('eu2.luminous.dev', login), headers: getRequestHeaders(login) },
+    ],
 };
 const LIVE_PROXY_ORDER = ['as', 'al', 'eu'];
 const LIVE_SOURCE_IDS = [...LIVE_PROXY_ORDER, 'twitch'];
@@ -703,11 +720,26 @@ function liveSourceSteps(order, wanted) {
 /** Délai d'une source du direct. Une source qui acceptait la connexion sans
  *  répondre retenait toutes les suivantes, jusqu'à ~100 s. */
 const LIVE_SOURCE_TIMEOUT = 6000;
+/** Délai d'un groupe de proxys : un premier muet (6 s) laisse encore 2 s
+ *  au secours ; un premier en erreur lui en laisse presque 6. */
+const LIVE_GROUP_TIMEOUT = 8000;
+
+/** Liste maîtresse du premier proxy du groupe qui répond ; null si aucun. */
+async function groupLiveMaster(candidates) {
+    const deadline = Date.now() + LIVE_GROUP_TIMEOUT;
+    for (const c of candidates) {
+        const left = deadline - Date.now();
+        if (left < 1000) break;
+        const got = await proxyLiveMaster(c, Math.min(LIVE_SOURCE_TIMEOUT, left)).catch(() => null);
+        if (got) return got;
+    }
+    return null;
+}
 
 /** Liste maîtresse d'un proxy ; null s'il ne répond pas ou si la
  *  chaîne y est hors ligne (pas de « #EXT-X-STREAM-INF »). */
-async function proxyLiveMaster(c) {
-    const r = await fetch(c.url, { headers: c.headers, signal: AbortSignal.timeout(LIVE_SOURCE_TIMEOUT) });
+async function proxyLiveMaster(c, ms = LIVE_SOURCE_TIMEOUT) {
+    const r = await fetch(c.url, { headers: c.headers, signal: AbortSignal.timeout(ms) });
     if (!r.ok) return null;
     const text = await r.text();
     return text.includes('#EXT-X-STREAM-INF') ? { text, url: r.url } : null;
