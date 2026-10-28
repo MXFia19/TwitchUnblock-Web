@@ -2744,12 +2744,16 @@ function welcomeOrWhatsNew() {
     pending = localStorage.getItem(TOUR_PENDING) === '1'
   } catch { return }
   if ((!seen && !RETURNING) || pending) {
+    // Instance auto-hébergée qui coupe la visite guidée (SITE_DEFAULTS
+    // {"tour": false}) : le nouveau visiteur arrive directement sur le site,
+    // « Revoir le tutoriel » reste dans les réglages.
+    const noTour = window.TU_CONFIG?.defaultPrefs?.tour === false
     try {
       localStorage.setItem(SEEN_VERSION, usage.SITE_VERSION)
-      if (deepLink) localStorage.setItem(TOUR_PENDING, '1')
+      if (deepLink && !noTour) localStorage.setItem(TOUR_PENDING, '1')
       else localStorage.removeItem(TOUR_PENDING)
     } catch {}
-    if (!deepLink) startTour()
+    if (!deepLink && !noTour) startTour()
     return
   }
   // Une lecture partagée en cours (lecteur ou mosaïque) : on ne la couvre
