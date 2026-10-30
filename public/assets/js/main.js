@@ -122,11 +122,15 @@ async function boot() {
     // passer pour un premier chargement : le même direct déjà ouvert repasse
     // en grand au lieu de redémarrer, et un autre lecteur se réduit — si la
     // chaîne n'est plus en live, sa page se voit au lieu de rester dessous.
+    // « Ouvrir dans l'app iPhone » : la page de la chaîne, sans son direct
+    // (pas de double son), puis l'app.
     navigator.serviceWorker.addEventListener('message', (e) => {
       if (e.data?.type !== 'open') return
       const u = new URL(e.data.url, location.origin)
-      go(u.pathname + u.search, { watch: true })
+      const appLogin = notifAppLogin(u)
+      go(u.pathname + u.search, { watch: !appLogin })
       applyRoute(routeFromLocation())
+      if (appLogin) openInApp(appLogin)
     })
   }
 
@@ -144,10 +148,22 @@ async function boot() {
   // L'adresse ouvre la page voulue (/xqc, /videos/123, /directory…), et les
   // boutons précédent / suivant du navigateur passent d'une page à l'autre.
   window.addEventListener('popstate', () => applyRoute(routeFromLocation()))
+  // Site ouvert par une notification (« notif », mis par sw.js) : la marque
+  // sort de l'adresse, et « Ouvrir dans l'app iPhone » vaut comme plus haut.
+  const opened = new URL(location.href)
+  let appLogin = null
+  if (opened.searchParams.has('notif')) {
+    opened.searchParams.delete('notif')
+    try { history.replaceState(history.state, '', opened.pathname + opened.search + opened.hash) } catch {}
+    appLogin = notifAppLogin(opened)
+  }
+  const first = routeFromLocation()
+  if (appLogin) first.live = false
   // Visite guidée ou nouveautés une fois la page de l'adresse ouverte : à
   // heure fixe, elles passaient avant le direct, la VOD ou la mosaïque d'un
   // lien et s'affichaient par-dessus.
-  applyRoute(routeFromLocation(), { initial: true }).finally(() => setTimeout(welcomeOrWhatsNew, 900))
+  applyRoute(first, { initial: true }).finally(() => setTimeout(welcomeOrWhatsNew, 900))
+  if (appLogin) openInApp(appLogin)
 }
 
 // ── Adresses comme sur Twitch ──────────────────────────────────────────────
@@ -1572,6 +1588,27 @@ function toggleLocalFollow(login) {
 const PUSH_STATE = 'tu_push'
 const pushSupported = () => 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window
 const isStandalone = () => Boolean(window.matchMedia?.('(display-mode: standalone)').matches || navigator.standalone)
+// iPad : Safari s'y présente comme un Mac, l'écran tactile le trahit.
+const isIOSLike = isIOS || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1)
+
+// « Ouvrir dans l'app iPhone » (web app sur iPhone et iPad, prefs.notifApp) :
+// une notification de live touchée ouvre la page de la chaîne, puis l'app par
+// son lien, comme le bouton « Ouvrir dans l'app » du bot Discord. iOS demande
+// en général de confirmer ; refusé, ou sans l'app, on reste sur la page.
+const NOTIF_APP_SCHEMES = { app: 'twitchunblock', test: 'twitchunblock-test' }
+
+/** Chaîne d'une notification de live (adresse « /login ») à ouvrir dans
+ *  l'app, ou null : réglage coupé, hors iPhone et iPad, autre notification. */
+function notifAppLogin(u) {
+  if (!isIOSLike || !NOTIF_APP_SCHEMES[store.prefs.notifApp]) return null
+  const parts = u.pathname.split('/').filter(Boolean)
+  return parts.length === 1 ? api.cleanLogin(parts[0]) : null
+}
+
+function openInApp(login) {
+  location.href = `${NOTIF_APP_SCHEMES[store.prefs.notifApp]}://live/${login}`
+}
+
 function pushState() { try { return JSON.parse(localStorage.getItem(PUSH_STATE) || '{}') } catch { return {} } }
 function savePushState(s) { try { localStorage.setItem(PUSH_STATE, JSON.stringify(s)) } catch {} }
 const pushOn = () => pushSupported() && Notification.permission === 'granted' && pushState().on === true
@@ -1979,10 +2016,8 @@ actions['copy-app-source'] = () => {
 // les activer depuis l'icône. La web app elle-même, et un navigateur qui
 // notifie sans installation (ordinateur, Android), vont droit à l'interrupteur.
 function openNotifInstall() {
-  // iPad : Safari s'y présente comme un Mac, l'écran tactile le trahit.
-  const ios = isIOS || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1)
-  if (isStandalone() || (!ios && pushSupported())) { openPushSettings(); return }
-  const body = !ios ? `<p class="muted small">${esc(t('push_unsupported'))}</p>`
+  if (isStandalone() || (!isIOSLike && pushSupported())) { openPushSettings(); return }
+  const body = !isIOSLike ? `<p class="muted small">${esc(t('push_unsupported'))}</p>`
     : installKind() === 'already' ? `<p class="muted small">${esc(t('install_already'))}</p>`
     : installStepsHtml(INSTALL_STEPS.ios)
   openSheet(`
@@ -5974,6 +6009,10 @@ function openSettings() {
         <button class="btn ghost sm" type="button" id="push-channels" data-action="push-channels" ${pushOn() ? '' : 'hidden'}>${icon('list', 15)}<span>${esc(t('push_channels'))}</span></button>
         ${isIOS && !isStandalone() && installKind() ? `<button class="link-btn" type="button" data-action="install-how">${esc(t('install_how'))}</button>` : ''}
       </div>
+      ${isIOSLike && isStandalone() ? `<label class="setting setting-col">
+        <span class="setting-text"><span>${esc(t('notif_app'))}</span><small>${esc(t('notif_app_sub'))}</small></span>
+        <select class="text-input" id="set-notifapp">${[['', t('notif_app_off')], ['app', 'TwitchUnblock'], ['test', 'TU Test']].map(([v, l]) => `<option value="${v}"${(p.notifApp || '') === v ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select>
+      </label>` : ''}
     </div>
     <div class="sheet-section">
       <h3>${esc(t('chat_settings'))}</h3>
@@ -6117,6 +6156,7 @@ function openSettings() {
     if (id === 'set-sync') p.chatSync = e.target.checked
     if (id === 'set-multichat') { setMultiChat(e.target.checked); return }
     if (id === 'set-push') { togglePush(e.target); return }
+    if (id === 'set-notifapp') p.notifApp = NOTIF_APP_SCHEMES[e.target.value] ? e.target.value : null
     if (id === 'set-raid') p.autoRaid = e.target.checked
     if (id === 'set-deleted') p.keepDeleted = e.target.checked
     if (id === 'set-history') p.loadHistory = e.target.checked

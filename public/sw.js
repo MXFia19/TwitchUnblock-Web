@@ -74,15 +74,20 @@ self.addEventListener('pushsubscriptionchange', (e) => {
 
 self.addEventListener('notificationclick', (e) => {
   e.notification.close()
-  const url = new URL(e.notification.data?.url || '/', self.location.origin).href
+  const url = new URL(e.notification.data?.url || '/', self.location.origin)
   e.waitUntil((async () => {
     const wins = (await self.clients.matchAll({ type: 'window', includeUncontrolled: true })).filter((w) => {
       const u = new URL(w.url)
       return u.origin === self.location.origin && !u.pathname.startsWith('/stats')
     })
     const win = wins.find((w) => w.focused) ?? wins[0]
-    if (!win) return self.clients.openWindow(url)
+    if (!win) {
+      // Site fermé : « notif » dit à la page qu'une notification l'ouvre
+      // (réglage « Ouvrir dans l'app iPhone ») ; elle le retire de l'adresse.
+      url.searchParams.set('notif', '1')
+      return self.clients.openWindow(url.href)
+    }
     await win.focus()
-    win.postMessage({ type: 'open', url })
+    win.postMessage({ type: 'open', url: url.href })
   })())
 })

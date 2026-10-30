@@ -77,6 +77,10 @@ export const DEFAULT_PREFS = {
   // Synchroniser mes réglages (compte connecté) : voir main.js. Propre à
   // cet appareil, jamais synchronisé lui-même.
   syncSettings: true,
+  // Web app sur iPhone et iPad : notification de live touchée ouverte dans
+  // l'app ('app' : TwitchUnblock, 'test' : TU Test) ; null = sur le site.
+  // Propre à cet appareil (l'app n'est peut-être pas installée ailleurs).
+  notifApp: null,
 }
 
 /** Réglages enregistrés, avec la qualité d'avant le réglage « Qualité
