@@ -381,7 +381,7 @@ export const ZH_HANT = {
   src_eu: 'Luminous 歐洲',
   src_pp: 'PerfProd 亞洲',
   src_al2: '阿爾巴尼亞代理 2',
-  src_eu2: 'Luminous 歐洲 2',
+  src_eu2: 'Luminous 歐洲 2', src_custom: '我的來源', src_custom_sub: '你自己的 luminous-ttv 伺服器位址（https://…）：會加入上方的順序，一開始排在第一。網站的 Worker 會向它要畫質清單。留空：不使用自己的來源。', src_custom_bad: '位址被拒：需為 https://、網域名稱，不含連接埠或參數。',
   src_twitch: 'Twitch 官方（含廣告）',
   src_now: '來源：{s}',
   live_source_order: '直播來源順序',

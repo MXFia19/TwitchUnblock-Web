@@ -378,7 +378,7 @@ export const RU = {
   src_eu: 'Luminous Европа',
   src_pp: 'PerfProd Азия',
   src_al2: 'Прокси в Албании 2',
-  src_eu2: 'Luminous Европа 2',
+  src_eu2: 'Luminous Европа 2', src_custom: 'Мой источник', src_custom_sub: 'Адрес вашего собственного сервера luminous-ttv (https://…): он занимает место в порядке выше, сначала первым. Worker сайта запрашивает у него список качеств. Пусто — без своего источника.', src_custom_bad: 'Адрес отклонён: https://, доменное имя, без порта и параметров.',
   src_twitch: 'Официальный Twitch (реклама)',
   src_now: 'Источник: {s}',
   live_source_order: 'Порядок источников трансляции',

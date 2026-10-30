@@ -437,6 +437,15 @@ async function handleGetLive(url, workerOrigin) {
     // l'autre jusqu'à ce qu'une réponde, pour que le direct se lance quand
     // même ; `source`, dans la réponse, dit laquelle a servi.
     const steps = liveSourceSteps(url.searchParams.get('order'), url.searchParams.get('source'));
+    // Source perso du site (adresse d'un serveur luminous-ttv) : à son rang
+    // dans l'ordre demandé, en tête s'il n'en dit rien.
+    const custom = customSourceBase(url.searchParams.get('custom'));
+    if (custom) {
+        const asked = String(url.searchParams.get('order') || '').split(',').map((s) => s.trim());
+        const at = asked.indexOf('custom');
+        const before = at < 0 ? 0 : new Set(asked.slice(0, at).filter((id) => LIVE_SOURCE_IDS.includes(id))).size;
+        steps.splice(Math.min(before, steps.length), 0, 'custom');
+    }
 
     let m3u8Content = "";
     let masterUrl = "";
@@ -444,7 +453,9 @@ async function handleGetLive(url, workerOrigin) {
     const seen = {};
     for (const id of steps) {
         try {
-            const got = id === 'twitch' ? await usherLiveMaster(login, seen) : await proxyLiveMaster(LIVE_PROXIES[id](login));
+            const got = id === 'twitch' ? await usherLiveMaster(login, seen)
+                : id === 'custom' ? await customLiveMaster(custom, login)
+                : await proxyLiveMaster(LIVE_PROXIES[id](login));
             if (!got) continue;
             m3u8Content = got.text;
             masterUrl = got.url;
@@ -460,6 +471,11 @@ async function handleGetLive(url, workerOrigin) {
 
     // Découpage du fichier M3U8 avec notre Proxy
     const links = parseAndProxyM3U8(m3u8Content, masterUrl, workerOrigin, false, useProxy);
+    // Source perso : le proxy ne relaie pas son adresse. « Auto » est sa
+    // liste maîtresse telle quelle, lue par le navigateur lui-même
+    // (luminous-ttv envoie Access-Control-Allow-Origin: *) ; ses variantes,
+    // chez Twitch, passent ensuite par le proxy (site : fixProxiedUrl).
+    if (source === 'custom') links.Auto = masterUrl;
     const variants = variantInfo(m3u8Content);
     
     // Récupération des infos du stream (Titre, Jeu, Avatar) pour un bel affichage
@@ -724,6 +740,34 @@ function liveSourceSteps(order, wanted) {
  *  répondre retenait toutes les suivantes, jusqu'à ~100 s. 5 s : les six
  *  proxys et Twitch tiennent dans les 45 s du site. */
 const LIVE_SOURCE_TIMEOUT = 5000;
+
+/** Source perso du site (prefs.customSource) : l'adresse d'un serveur
+ *  luminous-ttv à la personne. Mêmes règles que le site (api.js,
+ *  customSourceBase) : https, un nom de domaine (ni adresse IP ni nom
+ *  local), port 443, ni identifiants, ni requête ; null sinon. */
+function customSourceBase(v) {
+    if (typeof v !== 'string' || !v.trim() || v.length > 200) return null;
+    try {
+        const u = new URL(v.trim());
+        if (u.protocol !== 'https:' || u.username || u.password || u.search || u.hash) return null;
+        if (u.port && u.port !== '443') return null;
+        const host = u.hostname.toLowerCase();
+        if (!host.includes('.') || /^[\d.]+$/.test(host) || host.startsWith('[')
+            || /(^|\.)(localhost|local|internal|lan|home|arpa)$/.test(host)) return null;
+        return `https://${host}${u.pathname.replace(/\/+$/, '')}`;
+    } catch { return null; }
+}
+
+/** Liste maîtresse de la source perso (format luminous-ttv, /live/<chaîne>),
+ *  gardée seulement si toutes ses variantes sont chez Twitch (*.ttvnw.net) :
+ *  le proxy du Worker et du relais ne relaie qu'elles, et rien d'autre de ce
+ *  serveur n'est repris. null sinon. */
+async function customLiveMaster(base, login) {
+    const got = await proxyLiveMaster({ url: `${base}/live/${login}?${LIVE_QUERY}`, headers: getRequestHeaders(login) });
+    if (!got) return null;
+    const urls = got.text.split('\n').map((l) => l.trim()).filter((l) => /^https?:/i.test(l));
+    return urls.length && urls.every((u) => /^https:\/\/[a-z0-9.-]+\.ttvnw\.net\//i.test(u)) ? got : null;
+}
 
 /** Liste maîtresse d'un proxy ; null s'il ne répond pas ou si la
  *  chaîne y est hors ligne (pas de « #EXT-X-STREAM-INF »). */
@@ -1257,7 +1301,7 @@ const USAGE_EXT_VERSION = /^\d{1,4}\.\d{1,4}\.\d{1,4}$/;
 const USAGE_EXT_BROWSERS = ['chrome', 'firefox', 'other'];
 // live_account : direct de l'app servi par le compte d'un abonné sans pub ;
 // live_ad_break : pause pub de la chaîne affichée (une fois par pause).
-const USAGE_EVENTS = ['live_as', 'live_pp', 'live_al', 'live_al2', 'live_eu', 'live_eu2', 'live_twitch', 'live_account', 'live_worker', 'live_unknown',
+const USAGE_EVENTS = ['live_as', 'live_pp', 'live_al', 'live_al2', 'live_eu', 'live_eu2', 'live_custom', 'live_twitch', 'live_account', 'live_worker', 'live_unknown',
     'live_fail', 'live_play_fail', 'live_ad_break', 'vod', 'vod_fail', 'vod_play_fail'];
 
 // POST /api/ping — { id, version, platform } enregistre ; { id, forget: true } efface.

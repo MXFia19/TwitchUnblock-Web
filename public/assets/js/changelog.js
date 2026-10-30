@@ -9,18 +9,38 @@ export const CHANGELOG = [
     version: '2026.10.30b',
     items: {
       fr: [
+        'Les listes se poursuivent toutes seules en défilant (Top, catégories, VODs et clips d’une chaîne) : plus besoin de cliquer sur « Charger plus ».',
+        'Top des lives : un menu de langue juste à côté, comme dans les catégories.',
+        'Ma source : l’adresse de ton propre serveur luminous-ttv, dans Réglages → Lecteur, prend place dans l’ordre des sources.',
+        'Reprendre les VODs coupé : plus rien sur les VODs ne reste dans ce navigateur (positions et historique effacés). Avec un compte, tout revient si tu le réactives.',
         'VODs : une qualité que ton navigateur ne sait pas lire (HEVC ou AV1, dans Brave ou Firefox par exemple) laisse la place à la suivante, au même instant, au lieu de bloquer la lecture.',
       ],
       en: [
+        'Lists keep going by themselves as you scroll (Top, categories, a channel’s VODs and clips): no need to click “Load more” anymore.',
+        'Top streams: a language menu right next to them, like in categories.',
+        'My source: the address of your own luminous-ttv server, in Settings → Player, joins the order of live sources.',
+        'Continue watching off: nothing about VODs stays in this browser anymore (positions and history erased). With an account, it all comes back if you turn it on again.',
         'VODs: a quality your browser can’t play (HEVC or AV1, in Brave or Firefox for instance) gives way to the next one, at the same moment, instead of stopping playback.',
       ],
       es: [
+        'Las listas siguen solas al desplazarte (Top, categorías, VODs y clips de un canal): ya no hace falta pulsar «Cargar más».',
+        'Top de directos: un menú de idioma justo al lado, como en las categorías.',
+        'Mi fuente: la dirección de tu propio servidor luminous-ttv, en Ajustes → Reproductor, entra en el orden de las fuentes.',
+        'Seguir viendo desactivado: ya no queda nada de los VODs en este navegador (posiciones e historial borrados). Con una cuenta, todo vuelve si lo reactivas.',
         'VODs: una calidad que tu navegador no puede reproducir (HEVC o AV1, en Brave o Firefox por ejemplo) da paso a la siguiente, en el mismo momento, en lugar de detener la reproducción.',
       ],
       ru: [
+        'Списки продолжаются сами при прокрутке (Топ, категории, записи и клипы канала): больше не нужно нажимать «Загрузить ещё».',
+        'Топ трансляций: меню языка прямо рядом, как в категориях.',
+        'Мой источник: адрес вашего собственного сервера luminous-ttv в Настройки → Плеер добавляется в порядок источников.',
+        '«Продолжить просмотр» выключен: в этом браузере больше ничего не остаётся о записях (позиции и история стёрты). С аккаунтом всё вернётся, если включить снова.',
         'Записи: качество, которое ваш браузер не может воспроизвести (HEVC или AV1, например в Brave или Firefox), уступает место следующему с того же момента, а не останавливает воспроизведение.',
       ],
       'zh-Hant': [
+        '清單會在捲動時自動繼續載入（熱門直播、分類、頻道的 VOD 與剪輯）：不用再點「載入更多」。',
+        '熱門直播：旁邊直接有語言選單，和分類一樣。',
+        '我的來源：在 設定 → 播放器 填入你自己的 luminous-ttv 伺服器位址，它會加入來源順序。',
+        '關閉「繼續觀看」：這個瀏覽器不再保留任何 VOD 資料（位置與紀錄會被清除）。有帳號的話，重新開啟後全部會回來。',
         'VOD：瀏覽器無法播放的畫質（例如 Brave 或 Firefox 中的 HEVC 或 AV1）會在同一時間點改用下一個畫質，不再讓播放中斷。',
       ],
     },

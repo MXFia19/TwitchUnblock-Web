@@ -82,6 +82,8 @@ document.addEventListener('DOMContentLoaded', boot)
 async function boot() {
   // Avant tout rendu : la langue et le thème en dépendent.
   applySiteDefaults()
+  // Coupé avant cette version : ce qui restait sur les VODs s'efface.
+  if (store.prefs.vodProgress === false) store.forgetVods()
   applyTheme()
   initLang(store.prefs.lang)
   loadHls()   // prêt avant le premier clic
@@ -571,7 +573,11 @@ async function pullSync() {
   const data = await api.syncPull(userId)
   if (session.userId !== userId) return
   if (data && Array.isArray(data.history) && data.history.length) {
-    store.history = mergeHistory(store.history, data.history)
+    // « Reprendre les VODs » coupé : les VODs du compte ne reviennent pas
+    // dans ce navigateur, elles restent en mémoire pour ses envois.
+    const off = store.prefs.vodProgress === false
+    if (off) accountVods = { userId, items: data.history.filter((h) => h?.type === 'vod') }
+    store.history = mergeHistory(store.history, off ? data.history.filter((h) => h?.type !== 'vod') : data.history)
   }
   store.saveHistory()
   if (data) {
@@ -599,6 +605,23 @@ let lastSyncAt = 0
  *  ratée laissait l'envoi suivant écraser toute la sauvegarde du serveur). */
 let pulledFor = null
 let pulling = false
+/** VODs de l'historique du compte quand « Reprendre les VODs » est coupé :
+ *  gardées en mémoire seulement (rien sur les VODs dans ce navigateur), et
+ *  renvoyées avec chaque envoi — le serveur prend l'historique envoyé tel
+ *  quel, l'iPhone les aurait perdues. { userId, items } */
+let accountVods = null
+
+/** « Reprendre les VODs » coupé (réglage, ou déjà coupé au démarrage) :
+ *  rien sur les VODs ne reste dans ce navigateur (demande de 4 : la clé
+ *  twitch_vod_history en gardait). Celles du compte relu restent en mémoire
+ *  pour ses envois, et reviennent ici quand on réactive. */
+function forgetVods() {
+  const removed = store.forgetVods()
+  if (removed.length && session.userId && pulledFor === session.userId) {
+    const kept = accountVods?.userId === session.userId ? accountVods.items : []
+    accountVods = { userId: session.userId, items: mergeHistory(kept, removed) }
+  }
+}
 
 /** Un changement à sauvegarder. Aucun envoi immédiat. */
 function pushSync() { syncDirty = true }
@@ -616,7 +639,9 @@ function flushSync({ force = false } = {}) {
   const vods = new Set(store.history.filter((h) => h.type === 'vod').map((h) => String(h.term)))
   const progress = Object.fromEntries(Object.entries(store.allProgress())
     .filter(([id]) => vods.has(id)).map(([id, t]) => [id, Math.round(t)]))
-  const data = { history: store.history, progress }
+  // VODs du compte gardées hors de ce navigateur : renvoyées telles quelles.
+  const kept = store.prefs.vodProgress === false && accountVods?.userId === session.userId ? accountVods.items : []
+  const data = { history: kept.length ? mergeHistory(store.history, kept) : store.history, progress }
   const body = JSON.stringify(data)
   syncDirty = false
   if (body === lastSyncBody) return
@@ -2421,7 +2446,7 @@ async function loadCategories({ more = false } = {}) {
     cat.loaded = Date.now()
     cat.ready = true
     paintCats()
-    if (!cat.q) $('#cat-more').innerHTML = moreHtml({ cursor: cat.cursor, locked: cat.locked }, 'cat-more')
+    if (!cat.q) setMore('#cat-more', moreHtml({ cursor: cat.cursor, locked: cat.locked }, 'cat-more'))
   } catch {
     if (seq !== cat.seq) return
     grid.innerHTML = emptyState(t('err_loading'), 'refresh')
@@ -2443,6 +2468,31 @@ function paintCats() {
 function moreHtml(page, action) {
   if (page?.cursor) return `<button class="btn ghost" type="button" data-action="${action}">${esc(t('load_more'))}</button>`
   return page?.locked ? `<p class="muted small">${esc(t('more_needs_login'))}</p>` : ''
+}
+
+// Chargement continu (demande de 4) : un « Charger plus » arrivé à moins de
+// 800 px sous le bas de l'écran se clique tout seul, la liste se poursuit en
+// défilant. Le bouton reste (clavier, lecteur d'écran, liste trop courte
+// pour défiler) ; chacun ne part qu'une fois — désactivé pendant le
+// chargement, puis remplacé par le suivant, sans relance après un échec.
+const moreWatch = typeof IntersectionObserver === 'function'
+  ? new IntersectionObserver((entries) => {
+    for (const e of entries) {
+      if (!e.isIntersecting) continue
+      moreWatch.unobserve(e.target)
+      if (e.target.isConnected && !e.target.disabled) e.target.click()
+    }
+  }, { rootMargin: '0px 0px 800px 0px' })
+  : null
+
+/** Pose le pied d'une liste (moreHtml, vodsMoreHtml) et surveille son
+ *  « Charger plus ». */
+function setMore(box, html) {
+  const el = typeof box === 'string' ? $(box) : box
+  if (!el) return
+  el.innerHTML = html
+  const b = el.querySelector('button[data-action]')
+  if (b) moreWatch?.observe(b)
 }
 
 async function openCategory(c, { more = false } = {}) {
@@ -2488,7 +2538,7 @@ async function openCategory(c, { more = false } = {}) {
     // Lives bruts gardés : un masquage repeint la grille sans recharger.
     cat.streams = more ? [...(cat.streams ?? []), ...page.items] : page.items
     paintCatStreams()
-    $('#cat-streams-more').innerHTML = moreHtml(page, 'cat-streams-more')
+    setMore('#cat-streams-more', moreHtml(page, 'cat-streams-more'))
   } catch {
     if (seq !== cat.streamsSeq) return
     if (!more) $('#cat-streams').innerHTML = emptyState(t('err_loading'), 'refresh')
@@ -2556,6 +2606,14 @@ function setupCategories() {
     const b = e.target.closest('[data-home]')
     if (b) setHomeTab(b.dataset.home)
   })
+  // Langue du top choisie sur place, comme dans une catégorie : le top
+  // repasse sur elle (même réglage que Réglages → Top des lives).
+  $('#top-lang')?.addEventListener('change', (e) => {
+    store.prefs.topLang = e.target.value === 'auto' ? null : e.target.value
+    store.savePrefs()
+    renderTopLocal()
+    loadTop('local')
+  })
 }
 
 async function loadTop(language, { silent = false } = {}) {
@@ -2580,7 +2638,7 @@ async function loadTop(language, { silent = false } = {}) {
     }
     state.top = top
     paintTop()
-    $('#top-more').innerHTML = moreHtml(page, 'top-more')
+    setMore('#top-more', moreHtml(page, 'top-more'))
   } catch {
     if (!silent) grid.innerHTML = emptyState(t('err_loading'), 'refresh')
   }
@@ -2676,7 +2734,7 @@ async function loadTopMore() {
     else if (page.cursor) toast(t('err_loading'), 'error')
     // Repeint en entier : les lives du complément rejoignent leur place.
     paintTop()
-    $('#top-more').innerHTML = moreHtml(top, 'top-more')
+    setMore('#top-more', moreHtml(top, 'top-more'))
   } catch {
     if (btn) btn.disabled = false
   } finally {
@@ -3471,7 +3529,7 @@ function renderVodGrid() {
     $('span', hint).textContent = t(down ? 'unlisted_unavailable' : 'unlisted_hint')
   }
   const more = $('#channel-vods-more')
-  if (more) more.innerHTML = vodsMoreHtml(ch)
+  if (more) setMore(more, vodsMoreHtml(ch))
 }
 
 /** Sous les VODs : « Charger plus » tant que Twitch en a d'autres. S'il
@@ -4914,7 +4972,7 @@ async function loadChannelClips(period = state.clipPeriod ?? 'LAST_WEEK', { more
   // « Charger plus » ajoute à la suite : la grille ne remonte pas en haut.
   if (more && added) $('#channel-clips').insertAdjacentHTML('beforeend', added.map(clipCard).join(''))
   else $('#channel-clips').innerHTML = entry?.items?.length ? entry.items.map(clipCard).join('') : emptyState(t('no_clips'), 'film')
-  $('#channel-clips-more').innerHTML = moreHtml(entry, 'clips-more')
+  setMore('#channel-clips-more', moreHtml(entry, 'clips-more'))
 }
 
 /** Playlists de la chaîne : une rangée défilante par playlist, comme sur Twitch. */
@@ -5837,10 +5895,7 @@ function openSettings() {
         <button class="btn sm ghost" type="button" data-action="report-translation">${esc(t('lang_ai_report'))}</button></div>` : ''}
       <label class="setting setting-col">
         <span class="setting-text"><span>${esc(t('top_lang'))}</span><small>${esc(t('top_lang_sub', { l: topLangName(deviceTopLang()) }))}</small></span>
-        <select class="text-input" id="set-toplang">
-          <option value="auto" ${p.topLang ? '' : 'selected'}>${esc(t('lang_auto'))} · ${esc(topLangName(deviceTopLang()))}</option>
-          ${TOP_LANGS.map((c) => [c, topLangName(c)]).sort((a, b) => a[1].localeCompare(b[1], lang())).map(([c, n]) => `<option value="${c}" ${p.topLang === c ? 'selected' : ''}>${esc(n)}</option>`).join('')}
-        </select>
+        <select class="text-input" id="set-toplang">${topLangOptions(p.topLang)}</select>
       </label>
       ${toggle('set-homelist', t('home_list'), p.homeList, t('home_list_sub'))}
       ${toggle('set-recent', t('show_recent'), p.showRecent !== false, t('show_recent_sub'))}
@@ -5877,6 +5932,10 @@ function openSettings() {
         <ol class="src-order" id="src-order">${sourceOrderHtml()}</ol>
         <button class="btn ghost sm src-reset" type="button" data-action="src-reset">${esc(t('src_reset'))}</button>
       </div>
+      <label class="setting setting-col">
+        <span class="setting-text"><span>${esc(t('src_custom'))}</span><small>${esc(t('src_custom_sub'))}</small></span>
+        <input class="text-input" id="set-src-custom" type="url" inputmode="url" placeholder="https://…" spellcheck="false" autocomplete="off" value="${esc(api.customSourceBase(p.customSource) ?? '')}">
+      </label>
     </div>
     <div class="sheet-section">
       <h3>${esc(t('push_title'))}</h3>
@@ -6069,8 +6128,30 @@ function openSettings() {
     }
     if (id === 'set-homelist') { p.homeList = e.target.checked; store.savePrefs(); applyLayout(); return }
     if (id === 'set-recent') { p.showRecent = e.target.checked; store.savePrefs(); renderRecentChannels(); return }
-    if (id === 'set-vodprogress') { p.vodProgress = e.target.checked; store.savePrefs(); renderContinue(); return }
+    if (id === 'set-vodprogress') {
+      p.vodProgress = e.target.checked
+      store.savePrefs()
+      // Coupé : tout ce qui touche aux VODs s'efface d'ici. Réactivé : le
+      // compte rend son historique et ses positions (relecture).
+      if (!p.vodProgress) forgetVods()
+      else if (session.userId) pullSync().then(renderContinue, () => {})
+      renderContinue()
+      return
+    }
     if (id === 'set-pinsort') { p.pinnedByViewers = e.target.checked; store.savePrefs(); paintFollowed(); return }
+    if (id === 'set-src-custom') {
+      // Source perso : en tête de l'ordre une fois réglée, retirée de l'ordre
+      // une fois effacée ; une adresse refusée ne change rien.
+      const raw = e.target.value.trim()
+      const base = raw ? api.customSourceBase(raw) : null
+      if (raw && !base) { toast(t('src_custom_bad'), 'error'); return }
+      e.target.value = base ?? ''
+      if (base === (api.customSourceBase(p.customSource) ?? null)) return
+      p.customSource = base
+      const rest = api.liveSourceOrder().filter((x) => x !== 'custom')
+      setLiveSourceOrder(base ? ['custom', ...rest] : rest)
+      return
+    }
     if (id === 'set-toplang') {
       p.topLang = e.target.value === 'auto' ? null : e.target.value
       store.savePrefs()
@@ -6153,8 +6234,10 @@ const BACKUP_SETTINGS = {
   higherQualities: okBool,
   subAdFree: okBool,
   vodSpeed: (v) => (typeof v === 'number' ? validSpeed(v) : undefined),
-  liveSourceOrder: (v) => (Array.isArray(v) ? [...new Set(v.filter((id) => api.LIVE_SOURCES.includes(id)))] : undefined),
+  liveSourceOrder: (v) => (Array.isArray(v) ? [...new Set(v.filter((id) => api.LIVE_SOURCES.includes(id) || id === 'custom'))] : undefined),
   liveSource: (v) => (v === null || api.LIVE_SOURCES.includes(v) ? v : undefined),
+  // Source perso : une adresse valable (api.customSourceBase), ou rien.
+  customSource: (v) => (v === null ? null : api.customSourceBase(v) ?? undefined),
 }
 
 // Réglages par défaut d'une instance auto-hébergée : SITE_DEFAULTS (Docker),
@@ -6296,9 +6379,21 @@ function topLangName(code) {
     return n ? n.charAt(0).toLocaleUpperCase(lang()) + n.slice(1) : code.toUpperCase()
   } catch { return code.toUpperCase() }
 }
+/** Choix de la langue du top : celle de l'appareil (Auto), puis les autres. */
+function topLangOptions(current) {
+  return `<option value="auto" ${current ? '' : 'selected'}>${esc(t('lang_auto'))} · ${esc(topLangName(deviceTopLang()))}</option>`
+    + TOP_LANGS.map((c) => [c, topLangName(c)]).sort((a, b) => a[1].localeCompare(b[1], lang()))
+      .map(([c, n]) => `<option value="${c}" ${current === c ? 'selected' : ''}>${esc(n)}</option>`).join('')
+}
 function renderTopLocal() {
   const b = $('#top-local')
   if (b) b.textContent = topLangName(topLangCode())
+  // Menu du top (demande de 4) : le même choix que Réglages → Top des lives.
+  const s = $('#top-lang')
+  if (s) {
+    s.innerHTML = topLangOptions(store.prefs.topLang)
+    s.setAttribute('aria-label', t('top_lang'))
+  }
 }
 
 // ── Annonce du développeur ─────────────────────────────────────────────

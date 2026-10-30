@@ -678,7 +678,27 @@ export async function getLive(login, { avoid = null } = {}) {
   // Ordre des sources (réglages) : le Worker les essaie l'une après l'autre.
   // `source` (la première) pour un Worker d'avant l'ordre.
   const order = liveSourceOrder()
-  return viaRelay(await workerJson(`/api/get-live?name=${encodeURIComponent(login)}&proxy=true&source=${order[0]}&order=${order.join(',')}`, { avoid, timeout: LIVE_TIMEOUT }))
+  const custom = order.includes('custom') ? `&custom=${encodeURIComponent(customSourceBase(store.prefs.customSource))}` : ''
+  return viaRelay(await workerJson(`/api/get-live?name=${encodeURIComponent(login)}&proxy=true&source=${order[0]}&order=${order.join(',')}${custom}`, { avoid, timeout: LIVE_TIMEOUT }))
+}
+
+/** Source perso (Réglages → Lecteur, prefs.customSource ; demande de
+ *  hippxrr) : l'adresse d'un serveur luminous-ttv à soi, que le Worker
+ *  essaie à son rang dans l'ordre. Rend l'adresse nettoyée (sans « / »
+ *  final), ou null : https seulement, un nom de domaine (ni adresse IP ni
+ *  nom local), port 443, ni identifiants, ni requête, ni fragment — les
+ *  mêmes règles que le Worker. */
+export function customSourceBase(v) {
+  if (typeof v !== 'string' || !v.trim() || v.length > 200) return null
+  try {
+    const u = new URL(v.trim())
+    if (u.protocol !== 'https:' || u.username || u.password || u.search || u.hash) return null
+    if (u.port && u.port !== '443') return null
+    const host = u.hostname.toLowerCase()
+    if (!host.includes('.') || /^[\d.]+$/.test(host) || host.startsWith('[')
+      || /(^|\.)(localhost|local|internal|lan|home|arpa)$/.test(host)) return null
+    return `https://${host}${u.pathname.replace(/\/+$/, '')}`
+  } catch { return null }
 }
 
 /** Sources du direct, dans l'ordre automatique : Luminous Asie, PerfProd
@@ -696,7 +716,11 @@ const LIVE_SOURCE_BACKUP_OF = { pp: 'as', al2: 'al', eu2: 'eu' }
 export function liveSourceOrder(prefs = store.prefs) {
   const saved = Array.isArray(prefs.liveSourceOrder) ? prefs.liveSourceOrder
     : LIVE_SOURCES.includes(prefs.liveSource) ? [prefs.liveSource] : []
-  const order = saved.filter((id, i) => LIVE_SOURCES.includes(id) && saved.indexOf(id) === i)
+  // Source perso, quand une adresse valable est réglée : en tête tant
+  // qu'on ne l'a pas rangée ailleurs.
+  const custom = Boolean(customSourceBase(prefs.customSource))
+  const order = saved.filter((id, i) => (LIVE_SOURCES.includes(id) || (custom && id === 'custom')) && saved.indexOf(id) === i)
+  if (custom && !order.includes('custom')) order.unshift('custom')
   for (const id of LIVE_SOURCES) {
     if (order.includes(id)) continue
     const i = order.indexOf(LIVE_SOURCE_BACKUP_OF[id])
@@ -739,7 +763,10 @@ export function fixProxiedUrl(url, playlistUrl) {
     // « Auto » ne démarrait pas. La cause est l'en-tête Origin qu'il ajoute
     // (mesuré le 14/10), pas un jeton lié à l'adresse IP : le proxy reste.
     if (/(^|\.)playlist\.ttvnw\.net$|(^|\.)luminous\.dev$/.test(u.hostname)) {
-      return `${base}/api/proxy?url=${encodeURIComponent(url)}&isVod=false`
+      // Liste maîtresse lue sans proxy (« Auto » d'une source perso) : par le
+      // relais vidéo, comme les autres playlists, s'il répond.
+      const via = proxyBaseOf(playlistUrl) ?? (RELAY_BASE && !isDown(RELAY_BASE) ? RELAY_BASE : base)
+      return `${via}/api/proxy?url=${encodeURIComponent(url)}&isVod=false`
     }
     if (u.origin !== base || u.pathname === '/api/proxy') return url
     const source = new URL(playlistUrl).searchParams.get('url')

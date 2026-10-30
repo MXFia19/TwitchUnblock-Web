@@ -182,6 +182,27 @@ export const store = {
     this.saveHistory()
   },
 
+  /** « Reprendre les VODs » coupé : plus rien sur les VODs dans ce
+   *  navigateur — leurs entrées de l'historique (la clé garde les chaînes
+   *  récentes), leurs positions et leurs durées. Rend les entrées retirées. */
+  forgetVods() {
+    const vods = this.history.filter((h) => h.type === 'vod')
+    if (vods.length) {
+      this.history = this.history.filter((h) => h.type !== 'vod')
+      this.saveHistory()
+    }
+    try {
+      const keys = []
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i)
+        if (k?.startsWith('vod_progress_')) keys.push(k)
+      }
+      for (const k of keys) localStorage.removeItem(k)
+      localStorage.removeItem('tu_lengths')
+    } catch {}
+    return vods
+  },
+
   // ── Progression des VODs ────────────────────────────────────────────────
   // Stockage bloqué (cookies refusés) : localStorage lève une erreur, et la
   // grille des VODs comme l'ouverture d'une VOD plantaient.
@@ -200,6 +221,8 @@ export const store = {
   /** Durées connues, pour dessiner la barre de progression des cartes. */
   getLength(vodId) { return read('tu_lengths', {})[vodId] ?? 0 },
   setLength(vodId, seconds) {
+    // Elles ne servent qu'aux barres de progression, cachées sans la reprise.
+    if (this.prefs.vodProgress === false) return
     const all = read('tu_lengths', {})
     if (all[vodId] === Math.round(seconds)) return
     all[vodId] = Math.round(seconds)
