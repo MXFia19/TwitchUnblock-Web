@@ -13,7 +13,7 @@ import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { amoJwt, releaseNotes, reviewerNotes } from "../dev/amo-publish.mjs";
+import { amoJwt, keyHint, releaseNotes, reviewerNotes } from "../dev/amo-publish.mjs";
 
 const DIR = join(dirname(fileURLToPath(import.meta.url)), "..");
 const SCRIPT = join(DIR, "dev", "amo-publish.mjs");
@@ -206,6 +206,30 @@ test("clés absentes : arrêt avant toute requête", async () => {
     assert.match(r.out, /AMO_JWT_ISSUER et AMO_JWT_SECRET manquent/);
     assert.equal(amo.calls.length, 0);
   } finally { await amo.close(); }
+});
+
+test("clés entourées d'espaces ou de retours à la ligne : retirés, clés acceptées", async () => {
+  const amo = await fakeAmo({ versions: [VERSION] });
+  try {
+    const r = await run(amo.api, [PKG, SRC], { AMO_JWT_ISSUER: ` ${ISSUER}\n`, AMO_JWT_SECRET: `${SECRET}\r\n` });
+    assert.equal(r.code, 0, r.out);
+    assert.ok(amo.calls.length === 1 && !amo.calls[0].auth, "jeton accepté");
+  } finally { await amo.close(); }
+});
+
+test("clés refusées (401) : la raison et ce qui cloche, sans afficher les clés", async () => {
+  const hex = "ab12".repeat(16);
+  const amo = await fakeAmo();
+  try {
+    const r = await run(amo.api, [PKG, SRC], { AMO_JWT_ISSUER: hex, AMO_JWT_SECRET: ISSUER });
+    assert.equal(r.code, 1);
+    assert.match(r.out, /clés refusées \(HTTP 401, signature\) : AMO_JWT_ISSUER et AMO_JWT_SECRET sont inversés/);
+    assert.ok(!r.out.includes(hex) && !r.out.includes(ISSUER), "clés jamais dans le journal");
+    assert.equal(amo.calls.length, 1, "arrêt après la liste");
+  } finally { await amo.close(); }
+  assert.match(keyHint("user:1:2", "secret"), /AMO_JWT_SECRET n'a pas la forme/);
+  assert.match(keyHint("1234", hex), /AMO_JWT_ISSUER n'a pas la forme/);
+  assert.match(keyHint("user:1:2", hex), /bien formées/);
 });
 
 test("--check : notes de la version présentes, aucune requête", async () => {

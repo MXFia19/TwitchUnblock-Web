@@ -65,6 +65,19 @@ export function amoJwt(issuer, secret, now = Date.now()) {
   return `${head}.${body}.${createHmac("sha256", secret).update(`${head}.${body}`).digest("base64url")}`;
 }
 
+/** Ce qui cloche dans les clés quand AMO les refuse, sans jamais les
+ *  afficher : AMO_JWT_ISSUER est le « JWT issuer » de la page Manage API Keys
+ *  (user:123456:78), AMO_JWT_SECRET le « JWT secret » (64 caractères
+ *  hexadécimaux). */
+export function keyHint(issuer, secret) {
+  const isIssuer = (v) => /^user:\d+:\d+$/.test(v);
+  const isSecret = (v) => /^[0-9a-f]{64}$/i.test(v);
+  if (isSecret(issuer) && isIssuer(secret)) return "AMO_JWT_ISSUER et AMO_JWT_SECRET sont inversés";
+  if (!isIssuer(issuer)) return "AMO_JWT_ISSUER n'a pas la forme du « JWT issuer » d'AMO (user:123456:78)";
+  if (!isSecret(secret)) return "AMO_JWT_SECRET n'a pas la forme du « JWT secret » d'AMO (64 caractères hexadécimaux)";
+  return "clés bien formées : régénérées depuis (l'ancienne paire est alors révoquée), ou d'un autre compte que celui de l'extension ?";
+}
+
 /** Arrêt avec une erreur lisible dans le journal du workflow. Une exception,
  *  pas process.exit : sous Windows, quitter pendant que fetch ferme ses
  *  connexions fait planter Node (0xC0000409). */
@@ -81,8 +94,10 @@ function summary(line) {
 }
 
 async function publish(pkg, source, version, notes, approval) {
-  const issuer = process.env.AMO_JWT_ISSUER;
-  const secret = process.env.AMO_JWT_SECRET;
+  // Espaces et retours à la ligne collés avec la valeur du secret : retirés
+  // (AMO ne reconnaissait plus la clé : « Unknown JWT iss »).
+  const issuer = (process.env.AMO_JWT_ISSUER || "").trim();
+  const secret = (process.env.AMO_JWT_SECRET || "").trim();
   if (!issuer || !secret) fail("AMO_JWT_ISSUER et AMO_JWT_SECRET manquent (secrets du dépôt)");
   const id = encodeURIComponent(firefoxManifest(JSON.parse(readFileSync(join(EXT, "manifest.json"), "utf8"))).browser_specific_settings.gecko.id);
 
@@ -102,6 +117,10 @@ async function publish(pkg, source, version, notes, approval) {
 
   // 1. Déjà sur AMO (publique, en relecture ou refusée) : rien à faire.
   const list = await call("GET", `/addons/addon/${id}/versions/?filter=all_without_unlisted&page_size=50`);
+  if (list.status === 401 || list.status === 403) {
+    fail(`clés refusées (HTTP ${list.status}, ${list.data?.detail || "sans détail"}) : ${keyHint(issuer, secret)}. `
+      + "À reprendre sur https://addons.mozilla.org/developers/addon/api/key/");
+  }
   if (!list.ok || !Array.isArray(list.data?.results)) fail(`liste des versions illisible (HTTP ${list.status}) ${list.text}`);
   if (list.data.results.some((v) => v.version === version)) {
     summary(`TwitchUnblock Connect ${version} est déjà sur AMO : rien d'envoyé.`);
