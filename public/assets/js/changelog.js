@@ -6,6 +6,26 @@
 
 export const CHANGELOG = [
   {
+    version: '2026.10.30b',
+    items: {
+      fr: [
+        'VODs : une qualité que ton navigateur ne sait pas lire (HEVC ou AV1, dans Brave ou Firefox par exemple) laisse la place à la suivante, au même instant, au lieu de bloquer la lecture.',
+      ],
+      en: [
+        'VODs: a quality your browser can’t play (HEVC or AV1, in Brave or Firefox for instance) gives way to the next one, at the same moment, instead of stopping playback.',
+      ],
+      es: [
+        'VODs: una calidad que tu navegador no puede reproducir (HEVC o AV1, en Brave o Firefox por ejemplo) da paso a la siguiente, en el mismo momento, en lugar de detener la reproducción.',
+      ],
+      ru: [
+        'Записи: качество, которое ваш браузер не может воспроизвести (HEVC или AV1, например в Brave или Firefox), уступает место следующему с того же момента, а не останавливает воспроизведение.',
+      ],
+      'zh-Hant': [
+        'VOD：瀏覽器無法播放的畫質（例如 Brave 或 Firefox 中的 HEVC 或 AV1）會在同一時間點改用下一個畫質，不再讓播放中斷。',
+      ],
+    },
+  },
+  {
     version: '2026.10.30a',
     items: {
       fr: [

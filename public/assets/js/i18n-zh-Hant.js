@@ -604,6 +604,7 @@ export const ZH_HANT = {
   connect_update_how: '如何更新？',
   connect_update_chrome: 'Chrome、Edge、Brave：用新的 zip（twitchunblock-connect-chrome.zip）內容取代擴充功能資料夾的內容，再到擴充功能頁面按下它卡片上的重新載入箭頭（↻）。',
   connect_update_firefox: 'Firefox：從 Firefox 附加元件（addons.mozilla.org）安裝，之後會自動更新。',
+  quality_unplayable: '此瀏覽器無法播放 {q}（HEVC 或 AV1 編碼）：改用 {n}。',
   connect_login_twitch: '點數與下注：請在這個瀏覽器登入 twitch.tv',
   connect_confirm: '確認',
   connect_sending: '傳送中…',

@@ -468,12 +468,20 @@ const HLS_ISSUES = {
 }
 // Réparations du lecteur : sur place (recoverMediaError), nouvelle instance
 // (rebuild), nouvel essai après une erreur réseau (retryLoad), autre relais
-// ou Worker (swapLinks), segment introuvable sauté (skipMissingFrag).
+// ou Worker (swapLinks), segment introuvable sauté (skipMissingFrag),
+// qualité au codec illisible écartée (dropUnplayable).
 const HEALTH_FIXES = {
   recover: ['sur place', 'sur place'], rebuild: ['relance', 'relances'], retry: ['nouvel essai', 'nouveaux essais'],
   swap: ['autre relais', 'autres relais'], missing: ['segment absent', 'segments absents'],
-  audio: ['son remis à neuf', 'sons remis à neuf'],
+  audio: ['son remis à neuf', 'sons remis à neuf'], codec: ['qualité illisible écartée', 'qualités illisibles écartées'],
 }
+// Codec que ce navigateur ne décode pas : hls.js ne peut pas créer le tampon
+// (bufferAddCodecError, puis bufferIncompatibleCodecsError, fatale). C'est la
+// qualité d'origine en HEVC (ou AV1) d'une VOD lue par le secours du Worker,
+// sans liste maîtresse pour annoncer son codec — hls.js écarte sinon ces
+// qualités de lui-même (fb_mvu7bpp7 : Brave, VOD de locklear).
+const CODEC_ADD_ERROR = 'bufferAddCodecError'
+const CODEC_FATAL_ERROR = 'bufferIncompatibleCodecsError'
 /** « 1 coup de pouce », « 3 trous sautés ». */
 const counted = (n, [one, many]) => `${n} ${n > 1 ? many : one}`
 // Minute anormale : 2 décrochages ou 3 s d'attente, 2 % d'images perdues
@@ -930,6 +938,7 @@ export class Player {
    * @param {(url: string) => Promise<string>} [o.hqText]  playlist d'une adresse tuhq://
    * @param {(left: number) => void} [o.onAdState]  bandeau de pause pub ouvert (secondes restantes) ou fermé (0)
    * @param {() => boolean} [o.onFatal]  erreur fatale du flux du compte : true si la source habituelle reprend
+   * @param {(bad: string, next: string) => void} [o.onUnplayable]  qualité écartée pour son codec, et celle qui la remplace
    */
   constructor(root, o) {
     this.root = root
@@ -1169,6 +1178,7 @@ export class Player {
    */
   load({ links, variants, kind, startAt = 0, clip = false }) {
     this.links = links
+    this.unplayable = new Set()
     this.variants = variants && typeof variants === 'object' ? variants : {}
     this.kind = kind
     this.keepSpeed = kind === 'vod' && !clip
@@ -1392,14 +1402,26 @@ export class Player {
         // compte, qui ne passent jamais par nos relais.
         if (!hqSource && noteDirectSegmentError(Hls, data, this) && data.fatal) { hls.startLoad(); return }
         if (token !== this.attachToken) return
-        // Réglée par hls.js lui-même : comptée (santé de la lecture), rien d'autre.
-        if (!data.fatal) { this.health?.hlsIssue(data.details); return }
+        // Réglée par hls.js lui-même : comptée (santé de la lecture), rien
+        // d'autre. Un tampon refusé pour son codec est retenu pour la suite.
+        if (!data.fatal) {
+          if (data.details === CODEC_ADD_ERROR) this.codecRefused = token
+          this.health?.hlsIssue(data.details)
+          return
+        }
         logError('lecteur', `hls.js ${data.type} · ${data.details}${data.response?.code ? ` · HTTP ${data.response.code}` : ''}`)
         // Flux du compte : la source habituelle reprend aussitôt (main.js,
         // hq.js), hors de l'événement de hls.js, sans relances sur ce flux.
         if (hqSource && this.o.onFatal) {
           hls.stopLoad()
           setTimeout(() => { if (token === this.attachToken && !this.o.onFatal()) this.rebuild(token) }, 0)
+          return
+        }
+        // Codec illisible dans ce navigateur : ni la réparation ni une relance
+        // n'y changent rien (quatre essais, puis l'arrêt). Qualité suivante.
+        if (data.type === Hls.ErrorTypes.MEDIA_ERROR && (data.details === CODEC_FATAL_ERROR || this.codecRefused === token)) {
+          hls.stopLoad()
+          setTimeout(() => { if (token === this.attachToken && !this.dropUnplayable()) this.rebuild(token) }, 0)
           return
         }
         if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
@@ -1693,12 +1715,37 @@ export class Player {
    *  on garde la qualité, la position et les chapitres — `load` repartait
    *  de zéro. */
   swapLinks(links, variants = this.variants) {
-    this.links = links
+    // Sans les qualités déjà écartées pour leur codec (dropUnplayable).
+    this.links = Object.fromEntries(Object.entries(links).filter(([k]) => !this.unplayable?.has(k)))
+    links = this.links
     this.variants = variants && typeof variants === 'object' ? variants : {}
     if (!links[this.quality]) this.quality = pickQuality(Object.keys(links), this.o.prefs.qualityPref, this.variants)
     this.health?.add('swap')
     this.updateQualityLabel()
     this.attach(links[this.quality], this.kind === 'vod' ? this.resumeAt() : 0)
+  }
+
+  /** Qualité que ce navigateur ne décode pas (voir CODEC_FATAL_ERROR) :
+   *  retirée du menu pour cette vidéo, avec celles qui servent la même
+   *  playlist (« Auto » du secours des VODs = Source), et lecture reprise au
+   *  même instant à la qualité préférée parmi les autres. La préférence
+   *  n'est pas touchée : ce n'est pas un choix. false s'il n'en reste aucune. */
+  dropUnplayable() {
+    const bad = this.quality
+    const url = this.links[bad]
+    const keep = Object.fromEntries(Object.entries(this.links).filter(([k, u]) => k !== bad && u !== url))
+    const next = pickQuality(Object.keys(keep), this.o.prefs.qualityPref, this.variants)
+    if (!next) return false
+    this.unplayable ??= new Set()
+    for (const k of Object.keys(this.links)) if (!(k in keep)) this.unplayable.add(k)
+    console.info(`[TwitchUnblock] ${qualityLabel(bad)} : codec que ce navigateur ne lit pas, ${qualityLabel(next)} à la place.`)
+    this.links = keep
+    this.quality = next
+    this.health?.add('codec')
+    this.updateQualityLabel()
+    this.o.onUnplayable?.(qualityText(bad), qualityText(next))
+    this.attach(keep[next], this.kind === 'vod' ? this.resumeAt() : 0)
+    return true
   }
 
   /** Position à reprendre sur une autre source (relais, Worker, qualité) :

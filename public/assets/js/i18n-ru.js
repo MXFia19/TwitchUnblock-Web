@@ -564,6 +564,7 @@ export const RU = {
   connect_update_how: 'Как обновить?',
   connect_update_chrome: 'Chrome, Edge, Brave: замените содержимое папки расширения содержимым нового zip-архива (twitchunblock-connect-chrome.zip), затем нажмите стрелку ↻ на его карточке на странице расширений.',
   connect_update_firefox: 'Firefox: установите его из Firefox Add-ons (addons.mozilla.org) — дальше оно обновляется само.',
+  quality_unplayable: '{q} не воспроизводится в этом браузере (кодек HEVC или AV1): вместо этого {n}.',
   connect_login_twitch: 'Баллы и ставки: войдите на twitch.tv в этом браузере',
   connect_confirm: 'Подтвердить',
   connect_sending: 'Отправка…',

@@ -3783,6 +3783,8 @@ function setupPlayer() {
     hqText: (url) => state.watch?.hq?.text(url) ?? Promise.reject(new Error('hq: none')),
     onAdState: (left) => state.watch?.hq?.onAdState(left),
     onFatal: () => Boolean(state.watch?.hq?.onFatal()),
+    // Qualité au codec illisible ici (HEVC, AV1) : la suivante a pris le relais.
+    onUnplayable: (bad, next) => toast(t('quality_unplayable', { q: bad, n: next }), 'info'),
   })
   // Lecture reprise : un retour au flux du compte, ou une bascule pour une
   // pause pub arrivée pendant la pause, peut avoir attendu.
