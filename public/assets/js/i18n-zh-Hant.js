@@ -181,6 +181,8 @@ export const ZH_HANT = {
   install_ios_2: '點「分享」（依 Safari 的版面，可能在 ⋯ 選單裡）。',
   install_ios_3: '選擇「加入主畫面」；若出現「Web App」選項請保留開啟，然後點「加入」。',
   install_ios_4: '從圖示開啟 TwitchUnblock，再到設定 → 通知中開啟通知（需 iOS 16.4 以上）。',
+  notif_install_title: '直播通知',
+  notif_install_sub: '把網站安裝到主畫面後，你追隨的頻道一開台就會通知你，即使網站已關閉，也不需要第三方 App。在網頁 App 裡用 Twitch 帳號登入，就能找回你追隨的頻道。',
   install_android_1: '開啟瀏覽器選單（⋮）。',
   install_android_2: '選擇「安裝應用程式」或「加到主畫面」，若詢問就選「安裝」。',
   install_desktop: 'Chrome 或 Edge：網址列右端的安裝圖示，或瀏覽器選單 → 安裝。已安裝？請從你的應用程式中開啟。',

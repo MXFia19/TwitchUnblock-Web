@@ -6,6 +6,26 @@
 
 export const CHANGELOG = [
   {
+    version: '2026.10.30c',
+    items: {
+      fr: [
+        'Notifications de live : l’app iPhone laisse ntfy et renvoie vers le site installé en web app. Son lien ouvre les étapes pour l’ajouter à l’écran d’accueil et activer les notifications (ou directement l’interrupteur si ton navigateur sait déjà notifier).',
+      ],
+      en: [
+        'Live notifications: the iPhone app drops ntfy and sends you to the website installed as a web app. Its link opens the steps to add it to your Home Screen and turn notifications on (or the switch right away if your browser can already notify).',
+      ],
+      es: [
+        'Notificaciones de directos: la app de iPhone deja ntfy y te lleva al sitio instalado como app web. Su enlace abre los pasos para añadirlo a la pantalla de inicio y activar las notificaciones (o directamente el interruptor si tu navegador ya puede notificar).',
+      ],
+      ru: [
+        'Уведомления о трансляциях: приложение для iPhone отказывается от ntfy и предлагает сайт, установленный как веб-приложение. Его ссылка открывает шаги, чтобы добавить сайт на экран «Домой» и включить уведомления (или сразу переключатель, если браузер уже умеет уведомлять).',
+      ],
+      'zh-Hant': [
+        '直播通知：iPhone App 不再使用 ntfy，改為引導你使用安裝成網頁 App 的網站。它的連結會開啟加入主畫面並開啟通知的步驟（如果你的瀏覽器已能通知，則直接開啟開關）。',
+      ],
+    },
+  },
+  {
     version: '2026.10.30b',
     items: {
       fr: [

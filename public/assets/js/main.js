@@ -223,6 +223,9 @@ function routeFrom(pathname, search = '') {
   // « ?update=ios » : mettre à jour l'app iPhone (bouton de l'app sans
   // Feather, SideStore ni AltStore ; annonce aux versions pas à jour).
   if (q.has('update')) return { update: true }
+  // « ?install=notifications » : les notifications de live du site installé
+  // (bouton de l'app iPhone, qui a laissé ntfy).
+  if (q.has('install')) return { install: true }
   const clip = q.get('clip')
   const vod = q.get('id') ?? q.get('vod')
   const channel = api.cleanLogin(q.get('channel'))
@@ -270,6 +273,7 @@ async function applyRoute(r, { initial = false } = {}) {
     if (r.multi) { multi.openWith(r.multi); return }
     multi.close({ url: false })
     if (r.update) { openAppUpdate(); return }
+    if (r.install) { openNotifInstall(); return }
     // « /xqc » : son direct au premier chargement (comme sur Twitch), ensuite
     // seulement si cette entrée d'historique était celle du lecteur.
     const live = r.channel && r.live && (initial || Boolean(history.state?.watch))
@@ -1967,6 +1971,30 @@ function openAppUpdate() {
 actions['copy-app-source'] = () => {
   if (!navigator.clipboard?.writeText) return toast(APP_SOURCE_URL)
   navigator.clipboard.writeText(APP_SOURCE_URL).then(() => toast(t('copied'), 'success'), () => toast(APP_SOURCE_URL))
+}
+
+// ── Notifications de live (?install=notifications) ─────────────────────────
+// Ouverte par l'app iPhone (Réglages → Fonctionnalités en test), qui a laissé
+// ntfy pour les notifications du site : l'ajouter à l'écran d'accueil, puis
+// les activer depuis l'icône. La web app elle-même, et un navigateur qui
+// notifie sans installation (ordinateur, Android), vont droit à l'interrupteur.
+function openNotifInstall() {
+  // iPad : Safari s'y présente comme un Mac, l'écran tactile le trahit.
+  const ios = isIOS || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1)
+  if (isStandalone() || (!ios && pushSupported())) { openPushSettings(); return }
+  const body = !ios ? `<p class="muted small">${esc(t('push_unsupported'))}</p>`
+    : installKind() === 'already' ? `<p class="muted small">${esc(t('install_already'))}</p>`
+    : installStepsHtml(INSTALL_STEPS.ios)
+  openSheet(`
+    <div class="sheet-head"><h2>${esc(t('notif_install_title'))}</h2><button class="icon-btn" type="button" data-sheet-close>${icon('x', 20)}</button></div>
+    <p class="muted sheet-sub">${esc(t('notif_install_sub'))}</p>
+    <div class="sheet-section">${body}</div>`)
+}
+
+/** Réglages ouverts sur les notifications de live. */
+function openPushSettings() {
+  openSettings()
+  requestAnimationFrame(() => $('#set-push')?.closest('.sheet-section')?.scrollIntoView({ block: 'start' }))
 }
 
 /** Grille de cartes ou liste façon Twitch, au choix (bouton + réglage). */
