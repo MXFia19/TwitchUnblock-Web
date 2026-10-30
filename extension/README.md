@@ -10,11 +10,11 @@
 > [PROTOCOL.md](PROTOCOL.md)); spending points needs a real click; for 1440p the page only
 > gets the account's live playlists rewritten by the extension (segment addresses, no
 > token, no playlist address); nothing is sent anywhere but Twitch.
-> **Install**: download `twitchunblock-connect-chrome.zip` or
-> `twitchunblock-connect-firefox.zip` from the
-> [latest release](https://github.com/MXFia19/TwitchUnblock-Web/releases/latest) and follow
-> [INSTALL.md](INSTALL.md) — unpacked in Chrome, Edge and Brave, as a temporary add-on in
-> Firefox (until it is signed on AMO).
+> **Install**: Firefox, from
+> [Firefox Add-ons](https://addons.mozilla.org/firefox/addon/twitchunblock-connect/) (it
+> updates itself); Chrome, Edge and Brave, `twitchunblock-connect-chrome.zip` from the
+> [latest release](https://github.com/MXFia19/TwitchUnblock-Web/releases/latest), unpacked —
+> steps in [INSTALL.md](INSTALL.md).
 
 Browser extension that links the TwitchUnblock site to the Twitch session of this
 browser. The site can then show the points balance, claim chests, get watch time counted
@@ -31,10 +31,10 @@ instead of re-reading them every minute. Drops whose game account isn't linked s
 instead of “Claim”. Spending points takes one real click per spend. The Twitch session
 never leaves the extension.
 
-Updating an existing install (0.1.0 → 0.2.0): new zip in place of the old files, then ↻
-on the extension's card (Chrome, Edge, Brave), or a new temporary add-on (Firefox, which
-asks for one more access, `*.playlist.ttvnw.net`: “Allow access” in the extension's
-window). Details: [INSTALL.md](INSTALL.md).
+Updating an existing install: Chrome, Edge and Brave, new zip in place of the old files,
+then ↻ on the extension's card; Firefox, nothing to do with the version from Firefox
+Add-ons (a new access, such as `*.playlist.ttvnw.net` in 0.2.0, is asked in the
+extension's window: “Allow access”). Details: [INSTALL.md](INSTALL.md).
 
 The contract between the site and the extension is in [PROTOCOL.md](PROTOCOL.md) (a copy
 of the document shared by both sides).
@@ -53,26 +53,30 @@ of the document shared by both sides).
 4. Click **Load unpacked** and select the folder (the one that contains
    `manifest.json`).
 
-### Firefox 140 and later (temporary add-on)
+### Firefox 140 and later
 
-The `extension/` folder is the Chrome version (Chrome, Edge and Brave refuse a background
-given as a script, which Firefox requires). The Firefox version is built separately:
-`twitchunblock-connect-firefox.zip` from the
-[latest release](https://github.com/MXFia19/TwitchUnblock-Web/releases/latest) (to pick
-as is, without unzipping it), or `node extension/dev/build-firefox.mjs` from the cloned
-repository, which writes it to `extension-firefox/`.
+Install it from
+[Firefox Add-ons](https://addons.mozilla.org/firefox/addon/twitchunblock-connect/) (AMO, ID
+`twitchunblock-connect@mxfia19.github.io`): Firefox keeps it and installs new versions by
+itself. Every version reaching `main` is sent there by the *Extension* workflow (job
+**Publish on AMO**, `dev/amo-publish.mjs`: package, source code, release notes and notes
+for reviewers from [dev/AMO.md](dev/AMO.md)); Firefox offers it once Mozilla has reviewed
+it.
+
+For development, load it as a temporary add-on (it goes away when Firefox closes). The
+`extension/` folder is the Chrome version (Chrome, Edge and Brave refuse a background
+given as a script, which Firefox requires); the Firefox version is built separately:
+`node extension/dev/build-firefox.mjs` (add `--dev` to keep the test preview) writes it to
+`extension-firefox/`, and `twitchunblock-connect-firefox.zip` of the
+[latest release](https://github.com/MXFia19/TwitchUnblock-Web/releases/latest) is the
+published one.
 
 1. Open `about:debugging#/runtime/this-firefox`.
-2. Click **Load Temporary Add-on…** and pick the release's Firefox zip (or the
-   `manifest.json` in `extension-firefox/`).
+2. Click **Load Temporary Add-on…** and pick the `manifest.json` in `extension-firefox/`
+   (or the release's Firefox zip, as is).
 3. Open the extension's window: if an orange box reports missing access, click
    **Allow access** (or `about:addons` → TwitchUnblock Connect → Permissions → allow
    twitch.tv and the site's two addresses).
-
-A temporary add-on goes away when Firefox closes. A lasting install needs a signature
-from Mozilla (AMO): the extension is being submitted there (ID
-`twitchunblock-connect@mxfia19.github.io`; checklist and texts in
-[dev/AMO.md](dev/AMO.md)).
 
 ### Then
 

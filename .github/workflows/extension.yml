@@ -2,8 +2,9 @@
 # vérifie les JSON et la syntaxe des JS, lance le banc d'essai (API chrome et
 # Twitch simulés, sans réseau), puis produit les paquets Chrome et Firefox,
 # gardés en artefacts. Sur main, ils sont aussi publiés dans la release
-# « connect-v<version> » (la dernière), téléchargeables sans compte GitHub.
-# La signature Firefox (AMO) et les boutiques restent manuelles.
+# « connect-v<version> » (la dernière), téléchargeables sans compte GitHub,
+# et la version Firefox est envoyée sur addons.mozilla.org (job « Publish on
+# AMO »). Les boutiques de Chrome et d'Edge restent hors du workflow.
 name: Extension
 
 on:
@@ -52,7 +53,16 @@ jobs:
           done
 
       - name: Test bench
-        run: node extension/tests/run.mjs
+        run: |
+          node extension/tests/run.mjs
+          node extension/tests/amo.mjs
+
+      # Notes de version de la version du manifeste pour AMO (dev/AMO.md) : sans
+      # elles, le job « Publish on AMO » s'arrête sur main. Ici, un simple
+      # avertissement (la branche de test change de version avant d'avoir ses notes).
+      - name: AMO release notes
+        continue-on-error: true
+        run: node extension/dev/amo-publish.mjs --check
 
       # Le site annonce la dernière version (CONNECT_LATEST, dans
       # public/assets/js/connect.js) et propose la mise à jour aux versions plus
@@ -151,3 +161,43 @@ jobs:
             gh release create "$tag" $files --title "TwitchUnblock Connect $version" \
               --notes-file extension/INSTALL.md --target "$GITHUB_SHA" --latest
           fi
+
+  # Sur main seulement : la version du manifeste envoyée sur addons.mozilla.org
+  # si elle n'y est pas encore (en relecture comprise), par dev/amo-publish.mjs :
+  # le paquet Firefox de la release, le code source (dossier extension/ avec
+  # BUILD.md à la racine, dev/AMO.md), ses notes de version et les notes aux
+  # relecteurs. Mozilla la relit, puis Firefox l'installe de lui-même chez ceux
+  # qui ont l'extension d'AMO. Clés : secrets AMO_JWT_ISSUER et AMO_JWT_SECRET
+  # (Developer Hub → Manage API Keys) ; pas dans les copies du dépôt.
+  amo:
+    name: Publish on AMO
+    needs: build
+    if: github.ref == 'refs/heads/main' && github.repository == 'MXFia19/TwitchUnblock-Web'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Download packages
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: Submit
+        env:
+          AMO_JWT_ISSUER: ${{ secrets.AMO_JWT_ISSUER }}
+          AMO_JWT_SECRET: ${{ secrets.AMO_JWT_SECRET }}
+        run: |
+          version=$(node -p 'require("./extension/manifest.json").version')
+          name="twitchunblock-connect-$version"
+          test -f "dist/$name-firefox/manifest.json"
+          (cd "dist/$name-firefox" && zip -qr ../../amo-firefox.zip .)
+          cp extension/dev/BUILD.md BUILD.md
+          zip -qr amo-source.zip extension BUILD.md
+          node extension/dev/amo-publish.mjs amo-firefox.zip amo-source.zip

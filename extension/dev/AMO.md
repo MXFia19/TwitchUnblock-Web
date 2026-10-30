@@ -1,8 +1,22 @@
 # Publishing on addons.mozilla.org (AMO)
 
-What to upload and what to fill in when submitting TwitchUnblock Connect to
-addons.mozilla.org, so Firefox users can install it permanently and get updates
-automatically. The steps follow Mozilla's
+TwitchUnblock Connect is listed on addons.mozilla.org:
+<https://addons.mozilla.org/firefox/addon/twitchunblock-connect/>. Firefox installs it
+permanently from there and updates it automatically.
+
+**New versions are submitted by the CI.** On every push to `main` that touches
+`extension/`, the *Extension* workflow's **Publish on AMO** job (`dev/amo-publish.mjs`)
+sends the version of `manifest.json` to AMO if it isn't there yet (awaiting review
+included): the Firefox package, the source code zip, the version's
+[release notes](#release-notes) and the [notes for reviewers](#notes-for-reviewers). Mozilla
+then reviews it, and Firefox offers it to users by itself once approved. The job needs the
+repository secrets `AMO_JWT_ISSUER` and `AMO_JWT_SECRET` (Developer Hub → **Tools → Manage
+API Keys**). Add a version's release notes below before it reaches `main`: without them,
+the job stops before sending anything (`node extension/dev/amo-publish.mjs --check` tells,
+and the workflow runs it on every push).
+
+The rest of this page is the manual way (first submission, or when the job can't run). It
+follows Mozilla's
 [Submitting an add-on](https://extensionworkshop.com/documentation/publish/submitting-an-add-on/)
 guide: Developer Hub → **Submit a New Add-on** → **On this site**.
 
@@ -140,14 +154,18 @@ create a dedicated test account for them.
 After **Submit Version**: Developer Hub → **My Add-ons** → TwitchUnblock Connect →
 **Manage Status & Versions** → open the version. Fill in **Release notes** and, if the source
 code was not given during the submission, add it at the bottom (next to **Source code**,
-**Browse**), then **Save changes**. Release notes for 0.2.0:
+**Browse**), then **Save changes**.
 
-> First version on addons.mozilla.org: channel points and bonus chests, watch streaks,
-> drops, predictions, polls, raids and channel rewards for the TwitchUnblock website, plus
-> higher qualities (1440p and above).
+**Next versions by hand** (when the CI job can't run): Developer Hub → TwitchUnblock
+Connect → **Upload New Version** (the Firefox zip of the release), then the source zip, the
+version's release notes and the notes for reviewers.
 
-**Next versions**: Developer Hub → TwitchUnblock Connect → **Upload New Version** (the
-Firefox zip of the release), then the source zip and these notes. Release notes for 0.3.0:
+## Release notes
+
+One per version, under a `### <version>` heading, as a quote. The CI sends the one that
+matches `manifest.json` (paragraphs joined, in English).
+
+### 0.3.0
 
 > Follow or unfollow a channel and clip the live from the TwitchUnblock website, a Drops
 > page with all your campaigns, your points, chests, predictions and drops live, ad-free
@@ -156,3 +174,9 @@ Firefox zip of the release), then the source zip and these notes. Release notes 
 > linked now show a link instead of Claim. Spending points now takes one real click per
 > spend. One permission less: "tabs" is no longer requested, and the package no longer
 > includes the website's test preview.
+
+### 0.2.0
+
+> First version on addons.mozilla.org: channel points and bonus chests, watch streaks,
+> drops, predictions, polls, raids and channel rewards for the TwitchUnblock website, plus
+> higher qualities (1440p and above).

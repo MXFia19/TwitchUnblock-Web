@@ -21,9 +21,11 @@ and spending points always needs a click from you. For 1440p, the site only gets
 playlists, rewritten by the extension (the addresses of the video pieces), never your session
 or your playback token.
 
-Download the zip for your browser from the
-[latest release](https://github.com/MXFia19/TwitchUnblock-Web/releases/latest):
-`twitchunblock-connect-chrome.zip` or `twitchunblock-connect-firefox.zip`.
+**Firefox**: install it from
+[Firefox Add-ons](https://addons.mozilla.org/firefox/addon/twitchunblock-connect/); Firefox
+then updates it by itself. **Chrome, Edge, Brave**: download
+`twitchunblock-connect-chrome.zip` from the
+[latest release](https://github.com/MXFia19/TwitchUnblock-Web/releases/latest).
 
 ## Chrome, Edge, Brave (and other Chromium browsers)
 
@@ -45,20 +47,23 @@ themselves; reload them if the site doesn't see it.
 
 ## Firefox (version 140 or later)
 
-Until the extension is signed by Mozilla, Firefox can only load it as a temporary add-on,
-which goes away when Firefox closes (load it again the next time).
-
-1. Download **`twitchunblock-connect-firefox.zip`** (no need to unzip).
-2. Open `about:debugging#/runtime/this-firefox`.
-3. Click **Load Temporary Add-on…** and pick the zip file.
-4. Open the extension from the Extensions menu (puzzle icon). If it asks for access to
+1. Open [TwitchUnblock Connect on Firefox Add-ons](https://addons.mozilla.org/firefox/addon/twitchunblock-connect/)
+   and click **Add to Firefox**.
+2. Firefox lists what the extension can access and the data it sends to Twitch: click
+   **Add**.
+3. Open the extension from the Extensions menu (puzzle icon). If it asks for access to
    twitch.tv and the TwitchUnblock site, allow it (or `about:addons` → TwitchUnblock
    Connect → Permissions).
 
-**Updating**: remove the old temporary add-on (or restart Firefox), then load the new zip
-the same way. Version 0.2.0 needs one more access, to Twitch's live playlists
-(`*.playlist.ttvnw.net`): if the extension's window shows an orange box, click **Allow
-access**.
+**Updating**: nothing to do. Firefox installs each new version by itself once Mozilla has
+reviewed it (it checks about once a day; `about:addons` → ⚙ → **Check for Updates** does
+it right away). If a new version needs one more access, the extension's window shows an
+orange box: click **Allow access**.
+
+The release's `twitchunblock-connect-firefox.zip` is the same package, for tests: loaded as
+a temporary add-on (`about:debugging#/runtime/this-firefox` → **Load Temporary Add-on…**),
+it goes away when Firefox closes and never updates. If you used it, install the extension
+from Firefox Add-ons once.
 
 ## Use it
 
