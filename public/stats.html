@@ -56,6 +56,11 @@
     .split span { display: inline-flex; align-items: center; gap: 6px; }
     .tile .fresh { margin-top: 8px; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
     .unique-note { color: var(--muted); font-size: 13px; margin: -4px 0 16px; }
+    .view-filter { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 0 0 16px; }
+    .view-filter .seg { display: inline-flex; gap: 2px; padding: 3px; border-radius: 10px; border: 1px solid var(--line); background: var(--card); }
+    .view-filter .seg button { height: 30px; padding: 0 12px; border: 0; border-radius: 8px; background: transparent; color: var(--muted); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+    .view-filter .seg button.on { background: var(--purple); color: #0e0e10; }
+    .view-filter .hint, .not-split { color: var(--muted); font-size: 12px; }
     .dot { width: 9px; height: 9px; border-radius: 3px; flex: none; }
     .dot.ios { background: var(--ios); }
     .dot.web { background: var(--web); }
@@ -220,6 +225,15 @@
     <a class="btn" href="/" data-t="back"></a>
   </header>
 
+  <div class="view-filter" id="view-filter">
+    <div class="seg" role="group">
+      <button type="button" data-view="all" data-t="vAll"></button>
+      <button type="button" data-view="acct" data-t="vAcct"></button>
+      <button type="button" data-view="anon" data-t="vAnon"></button>
+    </div>
+    <span class="hint" id="view-hint"></span>
+  </div>
+
   <section class="tiles" id="tiles" aria-live="polite"></section>
   <p class="unique-note" data-t="uniqueNote"></p>
 
@@ -248,6 +262,7 @@
     <div class="card">
       <h2 data-t="hlTitle"></h2>
       <p class="sub" data-t="hlSub"></p>
+      <p class="not-split" data-t="vNotSplit" hidden></p>
       <div id="health"></div>
     </div>
     <div class="card">
@@ -261,6 +276,7 @@
     <div class="card">
       <h2 data-t="puSentTitle"></h2>
       <p class="sub" id="pu-sent-sub"></p>
+      <p class="not-split" data-t="vNotSplit" hidden></p>
       <div class="legend"><span><i class="dot ios"></i><span data-t="puLegendApp"></span></span><span><i class="dot web"></i><span data-t="puLegendWeb"></span></span></div>
       <div class="chart" id="chart-push"></div>
       <p class="sub push-line" id="pu-week"></p>
@@ -272,6 +288,7 @@
     <div class="card">
       <h2 data-t="puTitle"></h2>
       <p class="sub" data-t="puSub"></p>
+      <p class="not-split" data-t="vNotSplit" hidden></p>
       <div id="push"></div>
     </div>
   </section>
@@ -477,7 +494,7 @@
       loginPh: 'Pseudo Twitch', syncBtn: 'Effacer sa sauvegarde (historique, progression, réglages)', filterPh: 'Filtrer (pseudo, version…)',
       footer: 'Comptage : connecté, le compte Twitch (compté une fois sur tous ses appareils) ; sinon un identifiant tiré au hasard par navigateur ou par installation. Au plus un signal par heure, avec la langue de l’interface, le type d’appareil, la version d’iOS et le nombre de lectures (source du direct, échecs, pauses pub), et sur le site la version de l’extension TwitchUnblock Connect (ou son absence) et son navigateur ; ni adresse IP ni chaîne regardée, rien des réglages de l’extension ni de la session Twitch. Les entrées expirent après 35 jours. Depuis le 3 octobre 2026, les robots, navigateurs automatisés, copies locales du site et navigations privées sans stockage ne sont plus comptés ; les anciens identifiants parasites disparaîtront d’eux-mêmes.',
       today: "Aujourd'hui", week: '7 derniers jours', month: '30 derniers jours', partial: 'données depuis le {d} seulement',
-      actTitle: 'Actifs par jour', actSub: 'Personnes différentes chaque jour (une fois par jour, même si elles reviennent plusieurs fois).', actSince: 'Mesuré depuis le {d}.', actNone: 'Pas encore de données : la mesure commence avec cette mise à jour.',
+      actTitle: 'Actifs par jour', actSub: 'Personnes différentes chaque jour (une fois par jour, même si elles reviennent plusieurs fois).', vLabel: 'Qui compter', vAll: 'Tout le monde', vAcct: 'Avec compte', vAnon: 'Sans compte', vHint: 'Avec compte : une personne connectée à Twitch (site ou apps), comptée une fois. Sans compte : un appareil ou un navigateur.', vOld: 'Ce Worker ne les sépare pas encore : chiffres de tout le monde.', vNotSplit: 'Pas séparé par compte : chiffres de tout le monde.', actOther: 'Avant la répartition par plateforme', actSince: 'Mesuré depuis le {d}.', actNone: 'Pas encore de données : la mesure commence avec cette mise à jour.',
       rtTitle: 'Rétention', rtSub: 'Parmi les personnes arrivées depuis assez longtemps, la part revue au moins 1, 7 ou 14 jours après son premier jour. Par semaine d’arrivée, 5 dernières semaines.',
       rtD1: 'revenues un autre jour', rtD7: 'encore là 7 jours après', rtD14: 'encore là 14 jours après', rtOf: 'sur {n}', rtWeek: 'Arrivées', rtSize: 'Personnes', rtWeekOf: 'semaine du {d}', fbErrors: '{n} erreur(s) récente(s) jointe(s)', srvErrTitle: 'Erreurs du serveur : {n} (14 jours)', srvErrNone: 'Aucune erreur du serveur ces 14 derniers jours.', rtColD1: 'J+1', rtColD7: 'J+7', days3: '3 j', days7: '7 j', days30: '30 j',
       hlTitle: 'Santé du direct (7 jours)', hlSub: 'Source qui a servi chaque live lancé, et échecs. Compteurs anonymes : aucune chaîne, aucun titre.',
@@ -536,7 +553,7 @@
       loginPh: 'Twitch username', syncBtn: 'Erase their backup (history, progress, settings)', filterPh: 'Filter (username, version…)',
       footer: 'Counting: when signed in, the Twitch account (counted once across all devices); otherwise a random identifier per browser or install. At most one signal per hour, with the interface language, the device type, the iOS version and the number of plays (live source, failures, ad breaks), and on the website the version of the TwitchUnblock Connect extension (or that it’s missing) and its browser; no IP address and no watched channel, nothing of the extension’s settings or the Twitch session. Entries expire after 35 days. Since October 3, 2026, bots, automated browsers, local copies of the site and private browsing without storage are no longer counted; old noisy identifiers will disappear on their own.',
       today: 'Today', week: 'Last 7 days', month: 'Last 30 days', partial: 'data only since {d}',
-      actTitle: 'Active per day', actSub: 'Different people each day (once per day, even if they come back several times).', actSince: 'Measured since {d}.', actNone: 'No data yet: measuring starts with this update.',
+      actTitle: 'Active per day', actSub: 'Different people each day (once per day, even if they come back several times).', vLabel: 'Who to count', vAll: 'Everyone', vAcct: 'With an account', vAnon: 'Without an account', vHint: 'With an account: someone logged in with Twitch (website or apps), counted once. Without an account: a device or a browser.', vOld: 'This Worker doesn’t split them yet: everyone’s numbers.', vNotSplit: 'Not split by account: everyone’s numbers.', actOther: 'Before the per-platform split', actSince: 'Measured since {d}.', actNone: 'No data yet: measuring starts with this update.',
       rtTitle: 'Retention', rtSub: 'Among people who arrived long enough ago, the share seen again at least 1, 7 or 14 days after their first day. By arrival week, last 5 weeks.',
       rtD1: 'came back another day', rtD7: 'still there 7 days later', rtD14: 'still there 14 days later', rtOf: 'of {n}', rtWeek: 'Arrived', rtSize: 'People', rtWeekOf: 'week of {d}', fbErrors: '{n} recent error(s) attached', srvErrTitle: 'Server errors: {n} (14 days)', srvErrNone: 'No server errors in the last 14 days.', rtColD1: 'Day 1', rtColD7: 'Day 7', days3: '3 days', days7: '7 days', days30: '30 days',
       hlTitle: 'Live health (7 days)', hlSub: 'Source that served each live started, and failures. Anonymous counters: no channel, no title.',
@@ -595,7 +612,7 @@
       loginPh: 'Usuario de Twitch', syncBtn: 'Borrar su copia (historial, progreso, ajustes)', filterPh: 'Filtrar (usuario, versión…)',
       footer: 'Recuento: con sesión iniciada, la cuenta de Twitch (contada una vez en todos sus dispositivos); si no, un identificador aleatorio por navegador o instalación. Como mucho una señal por hora, con el idioma de la interfaz, el tipo de dispositivo, la versión de iOS y el número de reproducciones (fuente del directo, fallos, pausas publicitarias), y en el sitio la versión de la extensión TwitchUnblock Connect (o su ausencia) y su navegador; sin dirección IP ni canal visto, nada de los ajustes de la extensión ni de la sesión de Twitch. Las entradas caducan a los 35 días. Desde el 3 de octubre de 2026, los bots, navegadores automatizados, copias locales del sitio y la navegación privada sin almacenamiento ya no se cuentan; los antiguos identificadores parásitos desaparecerán solos.',
       today: 'Hoy', week: 'Últimos 7 días', month: 'Últimos 30 días', partial: 'datos solo desde el {d}',
-      actTitle: 'Activos por día', actSub: 'Personas distintas cada día (una vez por día, aunque vuelvan varias veces).', actSince: 'Medido desde el {d}.', actNone: 'Aún no hay datos: la medición empieza con esta actualización.',
+      actTitle: 'Activos por día', actSub: 'Personas distintas cada día (una vez por día, aunque vuelvan varias veces).', vLabel: 'A quién contar', vAll: 'Todos', vAcct: 'Con cuenta', vAnon: 'Sin cuenta', vHint: 'Con cuenta: una persona conectada con Twitch (web o apps), contada una vez. Sin cuenta: un dispositivo o un navegador.', vOld: 'Este Worker aún no los separa: cifras de todos.', vNotSplit: 'Sin separar por cuenta: cifras de todos.', actOther: 'Antes del reparto por plataforma', actSince: 'Medido desde el {d}.', actNone: 'Aún no hay datos: la medición empieza con esta actualización.',
       rtTitle: 'Retención', rtSub: 'Entre las personas que llegaron hace suficiente tiempo, la parte que volvió al menos 1, 7 o 14 días después de su primer día. Por semana de llegada, últimas 5 semanas.',
       rtD1: 'volvieron otro día', rtD7: 'siguen 7 días después', rtD14: 'siguen 14 días después', rtOf: 'de {n}', rtWeek: 'Llegadas', rtSize: 'Personas', rtWeekOf: 'semana del {d}', fbErrors: '{n} error(es) reciente(s) adjunto(s)', srvErrTitle: 'Errores del servidor: {n} (14 días)', srvErrNone: 'Ningún error del servidor en los últimos 14 días.', rtColD1: 'Día 1', rtColD7: 'Día 7', days3: '3 días', days7: '7 días', days30: '30 días',
       hlTitle: 'Salud del directo (7 días)', hlSub: 'Fuente que sirvió cada directo iniciado, y fallos. Contadores anónimos: ningún canal, ningún título.',
@@ -768,7 +785,11 @@
   function chartActive(s) {
     const days = s.activeSince ? (s.activeDaily ?? []).filter((d) => d.date >= s.activeSince) : []
     $('#act-sub').textContent = t('actSub') + (s.activeSince ? ' ' + t('actSince', { d: dayLabel(s.activeSince, { day: 'numeric', month: 'long' }) }) : '')
-    chartNew(days, { box: '#chart-active', table: '#table-active', series: PLATFORM_SERIES(['ios', 'tvos', 'web', 'android']), label: t('actTitle'), empty: t('actNone') })
+    const series = PLATFORM_SERIES(['ios', 'tvos', 'web', 'android'])
+    // Avec / sans compte : les jours d'avant la répartition par plateforme
+    // (30/10/2026) n'ont que leur total, montré à part.
+    if (days.some((d) => d.other > 0)) series.push({ key: 'other', name: t('actOther'), color: 'var(--faint)' })
+    chartNew(days, { box: '#chart-active', table: '#table-active', series, label: t('actTitle'), empty: t('actNone') })
   }
 
   function retention(s) {
@@ -1617,8 +1638,7 @@
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const s = await res.json()
       lastStats = s
-      tiles(s); kinds(s); chartNew(s.daily); chartActive(s); retention(s); health(s); devices(s); pushNow(s); chartPush(s)
-      loyalty(s); platformReturning(s); versions(s); extension(s)
+      render()
       const at = s.generatedAt ? new Date(s.generatedAt) : new Date()
       $('#updated').textContent = t('updated', { t: at.toLocaleTimeString(LOCALE, { hour: '2-digit', minute: '2-digit' }) })
     } catch (e) {
@@ -1628,10 +1648,43 @@
     }
   }
   let lastStats = null
+
+  // ── Qui compter : tout le monde, avec compte, sans compte ───────────────
+  // Les blocs comptés par personne suivent le choix : le Worker renvoie
+  // `split.acct` et `split.anon`, avec les mêmes champs que le total. La
+  // santé de la lecture et les notifications ne sont pas séparées (une note
+  // le dit) ; les cartes Comptes / Sans compte restent la comparaison.
+  const VIEW_KEY = 'tu_stats_view'
+  let viewKind = 'all'
+  try { if (['acct', 'anon'].includes(localStorage.getItem(VIEW_KEY))) viewKind = localStorage.getItem(VIEW_KEY) } catch {}
+  const viewOf = (s) => (viewKind !== 'all' && s.split?.[viewKind] ? { ...s, ...s.split[viewKind] } : s)
+  function render() {
+    const s = lastStats
+    for (const b of document.querySelectorAll('#view-filter [data-view]')) {
+      b.classList.toggle('on', b.dataset.view === viewKind)
+      b.setAttribute('aria-pressed', String(b.dataset.view === viewKind))
+    }
+    $('#view-hint').textContent = viewKind === 'all' ? '' : t(s?.split ? 'vHint' : 'vOld')
+    for (const el of document.querySelectorAll('.not-split')) el.hidden = viewKind === 'all'
+    if (!s) return
+    const v = viewOf(s)
+    tiles(v); kinds(s); chartNew(v.daily); chartActive(v); retention(v); health(s); devices(v); pushNow(s); chartPush(s)
+    loyalty(v); platformReturning(v); versions(v); extension(v)
+  }
+  $('#view-filter .seg').setAttribute('aria-label', t('vLabel'))
+  $('#view-filter').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-view]')
+    if (!b || b.dataset.view === viewKind) return
+    viewKind = b.dataset.view
+    try { localStorage.setItem(VIEW_KEY, viewKind) } catch {}
+    render()
+  })
+  render()
+
   let resizeTimer = null
   addEventListener('resize', () => {
     clearTimeout(resizeTimer)
-    resizeTimer = setTimeout(() => { if (lastStats) { chartNew(lastStats.daily); chartActive(lastStats); chartPush(lastStats) } }, 150)
+    resizeTimer = setTimeout(() => { if (lastStats) { const v = viewOf(lastStats); chartNew(v.daily); chartActive(v); chartPush(lastStats) } }, 150)
   })
   $('#refresh').addEventListener('click', () => { load(true); if (!$('#dev').hidden) { loadEntries(); loadAnnouncement(); loadPollAdmin(); loadFeedback(); loadAudit() } })
   load()

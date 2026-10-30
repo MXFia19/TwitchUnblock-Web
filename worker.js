@@ -1438,6 +1438,9 @@ async function handlePing(request, env) {
         counts.a = 1;
         counts['a_' + platform] = 1;
         counts[who ? 'a_acct' : 'a_anon'] = 1;
+        // Par plateforme et par type : le filtre « Avec / Sans compte » de
+        // /stats répartit ainsi les actifs par jour.
+        counts[`a_${platform}_${who ? 'acct' : 'anon'}`] = 1;
     }
     if (body.ev && typeof body.ev === 'object') {
         for (const k of USAGE_EVENTS) {
@@ -1513,38 +1516,107 @@ async function handleStats(env) {
     // `…New` : parmi les personnes de la période, celles vues pour la
     // première fois pendant cette période (les autres étaient déjà venues).
     const blank = () => ({ today: 0, week: 0, month: 0, known: 0, returning: 0, todayNew: 0, weekNew: 0, monthNew: 0 });
-    const total = blank();
-    const kinds = { accounts: blank(), anonymous: blank() };
-    const platforms = Object.fromEntries(PLATFORMS.map((p) => [p, blank()]));
-    const versions = {};
-    const loyalty = { once: 0, few: 0, regular: 0, daily: 0 };
-    let returning = 0, totalDays = 0, oldestFirst = null, cursor;
-    // Série des 30 derniers jours : nouveaux (premier jour vu) et vus pour la
-    // dernière fois ce jour-là, par plateforme.
     const dayKey = (offset) => new Date(todayMs - offset * 86400000).toISOString().slice(0, 10);
-    const daily = {};
-    for (let i = 29; i >= 0; i--) daily[dayKey(i)] = { date: dayKey(i), newIos: 0, newWeb: 0, newTv: 0, newAndroid: 0, lastIos: 0, lastWeb: 0, lastTv: 0, lastAndroid: 0 };
-
-    // Rétention : parmi ceux arrivés il y a au moins N jours, la part revue N
-    // jours ou plus après son premier jour (J+1, J+7, J+14), au total et par
-    // semaine d'arrivée (lundi UTC). Les entrées s'effacent 35 jours après le
-    // dernier passage : au-delà de 5 semaines, les chiffres seraient flatteurs.
-    const ret = { d1: { base: 0, kept: 0 }, d7: { base: 0, kept: 0 }, d14: { base: 0, kept: 0 } };
-    const cohorts = {};
     const weekOf = (iso) => {
         const d = new Date(iso + 'T00:00:00Z');
         return new Date(d.getTime() - ((d.getUTCDay() + 6) % 7) * 86400000).toISOString().slice(0, 10);
     };
-    // Appareils : personnes actives sur 30 jours qui envoient ces infos.
-    const devices = { reporting: { ios: 0, web: 0, tvos: 0, android: 0 }, lang: { ios: {}, web: {}, tvos: {}, android: {} }, os: {}, device: { ios: {}, web: {}, tvos: {}, android: {} } };
     const tally = (obj, k) => { obj[k] = (obj[k] || 0) + 1; };
-    // Extension TwitchUnblock Connect : personnes vues avec elle sur le site,
-    // une fois par période d'après le dernier jour où elle l'a été (xd), en
-    // tout, par version et par navigateur (les derniers vus). `reporting` :
-    // personnes actives sur 30 jours dont le site l'a cherchée, qu'elle y
-    // soit ou non (versions du site depuis 2026.10.25c).
-    const ext = { today: 0, week: 0, month: 0, reporting: 0, versions: {}, browsers: {} };
     const periods = () => ({ today: 0, week: 0, month: 0 });
+    // Tout ce qui se compte par personne, trois fois : tout le monde, les
+    // comptes Twitch, les sans-compte (un appareil ou un navigateur) — le
+    // filtre « Avec compte / Sans compte » de /stats.
+    const newAgg = () => {
+        // Série des 30 derniers jours : nouveaux (premier jour vu) et vus pour
+        // la dernière fois ce jour-là, par plateforme.
+        const daily = {};
+        for (let i = 29; i >= 0; i--) daily[dayKey(i)] = { date: dayKey(i), newIos: 0, newWeb: 0, newTv: 0, newAndroid: 0, lastIos: 0, lastWeb: 0, lastTv: 0, lastAndroid: 0 };
+        return {
+            total: blank(),
+            platforms: Object.fromEntries(PLATFORMS.map((p) => [p, blank()])),
+            versions: {},
+            loyalty: { once: 0, few: 0, regular: 0, daily: 0 },
+            returning: 0, totalDays: 0, oldestFirst: null, daily,
+            // Rétention : parmi ceux arrivés il y a au moins N jours, la part
+            // revue N jours ou plus après son premier jour (J+1, J+7, J+14), au
+            // total et par semaine d'arrivée (lundi UTC). Les entrées s'effacent
+            // 35 jours après le dernier passage : au-delà de 5 semaines, les
+            // chiffres seraient flatteurs.
+            ret: { d1: { base: 0, kept: 0 }, d7: { base: 0, kept: 0 }, d14: { base: 0, kept: 0 } },
+            cohorts: {},
+            // Appareils : personnes actives sur 30 jours qui envoient ces infos.
+            devices: { reporting: { ios: 0, web: 0, tvos: 0, android: 0 }, lang: { ios: {}, web: {}, tvos: {}, android: {} }, os: {}, device: { ios: {}, web: {}, tvos: {}, android: {} } },
+            // Extension TwitchUnblock Connect : personnes vues avec elle sur le
+            // site, une fois par période d'après le dernier jour où elle l'a été
+            // (xd), en tout, par version et par navigateur (les derniers vus).
+            // `reporting` : personnes actives sur 30 jours dont le site l'a
+            // cherchée, qu'elle y soit ou non (site depuis 2026.10.25c).
+            ext: { today: 0, week: 0, month: 0, reporting: 0, versions: {}, browsers: {} },
+        };
+    };
+    const everyone = newAgg(), accounts = newAgg(), anonymous = newAgg();
+
+    /** Une personne (un compte, ou un appareil sans compte) comptée dans `a`. */
+    function addPerson(a, meta, { age, firstAge, then, firstThen, plat }) {
+        // Une seule fois par période, quel que soit le nombre de jours où
+        // la personne (le compte, ou l'appareil sans compte) est revenue.
+        for (const c of [a.total, a.platforms[plat]]) {
+            c.known++;
+            if (age === 0) { c.today++; if (firstAge === 0) c.todayNew++; }
+            if (age < 7) { c.week++; if (firstAge < 7) c.weekNew++; }
+            if (age < 30) { c.month++; if (firstAge < 30) c.monthNew++; }
+        }
+        if (age < 30) { const v = `${meta.p || 'ios'} ${meta.v || '?'}`; a.versions[v] = (a.versions[v] || 0) + 1; }
+        const d = meta.days || 1;
+        a.totalDays += d;
+        if (d >= 2) { a.returning++; a.total.returning++; a.platforms[plat].returning++; }
+        if (d === 1) a.loyalty.once++; else if (d < 7) a.loyalty.few++; else if (d < 30) a.loyalty.regular++; else a.loyalty.daily++;
+        if (meta.first && (!a.oldestFirst || meta.first < a.oldestFirst)) a.oldestFirst = meta.first;
+        const p = plat === 'web' ? 'Web' : plat === 'tvos' ? 'Tv' : plat === 'android' ? 'Android' : 'Ios';
+        if (a.daily[meta.first]) a.daily[meta.first]['new' + p]++;
+        if (a.daily[meta.last]) a.daily[meta.last]['last' + p]++;
+
+        if (meta.first && Number.isFinite(firstAge) && firstAge <= USAGE_RETENTION_DAYS) {
+            const span = Math.round((then - firstThen) / 86400000);
+            const week = weekOf(meta.first);
+            const c = a.cohorts[week] ??= { week, size: 0, d1: { base: 0, kept: 0 }, d7: { base: 0, kept: 0 } };
+            c.size++;
+            for (const [n, k] of [[1, 'd1'], [7, 'd7'], [14, 'd14']]) {
+                if (firstAge < n) continue;
+                a.ret[k].base++;
+                if (span >= n) a.ret[k].kept++;
+                if (c[k]) { c[k].base++; if (span >= n) c[k].kept++; }
+            }
+        }
+        if (age < 30) {
+            const dv = a.devices;
+            if (meta.li || meta.di || meta.os) dv.reporting.ios++;
+            if (meta.lw || meta.dw) dv.reporting.web++;
+            if (meta.lt || meta.dt) dv.reporting.tvos++;
+            if (meta.la || meta.da) dv.reporting.android++;
+            if (meta.la) tally(dv.lang.android, meta.la);
+            if (meta.da) tally(dv.device.android, meta.da);
+            if (meta.lt) tally(dv.lang.tvos, meta.lt);
+            if (meta.dt) tally(dv.device.tvos, meta.dt);
+            if (meta.li) tally(dv.lang.ios, meta.li);
+            if (meta.lw) tally(dv.lang.web, meta.lw);
+            if (meta.os) tally(dv.os, meta.os);
+            if (meta.di) tally(dv.device.ios, meta.di);
+            if (meta.dw) tally(dv.device.web, meta.dw);
+            if (meta.xv) a.ext.reporting++;
+        }
+        const xThen = meta.xd && meta.xv !== '-' ? Date.parse(meta.xd + 'T00:00:00Z') : NaN;
+        const xAge = Number.isNaN(xThen) ? Infinity : Math.floor((todayMs - xThen) / 86400000);
+        if (xAge < 30) {
+            const browser = USAGE_EXT_BROWSERS.includes(meta.xb) ? meta.xb : 'other';
+            for (const c of [a.ext, a.ext.versions[meta.xv] ??= periods(), a.ext.browsers[browser] ??= periods()]) {
+                c.month++;
+                if (xAge < 7) c.week++;
+                if (xAge === 0) c.today++;
+            }
+        }
+    }
+    let cursor;
 
     // list() renvoie les métadonnées sans lecture par clé ; 1000 clés par page.
     do {
@@ -1560,76 +1632,27 @@ async function handleStats(env) {
             const plats = meta.ps ? String(meta.ps).split(',') : [meta.p || 'ios'];
             const plat = plats.includes('ios') ? 'ios' : plats.includes('android') ? 'android'
                 : plats.includes('tvos') ? 'tvos' : plats.includes('web') ? 'web' : 'ios';
-            const buckets = [platforms[plat]];
-            const kind = meta.k === 'a' ? kinds.accounts : kinds.anonymous;
-            // Une seule fois par période, quel que soit le nombre de jours où
-            // la personne (le compte, ou l'appareil sans compte) est revenue.
-            for (const c of [total, kind, ...buckets]) {
-                c.known++;
-                if (age === 0) { c.today++; if (firstAge === 0) c.todayNew++; }
-                if (age < 7) { c.week++; if (firstAge < 7) c.weekNew++; }
-                if (age < 30) { c.month++; if (firstAge < 30) c.monthNew++; }
-            }
-            if (age < 30) { const v = `${meta.p || 'ios'} ${meta.v || '?'}`; versions[v] = (versions[v] || 0) + 1; }
-            const d = meta.days || 1;
-            totalDays += d;
-            if (d >= 2) { returning++; kind.returning++; for (const b of buckets) b.returning++; }
-            if (d === 1) loyalty.once++; else if (d < 7) loyalty.few++; else if (d < 30) loyalty.regular++; else loyalty.daily++;
-            if (meta.first && (!oldestFirst || meta.first < oldestFirst)) oldestFirst = meta.first;
-            const p = plat === 'web' ? 'Web' : plat === 'tvos' ? 'Tv' : plat === 'android' ? 'Android' : 'Ios';
-            if (daily[meta.first]) daily[meta.first]['new' + p]++;
-            if (daily[meta.last]) daily[meta.last]['last' + p]++;
-
-            if (meta.first && Number.isFinite(firstAge) && firstAge <= USAGE_RETENTION_DAYS) {
-                const span = Math.round((then - firstThen) / 86400000);
-                const week = weekOf(meta.first);
-                const c = cohorts[week] ??= { week, size: 0, d1: { base: 0, kept: 0 }, d7: { base: 0, kept: 0 } };
-                c.size++;
-                for (const [n, k] of [[1, 'd1'], [7, 'd7'], [14, 'd14']]) {
-                    if (firstAge < n) continue;
-                    ret[k].base++;
-                    if (span >= n) ret[k].kept++;
-                    if (c[k]) { c[k].base++; if (span >= n) c[k].kept++; }
-                }
-            }
-            if (age < 30) {
-                if (meta.li || meta.di || meta.os) devices.reporting.ios++;
-                if (meta.lw || meta.dw) devices.reporting.web++;
-                if (meta.lt || meta.dt) devices.reporting.tvos++;
-                if (meta.la || meta.da) devices.reporting.android++;
-                if (meta.la) tally(devices.lang.android, meta.la);
-                if (meta.da) tally(devices.device.android, meta.da);
-                if (meta.lt) tally(devices.lang.tvos, meta.lt);
-                if (meta.dt) tally(devices.device.tvos, meta.dt);
-                if (meta.li) tally(devices.lang.ios, meta.li);
-                if (meta.lw) tally(devices.lang.web, meta.lw);
-                if (meta.os) tally(devices.os, meta.os);
-                if (meta.di) tally(devices.device.ios, meta.di);
-                if (meta.dw) tally(devices.device.web, meta.dw);
-                if (meta.xv) ext.reporting++;
-            }
-            const xThen = meta.xd && meta.xv !== '-' ? Date.parse(meta.xd + 'T00:00:00Z') : NaN;
-            const xAge = Number.isNaN(xThen) ? Infinity : Math.floor((todayMs - xThen) / 86400000);
-            if (xAge < 30) {
-                const browser = USAGE_EXT_BROWSERS.includes(meta.xb) ? meta.xb : 'other';
-                for (const c of [ext, ext.versions[meta.xv] ??= periods(), ext.browsers[browser] ??= periods()]) {
-                    c.month++;
-                    if (xAge < 7) c.week++;
-                    if (xAge === 0) c.today++;
-                }
-            }
+            const at = { age, firstAge, then, firstThen, plat };
+            addPerson(everyone, meta, at);
+            addPerson(meta.k === 'a' ? accounts : anonymous, meta, at);
         }
         cursor = page.list_complete ? undefined : page.cursor;
     } while (cursor);
 
     // Actifs par jour et santé du direct : compteurs de stats_day (depuis
     // leur mise en place seulement, l'historique d'avant n'existe pas).
-    const activeDaily = Object.keys(daily).map((date) => ({ date, total: 0, ios: 0, web: 0, tvos: 0, android: 0, acct: 0, anon: 0 }));
+    const activeDaily = Object.keys(everyone.daily).map((date) => ({ date, total: 0, ios: 0, web: 0, tvos: 0, android: 0, acct: 0, anon: 0 }));
     const byDate = Object.fromEntries(activeDaily.map((d) => [d.date, d]));
+    // Par type et par plateforme (a_ios_acct…), comptés depuis le 30/10/2026 :
+    // avant, seul le total par type existe (a_acct, a_anon).
+    const byKindDate = { acct: {}, anon: {} };
+    for (const kind of ['acct', 'anon']) {
+        for (const d of activeDaily) byKindDate[kind][d.date] = { ios: 0, web: 0, tvos: 0, android: 0 };
+    }
     const health = { week: { ios: {}, web: {}, tvos: {}, android: {} }, month: { ios: {}, web: {}, tvos: {}, android: {} }, since: null };
     let activeSince = null;
     // Notifications : envois réussis par jour (et le reste des compteurs).
-    const pushDaily = Object.keys(daily).map((date) => ({ date, ok_web: 0, ok_ntfy: 0 }));
+    const pushDaily = Object.keys(everyone.daily).map((date) => ({ date, ok_web: 0, ok_ntfy: 0 }));
     const pushByDate = Object.fromEntries(pushDaily.map((d) => [d.date, d]));
     const pushWeek = {};
     let pushSince = null;
@@ -1652,6 +1675,9 @@ async function handleStats(env) {
                 if (!d) continue;
                 const field = m === 'a' ? 'total' : m.slice(2);
                 if (field in d) d[field] += n;
+                const [plat, kind] = field.split('_');
+                const k = kind && byKindDate[kind]?.[r.day];
+                if (k && plat in k) k[plat] += n;
                 if (m === 'a' && n > 0 && (!activeSince || r.day < activeSince)) activeSince = r.day;
             } else if (m.startsWith('pu_')) {
                 const key = m.slice(3);
@@ -1731,14 +1757,33 @@ async function handleStats(env) {
         };
     } catch (e) { console.warn('stats des notifications :', e.message); }
 
+    // Ce qui se compte par personne, pour un agrégat (tout le monde, comptes,
+    // sans-compte) : mêmes champs que la réponse d'avant le filtre.
+    const view = (a) => ({
+        ...a.total, platforms: a.platforms, returning: a.returning, loyalty: a.loyalty,
+        retention: { ...a.ret, cohorts: Object.values(a.cohorts).sort((x, y) => y.week.localeCompare(x.week)).slice(0, 5) },
+        devices: a.devices, ext: a.ext,
+        avgDays: a.total.known ? Math.round((a.totalDays / a.total.known) * 10) / 10 : 0,
+        oldestFirst: a.oldestFirst,
+        versions: Object.entries(a.versions).map(([version, count]) => ({ version, count })).sort((x, y) => y.count - x.count),
+        daily: Object.values(a.daily),
+    });
+    // Actifs par jour d'un type : son total (a_acct, a_anon), réparti par
+    // plateforme depuis que c'est compté ; le reste (jours d'avant) à part.
+    const kindDaily = (kind) => activeDaily.map((d) => {
+        const k = byKindDate[kind][d.date];
+        const known = k.ios + k.web + k.tvos + k.android;
+        return { date: d.date, total: d[kind], ...k, other: Math.max(0, d[kind] - known) };
+    });
     const payload = {
-        ...total, platforms, accounts: kinds.accounts, anonymous: kinds.anonymous, returning, loyalty,
-        retention: { ...ret, cohorts: Object.values(cohorts).sort((a, b) => b.week.localeCompare(a.week)).slice(0, 5) },
-        devices, ext, activeDaily, activeSince, health, push,
-        avgDays: total.known ? Math.round((totalDays / total.known) * 10) / 10 : 0,
-        oldestFirst,
-        versions: Object.entries(versions).map(([version, count]) => ({ version, count })).sort((a, b) => b.count - a.count),
-        daily: Object.values(daily),
+        ...view(everyone), accounts: accounts.total, anonymous: anonymous.total,
+        activeDaily, activeSince, health, push,
+        // Filtre de /stats : la même chose, comptes seulement ou sans-compte
+        // seulement. Santé de la lecture et notifications ne sont pas séparées.
+        split: {
+            acct: { ...view(accounts), activeDaily: kindDaily('acct'), activeSince },
+            anon: { ...view(anonymous), activeDaily: kindDaily('anon'), activeSince },
+        },
         generatedAt: new Date().toISOString()
     };
     // no-store : sinon « Actualiser » pourrait resservir les mêmes chiffres.
