@@ -6,6 +6,26 @@
 
 export const CHANGELOG = [
   {
+    version: '2026.10.30a',
+    items: {
+      fr: [
+        'L’extension TwitchUnblock Connect est sur Firefox Add-ons : sur Firefox, installe-la depuis là (Réglages → TwitchUnblock Connect), elle se met ensuite à jour toute seule.',
+      ],
+      en: [
+        'The TwitchUnblock Connect extension is on Firefox Add-ons: on Firefox, install it from there (Settings → TwitchUnblock Connect), and it then updates itself.',
+      ],
+      es: [
+        'La extensión TwitchUnblock Connect está en Firefox Add-ons: en Firefox, instálala desde allí (Ajustes → TwitchUnblock Connect) y después se actualiza sola.',
+      ],
+      ru: [
+        'Расширение TwitchUnblock Connect теперь в Firefox Add-ons: в Firefox устанавливайте его оттуда (Настройки → TwitchUnblock Connect), дальше оно обновляется само.',
+      ],
+      'zh-Hant': [
+        'TwitchUnblock Connect 擴充功能已上架 Firefox 附加元件：在 Firefox 上請從那裡安裝（設定 → TwitchUnblock Connect），之後會自動更新。',
+      ],
+    },
+  },
+  {
     version: '2026.10.27a',
     items: {
       fr: [

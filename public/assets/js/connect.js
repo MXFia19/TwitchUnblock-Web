@@ -17,12 +17,15 @@ export const PROTOCOL = 1
 // Dernière release (workflow « Extension » sur main) : les deux zips à
 // télécharger sans compte GitHub, et les étapes d'installation en anglais.
 export const INSTALL_URL = 'https://github.com/MXFia19/TwitchUnblock-Web/releases/latest'
+// Firefox : la page de l'extension sur Firefox Add-ons (AMO), où le workflow
+// envoie chaque version ; installée de là, elle se met à jour seule.
+export const AMO_URL = 'https://addons.mozilla.org/firefox/addon/twitchunblock-connect/'
 
 // ── Version publiée : bandeau de mise à jour, comptage d'usage ────────────
 /** Dernière version publiée de l'extension : celle de extension/manifest.json
  *  (extension/dev/check-site-version.mjs le vérifie en CI). Installée à la
- *  main depuis GitHub, l'extension ne se met jamais à jour seule : plus
- *  ancienne, le site le dit (connect-update.js). */
+ *  main depuis GitHub (Chrome, Edge, Brave), l'extension ne se met jamais à
+ *  jour seule : plus ancienne, le site le dit (connect-update.js). */
 export const CONNECT_LATEST = '0.3.0'
 /** Première version qui suit une chaîne (follow.*) et dit si le compte est
  *  sans pub (hq.master `account`). */
@@ -44,26 +47,39 @@ export function compareVersions(a, b) {
   return 0
 }
 
+/** Navigateur de l'extension : celui que dit `hello` ; une annonce arrivée
+ *  avant lui (ou après une installation, page ouverte), ou pas d'extension :
+ *  celui de la page, le même (Edge, Brave… font tourner la version Chrome). */
+export function extBrowser(st, ua = globalThis.navigator?.userAgent ?? '') {
+  return st?.browser ?? (/Firefox\//.test(ua) ? 'firefox' : /Chrom(e|ium)\//.test(ua) ? 'chrome' : 'other')
+}
+
+/** Où installer l'extension : Firefox Add-ons pour Firefox, la release GitHub
+ *  pour les autres (Chrome, Edge, Brave). */
+export function installUrlFor(st, ua) {
+  return extBrowser(st, ua) === 'firefox' ? AMO_URL : INSTALL_URL
+}
+
 /** Mise à jour à proposer : { latest, current } quand l'extension détectée
  *  (branchée ou connexion au site coupée) est plus ancienne que `latest` ;
- *  null sinon — absente, pas encore détectée, à jour, version illisible. */
-export function updateFor(st, latest = CONNECT_LATEST) {
+ *  null sinon — absente, pas encore détectée, à jour, version illisible, et
+ *  sur Firefox : celle d'AMO se met à jour seule, et la nouvelle version n'y
+ *  est qu'une fois relue par Mozilla (le bandeau l'annoncerait trop tôt). */
+export function updateFor(st, latest = CONNECT_LATEST, ua) {
   if (st?.availability !== 'on' && st?.availability !== 'off') return null
+  if (extBrowser(st, ua) === 'firefox') return null
   return compareVersions(st.version, latest) < 0 ? { latest, current: st.version } : null
 }
 
 /** Ce que le signal d'usage (usage.js) dit de l'extension, rien d'autre (ni
  *  réglages ni session) : { ext: '0.1.0', extBrowser } si elle est là,
  *  { ext: 'none' } si elle est absente, {} tant que la détection n'a pas
- *  abouti. Navigateur d'après `hello` ; une annonce arrivée avant lui (ou
- *  après une installation, page ouverte) ne le donne pas : celui de la page
- *  alors, le même (Edge, Brave… font tourner la version Chrome). */
+ *  abouti. */
 export function usageFields(st, ua = globalThis.navigator?.userAgent ?? '') {
   if (st?.availability === 'absent') return { ext: 'none' }
   if (st?.availability !== 'on' && st?.availability !== 'off') return {}
   if (!USAGE_VERSION_RE.test(st.version ?? '')) return {}
-  const browser = st.browser ?? (/Firefox\//.test(ua) ? 'firefox' : /Chrom(e|ium)\//.test(ua) ? 'chrome' : 'other')
-  return { ext: st.version, extBrowser: browser }
+  return { ext: st.version, extBrowser: extBrowser(st, ua) }
 }
 /** Liste fermée du protocole : rien d'autre ne part. `hq.*` : extension
  *  0.2.0 et plus seulement (qualités supérieures, hq.js) ; `follow.*`,

@@ -15,7 +15,7 @@ import * as usage from './usage.js'
 import * as multi from './multi.js'
 import * as dl from './download.js'
 import { CHANGELOG } from './changelog.js'
-import { ACCOUNT_MIN_VERSION, EVENTS_KEEP_EVERY, INSTALL_URL as CONNECT_INSTALL_URL, canAccount, compareVersions, connect } from './connect.js'
+import { ACCOUNT_MIN_VERSION, EVENTS_KEEP_EVERY, canAccount, compareVersions, connect, extBrowser, installUrlFor } from './connect.js'
 import { errorText as connectErrorText, freshDrop } from './chat/connect-live.js'
 import { captureGlobalErrors, clearErrors, errorCount, errorLines, logError } from './errlog.js'
 import { initConnectUpdate } from './connect-update.js'
@@ -5762,7 +5762,7 @@ function connectSectionInner() {
     <p class="muted small cx-about">${esc(t('connect_privacy'))}</p>
     <div class="sheet-group">
       ${drops}
-      <a class="sheet-row" href="${CONNECT_INSTALL_URL}" target="_blank" rel="noopener">${icon('github', 18)}<span>${esc(t(installed ? 'connect_page' : 'connect_install'))}</span>${icon('external', 16)}</a>
+      <a class="sheet-row" href="${installUrlFor(s)}" target="_blank" rel="noopener">${icon(extBrowser(s) === 'firefox' ? 'download' : 'github', 18)}<span>${esc(t(installed ? 'connect_page' : 'connect_install'))}</span>${icon('external', 16)}</a>
     </div>`
 }
 
@@ -5774,7 +5774,7 @@ let hqCodecsText = ''
 function hqSettingInner() {
   if (!hqAvailable(connect.state())) {
     return `<p class="muted small hq-need">${esc(t('hq_needs_ext'))}
-      <a href="${CONNECT_INSTALL_URL}" target="_blank" rel="noopener">${esc(t('hq_get_ext'))}</a></p>`
+      <a href="${installUrlFor(connect.state())}" target="_blank" rel="noopener">${esc(t('hq_get_ext'))}</a></p>`
   }
   if (!hqCodecsText) {
     browserCodecs().then((list) => {

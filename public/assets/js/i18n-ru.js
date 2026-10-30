@@ -563,7 +563,7 @@ export const RU = {
   connect_update_get: 'Скачать',
   connect_update_how: 'Как обновить?',
   connect_update_chrome: 'Chrome, Edge, Brave: замените содержимое папки расширения содержимым нового zip-архива (twitchunblock-connect-chrome.zip), затем нажмите стрелку ↻ на его карточке на странице расширений.',
-  connect_update_firefox: 'Firefox: установите его заново из нового zip-архива (twitchunblock-connect-firefox.zip): about:debugging#/runtime/this-firefox → «Загрузить временное дополнение…».',
+  connect_update_firefox: 'Firefox: установите его из Firefox Add-ons (addons.mozilla.org) — дальше оно обновляется само.',
   connect_login_twitch: 'Баллы и ставки: войдите на twitch.tv в этом браузере',
   connect_confirm: 'Подтвердить',
   connect_sending: 'Отправка…',

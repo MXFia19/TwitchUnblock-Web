@@ -11,7 +11,7 @@ import {
 import { ConnectLive, errorText, freshDrop, isRepeatClick } from '../public/assets/js/chat/connect-live.js'
 import { t } from '../public/assets/js/i18n.js'
 // Version publiée : bandeau de mise à jour et comptage d'usage.
-import { CONNECT_LATEST, INSTALL_URL, compareVersions, updateFor, usageFields } from '../public/assets/js/connect.js'
+import { AMO_URL, CONNECT_LATEST, INSTALL_URL, compareVersions, installUrlFor, updateFor, usageFields } from '../public/assets/js/connect.js'
 import { updateBannerHtml } from '../public/assets/js/connect-update.js'
 import { esc } from '../public/assets/js/util.js'
 
@@ -571,6 +571,18 @@ test('mise à jour proposée seulement à une extension détectée plus ancienne
   for (const a of ['idle', 'detecting', 'absent']) assert.equal(updateFor(cxState(a, '0.1.0'), '0.2.0'), null, a)
   for (const v of [null, 'n/a']) assert.equal(updateFor(cxState('on', v), '0.2.0'), null, String(v))
   assert.equal(updateFor(cxState('on', CONNECT_LATEST)), null, 'dernière publiée par défaut')
+  // Firefox : celle de Firefox Add-ons se met à jour seule, pas de bandeau.
+  assert.equal(updateFor(cxState('on', '0.1.0', 'firefox'), '0.2.0'), null, 'Firefox')
+  assert.equal(updateFor(cxState('on', '0.1.0', null), '0.2.0', UA_FIREFOX), null, 'Firefox d’après la page')
+  assert.deepEqual(updateFor(cxState('on', '0.1.0', null), '0.2.0', UA_EDGE), { latest: '0.2.0', current: '0.1.0' }, 'Edge d’après la page')
+})
+
+test('lien d’installation : Firefox Add-ons sur Firefox, la release GitHub ailleurs', () => {
+  assert.equal(installUrlFor(cxState('on', '0.2.0', 'firefox')), AMO_URL)
+  assert.equal(installUrlFor(cxState('on', '0.2.0', 'chrome')), INSTALL_URL)
+  assert.equal(installUrlFor(cxState('absent', null, null), UA_FIREFOX), AMO_URL, 'sans extension : navigateur de la page')
+  assert.equal(installUrlFor(cxState('absent', null, null), UA_EDGE), INSTALL_URL)
+  assert.match(AMO_URL, /^https:\/\/addons\.mozilla\.org\/firefox\/addon\/twitchunblock-connect\/$/)
 })
 
 test('bandeau : versions, lien de téléchargement, étapes du navigateur, texte échappé', () => {
@@ -582,8 +594,10 @@ test('bandeau : versions, lien de téléchargement, étapes du navigateur, texte
   assert.ok(has(chrome, 'connect_update_chrome') && !has(chrome, 'connect_update_firefox'))
   const firefox = updateBannerHtml(upd, 'firefox')
   assert.ok(has(firefox, 'connect_update_firefox') && !has(firefox, 'connect_update_chrome'))
+  assert.ok(firefox.includes(`href="${esc(AMO_URL)}"`), 'Firefox : Firefox Add-ons')
   const unknown = updateBannerHtml(upd, null)
   assert.ok(has(unknown, 'connect_update_chrome') && has(unknown, 'connect_update_firefox'), 'navigateur inconnu : les deux')
+  assert.ok(unknown.includes(`href="${esc(INSTALL_URL)}"`))
   assert.ok(chrome.includes('data-cxu-close'), 'fermable')
   assert.ok(!updateBannerHtml({ latest: '<img src=x>', current: '"><b>' }).includes('<img'), 'échappé')
 })
