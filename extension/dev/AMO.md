@@ -98,53 +98,47 @@ with its own source code zip. Upload it from the add-on's page in the Developer 
 
 > What it does: a bridge between https://twitchunblock.vercel.app (our website, a Twitch
 > viewer) and the user's Twitch session in this browser. The website talks to a content
-> script (top frame only, only on the website's origin, https://twitchunblock.vercel.app).
-> The background checks the sender, origin, frame and arguments, and only performs a closed
-> list of operations (PROTOCOL.md): hello, status, points.get, points.claim, watch.beat,
-> predictions.get, predictions.bet, polls.get, polls.vote, raid.join, drops.get,
-> drops.claim, drops.pulse, rewards.get, rewards.redeem, hq.master, hq.playlist,
-> follow.get, follow.set, clips.create, drops.inventory, events.keep. No generic request
-> relay, no externally_connectable, no web_accessible_resources, no remote code, no
-> analytics.
+> script (top frame only, on the website's origin). The background checks the sender,
+> origin, frame and arguments, and only performs a closed list of operations
+> (PROTOCOL.md: points, predictions, polls, raids, drops, rewards, 1440p playlists, follow,
+> clips, account events). No generic request relay, no externally_connectable, no
+> web_accessible_resources, no remote code, no analytics.
 >
-> Account events (events.keep): while a website tab asks for them, the background keeps one
-> WebSocket to wss://hermes.twitch.tv (Twitch's own, as on twitch.tv), authenticated with
-> the session, subscribed only to the account's points, predictions and drops topics; the
-> page gets reduced events (numbers and ids). Closed 90 s after the last request.
+> Account events: while a website tab asks for them, the background keeps one WebSocket to
+> wss://hermes.twitch.tv (Twitch's own, as on twitch.tv), subscribed only to the account's
+> points, predictions and drops topics; the page gets reduced events (numbers and ids).
+> Closed 90 s after the last request.
 >
 > Data: requests go only to Twitch, with the user's existing session (the auth-token
 > cookie, read on each use, never copied, never given to the page). Nothing is sent to the
-> developer. Declared data collection: authenticationInfo (the session sent to Twitch) and
-> websiteActivity (actions and watch presence sent to Twitch). Privacy policy: PRIVACY.md.
+> developer. Declared data collection: authenticationInfo and websiteActivity, both only
+> sent to Twitch. Privacy policy: PRIVACY.md.
 >
 > Permissions:
 > - cookies: read the Twitch session;
 > - storage: settings (local) and session state (storage.session);
-> - scripting: Twitch requires a Client-Integrity token for mutations. The extension has a
->   www.twitch.tv page make Twitch's own POST https://gql.twitch.tv/integrity with
->   scripting.executeScript (world MAIN, a function bundled in background.js), using a
->   twitch.tv tab that is already open, or an inactive, muted tab it opens and closes
->   (tabs are found by their address through the host permissions: no "tabs" permission);
-> - hosts: *.twitch.tv; static.twitchcdn.net (twitch.tv's settings file, which holds the
->   watch statistics address); usher.ttvnw.net and *.playlist.ttvnw.net (live playlists, for
->   drops progress and 1440p); *.hls.ttvnw.net (HEAD requests on segments, for drops); the
->   website's origin (content script).
+> - scripting: Twitch requires a Client-Integrity token for mutations; a www.twitch.tv tab
+>   (an open one, or an inactive, muted tab opened and closed for it) makes Twitch's own
+>   POST https://gql.twitch.tv/integrity via scripting.executeScript (world MAIN, a function
+>   bundled in background.js). Tabs are found through the host permissions: no "tabs";
+> - hosts: *.twitch.tv; static.twitchcdn.net (settings file with the watch statistics
+>   address); usher.ttvnw.net and *.playlist.ttvnw.net (live playlists: drops, 1440p);
+>   *.hls.ttvnw.net (HEAD on segments, drops); the website's origin (content script).
 >
-> Spending points (bets, votes, rewards) needs a real click on the website
-> (navigator.userActivation is checked) and the website's confirmation; it can be turned off
-> in the extension's window. Following a channel and creating a clip need a real click too.
+> Spending points (bets, votes, rewards), following and creating a clip need a real click
+> on the website (navigator.userActivation is checked); spending also needs the website's
+> confirmation and can be turned off in the extension's window.
 >
 > How to test: log in on https://www.twitch.tv in Firefox, then open
 > https://twitchunblock.vercel.app and a live channel: the channel points button shows the
-> balance read by the extension. Settings → Player → "Higher qualities" uses hq.master and
-> hq.playlist. A Twitch account is required: any free account works (sign up on
-> https://www.twitch.tv); the extension only uses the session of the browser it runs in.
+> balance read by the extension. Settings → Player → "Higher qualities" uses the playlists.
+> Any free Twitch account works; the extension only uses this browser's session.
 >
-> Source code: the Firefox package is generated from the Chrome folder by
-> extension/dev/build-firefox.mjs (only manifest.json is rewritten; every other file is
-> copied unchanged, without the dev/ and tests/ folders). The source package is attached to
-> this version, with BUILD.md at its root. Build: Node.js 22 or later, no npm dependencies,
-> then node extension/dev/build-firefox.mjs. Tests: node extension/tests/run.mjs.
+> Source code: the Firefox package is built from the Chrome folder by
+> extension/dev/build-firefox.mjs (only manifest.json is rewritten, other files copied
+> unchanged, without dev/ and tests/). The source package (BUILD.md at its root) is
+> attached. Build: Node.js 22+, no npm dependencies: node extension/dev/build-firefox.mjs.
+> Tests: node extension/tests/run.mjs.
 
 Never put the developer's own Twitch login in these notes. If reviewers ask for an account,
 create a dedicated test account for them.

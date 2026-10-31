@@ -6,8 +6,9 @@
 //   node extension/dev/amo-publish.mjs --check
 //
 // Clés : AMO_JWT_ISSUER et AMO_JWT_SECRET (secrets GitHub ; Developer Hub →
-// Manage API Keys). Rien n'est envoyé si la version est déjà sur AMO, en
-// relecture comprise : un numéro envoyé ne se réutilise jamais.
+// Manage API Keys). Aucun paquet n'est envoyé si la version est déjà sur
+// AMO, en relecture comprise : un numéro envoyé ne se réutilise jamais ;
+// seules ses notes sont ajoutées si elles lui manquent.
 // Étapes : envoi du paquet (canal « listed ») → validation de Mozilla →
 // version créée avec son code source → notes de version et notes aux
 // relecteurs (dev/AMO.md ; l'API refuse ces deux champs dans la requête
@@ -25,6 +26,10 @@ const API = (process.env.AMO_API || "https://addons.mozilla.org/api/v5").replace
 // Validation d'un envoi : quelques secondes à quelques minutes chez Mozilla.
 const POLL_MS = Number(process.env.AMO_POLL_MS) || 5000;
 const POLL_MAX_MS = 15 * 60 * 1000;
+// AMO refuse des notes aux relecteurs de plus de 3 000 caractères (vu le
+// 31/10 : la 0.3.0 était créée, ses notes non) ; même plafond pour les notes
+// de version, par prudence.
+export const NOTES_MAX = 3000;
 
 /** Lignes de la citation Markdown (« > ») qui suit la ligne `heading` ; null
  *  sans ligne ou sans citation. */
@@ -53,6 +58,17 @@ export function releaseNotes(md, version) {
 export function reviewerNotes(md) {
   const quote = quoteAfter(md, "## Notes for Reviewers");
   return quote ? quote.join("\n").trim() || null : null;
+}
+
+/** Ce qui cloche dans les notes avant tout envoi (absentes, trop longues
+ *  pour AMO), ou null. */
+export function notesProblem(version, notes, approval) {
+  if (!notes) return `pas de notes de version pour ${version} dans extension/dev/AMO.md (« ## Release notes » → « ### ${version} »)`;
+  if (!approval) return "pas de notes aux relecteurs dans extension/dev/AMO.md (« ## Notes for Reviewers »)";
+  for (const [what, text] of [["notes de version", notes], ["notes aux relecteurs", approval]]) {
+    if (text.length > NOTES_MAX) return `${what} trop longues pour AMO : ${text.length} caractères, ${NOTES_MAX} au plus (extension/dev/AMO.md)`;
+  }
+  return null;
 }
 
 /** Jeton d'une requête : JWT HS256 signé avec le secret, valable 60 s
@@ -115,15 +131,30 @@ async function publish(pkg, source, version, notes, approval) {
     return { status: r.status, ok: r.ok, data, text: text.slice(0, 500) };
   }
 
-  // 1. Déjà sur AMO (publique, en relecture ou refusée) : rien à faire.
+  // 1. Déjà sur AMO (publique, en relecture ou refusée) : pas de paquet ;
+  // ses notes seulement si elles lui manquent (envoi interrompu après la
+  // création de la version, comme la 0.3.0 le 31/10).
   const list = await call("GET", `/addons/addon/${id}/versions/?filter=all_without_unlisted&page_size=50`);
   if (list.status === 401 || list.status === 403) {
     fail(`clés refusées (HTTP ${list.status}, ${list.data?.detail || "sans détail"}) : ${keyHint(issuer, secret)}. `
       + "À reprendre sur https://addons.mozilla.org/developers/addon/api/key/");
   }
   if (!list.ok || !Array.isArray(list.data?.results)) fail(`liste des versions illisible (HTTP ${list.status}) ${list.text}`);
-  if (list.data.results.some((v) => v.version === version)) {
-    summary(`TwitchUnblock Connect ${version} est déjà sur AMO : rien d'envoyé.`);
+  const existing = list.data.results.find((v) => v.version === version);
+  if (existing) {
+    const current = typeof existing.release_notes === "string" ? existing.release_notes : existing.release_notes?.["en-US"];
+    if (current) {
+      summary(`TwitchUnblock Connect ${version} est déjà sur AMO, avec ses notes : rien d'envoyé.`);
+      return;
+    }
+    const set = await call("PATCH", `/addons/addon/${id}/versions/${existing.id}/`, {
+      json: { release_notes: { "en-US": notes }, approval_notes: approval }
+    });
+    if (!set.ok) {
+      fail(`version ${version} déjà sur AMO (id ${existing.id}), mais notes refusées (HTTP ${set.status}) ${set.text} : `
+        + "les ajouter dans le Developer Hub (Manage Status & Versions)");
+    }
+    summary(`TwitchUnblock Connect ${version} est déjà sur AMO : ses notes manquaient, elles sont ajoutées (version ${existing.id}).`);
     return;
   }
 
@@ -179,8 +210,10 @@ async function main(args) {
   const md = readFileSync(join(EXT, "dev", "AMO.md"), "utf8");
   const notes = releaseNotes(md, version);
   const approval = reviewerNotes(md);
-  if (!notes) fail(`pas de notes de version pour ${version} dans extension/dev/AMO.md (« ## Release notes » → « ### ${version} »)`);
-  if (!approval) fail("pas de notes aux relecteurs dans extension/dev/AMO.md (« ## Notes for Reviewers »)");
+  // Avant tout envoi, --check compris : trop longues, AMO créait la version
+  // puis refusait ses notes.
+  const problem = notesProblem(version, notes, approval);
+  if (problem) fail(problem);
   if (args[0] === "--check") {
     console.log(`Notes de version ${version} pour AMO :\n${notes}`);
     return;

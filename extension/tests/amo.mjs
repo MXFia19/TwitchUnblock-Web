@@ -13,7 +13,7 @@ import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { amoJwt, keyHint, releaseNotes, reviewerNotes } from "../dev/amo-publish.mjs";
+import { NOTES_MAX, amoJwt, keyHint, notesProblem, releaseNotes, reviewerNotes } from "../dev/amo-publish.mjs";
 
 const DIR = join(dirname(fileURLToPath(import.meta.url)), "..");
 const SCRIPT = join(DIR, "dev", "amo-publish.mjs");
@@ -56,7 +56,10 @@ async function fakeAmo(opts = {}) {
     if (call.auth) return send(401, { detail: call.auth });
     const form = () => new Response(raw, { headers: { "content-type": req.headers["content-type"] || "" } }).formData();
     const base = `/api/v5/addons/addon/${GUID}/versions/`;
-    if (req.method === "GET" && call.path === base) return send(200, { count: o.versions.length, results: o.versions.map((version, i) => ({ id: i + 1, version })) });
+    // Version : un numéro (sans notes), ou { version, release_notes }.
+    if (req.method === "GET" && call.path === base) {
+      return send(200, { count: o.versions.length, results: o.versions.map((v, i) => (typeof v === "string" ? { id: i + 1, version: v, release_notes: null } : { id: i + 1, ...v })) });
+    }
     if (req.method === "POST" && call.path === "/api/v5/addons/upload/") {
       const f = await form();
       const file = f.get("upload");
@@ -81,10 +84,11 @@ async function fakeAmo(opts = {}) {
       if (o.create !== 201) return send(o.create, { detail: "refusé" });
       return send(201, { id: 4242, version: VERSION, file: { status: "unreviewed" } });
     }
-    if (req.method === "PATCH" && call.path === `${base}4242/`) {
+    const patched = /^(\d+)\/$/.exec(call.path.slice(base.length));
+    if (req.method === "PATCH" && call.path.startsWith(base) && patched) {
       call.json = JSON.parse(raw.toString("utf8"));
       call.contentType = req.headers["content-type"];
-      return send(o.patch, o.patch === 200 ? { id: 4242, version: VERSION } : { detail: "refusé" });
+      return send(o.patch, o.patch === 200 ? { id: Number(patched[1]), version: VERSION } : { detail: "refusé" });
     }
     send(404, { detail: "inconnu" });
   });
@@ -113,6 +117,15 @@ test("notes de la version du manifeste et notes aux relecteurs lues dans AMO.md"
   assert.ok(approval.includes("How to test") && approval.includes("closed"), "notes aux relecteurs");
   assert.ok(!approval.includes("Never put the developer"), "pas le texte hors citation");
   assert.ok(!/^>/m.test(approval));
+  assert.equal(notesProblem(VERSION, notes, approval), null, `dans les ${NOTES_MAX} caractères d'AMO`);
+});
+
+test("notes trop longues ou absentes : dit lesquelles, avant tout envoi", () => {
+  assert.match(notesProblem(VERSION, "ok", "x".repeat(NOTES_MAX + 1)), /notes aux relecteurs trop longues.*3001/);
+  assert.match(notesProblem(VERSION, "x".repeat(NOTES_MAX + 5), "ok"), /notes de version trop longues/);
+  assert.match(notesProblem(VERSION, null, "ok"), /pas de notes de version/);
+  assert.match(notesProblem(VERSION, "ok", null), /pas de notes aux relecteurs/);
+  assert.equal(notesProblem(VERSION, "x".repeat(NOTES_MAX), "x".repeat(NOTES_MAX)), null, "3000 tout juste : accepté");
 });
 
 test("jeton : HS256 signé avec le secret, 60 s, identifiant unique", () => {
@@ -149,13 +162,35 @@ test("version absente : paquet envoyé et validé, version créée avec son code
   } finally { await amo.close(); }
 });
 
-test("déjà sur AMO (en relecture comprise) : rien d'envoyé", async () => {
-  const amo = await fakeAmo({ versions: ["0.2.0", VERSION] });
+test("déjà sur AMO avec ses notes (en relecture comprise) : rien d'envoyé", async () => {
+  const amo = await fakeAmo({ versions: ["0.2.0", { version: VERSION, release_notes: { "en-US": "notes déjà là" } }] });
   try {
     const r = await run(amo.api);
     assert.equal(r.code, 0, r.out);
     assert.equal(amo.calls.length, 1, "seulement la liste");
-    assert.match(r.out, /déjà sur AMO/);
+    assert.match(r.out, /déjà sur AMO, avec ses notes/);
+  } finally { await amo.close(); }
+});
+
+test("déjà sur AMO sans ses notes (envoi interrompu) : notes ajoutées, pas de paquet", async () => {
+  const amo = await fakeAmo({ versions: ["0.2.0", VERSION] });
+  try {
+    const r = await run(amo.api);
+    assert.equal(r.code, 0, r.out);
+    assert.deepEqual(amo.calls.map((c) => c.method), ["GET", "PATCH"], "ni envoi ni création");
+    const patch = amo.calls[1];
+    assert.ok(patch.path.endsWith("/versions/2/"), "la version déjà là (id 2)");
+    assert.deepEqual(patch.json, { release_notes: { "en-US": releaseNotes(MD, VERSION) }, approval_notes: reviewerNotes(MD) });
+    assert.match(r.out, /notes manquaient, elles sont ajoutées/);
+  } finally { await amo.close(); }
+});
+
+test("déjà sur AMO, notes refusées : échec qui le dit", async () => {
+  const amo = await fakeAmo({ versions: [VERSION], patch: 400 });
+  try {
+    const r = await run(amo.api);
+    assert.notEqual(r.code, 0);
+    assert.match(r.out, /déjà sur AMO \(id 1\), mais notes refusées \(HTTP 400\)/);
   } finally { await amo.close(); }
 });
 
@@ -209,7 +244,7 @@ test("clés absentes : arrêt avant toute requête", async () => {
 });
 
 test("clés entourées d'espaces ou de retours à la ligne : retirés, clés acceptées", async () => {
-  const amo = await fakeAmo({ versions: [VERSION] });
+  const amo = await fakeAmo({ versions: [{ version: VERSION, release_notes: { "en-US": "notes déjà là" } }] });
   try {
     const r = await run(amo.api, [PKG, SRC], { AMO_JWT_ISSUER: ` ${ISSUER}\n`, AMO_JWT_SECRET: `${SECRET}\r\n` });
     assert.equal(r.code, 0, r.out);
