@@ -337,7 +337,7 @@ export async function getChannelInfo(login) {
   const data = await gql(`query($l: String!) {
     user(login: $l) {
       id login displayName profileImageURL(width: 150) lastBroadcast { startedAt }
-      stream { id title viewersCount createdAt game { id displayName name } previewImageURL(width: 640, height: 360) freeformTags { name } }
+      stream { id title viewersCount createdAt game { id displayName name } previewImageURL(width: 640, height: 360) freeformTags { name } archiveVideo { id } }
       broadcastSettings { title game { id displayName } }
     }
   }`, { l: login })

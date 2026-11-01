@@ -116,7 +116,7 @@ export const ZH_HANT = {
   hq_ad_fallback: 'Twitch 廣告時間：改以 {q} 無廣告播放',
   hq_ad_back: '廣告時間結束：回到 {q}',
   src_account: '你的 Twitch 帳號',
-  go_live: '回到直播',
+  go_live: '回到直播', back_to_live: '回到直播',
   chat: '聊天室',
   pip: '子母畫面',
   fullscreen: '全螢幕',

@@ -115,7 +115,7 @@ export const RU = {
   hq_ad_fallback: 'Реклама Twitch: {q} без рекламы',
   hq_ad_back: 'Реклама закончилась: снова {q}',
   src_account: 'Ваш аккаунт Twitch',
-  go_live: 'К прямому эфиру',
+  go_live: 'К прямому эфиру', back_to_live: 'Вернуться к эфиру',
   chat: 'Чат',
   pip: 'Картинка в картинке',
   fullscreen: 'Полный экран',

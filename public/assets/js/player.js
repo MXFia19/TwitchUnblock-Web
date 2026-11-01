@@ -1009,6 +1009,7 @@ export class Player {
             <span class="p-time vod-only"></span>
             <button class="p-live live-only" type="button"><span class="dot"></span><span class="p-live-text"></span></button>
             <button class="p-latency live-only" type="button" data-i18n-title="go_live"></button>
+            <button class="p-live p-back-live vod-only behind" type="button" hidden><span class="dot"></span><span class="p-back-live-text"></span></button>
             <button class="p-btn p-chapters vod-only" type="button" hidden data-i18n-title="chapters">${icon('list', 18)}<span class="p-chap-label"></span>${icon('chevronUp', 14)}</button>
             <span class="p-spacer"></span>
             <button class="p-btn p-quality" type="button" data-i18n-title="quality">${icon('settings', 20)}<span class="p-q-label"></span><span class="p-q-speed"></span></button>
@@ -1029,6 +1030,7 @@ export class Player {
       played: q('.p-played'), knob: q('.p-knob'), tip: q('.p-tip'),
       play: q('.p-play'), back: q('.p-back'), fwd: q('.p-fwd'), mute: q('.p-mute'), vol: q('.p-vol'),
       time: q('.p-time'), live: q('.p-live'), liveText: q('.p-live-text'), latency: q('.p-latency'),
+      backLive: q('.p-back-live'),
       quality: q('.p-quality'), qLabel: q('.p-q-label'), qSpeed: q('.p-q-speed'), chat: q('.p-chat'), pip: q('.p-pip'), fs: q('.p-fs'), theatre: q('.p-theatre'), chapBtn: q('.p-chapters'), chapLabel: q('.p-chap-label'),
       menu: q('.p-menu'), mutedNote: q('.p-mutednote'), mutedText: q('.p-mutednote-text'), mutedSkip: q('.p-mutednote-skip'),
       ad: q('.p-adbreak'), adTitle: q('.p-adbreak-title'), adSub: q('.p-adbreak-sub'), adHint: q('.p-adbreak-hint'),
@@ -1094,6 +1096,7 @@ export class Player {
     on(this.el.fwd, () => this.seekBy(10))
     on(this.el.mute, () => this.toggleMute())
     on(this.el.live, () => this.goLive())
+    on(this.el.backLive, () => this.backToLive?.())
     // La latence aussi : un clic ramène au bord du direct, sans recharger.
     on(this.el.latency, () => this.goLive())
     on(this.el.quality, () => this.toggleMenu())
@@ -1139,7 +1142,9 @@ export class Player {
       this.root.classList.remove('scrubbing')
       this.el.tip.hidden = true
       const target = this.positionFrom(e)
-      if (target !== null) this.video.currentTime = target
+      if (target === null) return
+      if (this.kind === 'live') this.rewindLiveTo(this.liveElapsed() - target)
+      else this.video.currentTime = target
     }
     prog.addEventListener('pointerup', end)
     prog.addEventListener('pointercancel', end)
@@ -1185,6 +1190,10 @@ export class Player {
     this.liveSource = null
     this.root.dataset.kind = kind
     this.el.progress.hidden = kind !== 'vod'
+    this.liveTimeline = null
+    this.root.classList.remove('live-timeline')
+    this.backToLive = null
+    this.el.backLive.hidden = true
     this.setChapters([])
     // Heure réelle : celle de la VOD d'avant oubliée (setBroadcastStart).
     this.broadcastStart = null
@@ -1954,6 +1963,12 @@ export class Player {
       // Bord sans les segments annoncés d'avance : ils ne sont pas encore là.
       // Avancer s'arrête au plancher du retard (MIN_LIVE_DELAY).
       const end = v.seekable.end(v.seekable.length - 1) - (this.prefetchAhead || 0)
+      // Plus loin que ce que garde le direct, VOD enregistrée : on y passe.
+      if (delta < 0 && this.liveTimeline && v.currentTime + delta < start - 0.5) {
+        this.rewindLiveTo(this.liveDelay() - delta)
+        this.flash(`${delta} s`)
+        return
+      }
       const ceiling = end - Math.max(1.5, this.behindTarget ?? this.minBehind())
       const to = Math.max(start, Math.min(ceiling, v.currentTime + delta))
       v.currentTime = to
@@ -2201,6 +2216,10 @@ export class Player {
       this.el.live.title = atEdge ? '' : t('go_live')
       const lat = this.liveDelay()
       this.el.latency.textContent = lat > 0 ? `${lat.toFixed(1)} s` : ''
+      if (this.liveTimeline && !this.dragging) {
+        const total = this.liveElapsed()
+        this.drawPosition((total - lat) / total)
+      }
       this.alignLive()
       this.holdLiveFloor()
       this.checkAdBreak()
@@ -2503,11 +2522,60 @@ export class Player {
   }
 
   positionFrom(e) {
-    const d = this.video.duration
+    const d = this.kind === 'live' ? (this.liveTimeline ? this.liveElapsed() : NaN) : this.video.duration
     if (!Number.isFinite(d) || d <= 0) return null
     const rect = this.el.progress.getBoundingClientRect()
     const r = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width))
     return r * d
+  }
+
+  /** Direct dont Twitch enregistre la VOD : la barre de progression couvre
+   *  toute la diffusion, du début à maintenant. Reculer au-delà de ce que
+   *  garde le direct (~30 s) passe à la VOD, à cet instant :
+   *  `onRewind(behind)` (secondes de retard sur le temps réel) rend vrai
+   *  s'il s'en charge — comme le retour en arrière de Twitch Turbo, et l'app
+   *  iPhone. null : pas de VOD, la barre reste cachée. */
+  setLiveTimeline(timeline) {
+    this.liveTimeline = this.kind === 'live' && timeline?.startedAt > 0 ? timeline : null
+    this.el.progress.hidden = this.kind !== 'vod' && !this.liveTimeline
+    this.root.classList.toggle('live-timeline', Boolean(this.liveTimeline))
+  }
+
+  /** Durée de la diffusion jusqu'à maintenant, en secondes. */
+  liveElapsed() {
+    return Math.max(1, (Date.now() - (this.liveTimeline?.startedAt || Date.now())) / 1000)
+  }
+
+  /** Retard le plus grand que permet le direct : le début de ce qu'il garde. */
+  liveMaxBehind() {
+    const v = this.video
+    const back = v.seekable.length ? Math.max(0, v.currentTime - v.seekable.start(0)) : 0
+    return this.liveDelay() + back
+  }
+
+  /** Être `behind` secondes derrière le temps réel : dans ce que garde le
+   *  direct, sinon par la VOD (onRewind) ; près du bord, le direct. */
+  rewindLiveTo(behind) {
+    const v = this.video
+    const delay = this.liveDelay()
+    if (behind <= delay + 3) { this.goLive(); return }
+    if (behind <= this.liveMaxBehind() + 0.5) {
+      const floor = v.seekable.length ? v.seekable.start(0) : 0
+      v.currentTime = Math.max(floor, v.currentTime - (behind - delay))
+      this.aligned = true
+      this.holdingBehind = true
+      return
+    }
+    if (this.liveTimeline?.onRewind?.(behind)) return
+    if (v.seekable.length) { v.currentTime = v.seekable.start(0); this.aligned = true; this.holdingBehind = true }
+  }
+
+  /** VOD ouverte en reculant sur un direct : un bouton « Revenir au
+   *  direct ». null : caché. */
+  setBackToLive(fn) {
+    this.backToLive = this.kind === 'vod' && typeof fn === 'function' ? fn : null
+    this.el.backLive.hidden = !this.backToLive
+    this.el.backLive.querySelector('.p-back-live-text').textContent = t('back_to_live')
   }
 
   /** Glissement sur la barre : curseur, infobulle ET compteur suivent le
@@ -2516,6 +2584,11 @@ export class Player {
   scrubTo(e) {
     const target = this.positionFrom(e)
     if (target === null) return
+    if (this.kind === 'live') {
+      this.drawPosition(target / this.liveElapsed())
+      this.hoverTip(e)
+      return
+    }
     this.drawPosition(target / this.video.duration)
     this.el.time.textContent = `${formatClock(target)} / ${formatClock(this.video.duration)}${this.clockSuffix(target)}`
     this.hoverTip(e)
@@ -2720,8 +2793,10 @@ export class Player {
 
   /** « · 22:15 » : l'heure réelle d'un instant d'une archive ; vide sinon. */
   clockSuffix(t0) {
-    if (!this.broadcastStart || this.kind !== 'vod' || !Number.isFinite(t0)) return ''
-    return ` · ${new Date(this.broadcastStart + Math.max(0, t0) * 1000).toLocaleTimeString(lang(), { hour: '2-digit', minute: '2-digit' })}`
+    // Direct à barre (setLiveTimeline) : l'heure à laquelle ce moment a été diffusé.
+    const start = this.kind === 'vod' ? this.broadcastStart : this.liveTimeline?.startedAt
+    if (!start || !Number.isFinite(t0)) return ''
+    return ` · ${new Date(start + Math.max(0, t0) * 1000).toLocaleTimeString(lang(), { hour: '2-digit', minute: '2-digit' })}`
   }
 
   /** « Aller à 22:15 » : l'instant de l'archive diffusé à cette heure-là — le

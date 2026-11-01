@@ -4598,6 +4598,13 @@ function renderLiveInfo(info, links) {
   const game = s?.game?.displayName || links?.game || ''
   const gameId = s?.game?.displayName ? s.game.id : ''
   if (state.watch && s?.createdAt) state.watch.startedAt = s.createdAt
+  // VOD en cours d'enregistrement : la barre du lecteur couvre toute la
+  // diffusion, et reculer au-delà de ce que garde le direct l'ouvre.
+  if (state.watch?.kind === 'live') {
+    state.watch.archiveId = s?.archiveVideo?.id || null
+    player?.setLiveTimeline(state.watch.archiveId && s?.createdAt
+      ? { startedAt: Date.parse(s.createdAt), onRewind: rewindLive } : null)
+  }
   $('#watch-title').textContent = name
   setWatchChannel(state.watch?.login)
   $('#mini-title').textContent = `${name}${title ? ` · ${title}` : ''}`
@@ -5107,12 +5114,25 @@ function playNextInPlaylist() {
   else state.playlist = null
 }
 
-async function openVod(id, preset, { keepPlaylist = false, at = null } = {}) {
+/** Reculer sur un direct au-delà de ce qu'il garde : sa VOD en cours
+ *  d'enregistrement, à l'instant visé (`behind` secondes de retard sur le
+ *  temps réel), avec un bouton pour revenir au direct — comme le retour en
+ *  arrière de Twitch Turbo et l'app iPhone (fb_mvwy7swa). Faux sans VOD. */
+function rewindLive(behind) {
+  const w = state.watch
+  if (w?.kind !== 'live' || !w.archiveId || !w.startedAt) return false
+  const at = Math.max(0, Math.floor((Date.now() - Date.parse(w.startedAt)) / 1000 - behind))
+  openVod(w.archiveId, null, { at, fromLive: w.login })
+  return true
+}
+
+async function openVod(id, preset, { keepPlaylist = false, at = null, fromLive = null } = {}) {
   const vodId = String(id)
   if (!keepPlaylist && !state.playlist?.ids.includes(vodId)) state.playlist = null
   stopPlayback()
   const known = preset ?? state.vodMeta.get(vodId) ?? {}
-  state.watch = { kind: 'vod', id: vodId, info: null, links: null }
+  // fromLive : ouverte en reculant sur ce direct (rewindLive).
+  state.watch = { kind: 'vod', id: vodId, info: null, links: null, fromLive }
   const token = state.watch
   showWatch('vod', known.title || `VOD ${vodId}`)
   go(`/videos/${vodId}`, { watch: true })
@@ -5148,6 +5168,7 @@ async function openVod(id, preset, { keepPlaylist = false, at = null } = {}) {
 
   $('#watch-loading').hidden = true
   player.load({ links: links.links, variants: token.variants, kind: 'vod', startAt })
+  player.setBackToLive(token.fromLive ? () => openLive(token.fromLive) : null)
   api.getVodMarkers(vodId).then((m) => {
     if (state.watch !== token) return
     player.setChapters(m.chapters)

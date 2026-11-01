@@ -6,6 +6,26 @@
 
 export const CHANGELOG = [
   {
+    version: '2026.11.01c',
+    items: {
+      fr: [
+        'Revenir en arrière dans un direct, comme avec Twitch Turbo : quand Twitch enregistre la VOD, la barre du lecteur couvre toute la diffusion. Glisse vers la gauche (ou −10 s au-delà de ce que garde le direct) pour revoir un moment, puis « Revenir au direct ».',
+      ],
+      en: [
+        'Rewind a live, like with Twitch Turbo: when Twitch records the VOD, the player bar covers the whole broadcast. Drag left (or −10 s past what the live keeps) to watch a moment again, then “Back to live”.',
+      ],
+      es: [
+        'Retroceder en un directo, como con Twitch Turbo: cuando Twitch graba el VOD, la barra del reproductor cubre toda la emisión. Desliza a la izquierda (o −10 s más allá de lo que guarda el directo) para volver a ver un momento, y luego «Volver al directo».',
+      ],
+      ru: [
+        'Перемотка прямого эфира назад, как с Twitch Turbo: когда Twitch записывает VOD, полоса плеера охватывает всю трансляцию. Сдвиньте влево (или −10 с дальше того, что хранит эфир), чтобы пересмотреть момент, затем «Вернуться к эфиру».',
+      ],
+      'zh-Hant': [
+        '像 Twitch Turbo 一樣倒轉直播：Twitch 錄製 VOD 時，播放器進度列會涵蓋整場直播。向左拖曳（或在超過直播保留範圍時按 −10 秒）即可重看片段，再按「回到直播」。',
+      ],
+    },
+  },
+  {
     version: '2026.11.01b',
     items: {
       fr: [
