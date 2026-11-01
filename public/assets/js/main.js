@@ -6,7 +6,7 @@ import * as api from './api.js'
 import { DEFAULT_PREFS, qualityPrefOf, store } from './store.js'
 import { LANGS, applyStatic, deviceLang, initLang, setLang, t, lang } from './i18n.js'
 import { Player, QUALITY_PREFS, loadHls, pickQuality, qualityText, segmentProxyOn, validQualityPref, validSpeed } from './player.js'
-import { HqLive, browserCodecs, buildHq, codecLabel, hqAvailable, hqCanAsk } from './hq.js'
+import { HqLive, browserCodecs, buildHq, codecLabel, hqAvailable, hqCanAsk, hqMissing } from './hq.js'
 import { ChatView, HIDDEN_EMOTES_MAX, timeLabel, validEmoteCode } from './chat/view.js'
 import { linkifyHtml } from './chat/message.js'
 import { copyBotCommand, showBotCommands } from './chat/botcmds.js'
@@ -3918,7 +3918,7 @@ function setupPlayer() {
     // Réglages depuis le menu du lecteur : la feuille s'ouvre par-dessus la
     // lecture, plein écran compris (openSheet la pose dans l'élément en
     // plein écran).
-    onSettings: (page) => openSettings(page === 'chat' ? 'chat' : 'menu'),
+    onSettings: (page) => openSettings(['chat', 'player', 'connect'].includes(page) ? page : 'menu'),
     // Qualités supérieures (hq.js) : playlists du flux du compte par
     // l'extension, pauses pub et erreur fatale de ce flux.
     hqText: (url) => state.watch?.hq?.text(url) ?? Promise.reject(new Error('hq: none')),
@@ -4287,9 +4287,10 @@ function askHq(login) {
     return { variants: res.variants, codecs, account: res.account }
   })().catch((e) => {
     console.info('[TwitchUnblock] Qualités supérieures indisponibles :', e?.code || e?.message || 'erreur')
-    return null
+    // La raison reste pour le menu de qualité (showHqMissing).
+    return { error: e?.code || 'error' }
   })
-  return { deadline, result: Promise.race([work, new Promise((resolve) => setTimeout(() => resolve(null), HQ_WAIT_MS))]) }
+  return { deadline, result: Promise.race([work, new Promise((resolve) => setTimeout(() => resolve({ error: 'timeout' }), HQ_WAIT_MS))]) }
 }
 
 /** État de l'extension une fois sa détection finie, `ms` au plus. */
@@ -4313,7 +4314,9 @@ function connectSettled(ms) {
  *  source habituelle d'abord, hq.js). null : la source habituelle. */
 async function startHq(token, ask) {
   const got = await ask.result
-  if (!got || state.watch !== token) return null
+  // Gardée pour dire, dans le menu de qualité, pourquoi rien ne dépasse 1080p.
+  token.hqGot = got
+  if (!got?.variants || state.watch !== token) return null
   // Compte sans pub (abonné, ou Turbo que la chaîne accepte) et réglage : tout
   // le direct par lui, comme l'app ; sinon seulement au-dessus de 1080p
   // (réglage « Qualités supérieures »), avec la source sans pub pendant les
@@ -4357,6 +4360,17 @@ async function startHq(token, ask) {
   if (adFree) noticeOnce('hq_account_adfree', t('hq_account_adfree'))
   console.info(adFree ? '[TwitchUnblock] Direct par le compte, sans pub.' : `[TwitchUnblock] Qualités supérieures par le compte : ${hq.top}p.`)
   return live
+}
+
+/** La chaîne diffuse au-dessus de 1080p mais le direct se lit sans : la
+ *  raison (hq.js, hqMissing) dans le menu de qualité, avec la qualité grisée
+ *  et, s'il y en a une, la page des réglages qui y remédie. */
+async function showHqMissing(token) {
+  const [format, codecs] = await Promise.all([api.getStreamFormat(token.login).catch(() => null), browserCodecs()])
+  if (state.watch !== token) return
+  const m = hqMissing({ format, hq: store.prefs.higherQualities, relay: segmentProxyOn(), conn: connect.state(), codecs, got: token.hqGot })
+  if (!m) return
+  player.setQualityNote({ label: `${m.q} (Source)`, text: t(`hq_why_${m.reason}`, { q: m.q, codec: m.codec, e: m.e }), action: m.action })
 }
 
 /** Avis montré une seule fois dans ce navigateur, comme dans l'app : on sait
@@ -4479,6 +4493,9 @@ async function openLive(rawLogin) {
   const play = hq ? hq.current() : { links: links.links, variants: token.variants }
   player.load({ links: play.links, variants: play.variants, kind: 'live' })
   player.setLiveSource(hq ? hq.sourceId() : links.source)
+  // La chaîne diffuse au-dessus de 1080p mais pas ici : pourquoi, dans le
+  // menu de qualité (comme twitch.tv).
+  if (!hq || !store.prefs.higherQualities) showHqMissing(token).catch(() => {})
   chat.openLive({ channel: login, channelId: info?.id ?? null })
   renderLiveInfo(info, links)
   loadFollowState(token)

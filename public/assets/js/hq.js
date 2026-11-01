@@ -153,6 +153,33 @@ export function buildHq(variants, codecs, { canPlay = defaultCanPlay, any = fals
   return { links, variants: info, master, top: video[0].height, topId: video[0].id }
 }
 
+/**
+ * La chaîne diffuse au-dessus de 1080p (`format` : api.getStreamFormat, ce
+ * qu'elle envoie à Twitch) mais le direct se lit sans : pourquoi, pour la
+ * qualité grisée du menu (comme twitch.tv). null : rien à dire (1080p au
+ * plus, format inconnu). `hq` : réglage « Qualités supérieures » ; `relay` :
+ * segments par le relais sur cet appareil ; `conn` : état de connect.js ;
+ * `codecs` : browserCodecs ; `got` : réponse de la liste du compte
+ * ({ variants } ou { error }), s'il y en a eu une. `action` : la page des
+ * réglages qui y remédie (player, connect).
+ */
+export function hqMissing({ format, hq, relay, conn, codecs, got }) {
+  if (!(format?.height > 1080)) return null
+  const q = `${format.height}p${format.fps >= 1 ? Math.round(format.fps) : ''}`
+  const fam = videoFamily(format.codec)
+  const codec = fam === 'h265' || fam === 'av1' ? CODEC_NAMES[fam] : ''
+  const why = (reason, action = null, e = '') => ({ reason, action, q, codec, e })
+  if (!hq) return why('setting', 'player')
+  if (relay) return why('relay')
+  if (conn?.availability !== 'on') return why('ext', 'connect')
+  if (!versionAtLeast(conn.version)) return why('ext_old', 'connect')
+  if (conn.session === null) return why('ext_login', 'connect')
+  if (codec && !(codecs || []).includes(fam)) return why('codec')
+  if (got?.error === 'timeout') return why('slow')
+  if (got?.error) return why('error', 'connect', String(got.error).slice(0, 40))
+  return why('not_offered')
+}
+
 // ── Pause pub au bord du flux du compte ───────────────────────────────────
 const AD_CLASS = 'CLASS="twitch-stitched-ad"'
 const AD_MAX_MS = 200_000

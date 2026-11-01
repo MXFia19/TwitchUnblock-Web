@@ -7,7 +7,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { HQ_CODECS, OPS, cleanArgs, normalize, timeoutFor } from '../public/assets/js/connect.js'
 import {
-  EDGE_WINDOW, HQ_MIN_VERSION, HqLive, buildHq, codecLabel, detectCodecs, edgeAdWait, hqAvailable, hqCanAsk, isHqUrl,
+  EDGE_WINDOW, HQ_MIN_VERSION, HqLive, buildHq, codecLabel, detectCodecs, edgeAdWait, hqAvailable, hqCanAsk, hqMissing, isHqUrl,
   versionAtLeast, videoFamily,
 } from '../public/assets/js/hq.js'
 
@@ -470,6 +470,25 @@ test('identifiants périmés (expired) : nouvelle liste demandée, une fois par 
   await assert.rejects(s.live.text(`tuhq://v/${ID(10)}`))
   await s.clock.advance(1)
   assert.equal(renews, 1)
+})
+
+test('hqMissing : pourquoi la chaîne dépasse 1080p mais pas le direct, dans l’ordre', () => {
+  const format = { height: 1440, fps: 60, codec: 'hev1.1.6.L150.90.0.0.0.0.0' }
+  const on = { availability: 'on', version: '0.4.1', session: { login: 'x' } }
+  const r = (o = {}) => hqMissing({ format, hq: true, relay: false, conn: on, codecs: ['h265', 'h264'], got: { variants: [] }, ...o })
+  assert.equal(r({ format: { height: 1080, fps: 60, codec: 'avc1.4D401F' } }), null, '1080p : rien à dire')
+  assert.equal(r({ format: null }), null, 'format inconnu')
+  assert.deepEqual(r({ hq: false }), { reason: 'setting', action: 'player', q: '1440p60', codec: 'HEVC', e: '' })
+  assert.equal(r({ relay: true }).reason, 'relay')
+  assert.deepEqual([r({ conn: { availability: 'absent' } }).reason, r({ conn: { availability: 'off' } }).action], ['ext', 'connect'])
+  assert.equal(r({ conn: { ...on, version: '0.1.0' } }).reason, 'ext_old')
+  assert.equal(r({ conn: { ...on, session: null } }).reason, 'ext_login')
+  assert.equal(r({ codecs: ['h264'] }).reason, 'codec', 'HEVC non décodé ici (accélération matérielle coupée)')
+  assert.equal(r({ codecs: ['h264'], format: { height: 1440, fps: 60, codec: 'avc1.64002A' } }).reason, 'not_offered', 'en H.264 : pas une question de codec')
+  assert.equal(r({ got: { error: 'timeout' } }).reason, 'slow')
+  assert.deepEqual(r({ got: { error: 'integrity' } }), { reason: 'error', action: 'connect', q: '1440p60', codec: 'HEVC', e: 'integrity' })
+  assert.equal(r().reason, 'not_offered')
+  assert.equal(r({ format: { height: 1440, fps: 0, codec: '' } }).q, '1440p')
 })
 
 test('dernier recours (aucune source habituelle) : une erreur fatale reste au lecteur, aucune bascule', async () => {

@@ -10,15 +10,19 @@ export const CHANGELOG = [
     items: {
       fr: [
         'TwitchUnblock Connect 0.4.1 : avec « Ouvrir twitch.tv sur TwitchUnblock » allumé, les coffres, paris, votes, récompenses et drops remarchent — l’onglet Twitch dont l’extension a besoin pour son jeton partait lui aussi sur le site.',
+        'Lecteur : quand la chaîne diffuse au-dessus de 1080p mais que le site ne le propose pas, le menu de qualité montre ce 1440p grisé, comme twitch.tv, avec la raison — réglage « Qualités supérieures » coupé, extension absente ou à mettre à jour, codec HEVC ou AV1 que le navigateur ne décode pas (accélération matérielle), relais, extension trop lente — et un bouton vers le bon réglage.',
       ],
       en: [
         'TwitchUnblock Connect 0.4.1: with “Open twitch.tv on TwitchUnblock” on, chests, bets, votes, rewards and drops work again — the Twitch tab the extension needs for its token was sent to the site too.',
+        'Player: when the channel streams above 1080p but the site doesn’t offer it, the quality menu shows that 1440p greyed out, like twitch.tv, with the reason — “Higher qualities” off, extension missing or outdated, an HEVC or AV1 codec the browser doesn’t decode (hardware acceleration), the relay, the extension answering too late — and a button to the right setting.',
       ],
       es: [
         'TwitchUnblock Connect 0.4.1: con «Abrir twitch.tv en TwitchUnblock» activado, los cofres, apuestas, votos, recompensas y drops vuelven a funcionar; la pestaña de Twitch que la extensión necesita para su token también se enviaba al sitio.',
+        'Reproductor: cuando el canal emite por encima de 1080p pero el sitio no lo ofrece, el menú de calidad muestra ese 1440p en gris, como twitch.tv, con el motivo —«Calidades superiores» desactivado, extensión ausente o desactualizada, un códec HEVC o AV1 que el navegador no decodifica (aceleración por hardware), el relé, la extensión respondiendo tarde— y un botón al ajuste correcto.',
       ],
       ru: [
         'TwitchUnblock Connect 0.4.1: при включённом «Открывать twitch.tv в TwitchUnblock» сундуки, ставки, голосования, награды и дропсы снова работают — вкладка Twitch, нужная расширению для его токена, тоже уходила на сайт.',
+        'Плеер: если канал вещает выше 1080p, а сайт этого не предлагает, меню качества показывает этот 1440p серым, как twitch.tv, с причиной — выключено «Повышенное качество», нет расширения или оно устарело, кодек HEVC или AV1, который браузер не декодирует (аппаратное ускорение), ретранслятор, расширение ответило слишком поздно — и кнопкой к нужной настройке.',
       ],
     },
   },

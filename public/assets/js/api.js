@@ -344,6 +344,15 @@ export async function getChannelInfo(login) {
   return data?.user ?? null
 }
 
+/** Résolution, cadence et codec de ce que la chaîne envoie à Twitch (pas
+ *  forcément ce que Twitch donne à voir) : à part des infos du direct, pour
+ *  qu'un champ refusé n'y casse rien. null hors direct. */
+export async function getStreamFormat(login) {
+  const data = await gql(`query($l: String!) { user(login: $l) { stream { width height averageFPS codec } } }`, { l: login })
+  const s = data?.user?.stream
+  return s ? { width: Number(s.width) || 0, height: Number(s.height) || 0, fps: Number(s.averageFPS) || 0, codec: typeof s.codec === 'string' ? s.codec : '' } : null
+}
+
 export async function searchChannels(query) {
   const data = await gql(`query($q: String!) {
     searchUsers(userQuery: $q, first: 6) {

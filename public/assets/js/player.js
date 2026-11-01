@@ -1188,6 +1188,7 @@ export class Player {
     this.kind = kind
     this.keepSpeed = kind === 'vod' && !clip
     this.liveSource = null
+    this.qualityNote = null
     this.root.dataset.kind = kind
     this.el.progress.hidden = kind !== 'vod'
     this.liveTimeline = null
@@ -2717,6 +2718,16 @@ export class Player {
     const keys = sortQualities(Object.keys(this.links), this.variants)
     const rate = this.video.playbackRate
     let html = `<div class="p-menu-title">${esc(t('quality'))}</div>`
+    // La chaîne diffuse plus haut que ce qui se lit ici (main.js,
+    // showHqMissing) : pourquoi, puis la qualité grisée, comme twitch.tv.
+    const note = this.kind === 'live' ? this.qualityNote : null
+    if (note) {
+      const act = note.action
+        ? `<button type="button" data-settings="${esc(note.action)}">${esc(t(note.action === 'player' ? 'hq_why_open_setting' : 'hq_why_open_connect'))}</button>`
+        : ''
+      html += `<div class="p-q-why">${icon('info', 15)}<div><p>${esc(note.text)}</p>${act}</div></div>`
+      html += `<button type="button" class="p-q-off" disabled><span>${esc(note.label)}</span></button>`
+    }
     html += keys.map((k) => `<button type="button" data-q="${esc(k)}" class="${k === this.quality ? 'on' : ''}">
       <span>${esc(this.menuLabel(k))}</span>${k === this.quality ? icon('check', 16) : ''}</button>`).join('')
     // Direct : la source (proxy) qui sert le flux, et de quoi en changer.
@@ -2787,6 +2798,11 @@ export class Player {
   }
 
   closeMenu() { this.el.menu.hidden = true; delete this.el.menu.dataset.kind; this.scheduleHide() }
+
+  /** Qualité plus haute chez Twitch qu'ici (main.js, showHqMissing) : grisée
+   *  dans le menu de qualité, avec pourquoi — { label, text, action } ou
+   *  null. Oubliée au chargement suivant. */
+  setQualityNote(note) { this.qualityNote = note || null }
 
   /** Début de la diffusion d'une archive (ms, null sinon) : l'heure réelle
    *  de chaque instant, et « Aller à une heure ». */
