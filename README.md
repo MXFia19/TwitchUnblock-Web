@@ -681,7 +681,10 @@ bot refuses a role managed by an integration, with permissions, or allowed
 into a channel. New test builds are posted in the test builds channel, one
 message per platform (iPhone, Apple TV, Android) that mentions only that
 platform's testers role: the iPhone ones point to the main source (it lists
-TU Test), the Apple TV ones to its test source for ATVLoadly.
+TU Test), the Apple TV ones to its test source for ATVLoadly. Like the
+release pings button, the bot keeps a message at the bottom of that channel
+with one button per platform (📱 iPhone, 📺 Apple TV, 🤖 Android — each
+testers role picked with `/setup`): tapping one takes or drops that role.
 
 **For everyone** (answers only the person sees, in their Discord language
 when it's French, Spanish or Russian, English otherwise; what the bot posts

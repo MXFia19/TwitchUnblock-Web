@@ -34,7 +34,9 @@
 //  testeurs, un message par plateforme (iPhone, Apple TV, Android) avec la
 //  mention de ses testeurs ; /release-pings (ou le bouton posté par /setup,
 //  gardé tout en bas du salon des annonces) : chacun prend ou rend ce rôle
-//  (sans permission ni accès à un salon, vérifié).
+//  (sans permission ni accès à un salon, vérifié) ; de même, en bas du
+//  salon des builds de test, un bouton par plateforme pour le rôle de ses
+//  testeurs.
 //  Rôles : /roles, un menu de ses rôles (ceux de /setup — sorties,
 //  sondages, testeurs de chaque plateforme — et ceux de /roles-config) ;
 //  public:true (développeur) : un message permanent dans le salon, le même
@@ -2078,6 +2080,7 @@ export function startDiscordBridge({
 
   async function onMessage(m) {
     if (!m.guild_id) return onDirectMessage(m)
+    if (m.guild_id === st.guild && m.channel_id && m.channel_id === st.settings.testers) noteTestBuilds(m)
     if (m.guild_id === st.guild && m.channel_id && m.channel_id === st.settings.announcements) return noteAnnouncement(m)
     if (m.guild_id !== st.guild || !st.forum) return
     if (m.author?.id && m.author.id === st.me) return
@@ -2369,6 +2372,11 @@ export function startDiscordBridge({
     call({ action: 'audit', what: 'bot.setup', detail: `${use} → #${i.channel_id}${role ? ` (role ${role})` : ''}`, by: byOf(i.member?.user || i.user) }).catch(() => {})
     // Rôle des sorties : un bouton dans le salon, pour le prendre ou le rendre.
     if (use === 'announcements' && role) await postReleasePing(i.channel_id)
+    // Salon ou rôle des testeurs choisi : les boutons du salon des builds de
+    // test suivent (un par rôle choisi).
+    if (['testers', 'testers-tv', 'testers-android'].includes(use) && settings.testers) {
+      await postTestPing(settings.testers).catch((e) => log.warn(`Discord bridge: test pings buttons not posted (${e.message})`))
+    }
     // Les rôles des sorties, des sondages et des testeurs sont dans la liste
     // de /roles ; un rôle qu'on ne peut pas donner sans risque (permissions,
     // salon qu'il ouvre…) sert aux mentions sans y être proposé.
@@ -2382,7 +2390,7 @@ export function startDiscordBridge({
         ? `Published release notes will go to this channel and mention <@&${role}> (the role must be mentionable). `
           + 'Members take or drop it with /release-pings or the button I just posted — I need “Manage Roles”, above that role.'
         : 'Published release notes will go to this channel (add a role to mention it at each release).',
-      testers: `New test builds will be posted here, one message per platform${role ? `; the iPhone ones mention <@&${role}>` : ''}. The Apple TV and Android ones mention their own testers role (use: “Apple TV testers role”, “Android testers role”).`,
+      testers: `New test builds will be posted here, one message per platform${role ? `; the iPhone ones mention <@&${role}>` : ''}. The Apple TV and Android ones mention their own testers role (use: “Apple TV testers role”, “Android testers role”). Members take or drop these roles with the buttons I keep at the bottom of this channel.`,
       'testers-tv': role ? `Apple TV test builds will mention <@&${role}>.` : 'Apple TV test builds won’t mention anyone.',
       'testers-android': role ? `Android test builds will mention <@&${role}>.` : 'Android test builds won’t mention anyone.',
       todo: 'To-do items will be listed here: right-click a message → Apps → “Add to to-do” (or “Add conversation to to-do” on the first message of a conversation), or /todo.',
@@ -2531,6 +2539,10 @@ export function startDiscordBridge({
       if (patch.announcementsRole || (patch.announcements && st.settings.announcementsRole)) {
         await postReleasePing(st.settings.announcements).catch((e) => log.warn(`Discord bridge: release pings button not posted (${e.message})`))
       }
+      // Rôles des testeurs (ou leur salon) tout juste choisis : leurs boutons.
+      if (st.settings.testers && (patch.testers || TEST_PLATFORMS.some((p) => patch[p.setting]))) {
+        await postTestPing(st.settings.testers).catch((e) => log.warn(`Discord bridge: test pings buttons not posted (${e.message})`))
+      }
       refreshRolesMessage().catch(() => {})
       call({ action: 'audit', what: 'bot.server-setup', detail: `${created.length} created, ${moved.length} moved`, by: byOf(user) }).catch(() => {})
       const set = filledLines(patch)
@@ -2593,6 +2605,9 @@ export function startDiscordBridge({
       if (patch.announcementsRole && st.settings.announcements) {
         await postReleasePing(st.settings.announcements).catch((e) => log.warn(`Discord bridge: release pings button not posted (${e.message})`))
       }
+      if (st.settings.testers && TEST_PLATFORMS.some((p) => patch[p.setting])) {
+        await postTestPing(st.settings.testers).catch((e) => log.warn(`Discord bridge: test pings buttons not posted (${e.message})`))
+      }
     }
     refreshRolesMessage().catch((e) => log.warn(`Discord bridge: roles message not updated (${e.message})`))
     call({ action: 'audit', what: 'bot.onboarding', detail: `${o.made.length} question(s), ${o.replaced.length} replaced, ${o.added.length} default(s) added`, by: byOf(user) }).catch(() => {})
@@ -2614,7 +2629,9 @@ export function startDiscordBridge({
     && (m.components || []).some((r) => (r.components || []).some((c) => c.custom_id === 'rp:toggle'))
 
   function noteAnnouncement(m) {
-    if (!st.settings.announcementsRole || isReleasePing(m)) return
+    // Ses propres boutons ne le font pas redescendre (ni ceux des testeurs,
+    // si c'est le même salon : sinon chacun relançait l'autre sans fin).
+    if (!st.settings.announcementsRole || isReleasePing(m) || isTestPing(m)) return
     clearTimeout(releasePingTimer)
     releasePingTimer = setTimeout(() => {
       postReleasePing(st.settings.announcements)
@@ -2644,6 +2661,68 @@ export function startDiscordBridge({
     const settings = { ...st.settings, releasePingMsg: { channel, id: m.id } }
     await kvSet('settings', settings)
     st.settings = settings
+  }
+
+  // ── Boutons des testeurs, toujours en bas du salon des builds de test ──
+  // Comme celui des sorties : un bouton par plateforme dont le rôle des
+  // testeurs est choisi (/setup), reposté en bas 8 s après chaque nouveau
+  // message du salon (annonces des builds comprises), l'ancien supprimé ;
+  // le message actuel est retenu dans les réglages (testPingMsg).
+  const TEST_PING_TEXT = '🧪 Want a ping when a new test build is out? Tap your platform (tap it again to stop).'
+  const TEST_PLATFORMS = [
+    { key: 'ios', setting: 'testersRole', label: '📱 iPhone (TU Test)', name: 'iPhone' },
+    { key: 'tv', setting: 'testersRoleTv', label: '📺 Apple TV', name: 'Apple TV' },
+    { key: 'android', setting: 'testersRoleAndroid', label: '🤖 Android', name: 'Android' },
+  ]
+  let testPingTimer = null
+  const isTestPing = (m) => m.author?.id === st.me
+    && (m.components || []).some((r) => (r.components || []).some((c) => /^tp:/.test(c.custom_id || '')))
+  const testPingButtons = () => TEST_PLATFORMS.filter((p) => st.settings[p.setting]).map((p) => button(p.label, `tp:${p.key}`, 1))
+
+  function noteTestBuilds(m) {
+    if (!testPingButtons().length || isTestPing(m) || isReleasePing(m)) return
+    clearTimeout(testPingTimer)
+    testPingTimer = setTimeout(() => {
+      postTestPing(st.settings.testers)
+        .catch((e) => log.warn(`Discord bridge: test pings buttons not moved down (${e.message})`))
+    }, 8000)
+  }
+
+  /** Les boutons postés en bas de `channel`, puis l'ancien message supprimé
+   *  (jamais un moment sans) ; plus aucun rôle de testeurs : l'ancien est
+   *  seulement retiré. */
+  async function postTestPing(channel) {
+    if (!channel) return
+    const old = st.settings.testPingMsg
+    const buttons = testPingButtons()
+    const m = buttons.length
+      ? await rest('POST', `/channels/${channel}/messages`, { content: TEST_PING_TEXT, allowed_mentions: { parse: [] }, components: [row(...buttons)] })
+      : null
+    if (old?.id && old.id !== m?.id) await rest('DELETE', `/channels/${old.channel || channel}/messages/${old.id}`).catch(() => {})
+    if (m?.id || old) await saveSettings({ testPingMsg: m?.id ? { channel, id: m.id } : null })
+  }
+
+  /** Un bouton des testeurs : le rôle de sa plateforme, pris ou rendu —
+   *  revérifié avant d'être donné, comme celui des sorties. */
+  async function toggleTesterRole(i, user, key) {
+    const p = TEST_PLATFORMS.find((x) => x.key === key)
+    const role = p ? st.settings[p.setting] : null
+    if (!role || !st.guild) return 'There’s no testers role for these builds yet.'
+    const has = (i.member?.roles || []).includes(role)
+    if (!has) {
+      const problem = await releaseRoleProblem(st.guild, role)
+      if (problem) {
+        log.warn(`Discord bridge: testers role not given — ${problem}`)
+        return '❌ This testers role is unavailable for now (it isn’t safe to hand out) — please tell the developer.'
+      }
+    }
+    try {
+      await rest(has ? 'DELETE' : 'PUT', `/guilds/${st.guild}/members/${user.id}/roles/${role}`)
+    } catch (e) {
+      log.warn(`Discord bridge: testers role not changed (${e.message})`)
+      return `❌ I couldn’t change your roles (${e.message}). The bot needs “Manage Roles”, and its role must be above <@&${role}>.`
+    }
+    return has ? `🔕 You won’t be pinged for new ${p.name} test builds anymore.` : `🧪 You’ll be pinged for each new ${p.name} test build.`
   }
 
   /** Rôles et salons du serveur, et rôles du bot : de quoi vérifier un rôle
@@ -4086,6 +4165,7 @@ export function startDiscordBridge({
       })
     }
     if (kind === 'rp') return deferred(i, () => toggleReleaseRole(i, user))
+    if (kind === 'tp') return deferred(i, () => toggleTesterRole(i, user, a))
     if (kind === 'roles') return onRolesMenu(i, user, a)
     // Menu de /top, vote d'une suggestion, boutons du message de bienvenue
     // (les réponses de /download, /roles et /help, pour soi seul).
@@ -5223,6 +5303,11 @@ export function startDiscordBridge({
         st.labels = c.labels || {}
         st.settings = (await kvGet('settings')) || {}
         refreshTemplates().catch(() => {})
+        // Boutons des testeurs jamais postés (salon et rôles déjà choisis) :
+        // postés une fois, sans attendre un nouveau message du salon.
+        if (st.settings.testers && !st.settings.testPingMsg && TEST_PLATFORMS.some((p) => st.settings[p.setting])) {
+          postTestPing(st.settings.testers).catch((e) => log.warn(`Discord bridge: test pings buttons not posted (${e.message})`))
+        }
         break
       } catch (e) {
         log.warn(`Discord bridge: the Worker doesn’t answer (${e.message}) — trying again in 1 min`
