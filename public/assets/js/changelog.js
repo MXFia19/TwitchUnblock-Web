@@ -6,6 +6,23 @@
 
 export const CHANGELOG = [
   {
+    version: '2026.11.01h',
+    items: {
+      fr: [
+        'Lecteur : quand les serveurs vidéo de Twitch ne répondent pas dans ce navigateur et que la vidéo passe par le relais, un avis dit ce qui bloque d’habitude et comment les laisser passer — sur Firefox, le bouclier de la protection renforcée ; sur Brave, les Shields ; sinon, l’exception dans le bloqueur de pubs. Le menu de qualité donne le même conseil.',
+      ],
+      en: [
+        'Player: when Twitch’s video servers don’t answer in this browser and the video goes through the relay, a notice says what usually blocks them and how to let them through — in Firefox, the Enhanced Tracking Protection shield; in Brave, Shields; otherwise, an exception in your ad blocker. The quality menu gives the same advice.',
+      ],
+      es: [
+        'Reproductor: cuando los servidores de vídeo de Twitch no responden en este navegador y el vídeo pasa por el relé, un aviso explica qué suele bloquearlos y cómo dejarlos pasar: en Firefox, el escudo de la protección mejorada; en Brave, los Shields; si no, la excepción en el bloqueador de anuncios. El menú de calidad da el mismo consejo.',
+      ],
+      ru: [
+        'Плеер: если видеосерверы Twitch не отвечают в этом браузере и видео идёт через ретранслятор, уведомление объясняет, что их обычно блокирует и как их пропустить — в Firefox щит улучшенной защиты, в Brave Shields, иначе исключение в блокировщике рекламы. В меню качества — тот же совет.',
+      ],
+    },
+  },
+  {
     version: '2026.11.01g',
     items: {
       fr: [

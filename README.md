@@ -529,7 +529,10 @@ hour depending on quality); live video segments don't, only their playlists —
 unless a browser can't reach Twitch's CDN (three segments in a row that never
 arrive): that device then sends them through the relay for a week, and goes
 back to direct as soon as the CDN answers again (checked every 10 minutes at
-most).
+most). When it switches, a notice says what usually blocks Twitch's video
+servers in that browser and how to let them through: Firefox's Enhanced
+Tracking Protection (the shield), Brave Shields (the lion), otherwise an ad
+blocker or a filtered network (an exception for the site).
 
 **Oracle Cloud:** open ports 80 and 443 in two places — in the VCN's security
 list (*Networking → Virtual cloud networks → your VCN → Security lists →

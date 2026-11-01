@@ -147,7 +147,9 @@ export function icon(name, size = 20) {
 
 // ── Notifications ──────────────────────────────────────────────────────────
 let toastTimer = null
-export function toast(message, kind = 'info') {
+/** Avis en bas de l'écran ; `ms` : durée d'affichage (plus longue pour un
+ *  conseil à lire). */
+export function toast(message, kind = 'info', ms = 2600) {
   let el = document.getElementById('toast')
   if (!el) {
     el = document.createElement('div')
@@ -158,7 +160,7 @@ export function toast(message, kind = 'info') {
   el.textContent = message
   el.className = `toast show ${kind}`
   clearTimeout(toastTimer)
-  toastTimer = setTimeout(() => { el.className = `toast ${kind}` }, 2600)
+  toastTimer = setTimeout(() => { el.className = `toast ${kind}` }, ms)
 }
 
 export const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent)

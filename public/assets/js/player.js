@@ -10,7 +10,7 @@
 
 import { lang, t } from './i18n.js'
 import { API_URL, RELAY_BASE, WORKER_BASES, fixProxiedUrl, liveSourceOrder, proxyBaseOf } from './api.js'
-import { $, esc, formatClock, icon, isIOS } from './util.js'
+import { $, esc, formatClock, icon, isIOS, toast } from './util.js'
 import { logError } from './errlog.js'
 import { isHqUrl } from './hq.js'
 
@@ -93,7 +93,19 @@ export function noteDirectSegmentError(Hls, data, counter) {
   counter.directFails = 0
   enableSegmentProxy()
   console.info('[TwitchUnblock] Segments directs bloqués : passage par le relais.')
+  // Ce qui bloque d'habitude ces requêtes dans ce navigateur, et comment les
+  // laisser passer (une fois par bascule : le relais est ensuite retenu).
+  toast(`${t('relay_on')} ${t(blockHintKey())}`, 'info', 12000)
   return true
+}
+
+/** Ce qui bloque d'habitude les serveurs vidéo de Twitch dans ce
+ *  navigateur : la protection renforcée de Firefox, les Shields de Brave,
+ *  sinon un bloqueur de pubs ou le réseau. Clé de l'avis à montrer. */
+export function blockHintKey() {
+  if (/\bFirefox\//.test(navigator.userAgent || '')) return 'relay_hint_firefox'
+  if (navigator.brave) return 'relay_hint_brave'
+  return 'relay_hint_blocker'
 }
 
 /** Erreur réseau de hls.js due au relais ou au Worker qui sert la vidéo :

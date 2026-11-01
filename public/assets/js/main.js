@@ -5,7 +5,7 @@
 import * as api from './api.js'
 import { DEFAULT_PREFS, qualityPrefOf, store } from './store.js'
 import { LANGS, applyStatic, deviceLang, initLang, setLang, t, lang } from './i18n.js'
-import { Player, QUALITY_PREFS, loadHls, pickQuality, qualityText, segmentProxyOn, validQualityPref, validSpeed } from './player.js'
+import { Player, QUALITY_PREFS, blockHintKey, loadHls, pickQuality, qualityText, segmentProxyOn, validQualityPref, validSpeed } from './player.js'
 import { HqLive, browserCodecs, buildHq, codecLabel, hqAvailable, hqCanAsk, hqMissing } from './hq.js'
 import { ChatView, HIDDEN_EMOTES_MAX, timeLabel, validEmoteCode } from './chat/view.js'
 import { linkifyHtml } from './chat/message.js'
@@ -4373,7 +4373,10 @@ async function showHqMissing(token) {
   if (state.watch !== token) return
   const m = hqMissing({ format, hq: store.prefs.higherQualities, relay: segmentProxyOn(), conn: connect.state(), codecs, got: token.hqGot })
   if (!m) return
-  player.setQualityNote({ label: `${m.q} (Source)`, text: t(`hq_why_${m.reason}`, { q: m.q, codec: m.codec, e: m.e }), action: m.action })
+  // Relais : ce qui bloque d'habitude les serveurs de Twitch ici, et comment
+  // les laisser passer (Firefox, Brave, bloqueur).
+  const hint = m.reason === 'relay' ? ` ${t(blockHintKey())}` : ''
+  player.setQualityNote({ label: `${m.q} (Source)`, text: t(`hq_why_${m.reason}`, { q: m.q, codec: m.codec, e: m.e }) + hint, action: m.action })
 }
 
 /** Avis montré une seule fois dans ce navigateur, comme dans l'app : on sait
