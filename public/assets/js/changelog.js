@@ -6,6 +6,23 @@
 
 export const CHANGELOG = [
   {
+    version: '2026.11.01e',
+    items: {
+      fr: [
+        'Bouton Discord dans la barre du haut, à côté de « Bug ou idée ? » : plus besoin de le chercher en bas de page.',
+      ],
+      en: [
+        'A Discord button in the top bar, next to “Bug or idea?”: no need to look for it at the bottom of the page.',
+      ],
+      es: [
+        'Botón de Discord en la barra superior, junto a «¿Error o idea?»: ya no hace falta buscarlo al final de la página.',
+      ],
+      ru: [
+        'Кнопка Discord в верхней панели, рядом с «Ошибка или идея?»: больше не нужно искать её внизу страницы.',
+      ],
+    },
+  },
+  {
     version: '2026.11.01d',
     items: {
       fr: [

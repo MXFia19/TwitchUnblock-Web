@@ -193,6 +193,7 @@ input[type='search']::-webkit-search-cancel-button { filter: invert(1) opacity(0
   transition: background 0.15s, border-color 0.15s;
 }
 .feedback-btn:hover { background: rgba(var(--primary-rgb), 0.2); border-color: var(--purple); }
+.discord-btn:hover { color: #5865f2; }
 /* Écran moyen ou petit : l'icône seule, la barre n'a pas la place du texte. */
 @media (max-width: 1200px) {
   .feedback-btn { width: 36px; padding: 0; }
@@ -1308,6 +1309,14 @@ html.multi-open { overflow: hidden; }
   .p-time, .p-live { min-width: 0; flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; }
 }
 @media (max-width: 400px) { .p-back, .p-fwd { display: none; } }
+/* Téléphone : Discord, Bug ou idée, Réglages et le compte tiennent à côté
+   du logo (la barre débordait de quelques pixels). */
+@media (max-width: 420px) {
+  .topbar { gap: 10px; }
+  .topbar-actions { gap: 4px; }
+  .topbar-actions .icon-btn { width: 36px; height: 36px; }
+}
+@media (max-width: 340px) { .brand-name { display: none; } }
 /* Entre 761 et 1 100 px, la barre du haut débordait : les onglets gardent
    leur icône (texte lu par les lecteurs d'écran), le compte son logo. */
 @media (min-width: 761px) and (max-width: 1100px) {

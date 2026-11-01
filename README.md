@@ -179,7 +179,8 @@ Messages, operations, error codes and limits: [`extension/PROTOCOL.md`](extensio
 
 ## Community
 
-Questions, bugs, ideas: **[join the Discord](https://discord.gg/cEsMRdxsVq)**.
+Questions, bugs, ideas: **[join the Discord](https://discord.gg/cEsMRdxsVq)** — the Discord
+button in the website's top bar leads there too.
 
 ---
 
@@ -677,8 +678,10 @@ posts it in the announcements channel, mentioning the release role if you
 picked one. Members take or drop that role with `/release-pings` or the
 **🔔 Release pings** button the bot posts there — so anyone can get it: the
 bot refuses a role managed by an integration, with permissions, or allowed
-into a channel. New test builds are posted in the test builds channel,
-mentioning its role.
+into a channel. New test builds are posted in the test builds channel, one
+message per platform (iPhone, Apple TV, Android) that mentions only that
+platform's testers role: the iPhone ones point to the main source (it lists
+TU Test), the Apple TV ones to its test source for ATVLoadly.
 
 **For everyone** (answers only the person sees, in their Discord language
 when it's French, Spanish or Russian, English otherwise; what the bot posts
@@ -690,8 +693,10 @@ in a channel stays in English):
   bot says what worked ("+A −B") and what didn't. One change every 5 seconds
   per person. The
   developer picks the roles with `/roles-config add role: [description]
-  [emoji]` (again to change them), `remove` and `list`; the release pings
-  role is always in the list. Only safe roles are taken, and they're checked
+  [emoji]` (again to change them), `remove` and `list`; the roles chosen with
+  `/setup` — release pings, polls (*Polls role*), and the iPhone, Apple TV and
+  Android testers — are always in the list (one that isn't safe is only used
+  for mentions). Only safe roles are taken, and they're checked
   again each time one is given: not managed by an integration, without
   permissions, not named in any channel's permissions, below the bot's own
   role. A role that stops being safe is no longer shown nor given, and the
@@ -702,14 +707,18 @@ in a channel stays in English):
   replaces the previous one; it follows `/roles-config` and `/setup` changes.
 - `/download`: every way to install — iPhone and iPad (the source for
   AltStore, SideStore or Feather, which also lists TU Test; the latest IPA),
-  Apple TV (ATVLoadly sources: test builds, and stable releases once their
-  source exists), Android (the APK releases, saying when there are only test
-  builds so far), the website. `public:True` (developer only) posts it in the
+  Apple TV (the ATVLoadly source of its stable releases — test builds go to
+  testers, with their own source), Android (the APK releases, saying when
+  there are only test builds so far), the website (and self-hosting), and the
+  TwitchUnblock Connect extension (Firefox Add-ons, the Chrome, Edge and Brave
+  zip, the install guide). `public:True` (developer only) posts it in the
   channel.
 - `/version`: latest versions — iPhone app and TU Test, Apple TV (test, and
-  stable once its source exists), Android, website — read from the raw
-  source files and the public releases API on GitHub (no token) and from the
-  website, kept 10 minutes; one that can't be read shows as unknown.
+  stable once its source exists), Android, website, extension (and its
+  Firefox Add-ons version while Mozilla reviews the newer ones) — read from
+  the raw source files and the public releases API on GitHub (no token), the
+  website and Firefox Add-ons, kept 10 minutes; one that can't be read shows
+  as unknown.
 - `/help`: the commands useful to the person (the developer's too, for the
   developer).
 - `/live channel:` (a name, `@name` or a twitch.tv link): if the channel is
@@ -809,7 +818,7 @@ Setting it up:
      main Worker's account, and that account's ID (*Workers & Pages*,
      right-hand column). Read-only: it can't change anything. Not the same
      token as the database backup's.
-5. **Whole layout at once** (optional): `/server-setup` shows a preview of the server layout — 📢 Info (rules, announcements, roles, and the project’s own channels), 💬 Community (general, the suggestions forum and per-platform channels, bot commands, clips, voice), 🆘 Help (support, bug reports, iPhone install), 🧪 Testing (test builds, testers’ chat) and 🔒 Staff (the reports forum, to-do, alerts, notes), with the roles Moderator, Contributor, Releases, and iOS, tvOS and Android testers. `/server-setup apply:True` then creates what’s missing, moves the existing channels into their category (their names and permissions are kept, a typo like “gerenal” is fixed; a staff channel visible to everyone is pointed out), renames a matching category (“Information” → “📢 Info”), fills the `/setup` choices still empty, posts the rules in a new #rules and the roles menu in #roles, where the tester roles can be picked. Nothing is deleted, and running it again only does what’s still missing. The bot only grants permissions it has: with the invite link above, the Moderator role is created without its moderation permissions (add them in *Server Settings → Roles*, or give the bot Administrator). Test builds mention the tester role of their platform (iPhone, Apple TV, Android; `/setup` *Apple TV testers role* / *Android testers role* to change them).
+5. **Whole layout at once** (optional): `/server-setup` shows a preview of the server layout — 📢 Info (rules, announcements, roles, and the project’s own channels), 💬 Community (general, the suggestions forum and per-platform channels, bot commands, clips, voice), 🆘 Help (support, bug reports, iPhone install), 🧪 Testing (test builds, testers’ chat) and 🔒 Staff (the reports forum, to-do, alerts, notes), with the roles Moderator, Contributor, Releases, and iOS, tvOS and Android testers. `/server-setup apply:True` then creates what’s missing, moves the existing channels into their category (their names and permissions are kept, a typo like “gerenal” is fixed; a staff channel visible to everyone is pointed out), renames a matching category (“Information” → “📢 Info”), fills the `/setup` choices still empty, posts the rules in a new #rules and the roles menu in #roles, where the tester roles can be picked. Nothing is deleted, and running it again only does what’s still missing. The bot only grants permissions it has: with the invite link above, the Moderator role is created without its moderation permissions (add them in *Server Settings → Roles*, or give the bot Administrator). Test builds mention the tester role of their platform (iPhone, Apple TV, Android; `/setup` *Apple TV testers role* / *Android testers role* to change them). **Onboarding** (Community servers): `/onboarding` previews two questions built from these roles — *What should we ping you for?* (new versions, polls, or nothing for now) and *Want to try test builds before everyone else?* (iPhone & iPad, Apple TV, Android, each opening the 🧪 Testing channels) — in place of the questions that only gave those roles (the others stay). A role that every answer of a required question gave (like *Member*) is still given to everyone, and the public categories join the default channels (a category left out of the onboarding is hidden from new members). `/onboarding apply:True` applies it and fills the `/setup` roles still empty; the bot needs *Manage Server* and *Manage Roles* (or Administrator). The polls role is never created: pick yours with `/setup` *Polls role*.
 6. **Channels**: run `/setup` in the private channel (*Alerts, daily summary
    and release drafts*), in the announcements channel (*Release
    announcements*, optionally with the role to mention at each release), in

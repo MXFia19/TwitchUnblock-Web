@@ -31,13 +31,16 @@
 //  /poll-end (sondage, résultats postés à la fin) ; brouillon des
 //  notes de version à chaque sortie, publié d'un bouton (avec la mention du
 //  rôle des sorties choisi par /setup) ; versions de test annoncées aux
-//  testeurs ; /release-pings (ou le bouton posté par /setup, gardé tout en
-//  bas du salon des annonces) : chacun prend ou rend ce rôle (sans
-//  permission ni accès à un salon, vérifié).
-//  Rôles : /roles, un menu de ses rôles (les rôles choisis par
-//  /roles-config, et celui des sorties) ; public:true (développeur) : un
-//  message permanent dans le salon, le même menu pour tous. Seuls des rôles
-//  sûrs, revérifiés à chaque fois ; un changement toutes les 5 s par personne.
+//  testeurs, un message par plateforme (iPhone, Apple TV, Android) avec la
+//  mention de ses testeurs ; /release-pings (ou le bouton posté par /setup,
+//  gardé tout en bas du salon des annonces) : chacun prend ou rend ce rôle
+//  (sans permission ni accès à un salon, vérifié).
+//  Rôles : /roles, un menu de ses rôles (ceux de /setup — sorties,
+//  sondages, testeurs de chaque plateforme — et ceux de /roles-config) ;
+//  public:true (développeur) : un message permanent dans le salon, le même
+//  menu pour tous. Seuls des rôles sûrs, revérifiés à chaque fois ; un
+//  changement toutes les 5 s par personne. /onboarding : les questions
+//  d'accueil de Discord (pings, builds de test) tirées de ces rôles.
 //  Pour tous aussi : /download (toutes les façons d'installer), /version
 //  (dernières versions, lues sur GitHub et le site), /help ; /live (une
 //  chaîne en direct ?) et /top (les 10 plus gros directs), avec des boutons
@@ -165,17 +168,22 @@ const COMMANDS = [
           { name: 'Test builds', value: 'testers' },
           { name: 'Apple TV testers role (with role:)', value: 'testers-tv' },
           { name: 'Android testers role (with role:)', value: 'testers-android' },
+          { name: 'Polls role, offered in /roles (with role:)', value: 'polls-role' },
           { name: 'To-do list (suggestions to keep)', value: 'todo' },
           { name: 'Suggestions (/suggest cards, members vote)', value: 'suggestions' },
           { name: 'Welcome messages for new members', value: 'welcome' },
           { name: 'Stop the welcome messages', value: 'welcome-off' },
         ],
       },
-      { type: 8, name: 'role', description: 'Role to mention (release announcements or test builds)', required: false },
+      { type: 8, name: 'role', description: 'Role to mention (releases, test builds) or the polls role', required: false },
     ],
   },
   {
     name: 'server-setup', description: 'Build the server layout: categories, channels, roles (a preview first)', default_member_permissions: ADMIN,
+    options: [{ type: 5, name: 'apply', description: 'Apply the changes (without it: a preview only)', required: false }],
+  },
+  {
+    name: 'onboarding', description: 'Better onboarding questions: pings and test builds (a preview first)', default_member_permissions: ADMIN,
     options: [{ type: 5, name: 'apply', description: 'Apply the changes (without it: a preview only)', required: false }],
   },
   { name: 'summary', description: 'Post the daily summary now', default_member_permissions: ADMIN },
@@ -281,15 +289,25 @@ const plural = (n, word) => `${n} ${word}${n > 1 ? 's' : ''}`
 const bullets = (body) => String(body || '').split('\n').map((l) => l.trim()).filter((l) => /^[-*] /.test(l)).map((l) => `- ${l.slice(2).trim()}`)
 
 // /download et /version : adresses reprises des README (app iPhone et Apple
-// TV, Android). La source de l'iPhone liste aussi « TU Test », les builds de
-// test ; celle des versions stables de l'Apple TV n'existe qu'à partir de sa
-// prochaine sortie (lue avant d'être montrée).
+// TV, Android, extension). La source de l'iPhone liste aussi « TU Test », les
+// builds de test ; ceux de l'Apple TV (la même app, donc une autre source)
+// n'ont leur source que dans l'annonce de chaque build, aux testeurs :
+// /download ne montre que celle des versions stables (lue avant).
 const IOS_SOURCE = 'https://raw.githubusercontent.com/MXFia19/TwitchUnblock/master/apps.json'
 const ADD_SOURCE = 'https://altdirect.app/?url=https://raw.githubusercontent.com/MXFia19/TwitchUnblock/master/apps.json'
 const IPA = 'https://github.com/MXFia19/TwitchUnblock/releases/latest/download/TwitchUnblock.ipa'
 const TV_TEST_SOURCE = 'https://raw.githubusercontent.com/MXFia19/TwitchUnblock/test-17d298/apps-tv.json'
 const TV_STABLE_SOURCE = 'https://raw.githubusercontent.com/MXFia19/TwitchUnblock/master/apps-tv-stable.json'
 const APK_RELEASES = 'https://github.com/MXFia19/TwitchUnblock-Android/releases'
+// Extension TwitchUnblock Connect (le site sur ordinateur) : sur Firefox
+// Add-ons (AMO_API : sa version publique, en retard le temps de la relecture
+// de Mozilla) et en zip dans la dernière release du dépôt du site (Chrome,
+// Edge, Brave). Le site s'héberge aussi avec Docker (README).
+const AMO_PAGE = 'https://addons.mozilla.org/firefox/addon/twitchunblock-connect/'
+const AMO_API = 'https://addons.mozilla.org/api/v5/addons/addon/twitchunblock-connect/'
+const EXT_RELEASE = 'https://github.com/MXFia19/TwitchUnblock-Web/releases/latest'
+const EXT_GUIDE = 'https://github.com/MXFia19/TwitchUnblock-Web/blob/main/extension/INSTALL.md'
+const SELF_HOST = 'https://github.com/MXFia19/TwitchUnblock-Web#self-hosting-with-docker'
 
 // Emoji d'un rôle de /roles : un emoji standard (une seule séquence), ou un
 // emoji du serveur écrit <:nom:id> (<a:nom:id> s'il est animé).
@@ -315,19 +333,23 @@ const I18N = {
     roles_skipped: (n) => `⚠️ ${n === 1 ? 'One role' : `${n} roles`} can’t be given out right now — the developer was told.`,
     roles_error: (r, m) => `❌ I couldn’t change ${r} (${m}) — please tell the developer.`,
     rp_desc: 'Get pinged when a new version is out',
+    rp_desc_polls: 'Get pinged when a new poll is up',
+    rp_desc_ios: 'Pings for new iPhone test builds (TU Test)',
+    rp_desc_tv: 'Pings for new Apple TV test builds',
+    rp_desc_android: 'Pings for new Android test builds',
     public_admin_only: 'ℹ️ Only the developer can post this in the channel — here it is, just for you.',
     posted: (c) => `✅ Posted in <#${c}>.`,
     post_failed: (m) => `Not posted (${m}): I need to see this channel and to send messages with embeds in it.`,
     rc_added: (r) => `✅ <@&${r}> is now offered in /roles.`,
     rc_updated: (r) => `✅ <@&${r}> updated.`,
-    rc_full: '❌ 25 roles at most (a Discord menu limit), the release pings role included.',
+    rc_full: '❌ 25 roles at most (a Discord menu limit), the /setup roles included.',
     rc_bad_emoji: '❌ Unknown emoji: use a standard emoji or one of this server’s.',
     rc_removed: (r) => `🗑️ <@&${r}> is no longer offered.`,
     rc_not_listed: (r) => `<@&${r}> wasn’t offered.`,
-    rc_release_stays: (r) => `<@&${r}> is the release pings role (set with /setup): it stays in /roles.`,
+    rc_setup_stays: (r) => `<@&${r}> is set with /setup (release pings, polls or testers): it stays in /roles.`,
     rc_empty: 'No roles offered yet: add one with /roles-config add.',
     rc_head: '🏷️ **Roles offered in /roles**',
-    rc_release: 'release pings, /setup',
+    rc_setup: 'set with /setup',
     rc_message: (c) => `Roles message for everyone: <#${c}> (kept up to date).`,
     rp_everyone: '@everyone can’t be used.',
     rp_unreadable: 'I can’t read this role.',
@@ -340,20 +362,24 @@ const I18N = {
     dl_ios: (src) => 'Not on the App Store: it’s sideloaded. **Add source** opens the source in AltStore, SideStore or Feather (also LiveContainer, StikStore, TrollApps): install **TwitchUnblock**. The same source lists **TU Test**, the test builds (newest features, may be unstable), installed next to the normal app. **Download IPA**: the latest version, for Sideloadly or TrollStore.\n'
       + `Source address, to add it by hand:\n\`\`\`\n${src}\n\`\`\``,
     dl_tv_title: '📺 Apple TV',
-    dl_tv: 'AltStore, SideStore and Feather don’t handle tvOS: install it with **ATVLoadly** (or Xcode on a Mac). Add a source in ATVLoadly and the app updates on its own.',
-    dl_tv_test: 'Test builds:',
-    dl_tv_stable: 'Stable releases:',
+    dl_tv: 'AltStore, SideStore and Feather don’t handle tvOS: install it with **ATVLoadly** (or Xcode on a Mac). Add the source below in ATVLoadly and the app updates on its own.',
+    dl_tv_source: 'Source address:',
+    dl_tv_testers: 'Test builds go to testers: take the Apple TV testers role with `/roles` to get them.',
     dl_tv_no_stable: 'Stable releases get their source with the next Apple TV release.',
     dl_android_title: '🤖 Android',
     dl_android: 'One app for phones, tablets and Android TV: download the latest `TwitchUnblock-….apk` from **Releases**, open it, and allow installs from this source if Android asks. On a TV, install *Downloader* and enter the APK’s address.',
     dl_android_test_only: (v) => `Only test builds (**TU Test**) so far — latest: **${v}**.`,
     dl_android_none: 'No release yet.',
     dl_web_title: '🌐 Website',
-    dl_web: 'Nothing to install: it runs in any browser. On iPhone, add it to your Home Screen: it opens like an app and gets live notifications (iOS 16.4+).',
+    dl_web: 'Nothing to install: it runs in any browser. On iPhone, add it to your Home Screen: it opens like an app and gets live notifications (iOS 16.4+). On a computer, the **TwitchUnblock Connect** extension (below) adds channel points, drops and 1440p. You can also host your own copy with Docker (**Self-hosting**).',
+    dl_ext_title: '🧩 Browser extension: TwitchUnblock Connect',
+    dl_ext: 'For the website on a computer. It uses your browser’s Twitch session, which never leaves the extension: channel points and chests, predictions and polls, drops, 1440p and above, follows, and no ads with your sub or Turbo — it can also open Twitch links on the website.\n**Firefox**: install it from Firefox Add-ons, it then updates by itself. **Chrome, Edge, Brave**: download `twitchunblock-connect-chrome.zip` from the latest release, unzip it, then **Load unpacked** in the extensions page (Developer mode) — see the install guide.',
+    dl_ext_amo: (v) => `Firefox Add-ons: **${v}** (newer versions wait for Mozilla’s review)`,
     dl_latest: (v) => `Latest version: **${v}**`,
-    b_add_source: 'Add source', b_ipa: 'Download IPA', b_tv_test: 'Test source', b_tv_stable: 'Stable source', b_apk: 'APK (Releases)', b_site: 'Open the website',
+    b_add_source: 'Add source', b_ipa: 'Download IPA', b_tv_source: 'Apple TV source', b_apk: 'APK (Releases)', b_site: 'Open the website', b_selfhost: 'Self-hosting',
+    b_amo: 'Firefox Add-ons', b_ext_zip: 'Chrome, Edge, Brave', b_ext_guide: 'Install guide',
     v_head: '🏷️ **Latest versions**',
-    v_ios: 'iPhone app:', v_tu_test: 'TU Test (test builds):', v_tv: 'Apple TV:', v_android: 'Android:', v_web: 'Website:',
+    v_ios: 'iPhone app:', v_tu_test: 'TU Test (test builds):', v_tv: 'Apple TV:', v_android: 'Android:', v_web: 'Website:', v_ext: 'Extension (Connect):',
     v_test: 'test', v_stable: 'stable',
     v_test_only: (v) => `test builds only (${v})`,
     v_unknown: 'unknown', v_none: 'none yet', v_checked: 'Checked',
@@ -369,6 +395,7 @@ const I18N = {
     h_admin: '**Developer only**',
     h_setup: 'use this channel for alerts, release announcements, test builds, the to-do list, suggestions or welcome messages',
     h_server_setup: 'build the server layout (categories, channels, roles) without deleting anything: a preview first, then apply:True',
+    h_onboarding: 'better onboarding questions (pings, test builds per platform) that keep the roles everyone gets: a preview first, then apply:True',
     h_announce: 'banner in the app and on the website, and remove it',
     h_poll: 'poll in the app and on the website, and end it (results posted)',
     h_todo: 'add to the to-do channel (or a message’s Apps menu → Add to to-do, or Add conversation to to-do for several messages)',
@@ -446,19 +473,23 @@ const I18N = {
     roles_skipped: (n) => `⚠️ ${n === 1 ? 'Un rôle ne peut' : `${n} rôles ne peuvent`} pas être donné${n === 1 ? '' : 's'} pour l’instant — le développeur est prévenu.`,
     roles_error: (r, m) => `❌ Je n’ai pas pu changer ${r} (${m}) — préviens le développeur.`,
     rp_desc: 'Être notifié quand une nouvelle version sort',
+    rp_desc_polls: 'Être notifié quand un nouveau sondage est lancé',
+    rp_desc_ios: 'Notifié pour les builds de test iPhone (TU Test)',
+    rp_desc_tv: 'Notifié pour les builds de test Apple TV',
+    rp_desc_android: 'Notifié pour les builds de test Android',
     public_admin_only: 'ℹ️ Seul le développeur peut le poster dans le salon — le voici, pour toi seul.',
     posted: (c) => `✅ Posté dans <#${c}>.`,
     post_failed: (m) => `Pas posté (${m}) : je dois voir ce salon et pouvoir y envoyer des messages avec des encadrés.`,
     rc_added: (r) => `✅ <@&${r}> est maintenant proposé dans /roles.`,
     rc_updated: (r) => `✅ <@&${r}> mis à jour.`,
-    rc_full: '❌ 25 rôles au plus (limite d’un menu de Discord), rôle des sorties compris.',
+    rc_full: '❌ 25 rôles au plus (limite d’un menu de Discord), rôles de /setup compris.',
     rc_bad_emoji: '❌ Emoji inconnu : prends un emoji standard ou un emoji de ce serveur.',
     rc_removed: (r) => `🗑️ <@&${r}> n’est plus proposé.`,
     rc_not_listed: (r) => `<@&${r}> n’était pas proposé.`,
-    rc_release_stays: (r) => `<@&${r}> est le rôle des sorties (choisi avec /setup) : il reste dans /roles.`,
+    rc_setup_stays: (r) => `<@&${r}> est choisi avec /setup (sorties, sondages ou testeurs) : il reste dans /roles.`,
     rc_empty: 'Aucun rôle proposé pour l’instant : ajoutes-en un avec /roles-config add.',
     rc_head: '🏷️ **Rôles proposés dans /roles**',
-    rc_release: 'sorties, /setup',
+    rc_setup: 'choisi avec /setup',
     rc_message: (c) => `Message des rôles pour tous : <#${c}> (tenu à jour).`,
     rp_everyone: '@everyone ne peut pas servir.',
     rp_unreadable: 'Je n’arrive pas à lire ce rôle.',
@@ -470,19 +501,23 @@ const I18N = {
     dl_ios_title: '📱 iPhone et iPad',
     dl_ios: (src) => 'Pas sur l’App Store : elle s’installe autrement (sideload). **Ajouter la source** l’ouvre dans AltStore, SideStore ou Feather (aussi LiveContainer, StikStore, TrollApps) : installe **TwitchUnblock**. La même source propose **TU Test**, les builds de test (nouveautés en avance, parfois instables), installée à côté de l’app normale. **Télécharger l’IPA** : la dernière version, pour Sideloadly ou TrollStore.\n'
       + `Adresse de la source, à ajouter à la main :\n\`\`\`\n${src}\n\`\`\``,
-    dl_tv: 'AltStore, SideStore et Feather ne gèrent pas tvOS : installe-la avec **ATVLoadly** (ou Xcode sur un Mac). Ajoute une source dans ATVLoadly et l’app se met à jour toute seule.',
-    dl_tv_test: 'Builds de test :',
-    dl_tv_stable: 'Versions stables :',
+    dl_tv: 'AltStore, SideStore et Feather ne gèrent pas tvOS : installe-la avec **ATVLoadly** (ou Xcode sur un Mac). Ajoute la source ci-dessous dans ATVLoadly et l’app se met à jour toute seule.',
+    dl_tv_source: 'Adresse de la source :',
+    dl_tv_testers: 'Les builds de test vont aux testeurs : prends le rôle des testeurs Apple TV avec `/roles` pour les recevoir.',
     dl_tv_no_stable: 'Les versions stables auront leur source à la prochaine sortie de l’app Apple TV.',
     dl_android: 'Une seule app pour téléphone, tablette et Android TV : télécharge le dernier `TwitchUnblock-….apk` dans **Releases**, ouvre-le, et autorise l’installation depuis cette source si Android le demande. Sur une TV : installe *Downloader* et entre l’adresse de l’APK.',
     dl_android_test_only: (v) => `Seulement des builds de test (**TU Test**) pour l’instant — dernier : **${v}**.`,
     dl_android_none: 'Pas encore de version publiée.',
     dl_web_title: '🌐 Site web',
-    dl_web: 'Rien à installer : il marche dans n’importe quel navigateur. Sur iPhone, ajoute-le à l’écran d’accueil : il s’ouvre comme une app et reçoit les notifications de live (iOS 16.4+).',
+    dl_web: 'Rien à installer : il marche dans n’importe quel navigateur. Sur iPhone, ajoute-le à l’écran d’accueil : il s’ouvre comme une app et reçoit les notifications de live (iOS 16.4+). Sur ordinateur, l’extension **TwitchUnblock Connect** (plus bas) ajoute les points de chaîne, les drops et le 1440p. Tu peux aussi héberger ta propre copie avec Docker (**Auto-hébergement**).',
+    dl_ext_title: '🧩 Extension de navigateur : TwitchUnblock Connect',
+    dl_ext: 'Pour le site sur ordinateur. Elle utilise la session Twitch de ton navigateur, qui ne quitte jamais l’extension : points de chaîne et coffres, prédictions et sondages, drops, 1440p et plus, suivre des chaînes, et sans pub avec ton abonnement ou Turbo — elle peut aussi ouvrir les liens Twitch sur le site.\n**Firefox** : installe-la depuis Firefox Add-ons, elle se met ensuite à jour toute seule. **Chrome, Edge, Brave** : télécharge `twitchunblock-connect-chrome.zip` dans la dernière release, décompresse-le, puis **Charger l’extension non empaquetée** dans la page des extensions (mode développeur) — voir le guide d’installation.',
+    dl_ext_amo: (v) => `Firefox Add-ons : **${v}** (les versions plus récentes attendent la relecture de Mozilla)`,
     dl_latest: (v) => `Dernière version : **${v}**`,
-    b_add_source: 'Ajouter la source', b_ipa: 'Télécharger l’IPA', b_tv_test: 'Source de test', b_tv_stable: 'Source stable', b_site: 'Ouvrir le site',
+    b_add_source: 'Ajouter la source', b_ipa: 'Télécharger l’IPA', b_tv_source: 'Source Apple TV', b_site: 'Ouvrir le site', b_selfhost: 'Auto-hébergement',
+    b_ext_guide: 'Guide d’installation',
     v_head: '🏷️ **Dernières versions**',
-    v_ios: 'App iPhone :', v_tu_test: 'TU Test (builds de test) :', v_tv: 'Apple TV :', v_android: 'Android :', v_web: 'Site :',
+    v_ios: 'App iPhone :', v_tu_test: 'TU Test (builds de test) :', v_tv: 'Apple TV :', v_android: 'Android :', v_web: 'Site :', v_ext: 'Extension (Connect) :',
     v_test: 'test', v_stable: 'stable',
     v_test_only: (v) => `builds de test seulement (${v})`,
     v_unknown: 'inconnue', v_none: 'aucune pour l’instant', v_checked: 'Vérifié',
@@ -498,6 +533,7 @@ const I18N = {
     h_admin: '**Réservé au développeur**',
     h_setup: 'ce salon pour les alertes, les annonces de version, les builds de test, la liste à faire, les suggestions ou la bienvenue',
     h_server_setup: 'construire la structure du serveur (catégories, salons, rôles) sans rien supprimer : un aperçu d’abord, puis apply:True',
+    h_onboarding: 'de meilleures questions d’accueil (pings, builds de test par plateforme) qui gardent les rôles donnés à tous : un aperçu d’abord, puis apply:True',
     h_announce: 'bandeau dans l’app et sur le site, et le retirer',
     h_poll: 'sondage dans l’app et sur le site, et le clore (résultats postés)',
     h_todo: 'ajouter à la liste à faire (ou menu Apps d’un message → Add to to-do, ou Add conversation to to-do pour plusieurs messages)',
@@ -574,19 +610,23 @@ const I18N = {
     roles_skipped: (n) => `⚠️ ${n === 1 ? 'Un rol no se puede' : `${n} roles no se pueden`} dar por ahora; ya se avisó al desarrollador.`,
     roles_error: (r, m) => `❌ No pude cambiar ${r} (${m}); avisa al desarrollador.`,
     rp_desc: 'Recibir un aviso cuando salga una nueva versión',
+    rp_desc_polls: 'Recibir un aviso cuando haya una nueva encuesta',
+    rp_desc_ios: 'Avisos de nuevas versiones de prueba para iPhone (TU Test)',
+    rp_desc_tv: 'Avisos de nuevas versiones de prueba para Apple TV',
+    rp_desc_android: 'Avisos de nuevas versiones de prueba para Android',
     public_admin_only: 'ℹ️ Solo el desarrollador puede publicarlo en el canal; aquí lo tienes, solo para ti.',
     posted: (c) => `✅ Publicado en <#${c}>.`,
     post_failed: (m) => `No publicado (${m}): necesito ver este canal y poder enviar en él mensajes con insertos.`,
     rc_added: (r) => `✅ <@&${r}> ya se ofrece en /roles.`,
     rc_updated: (r) => `✅ <@&${r}> actualizado.`,
-    rc_full: '❌ 25 roles como máximo (límite de un menú de Discord), incluido el rol de las versiones.',
+    rc_full: '❌ 25 roles como máximo (límite de un menú de Discord), incluidos los roles de /setup.',
     rc_bad_emoji: '❌ Emoji desconocido: usa un emoji estándar o uno de este servidor.',
     rc_removed: (r) => `🗑️ <@&${r}> ya no se ofrece.`,
     rc_not_listed: (r) => `<@&${r}> no se ofrecía.`,
-    rc_release_stays: (r) => `<@&${r}> es el rol de las versiones (elegido con /setup): sigue en /roles.`,
+    rc_setup_stays: (r) => `<@&${r}> se elige con /setup (versiones, encuestas o testers): sigue en /roles.`,
     rc_empty: 'Todavía no se ofrece ningún rol: añade uno con /roles-config add.',
     rc_head: '🏷️ **Roles ofrecidos en /roles**',
-    rc_release: 'versiones, /setup',
+    rc_setup: 'elegido con /setup',
     rc_message: (c) => `Mensaje de roles para todos: <#${c}> (se mantiene al día).`,
     rp_everyone: '@everyone no se puede usar.',
     rp_unreadable: 'No puedo leer este rol.',
@@ -598,19 +638,23 @@ const I18N = {
     dl_ios_title: '📱 iPhone y iPad',
     dl_ios: (src) => 'No está en la App Store: se instala por otra vía (sideload). **Añadir fuente** la abre en AltStore, SideStore o Feather (también LiveContainer, StikStore, TrollApps): instala **TwitchUnblock**. La misma fuente incluye **TU Test**, las versiones de prueba (novedades antes, pueden ser inestables), que se instala junto a la app normal. **Descargar IPA**: la última versión, para Sideloadly o TrollStore.\n'
       + `Dirección de la fuente, para añadirla a mano:\n\`\`\`\n${src}\n\`\`\``,
-    dl_tv: 'AltStore, SideStore y Feather no admiten tvOS: instálala con **ATVLoadly** (o Xcode en un Mac). Añade una fuente en ATVLoadly y la app se actualiza sola.',
-    dl_tv_test: 'Versiones de prueba:',
-    dl_tv_stable: 'Versiones estables:',
+    dl_tv: 'AltStore, SideStore y Feather no admiten tvOS: instálala con **ATVLoadly** (o Xcode en un Mac). Añade la fuente de abajo en ATVLoadly y la app se actualiza sola.',
+    dl_tv_source: 'Dirección de la fuente:',
+    dl_tv_testers: 'Las versiones de prueba son para los testers: toma el rol de testers de Apple TV con `/roles` para recibirlas.',
     dl_tv_no_stable: 'Las versiones estables tendrán su fuente con la próxima versión de la app de Apple TV.',
     dl_android: 'Una sola app para móvil, tableta y Android TV: descarga el último `TwitchUnblock-….apk` en **Releases**, ábrelo y permite instalar desde esta fuente si Android lo pide. En una TV: instala *Downloader* e introduce la dirección del APK.',
     dl_android_test_only: (v) => `Por ahora solo hay versiones de prueba (**TU Test**); la última: **${v}**.`,
     dl_android_none: 'Todavía no hay ninguna versión.',
     dl_web_title: '🌐 Sitio web',
-    dl_web: 'Nada que instalar: funciona en cualquier navegador. En iPhone, añádelo a la pantalla de inicio: se abre como una app y recibe avisos de directos (iOS 16.4+).',
+    dl_web: 'Nada que instalar: funciona en cualquier navegador. En iPhone, añádelo a la pantalla de inicio: se abre como una app y recibe avisos de directos (iOS 16.4+). En un ordenador, la extensión **TwitchUnblock Connect** (más abajo) añade los puntos del canal, los drops y el 1440p. También puedes alojar tu propia copia con Docker (**Autoalojamiento**).',
+    dl_ext_title: '🧩 Extensión del navegador: TwitchUnblock Connect',
+    dl_ext: 'Para el sitio en un ordenador. Usa la sesión de Twitch de tu navegador, que nunca sale de la extensión: puntos del canal y cofres, predicciones y encuestas, drops, 1440p y más, seguir canales, y sin anuncios con tu suscripción o Turbo; también puede abrir los enlaces de Twitch en el sitio.\n**Firefox**: instálala desde Firefox Add-ons y luego se actualiza sola. **Chrome, Edge, Brave**: descarga `twitchunblock-connect-chrome.zip` de la última versión, descomprímelo y usa **Cargar descomprimida** en la página de extensiones (modo de desarrollador); consulta la guía de instalación.',
+    dl_ext_amo: (v) => `Firefox Add-ons: **${v}** (las versiones más recientes esperan la revisión de Mozilla)`,
     dl_latest: (v) => `Última versión: **${v}**`,
-    b_add_source: 'Añadir fuente', b_ipa: 'Descargar IPA', b_tv_test: 'Fuente de prueba', b_tv_stable: 'Fuente estable', b_site: 'Abrir el sitio',
+    b_add_source: 'Añadir fuente', b_ipa: 'Descargar IPA', b_tv_source: 'Fuente de Apple TV', b_site: 'Abrir el sitio', b_selfhost: 'Autoalojamiento',
+    b_ext_guide: 'Guía de instalación',
     v_head: '🏷️ **Últimas versiones**',
-    v_ios: 'App de iPhone:', v_tu_test: 'TU Test (versiones de prueba):', v_web: 'Sitio web:',
+    v_ios: 'App de iPhone:', v_tu_test: 'TU Test (versiones de prueba):', v_web: 'Sitio web:', v_ext: 'Extensión (Connect):',
     v_test: 'prueba', v_stable: 'estable',
     v_test_only: (v) => `solo versiones de prueba (${v})`,
     v_unknown: 'desconocida', v_none: 'ninguna todavía', v_checked: 'Comprobado',
@@ -626,6 +670,7 @@ const I18N = {
     h_admin: '**Solo para el desarrollador**',
     h_setup: 'usar este canal para alertas, anuncios de versiones, versiones de prueba, la lista de tareas, sugerencias o bienvenidas',
     h_server_setup: 'crear la estructura del servidor (categorías, canales, roles) sin borrar nada: primero una vista previa, luego apply:True',
+    h_onboarding: 'mejores preguntas de bienvenida (avisos, versiones de prueba por plataforma) que mantienen los roles que reciben todos: primero una vista previa, luego apply:True',
     h_announce: 'aviso en la app y el sitio web, y quitarlo',
     h_poll: 'encuesta en la app y el sitio web, y cerrarla (resultados publicados)',
     h_todo: 'añadir a la lista de tareas (o menú Apps de un mensaje → Add to to-do, o Add conversation to to-do para varios mensajes)',
@@ -702,19 +747,23 @@ const I18N = {
     roles_skipped: (n) => `⚠️ Сейчас нельзя выдать ролей: ${n} — разработчик предупреждён.`,
     roles_error: (r, m) => `❌ Не удалось изменить ${r} (${m}) — сообщи разработчику.`,
     rp_desc: 'Уведомление о выходе новой версии',
+    rp_desc_polls: 'Уведомление о новом опросе',
+    rp_desc_ios: 'Уведомления о тестовых сборках для iPhone (TU Test)',
+    rp_desc_tv: 'Уведомления о тестовых сборках для Apple TV',
+    rp_desc_android: 'Уведомления о тестовых сборках для Android',
     public_admin_only: 'ℹ️ Публиковать это в канале может только разработчик — вот ответ только для тебя.',
     posted: (c) => `✅ Опубликовано в <#${c}>.`,
     post_failed: (m) => `Не опубликовано (${m}): мне нужно видеть этот канал и отправлять в него сообщения со вставками.`,
     rc_added: (r) => `✅ <@&${r}> теперь предлагается в /roles.`,
     rc_updated: (r) => `✅ <@&${r}> обновлена.`,
-    rc_full: '❌ Не больше 25 ролей (ограничение меню Discord), включая роль уведомлений о версиях.',
+    rc_full: '❌ Не больше 25 ролей (ограничение меню Discord), включая роли из /setup.',
     rc_bad_emoji: '❌ Неизвестный эмодзи: используй стандартный эмодзи или эмодзи этого сервера.',
     rc_removed: (r) => `🗑️ <@&${r}> больше не предлагается.`,
     rc_not_listed: (r) => `<@&${r}> и так не предлагалась.`,
-    rc_release_stays: (r) => `<@&${r}> — роль уведомлений о версиях (задана через /setup): она остаётся в /roles.`,
+    rc_setup_stays: (r) => `<@&${r}> задана через /setup (версии, опросы или тестеры): она остаётся в /roles.`,
     rc_empty: 'Пока не предлагается ни одной роли: добавь через /roles-config add.',
     rc_head: '🏷️ **Роли в /roles**',
-    rc_release: 'версии, /setup',
+    rc_setup: 'задана через /setup',
     rc_message: (c) => `Сообщение с ролями для всех: <#${c}> (обновляется).`,
     rp_everyone: '@everyone использовать нельзя.',
     rp_unreadable: 'Не могу прочитать эту роль.',
@@ -726,19 +775,23 @@ const I18N = {
     dl_ios_title: '📱 iPhone и iPad',
     dl_ios: (src) => 'Приложения нет в App Store — его ставят в обход (sideload). **Добавить источник** открывает его в AltStore, SideStore или Feather (а также LiveContainer, StikStore, TrollApps): установи **TwitchUnblock**. В том же источнике есть **TU Test** — тестовые сборки (новинки раньше всех, бывают нестабильны), ставятся рядом с обычным приложением. **Скачать IPA** — последняя версия, для Sideloadly или TrollStore.\n'
       + `Адрес источника, чтобы добавить вручную:\n\`\`\`\n${src}\n\`\`\``,
-    dl_tv: 'AltStore, SideStore и Feather не поддерживают tvOS: установи через **ATVLoadly** (или Xcode на Mac). Добавь источник в ATVLoadly — и приложение будет обновляться само.',
-    dl_tv_test: 'Тестовые сборки:',
-    dl_tv_stable: 'Стабильные версии:',
+    dl_tv: 'AltStore, SideStore и Feather не поддерживают tvOS: установи через **ATVLoadly** (или Xcode на Mac). Добавь источник ниже в ATVLoadly — и приложение будет обновляться само.',
+    dl_tv_source: 'Адрес источника:',
+    dl_tv_testers: 'Тестовые сборки получают тестеры: возьми роль тестеров Apple TV через `/roles`, чтобы их получать.',
     dl_tv_no_stable: 'Источник стабильных версий появится со следующим выпуском приложения для Apple TV.',
     dl_android: 'Одно приложение для телефона, планшета и Android TV: скачай последний `TwitchUnblock-….apk` в **Releases**, открой его и разреши установку из этого источника, если Android спросит. На телевизоре установи *Downloader* и введи адрес APK.',
     dl_android_test_only: (v) => `Пока есть только тестовые сборки (**TU Test**), последняя: **${v}**.`,
     dl_android_none: 'Версий пока нет.',
     dl_web_title: '🌐 Сайт',
-    dl_web: 'Ничего не нужно устанавливать: работает в любом браузере. На iPhone добавь его на экран «Домой» — он откроется как приложение и будет присылать уведомления о трансляциях (iOS 16.4+).',
+    dl_web: 'Ничего не нужно устанавливать: работает в любом браузере. На iPhone добавь его на экран «Домой» — он откроется как приложение и будет присылать уведомления о трансляциях (iOS 16.4+). На компьютере расширение **TwitchUnblock Connect** (ниже) добавляет баллы канала, дропсы и 1440p. Можно и разместить свою копию с Docker (**Self-hosting**).',
+    dl_ext_title: '🧩 Расширение для браузера: TwitchUnblock Connect',
+    dl_ext: 'Для сайта на компьютере. Оно использует сессию Twitch твоего браузера, которая никогда не покидает расширение: баллы канала и сундуки, прогнозы и опросы, дропсы, 1440p и выше, подписки на каналы и просмотр без рекламы с подпиской или Turbo; ещё оно может открывать ссылки Twitch на сайте.\n**Firefox**: установи из Firefox Add-ons, дальше оно обновляется само. **Chrome, Edge, Brave**: скачай `twitchunblock-connect-chrome.zip` из последнего релиза, распакуй и нажми **Загрузить распакованное расширение** на странице расширений (режим разработчика) — см. инструкцию по установке.',
+    dl_ext_amo: (v) => `Firefox Add-ons: **${v}** (новые версии ждут проверки Mozilla)`,
     dl_latest: (v) => `Последняя версия: **${v}**`,
-    b_add_source: 'Добавить источник', b_ipa: 'Скачать IPA', b_tv_test: 'Тестовый источник', b_tv_stable: 'Стабильный источник', b_site: 'Открыть сайт',
+    b_add_source: 'Добавить источник', b_ipa: 'Скачать IPA', b_tv_source: 'Источник Apple TV', b_site: 'Открыть сайт',
+    b_ext_guide: 'Инструкция по установке',
     v_head: '🏷️ **Последние версии**',
-    v_ios: 'Приложение для iPhone:', v_tu_test: 'TU Test (тестовые сборки):', v_web: 'Сайт:',
+    v_ios: 'Приложение для iPhone:', v_tu_test: 'TU Test (тестовые сборки):', v_web: 'Сайт:', v_ext: 'Расширение (Connect):',
     v_test: 'тест', v_stable: 'стабильная',
     v_test_only: (v) => `только тестовые сборки (${v})`,
     v_unknown: 'неизвестна', v_none: 'пока нет', v_checked: 'Проверено',
@@ -754,6 +807,7 @@ const I18N = {
     h_admin: '**Только для разработчика**',
     h_setup: 'этот канал для оповещений, анонсов версий, тестовых сборок, списка задач, предложений или приветствий',
     h_server_setup: 'создать структуру сервера (категории, каналы, роли), ничего не удаляя: сначала предпросмотр, затем apply:True',
+    h_onboarding: 'улучшенные вопросы при входе (уведомления, тестовые сборки по платформам), сохраняющие роли, которые получают все: сначала предпросмотр, затем apply:True',
     h_announce: 'баннер в приложении и на сайте, и убрать его',
     h_poll: 'опрос в приложении и на сайте, и завершить его (итоги публикуются)',
     h_todo: 'добавить в список задач (или меню «Приложения» у сообщения → Add to to-do, или Add conversation to to-do для нескольких сообщений)',
@@ -843,7 +897,7 @@ function lang(locale) {
 const EN = lang('en')
 // /help : commandes du développeur, montrées à lui seul.
 const ADMIN_HELP = [
-  ['/setup', 'h_setup'], ['/server-setup', 'h_server_setup'], ['/announce · /announce-clear', 'h_announce'], ['/app-announce', 'h_app_announce'], ['/poll · /poll-end', 'h_poll'],
+  ['/setup', 'h_setup'], ['/server-setup', 'h_server_setup'], ['/onboarding', 'h_onboarding'], ['/announce · /announce-clear', 'h_announce'], ['/app-announce', 'h_app_announce'], ['/poll · /poll-end', 'h_poll'],
   ['/todo', 'h_todo'], ['/summary', 'h_summary'], ['/status', 'h_status'], ['/roles-config', 'h_roles_config'],
   ['/roles public:True · /download public:True', 'h_public'], ['/delete · /block · /merge', 'h_report'], ['/forget-user', 'h_forget'],
 ]
@@ -1213,30 +1267,32 @@ export const SERVER_LAYOUT = [
   },
 ]
 
-/** Rôles voulus. `setting` : réglage de /setup qui désigne déjà ce rôle ;
- *  `self` : proposé dans le menu des rôles (/roles, #roles), avec cette
- *  description et cet emoji — sans permission ni salon réservé, donc sûr. */
+/** Rôles voulus. `setting` : réglage de /setup qui désigne déjà ce rôle (les
+ *  rôles des sorties, des sondages et des testeurs sont alors proposés
+ *  d'office par /roles) ; `keep` : seulement repris s'il existe, jamais créé. */
 export const SERVER_ROLES = [
   {
     key: 'moderator', name: 'Moderator', color: 0x2ecc71, hoist: true, aliases: ['moderator', 'moderateur', 'mod', 'mods', 'moderators'],
     permissions: P.manageMessages | P.manageThreads | P.moderate | P.kick | P.mute | P.move,
   },
   { key: 'contributor', name: 'Contributor', color: 0xf1c40f, hoist: true, aliases: ['contributor', 'contributors', 'contributeur', 'translator', 'traducteur'] },
-  { key: 'releases', name: 'Releases', mentionable: true, setting: 'announcementsRole', aliases: ['releases', 'releasepings', 'updates', 'sorties'] },
+  {
+    key: 'releases', name: 'Releases', mentionable: true, setting: 'announcementsRole',
+    aliases: ['releases', 'releasepings', 'releaseping', 'updates', 'updatepings', 'changelog', 'changelogs', 'sorties'],
+  },
+  // Sondages : rien ne mentionne ce rôle tout seul, il n'est pas créé.
+  { key: 'polls', name: 'Polls', mentionable: true, setting: 'pollsRole', keep: true, aliases: ['polls', 'poll', 'pollpings', 'pollping', 'sondages', 'sondage', 'votes'] },
   {
     key: 'tester', name: 'iOS Tester', color: 0x9b59b6, mentionable: true, setting: 'testersRole',
-    aliases: ['iostester', 'tester', 'testers', 'testeur', 'testeurs', 'testios', 'testeriphone', 'betatester'],
-    self: { description: 'Pings for new iPhone test builds (TU Test)', emoji: '🧪' },
+    aliases: ['iostester', 'testerios', 'tester', 'testers', 'testeur', 'testeurs', 'testeurios', 'testios', 'testeriphone', 'betatester'],
   },
   {
     key: 'testerTv', name: 'tvOS Tester', color: 0x3498db, mentionable: true, setting: 'testersRoleTv',
-    aliases: ['tvostester', 'testertvos', 'testtvos', 'testtv', 'tvtester', 'appletvtester'],
-    self: { description: 'Pings for new Apple TV test builds', emoji: '📺' },
+    aliases: ['tvostester', 'testertvos', 'testeurtvos', 'testtvos', 'testtv', 'tvtester', 'appletvtester', 'testerappletv'],
   },
   {
     key: 'testerAndroid', name: 'Android Tester', color: 0x2ecc71, mentionable: true, setting: 'testersRoleAndroid',
-    aliases: ['androidtester', 'testerandroid', 'testandroid', 'android'],
-    self: { description: 'Pings for new Android test builds', emoji: '🤖' },
+    aliases: ['androidtester', 'testerandroid', 'testeurandroid', 'testandroid', 'android'],
   },
 ]
 
@@ -1310,7 +1366,7 @@ export function serverPlan({ guild, channels = [], roles = [], settings = {}, fo
 /** Lignes de l'aperçu (et du compte rendu) d'un plan de /server-setup. */
 export function serverPlanLines(plan) {
   const out = []
-  out.push(`**Roles:** ${plan.roles.map((r) => (r.id ? `✓ <@&${r.id}>` : `+ ${r.name}`)).join(' · ')}`)
+  out.push(`**Roles:** ${plan.roles.filter((r) => r.id || !r.keep).map((r) => (r.id ? `✓ <@&${r.id}>` : `+ ${r.name}`)).join(' · ')}`)
   const warn = []
   for (const cat of plan.categories) {
     out.push('', `**${cat.name}**${cat.id ? (cat.rename ? ` (renamed from “${cat.rename}”)` : '') : ' (new category)'}`)
@@ -1327,6 +1383,128 @@ export function serverPlanLines(plan) {
     out.push('', `**Left as they are:** ${shown}${plan.untouched.length > 25 ? ` … +${plan.untouched.length - 25}` : ''}`)
   }
   if (warn.length) out.push('', ...warn)
+  return out
+}
+
+/** Réglages de /setup remplis par /server-setup ou /onboarding, lisibles. */
+const filledLines = (patch) => Object.entries(patch).map(([k, v]) => (/Role/.test(k) ? `${k} → <@&${v}>` : `${k} → <#${v}>`))
+
+// ── /onboarding : les questions d'accueil de Discord ──────────────────────
+/** Identifiant au format de Discord (snowflake) d'une nouvelle question de
+ *  l'onboarding : Discord en veut un, même pour une question nouvelle. */
+let snowSeq = 0
+const snowflake = () => String(((BigInt(Date.now()) - 1420070400000n) << 22n) | BigInt(snowSeq++ & 0xfff))
+
+/** Emoji d'une réponse tel que Discord le reprend (PUT) : en champs à plat. */
+function onboardingEmoji(o) {
+  const e = o.emoji || { id: o.emoji_id, name: o.emoji_name, animated: o.emoji_animated }
+  return { ...(e.id ? { emoji_id: e.id } : {}), ...(e.name ? { emoji_name: e.name } : {}), ...(e.id && e.animated ? { emoji_animated: true } : {}) }
+}
+
+/** Question gardée telle quelle, au format que Discord reprend (PUT). */
+const putPrompt = (p) => ({
+  id: p.id, title: p.title, single_select: Boolean(p.single_select), required: Boolean(p.required),
+  in_onboarding: p.in_onboarding !== false, type: p.type ?? 0,
+  options: (p.options || []).map((o) => ({
+    ...(o.id ? { id: o.id } : {}), title: o.title, description: o.description || null,
+    role_ids: o.role_ids || [], channel_ids: o.channel_ids || [], ...onboardingEmoji(o),
+  })),
+})
+
+/** Onboarding de Discord (/onboarding), tiré du plan de /server-setup : une
+ *  question pour les pings (sorties, sondages) et une pour les builds de
+ *  test (une réponse par plateforme, qui ouvre les salons de test), à la
+ *  place des questions qui ne donnaient que ces rôles ; les autres restent
+ *  telles quelles. Le rôle que donnait chaque réponse d'une question
+ *  obligatoire (« Member ») reste donné à tous : la question des pings est
+ *  alors obligatoire, avec « Nothing for now ». Les catégories publiques
+ *  (sauf celle des tests, ouverte par les réponses des testeurs) rejoignent
+ *  les salons par défaut : hors de l'onboarding, un nouveau membre ne les
+ *  voit pas. `onboarding` : celui de Discord (GET) ; `newId` : identifiant
+ *  d'une nouvelle question. */
+export function onboardingPlan({ onboarding, plan, newId = snowflake }) {
+  const role = (key) => plan.roles.find((r) => r.key === key)?.id || null
+  const pingRoles = [role('releases'), role('polls')].filter(Boolean)
+  const testRoles = [role('tester'), role('testerTv'), role('testerAndroid')].filter(Boolean)
+  const managed = [...pingRoles, ...testRoles]
+  const prompts = Array.isArray(onboarding?.prompts) ? onboarding.prompts : []
+  const rolesOf = (o) => o.role_ids || []
+  const gives = (p, ids) => (p.options || []).some((o) => rolesOf(o).some((r) => ids.includes(r)))
+  // Rôles que donne chaque réponse d'une question obligatoire (« Member »).
+  const base = []
+  for (const p of prompts) {
+    if (!p.required || !p.options?.length) continue
+    for (const r of rolesOf(p.options[0])) {
+      if (!managed.includes(r) && !base.includes(r) && p.options.every((o) => rolesOf(o).includes(r))) base.push(r)
+    }
+  }
+  // Remplacées : les questions qui ne donnent que ces rôles (et ceux de
+  // tous) ; une question qui en mêle d'autres reste telle quelle.
+  const replaced = prompts.filter((p) => gives(p, managed)
+    && (p.options || []).every((o) => rolesOf(o).every((r) => managed.includes(r) || base.includes(r))))
+  const pingsFrom = replaced.find((p) => gives(p, pingRoles)) || null
+  const testsFrom = replaced.find((p) => p !== pingsFrom && gives(p, testRoles)) || null
+  const testing = (plan.categories.find((c) => c.key === 'testing')?.channels || [])
+    .filter((c) => c.id && c.spec.type !== 2).map((c) => c.id)
+  // Même réponse qu'avant (même rôle, dans la question reprise) : son id
+  // reste, et avec lui le choix des membres qui l'avaient prise.
+  const answer = (from, primary, title, description, emoji, role_ids, channel_ids = []) => {
+    const same = (from?.options || []).find((o) => {
+      const own = rolesOf(o).filter((r) => !base.includes(r))
+      return primary ? own.includes(primary) : own.length === 0
+    })
+    return { ...(same?.id ? { id: same.id } : {}), title, description, emoji_name: emoji, role_ids, channel_ids }
+  }
+  const pings = [
+    role('releases') && answer(pingsFrom, role('releases'), 'New versions', 'App, website and extension updates, with what’s new', '📣', [role('releases'), ...base]),
+    role('polls') && answer(pingsFrom, role('polls'), 'Polls', 'When there’s a new poll to vote in', '📊', [role('polls'), ...base]),
+  ].filter(Boolean)
+  if (pings.length && base.length) pings.push(answer(pingsFrom, null, 'Nothing for now', 'Change it anytime in Channels & Roles', '🔕', [...base]))
+  const tests = [
+    role('tester') && answer(testsFrom, role('tester'), 'iPhone & iPad', 'TU Test: the newest features first, next to the normal app', '📱', [role('tester')], testing),
+    role('testerTv') && answer(testsFrom, role('testerTv'), 'Apple TV', 'Test builds of the Apple TV app', '📺', [role('testerTv')], testing),
+    role('testerAndroid') && answer(testsFrom, role('testerAndroid'), 'Android', 'Test builds for phones, tablets and Android TV', '🤖', [role('testerAndroid')], testing),
+  ].filter(Boolean)
+  const question = (from, title, required, options) => ({ id: from?.id || newId(), title, single_select: false, required, in_onboarding: true, type: 0, options })
+  const made = [
+    ...(pings.length ? [question(pingsFrom, 'What should we ping you for?', base.length > 0, pings)] : []),
+    ...(tests.length ? [question(testsFrom, 'Want to try test builds before everyone else?', false, tests)] : []),
+  ]
+  const kept = prompts.filter((p) => !replaced.includes(p))
+  const defaults = [...(onboarding?.default_channel_ids || [])]
+  const added = []
+  for (const cat of plan.categories) {
+    if (!cat.id || cat.access === 'staff' || cat.key === 'testing' || defaults.includes(cat.id)) continue
+    defaults.push(cat.id)
+    added.push(cat.id)
+  }
+  const next = [...made, ...kept.map(putPrompt)]
+  // Rien à changer : mêmes questions (titres, réponses, rôles, salons), dans
+  // le même ordre, et mêmes salons par défaut.
+  const shape = (list) => JSON.stringify(list.map((p) => [p.title, Boolean(p.required), Boolean(p.single_select), p.in_onboarding !== false,
+    (p.options || []).map((o) => [o.title, o.description || '', onboardingEmoji(o), [...rolesOf(o)].sort(), [...(o.channel_ids || [])].sort()])]))
+  return {
+    prompts: next, defaults, added, base, made, kept, replaced,
+    missing: ['releases', 'polls', 'tester', 'testerTv', 'testerAndroid'].filter((k) => !role(k)),
+    unchanged: !added.length && shape(prompts) === shape(next),
+  }
+}
+
+/** Lignes de l'aperçu (et du compte rendu) de /onboarding. */
+export function onboardingPlanLines(o) {
+  const out = []
+  const targets = (a) => [...a.role_ids.map((r) => `<@&${r}>`), ...a.channel_ids.map((c) => `<#${c}>`)].join(' ')
+  if (o.replaced.length) out.push(`**Replaced:** ${o.replaced.map((p) => `“${p.title}”`).join(' · ')}`)
+  for (const [n, q] of o.made.entries()) {
+    out.push('', `**${n + 1}. ${q.title}** (${q.required ? 'required' : 'optional'}, several answers)`)
+    for (const a of q.options) out.push(`${a.emoji_name} **${a.title}** — ${a.description} → ${targets(a)}`)
+  }
+  if (o.kept.length) out.push('', `**Kept as they are:** ${o.kept.map((p) => `“${p.title}”`).join(' · ')}`)
+  out.push('', `**Default channels:** ${o.defaults.map((c) => `<#${c}>`).join(' ') || 'none'}`)
+  if (o.added.length) out.push(`+ ${o.added.map((c) => `<#${c}>`).join(' ')}: new members didn’t see ${o.added.length > 1 ? 'these categories' : 'this category'} (not in the onboarding).`)
+  if (o.base.length) out.push(`Everyone still gets ${o.base.map((r) => `<@&${r}>`).join(' ')} (the pings question stays required).`)
+  const names = { releases: 'release pings', polls: 'polls', tester: 'iPhone testers', testerTv: 'Apple TV testers', testerAndroid: 'Android testers' }
+  if (o.missing.length) out.push('', `No role for: ${o.missing.map((k) => names[k]).join(', ')} — \`/setup\` picks one (role:); \`/server-setup apply:True\` creates the others, not the polls one.`)
   return out
 }
 
@@ -1436,6 +1614,8 @@ export function startDiscordBridge({
         const e = new Error(`${method} ${path.split('?')[0]} → ${r.status}${code ? ` (${code})` : ''}`)
         e.code = code
         e.status = r.status
+        // Détail de Discord (le champ refusé…), pour le dire quand il aide.
+        e.body = text.slice(0, 500)
         throw e
       }
       try { return text ? JSON.parse(text) : null } catch { return null }
@@ -2110,6 +2290,7 @@ export function startDiscordBridge({
         })
       case 'setup': return deferred(i, () => setup(i))
       case 'server-setup': return deferred(i, () => serverSetup(i, user, opt(i, 'apply') === true))
+      case 'onboarding': return deferred(i, () => onboardingSetup(i, user, opt(i, 'apply') === true))
       case 'summary':
         return deferred(i, async () => ((await postSummary(st.settings.alerts || i.channel_id)) ? 'Summary posted.' : 'Nothing to post.'))
       case 'status': return deferred(i, statusText)
@@ -2170,6 +2351,7 @@ export function startDiscordBridge({
     else if (use === 'testers') { settings.testers = i.channel_id; settings.testersRole = role }
     else if (use === 'testers-tv') settings.testersRoleTv = role
     else if (use === 'testers-android') settings.testersRoleAndroid = role
+    else if (use === 'polls-role') settings.pollsRole = role
     else if (use === 'todo') settings.todo = i.channel_id
     else if (use === 'suggestions') settings.suggestions = i.channel_id
     // Bienvenue : choisie (ou coupée) de nouveau, l'intent est redemandée.
@@ -2187,22 +2369,29 @@ export function startDiscordBridge({
     call({ action: 'audit', what: 'bot.setup', detail: `${use} → #${i.channel_id}${role ? ` (role ${role})` : ''}`, by: byOf(i.member?.user || i.user) }).catch(() => {})
     // Rôle des sorties : un bouton dans le salon, pour le prendre ou le rendre.
     if (use === 'announcements' && role) await postReleasePing(i.channel_id)
-    // Le rôle des sorties fait partie de la liste de /roles.
-    if (use === 'announcements') refreshRolesMessage().catch((e) => log.warn(`Discord bridge: roles message not updated (${e.message})`))
-    return {
+    // Les rôles des sorties, des sondages et des testeurs sont dans la liste
+    // de /roles ; un rôle qu'on ne peut pas donner sans risque (permissions,
+    // salon qu'il ouvre…) sert aux mentions sans y être proposé.
+    const offered = ['announcements', 'testers', 'testers-tv', 'testers-android', 'polls-role'].includes(use)
+    if (offered) refreshRolesMessage().catch((e) => log.warn(`Discord bridge: roles message not updated (${e.message})`))
+    const unsafe = offered && role && use !== 'announcements'
+      ? await releaseRoleProblem(i.guild_id || st.guild, role, i.data?.resolved?.roles?.[role], true).catch(() => null) : null
+    const text = {
       alerts: 'This channel now gets the alerts, the daily summary and the release-notes drafts. Keep it private.',
       announcements: role
         ? `Published release notes will go to this channel and mention <@&${role}> (the role must be mentionable). `
           + 'Members take or drop it with /release-pings or the button I just posted — I need “Manage Roles”, above that role.'
         : 'Published release notes will go to this channel (add a role to mention it at each release).',
-      testers: `New test builds will be posted here${role ? ` and mention <@&${role}> (the role must be mentionable)` : ''}.`,
-      'testers-tv': role ? `Apple TV test builds will mention <@&${role}>.` : 'Apple TV test builds will mention the testers role again.',
+      testers: `New test builds will be posted here, one message per platform${role ? `; the iPhone ones mention <@&${role}>` : ''}. The Apple TV and Android ones mention their own testers role (use: “Apple TV testers role”, “Android testers role”).`,
+      'testers-tv': role ? `Apple TV test builds will mention <@&${role}>.` : 'Apple TV test builds won’t mention anyone.',
       'testers-android': role ? `Android test builds will mention <@&${role}>.` : 'Android test builds won’t mention anyone.',
       todo: 'To-do items will be listed here: right-click a message → Apps → “Add to to-do” (or “Add conversation to to-do” on the first message of a conversation), or /todo.',
       suggestions: 'Suggestions (/suggest) will be posted here as public cards that members vote on. Their report also gets a post in the forum, tagged “Suggestion”.',
       welcome: 'New members will be welcomed here, with Download, Pick roles and Help buttons. This needs the **Server Members Intent** (developer portal → your application → Bot → Privileged Gateway Intents): if it’s off, Discord refuses the connection — I then reconnect without it, turn the welcome off and say so in the alerts channel.',
       'welcome-off': 'Welcome messages are off.',
+      'polls-role': role ? `<@&${role}> is now offered in /roles, for the polls pings.` : 'No polls role anymore.',
     }[use]
+    return unsafe ? `${text}\n⚠️ Not offered in /roles: ${unsafe}` : text
   }
 
   // ── /server-setup : catégories, salons et rôles (SERVER_LAYOUT) ─────────
@@ -2239,6 +2428,7 @@ export function startDiscordBridge({
       const roleId = {}
       for (const r of plan.roles) {
         if (r.id) { roleId[r.key] = r.id; continue }
+        if (r.keep) continue
         const want = r.permissions || 0n
         const made = await rest('POST', `/guilds/${guild}/roles`, {
           name: r.name, color: r.color || 0, hoist: Boolean(r.hoist), mentionable: Boolean(r.mentionable),
@@ -2305,11 +2495,9 @@ export function startDiscordBridge({
       for (const cat of plan.categories) for (const ch of cat.channels) {
         if (ch.spec.key && ch.id && !settings[ch.spec.key]) patch[ch.spec.key] = ch.id
       }
+      // Rôles des sorties, des sondages et des testeurs : proposés d'office
+      // par /roles une fois choisis.
       for (const r of plan.roles) if (r.setting && r.id && !settings[r.setting]) patch[r.setting] = r.id
-      // Rôles des testeurs dans le menu des rôles (/roles, #roles), s'ils n'y sont pas.
-      const selfRoles = (Array.isArray(settings.selfRoles) ? settings.selfRoles : []).filter((x) => x?.id)
-      const added = plan.roles.filter((r) => r.self && r.id && !selfRoles.some((x) => x.id === r.id))
-      if (added.length) patch.selfRoles = [...selfRoles, ...added.map((r) => ({ id: r.id, description: r.self.description, emoji: r.self.emoji }))].slice(0, 25)
       if (Object.keys(patch).length) await saveSettings(patch)
       forgetFacts()
       // Salon des règles tout neuf : son message (le seul à poster).
@@ -2345,8 +2533,7 @@ export function startDiscordBridge({
       }
       refreshRolesMessage().catch(() => {})
       call({ action: 'audit', what: 'bot.server-setup', detail: `${created.length} created, ${moved.length} moved`, by: byOf(user) }).catch(() => {})
-      const set = Object.entries(patch).map(([k, v]) => (k === 'selfRoles' ? `roles menu → ${added.map((r) => `<@&${r.id}>`).join(' ')}`
-        : /Role|RoleTv|RoleAndroid$/.test(k) ? `${k} → <@&${v}>` : `${k} → <#${v}>`))
+      const set = filledLines(patch)
       return {
         content: `✅ Server set up: ${created.length} channel(s) created, ${moved.length} moved${rolesPosted ? ', roles menu posted' : ''}. Nothing was deleted.`,
         embeds: [{
@@ -2357,6 +2544,61 @@ export function startDiscordBridge({
     } catch (e) {
       if (e.code === 50013) throw new Error('Missing permissions: I need “Manage Channels” and “Manage Roles” (or Administrator), with my role above the roles I create. What was done so far stays; run it again once fixed.')
       throw e
+    }
+  }
+
+  // ── /onboarding : les questions d'accueil (onboardingPlan) ──────────────
+  /** Sans `apply` : l'aperçu seul. Avec : l'onboarding remplacé (Discord
+   *  veut « Gérer le serveur » et « Gérer les rôles »), et les réglages de
+   *  /setup encore vides remplis avec les rôles trouvés (sorties, sondages,
+   *  testeurs), proposés alors d'office par /roles. Les membres gardent
+   *  leurs rôles. */
+  async function onboardingSetup(i, user, apply) {
+    const guild = i.guild_id || st.guild
+    if (!guild) return 'Run this in the server.'
+    const [channels, roles, onboarding] = await Promise.all([
+      rest('GET', `/guilds/${guild}/channels`),
+      rest('GET', `/guilds/${guild}/roles`),
+      rest('GET', `/guilds/${guild}/onboarding`).catch((e) => ({ failed: e.message })),
+    ])
+    if (!onboarding || onboarding.failed) return `❌ I can’t read the onboarding (${onboarding?.failed || 'no answer'}). It needs a Community server: Server Settings → Enable Community.`
+    const settings = { ...((await kvGet('settings').catch(() => null)) || st.settings) }
+    const plan = serverPlan({ guild, channels, roles, settings, forum: st.forum })
+    const o = onboardingPlan({ onboarding, plan })
+    const patch = {}
+    for (const r of plan.roles) if (r.setting && r.id && !settings[r.setting]) patch[r.setting] = r.id
+    const fill = Object.keys(patch).length ? ['', `**Bot settings ${apply ? 'filled' : 'to fill'}:** ${filledLines(patch).join(' · ')}`] : []
+    const embeds = (color) => [{ color, description: [...onboardingPlanLines(o), ...fill].join('\n').slice(0, 4000) }]
+    if (!apply) {
+      return {
+        content: o.unchanged
+          ? `**Onboarding — already up to date.**${fill.length ? ' `/onboarding apply:True` fills the bot settings below.' : ''}`
+          : '**Onboarding — preview.** Only the questions that gave just these roles are replaced; members keep their roles.'
+            + `${onboarding.enabled ? '' : ' Onboarding is off on this server: turn it on in Server Settings → Onboarding once applied.'} Run \`/onboarding apply:True\` to apply.`,
+        embeds: embeds(0x9146ff),
+      }
+    }
+    if (!o.unchanged) {
+      try {
+        await rest('PUT', `/guilds/${guild}/onboarding`, { prompts: o.prompts, default_channel_ids: o.defaults, enabled: Boolean(onboarding.enabled), mode: onboarding.mode ?? 0 })
+      } catch (e) {
+        if (e.code === 50013) throw new Error('Missing permissions: I need “Manage Server” and “Manage Roles” (or Administrator), with my role above the roles the answers give.')
+        if (e.code === 350000 || e.code === 350001) throw new Error(`Discord refused it (${e.message}): onboarding needs at least 7 default channels, 5 of them where everyone can talk.`)
+        if (e.code === 50035) throw new Error(`Discord refused it: ${e.body || e.message}`)
+        throw e
+      }
+    }
+    if (Object.keys(patch).length) {
+      await saveSettings(patch)
+      if (patch.announcementsRole && st.settings.announcements) {
+        await postReleasePing(st.settings.announcements).catch((e) => log.warn(`Discord bridge: release pings button not posted (${e.message})`))
+      }
+    }
+    refreshRolesMessage().catch((e) => log.warn(`Discord bridge: roles message not updated (${e.message})`))
+    call({ action: 'audit', what: 'bot.onboarding', detail: `${o.made.length} question(s), ${o.replaced.length} replaced, ${o.added.length} default(s) added`, by: byOf(user) }).catch(() => {})
+    return {
+      content: o.unchanged ? '✅ Onboarding already up to date.' : '✅ Onboarding updated: new members get these questions, the others find them in Channels & Roles.',
+      embeds: embeds(0x2ecc71),
     }
   }
 
@@ -2476,18 +2718,39 @@ export function startDiscordBridge({
   }
 
   // ── /roles et /roles-config ─────────────────────────────────────────────
-  // Rôles proposés : réglage selfRoles ([{ id, description, emoji }], écrit
-  // par /roles-config) et le rôle des sorties de /setup. Le message pour tous
-  // de /roles public:true est retenu (rolesMsg) et suit la liste.
+  // Rôles proposés : ceux de /setup (sorties, sondages, testeurs de chaque
+  // plateforme) et le réglage selfRoles ([{ id, description, emoji }], écrit
+  // par /roles-config). Le message pour tous de /roles public:true est
+  // retenu (rolesMsg) et suit la liste.
   const ROLE_COOLDOWN = 5000      // un changement par personne, au plus
   const roleChanges = new Map()   // personne → dernier changement
 
-  /** Rôles proposés par /roles : ceux de /roles-config, et le rôle des
-   *  sorties (/setup) s'il y en a un — 25 au plus (un menu de Discord). */
+  /** Rôles de /setup proposés d'office par /roles, dans cet ordre : pings
+   *  des sorties et des sondages, testeurs de chaque plateforme. */
+  const SETUP_ROLES = [
+    { setting: 'announcementsRole', emoji: '🔔', desc: 'rp_desc' },
+    { setting: 'pollsRole', emoji: '📊', desc: 'rp_desc_polls' },
+    { setting: 'testersRole', emoji: '📱', desc: 'rp_desc_ios' },
+    { setting: 'testersRoleTv', emoji: '📺', desc: 'rp_desc_tv' },
+    { setting: 'testersRoleAndroid', emoji: '🤖', desc: 'rp_desc_android' },
+  ]
+  // Ce que /server-setup écrivait pour les testeurs dans selfRoles, avant
+  // qu'ils soient proposés d'office : remplacé par le texte traduit.
+  const OLD_TESTER_DESC = new Set(['Pings for new iPhone test builds (TU Test)', 'Pings for new Apple TV test builds', 'Pings for new Android test builds'])
+
+  /** Rôles proposés par /roles : ceux de /setup, puis ceux de /roles-config
+   *  — 25 au plus (un menu de Discord). Un rôle de /setup aussi ajouté par
+   *  /roles-config y prend sa description et son emoji. */
   function offeredRoles(settings = st.settings) {
     const list = (Array.isArray(settings.selfRoles) ? settings.selfRoles : []).filter((r) => r?.id)
-    const rp = settings.announcementsRole
-    return (rp && !list.some((r) => r.id === rp) ? [{ id: rp, release: true }, ...list] : list).slice(0, 25)
+    const auto = []
+    for (const s of SETUP_ROLES) {
+      const id = settings[s.setting]
+      if (!id || auto.some((r) => r.id === id)) continue
+      const own = list.find((r) => r.id === id)
+      auto.push({ id, setup: s, ...(own && !OLD_TESTER_DESC.has(own.description) ? { description: own.description, emoji: own.emoji } : {}) })
+    }
+    return [...auto, ...list.filter((r) => !auto.some((a) => a.id === r.id))].slice(0, 25)
   }
 
   /** Rôle proposé qui n'est plus sûr : ni montré ni donné, et le développeur
@@ -2505,8 +2768,10 @@ export function startDiscordBridge({
       const info = f.roles.find((x) => x.id === r.id)
       if (!info) continue
       const problem = roleProblem(f, st.guild, r.id)
-      if (problem) { flagRole(r.id, problem); continue }
-      out.push({ id: r.id, name: info.name, description: r.description || (r.release ? t('rp_desc') : ''), emoji: r.emoji || (r.release ? '🔔' : '') })
+      // Rôle de /setup qui ne convient pas (il ouvre un salon…) : passé sans
+      // alerte, il sert encore aux mentions ; /roles-config list le signale.
+      if (problem) { if (!r.setup) flagRole(r.id, problem); continue }
+      out.push({ id: r.id, name: info.name, description: r.description || (r.setup ? t(r.setup.desc) : ''), emoji: r.emoji || r.setup?.emoji || '' })
     }
     return out
   }
@@ -2733,15 +2998,15 @@ export function startDiscordBridge({
       // Déjà proposé : description et emoji remplacés s'ils sont donnés.
       const entry = { ...list[at], id: role, ...(description ? { description } : {}), ...(emoji ? { emoji } : {}) }
       const next = at >= 0 ? list.map((r, n) => (n === at ? entry : r)) : [...list, entry]
-      const release = settings.announcementsRole
-      if (next.length + (release && !next.some((r) => r.id === release) ? 1 : 0) > 25) return t('rc_full')
+      const ids = new Set([...SETUP_ROLES.map((s) => settings[s.setting]).filter(Boolean), ...next.map((r) => r.id)])
+      if (ids.size > 25) return t('rc_full')
       await save(next, `${at >= 0 ? 'update' : 'add'} ${role}`)
       return t(at >= 0 ? 'rc_updated' : 'rc_added', role)
     }
     if (sub?.name === 'remove') {
       const next = list.filter((r) => r.id !== role)
       if (next.length !== before.length) await save(next, next.length !== list.length ? `remove ${role}` : '')
-      if (role === settings.announcementsRole) return t('rc_release_stays', role)
+      if (SETUP_ROLES.some((s) => settings[s.setting] === role)) return t('rc_setup_stays', role)
       return t(next.length !== list.length ? 'rc_removed' : 'rc_not_listed', role)
     }
     if (list.length !== before.length) await save(list)
@@ -2749,9 +3014,9 @@ export function startDiscordBridge({
     if (!entries.length) return t('rc_empty')
     const lines = entries.map((r) => {
       const problem = roleProblem(f, st.guild, r.id, null, t)
-      const emoji = r.emoji || (r.release ? '🔔' : '')
-      const description = r.description || (r.release ? t('rp_desc') : '')
-      return `- ${emoji ? `${emoji} ` : ''}<@&${r.id}>${description ? ` — ${description}` : ''}${r.release ? ` (${t('rc_release')})` : ''}${problem ? `\n  ⚠️ ${problem}` : ''}`
+      const emoji = r.emoji || r.setup?.emoji || ''
+      const description = r.description || (r.setup ? t(r.setup.desc) : '')
+      return `- ${emoji ? `${emoji} ` : ''}<@&${r.id}>${description ? ` — ${description}` : ''}${r.setup ? ` (${t('rc_setup')})` : ''}${problem ? `\n  ⚠️ ${problem}` : ''}`
     })
     const m = settings.rolesMsg?.id ? `\n${t('rc_message', settings.rolesMsg.channel)}` : ''
     return `${t('rc_head')}\n${lines.join('\n')}${m}`.slice(0, 1900)
@@ -2800,6 +3065,18 @@ export function startDiscordBridge({
     }
   }
 
+  /** Extension : la version de sa dernière release (étiquette
+   *  connect-vX.Y.Z) — false s'il n'y en a pas, null si la liste est
+   *  illisible. */
+  function extVersion(list) {
+    if (list === false) return false
+    if (!Array.isArray(list)) return null
+    const when = (r) => Date.parse(r.published_at || r.created_at || 0) || 0
+    const rel = list.filter((r) => r && !r.draft && !r.prerelease && /^connect-v\d+\.\d+\.\d+$/.test(r.tag_name || ''))
+      .sort((a, b) => when(b) - when(a))[0]
+    return rel ? rel.tag_name.slice('connect-v'.length) : false
+  }
+
   /** Dernières versions, lues sur GitHub (sources brutes ; releases
    *  d'Android par l'API publique, sans jeton) et sur le site, gardées
    *  10 min — 1 min quand une lecture a raté. Une version illisible vaut
@@ -2812,7 +3089,9 @@ export function startDiscordBridge({
       readJson(IOS_SOURCE), readJson(testSource), readJson(TV_TEST_SOURCE), readJson(TV_STABLE_SOURCE),
       repos.android ? readJson(`${github}/repos/${repos.android}/releases?per_page=30`) : false,
       siteVersion().catch(() => null),
-    ]).then(([main, test, tv, tvStable, apks, web]) => {
+      repos.web ? readJson(`${github}/repos/${repos.web}/releases?per_page=20`) : false,
+      readJson(AMO_API),
+    ]).then(([main, test, tv, tvStable, apks, web, webRels, amo]) => {
       const v = {
         at: memo.at,
         ios: sourceVersion(main, 'TwitchUnblock'),
@@ -2821,6 +3100,9 @@ export function startDiscordBridge({
         tvStable: sourceVersion(tvStable),
         android: androidVersions(apks),
         web: web || null,
+        // Extension : sa dernière release (le zip) et sa version sur Firefox
+        // Add-ons ; un objet, pour qu'AMO injoignable ne fasse pas tout relire.
+        ext: { zip: extVersion(webRels), amo: amo ? String(amo.current_version?.version || '').slice(0, 20) || null : amo },
       }
       if (Object.values(v).includes(null)) memo.ttl = 60_000
       return v
@@ -2843,12 +3125,15 @@ export function startDiscordBridge({
       `📺 ${t('v_tv')} ${t('v_test')} ${b(v.tvTest)}${v.tvStable ? ` · ${t('v_stable')} ${b(v.tvStable)}` : ''}`,
       `🤖 ${t('v_android')} ${android}`,
       `🌐 ${t('v_web')} ${b(v.web)}`,
+      `🧩 ${t('v_ext')} ${b(v.ext?.zip)}${v.ext?.amo && v.ext.amo !== v.ext.zip ? ` · Firefox Add-ons ${b(v.ext.amo)}` : ''}`,
       `-# ${t('v_checked')} <t:${Math.floor(v.at / 1000)}:R>`,
     ].join('\n')
   }
 
   /** /download : un encadré par plateforme et, dessous, une rangée de
-   *  boutons (liens) par plateforme, dans le même ordre. */
+   *  boutons (liens) par plateforme, dans le même ordre (cinq au plus, la
+   *  limite de Discord). L'Apple TV n'y a que la source de ses versions
+   *  stables : celle des builds de test est dans l'annonce de chacun. */
   function downloadMessage(t, v) {
     const link = (emoji, label, url) => ({ type: 2, style: 5, label, url, emoji: { name: emoji } })
     const code = (url) => `\`\`\`\n${url}\n\`\`\`\n`
@@ -2858,18 +3143,25 @@ export function startDiscordBridge({
     // Source des versions stables de l'Apple TV : montrée, sauf quand on sait
     // qu'elle n'existe pas encore.
     const tvStable = v?.tvStable !== false
+    const tv = tvStable ? `${t('dl_tv_source')}\n${code(TV_STABLE_SOURCE)}${v?.tvStable ? t('dl_latest', v.tvStable) : ''}` : t('dl_tv_no_stable')
+    // Extension : la version de sa release ; Firefox Add-ons en retard le
+    // temps de la relecture de Mozilla, c'est dit.
+    const x = v?.ext
+    const ext = x?.zip ? `\n${t('dl_latest', x.zip)}${x.amo && compareVersions(x.amo, x.zip) < 0 ? ` · ${t('dl_ext_amo', x.amo)}` : ''}` : ''
     return {
       embeds: [
         embed(t('dl_ios_title'), `${t('dl_ios', IOS_SOURCE)}${v?.ios ? `\n${t('dl_latest', v.ios)}${v.iosTest ? ` · TU Test **${v.iosTest}**` : ''}` : ''}`),
-        embed(t('dl_tv_title'), `${t('dl_tv')}\n${t('dl_tv_test')}\n${code(TV_TEST_SOURCE)}${tvStable ? `${t('dl_tv_stable')}\n${code(TV_STABLE_SOURCE)}` : t('dl_tv_no_stable')}`),
+        embed(t('dl_tv_title'), `${t('dl_tv')}\n${tv}\n${t('dl_tv_testers')}`),
         embed(t('dl_android_title'), `${t('dl_android')}${android}`),
         embed(t('dl_web_title'), t('dl_web')),
+        embed(t('dl_ext_title'), `${t('dl_ext')}${ext}`),
       ],
       components: [
         row(link('📱', t('b_add_source'), ADD_SOURCE), link('📱', t('b_ipa'), IPA)),
-        row(link('📺', t('b_tv_test'), TV_TEST_SOURCE), ...(tvStable ? [link('📺', t('b_tv_stable'), TV_STABLE_SOURCE)] : [])),
+        ...(tvStable ? [row(link('📺', t('b_tv_source'), TV_STABLE_SOURCE))] : []),
         row(link('🤖', t('b_apk'), APK_RELEASES)),
-        row(link('🌐', t('b_site'), site)),
+        row(link('🌐', t('b_site'), site), link('🐳', t('b_selfhost'), SELF_HOST)),
+        row(link('🦊', t('b_amo'), AMO_PAGE), link('🧩', t('b_ext_zip'), EXT_RELEASE), link('📖', t('b_ext_guide'), EXT_GUIDE)),
       ],
     }
   }
@@ -4107,24 +4399,27 @@ export function startDiscordBridge({
     })
   }
 
+  /** Nouveau build de test dans le salon des testeurs (/setup testers) : un
+   *  message par plateforme, qui ne mentionne que ses testeurs à elle
+   *  (/setup ; sans rôle choisi, personne). iPhone : « TU Test », dans la
+   *  source principale ; Apple TV : sa source de test pour ATVLoadly (la
+   *  même app que la stable, donc une autre source) ; Android : l'APK. */
   async function postTestBuild(rel, platform = /^tv-test-/.test(rel.tag_name || '') ? 'tv' : 'ios') {
     const channel = st.settings.testers
     if (!channel) return
-    const tv = platform === 'tv'
-    const android = platform === 'android'
-    // Rôle des testeurs de la plateforme (Apple TV, Android) ; Apple TV sans
-    // le sien : celui des testeurs, comme avant.
-    const role = tv ? (st.settings.testersRoleTv || st.settings.testersRole)
-      : android ? st.settings.testersRoleAndroid : st.settings.testersRole
+    const role = { ios: st.settings.testersRole, tv: st.settings.testersRoleTv, android: st.settings.testersRoleAndroid }[platform] || null
     const items = bullets(rel.body).slice(0, 12)
-    // Apple TV : sa source (apps-tv.json, à côté de celle de test) pour
-    // ATVLoadly, qui se met alors à jour seul.
-    const how = android
-      ? `Android build: download the APK (phone and Android TV): <${rel.html_url}>`
-      : tv
-      ? `Apple TV build: add the source <${testSource.replace(/apps-test\.json$/, 'apps-tv.json')}> in ATVLoadly for automatic updates, or install it with Xcode (see the README): <${rel.html_url}>`
-      : `Install it from the test source <${testSource}>, or download the IPA: <${rel.html_url}>`
-    await sendChunks(channel, `${role ? `<@&${role}> ` : ''}🧪 **New ${android ? 'Android ' : tv ? 'Apple TV ' : ''}test build: ${rel.name}**\n${items.join('\n')}\n\n${how}`,
+    const head = {
+      ios: `📱 **New iPhone test build: ${rel.name}**`,
+      tv: `📺 **New Apple TV test build: ${rel.name}**`,
+      android: `🤖 **New Android test build: ${rel.name}**`,
+    }[platform]
+    const how = {
+      ios: `Update **TU Test** from the main source <${IOS_SOURCE}> (AltStore, SideStore, Feather…), or download the IPA: <${rel.html_url}>`,
+      tv: `Add the Apple TV test source <${TV_TEST_SOURCE}> in ATVLoadly for automatic updates, or install it with Xcode (see the README): <${rel.html_url}>`,
+      android: `Download the APK (phones, tablets and Android TV): <${rel.html_url}>`,
+    }[platform]
+    await sendChunks(channel, `${role ? `<@&${role}> ` : ''}${head}\n${items.join('\n')}\n\n${how}`,
       { allowed_mentions: role ? { parse: [], roles: [role] } : { parse: [] } })
   }
 
