@@ -90,13 +90,18 @@ published one.
 
 - **Status**: connected as @login, or “log in to twitch.tv”; expiry of the integrity
   token if there is one.
-- **Settings** (stored in the browser, no secret), all on by default:
+- **Settings** (stored in the browser, no secret), on by default except the last one:
   - *Connection to the TwitchUnblock site*: when off, the site gets nothing more (it
     only sees that the extension is there and turned off).
   - *Claim automatically (chests and drops)*: the bonus chest and finished drops are
     claimed while a live is watched on the site.
   - *Bets, votes and rewards from the site*: always after a real click on the site and
     its confirmation.
+  - *Open twitch.tv on TwitchUnblock* (off by default, 0.4.0): channel, VOD, clip and
+    category pages of twitch.tv open on the site, at the same path. Sign-in, settings and
+    the other Twitch pages stay on Twitch, and so does a page opened from the site or with
+    `?tu=0` in its address. `redirect.js` is only registered while the option is on
+    (`scripting.registerContentScripts`), with no new permission.
 - **Diagnostic**: checks the session again and gets a new integrity token. Tokens only
   show masked (first 4 characters and length).
 
@@ -168,6 +173,7 @@ published one.
 | `manifest.json` | MV3, Chrome version (`service_worker`); `dev/build-firefox.mjs` derives the Firefox version from it (`scripts`, gecko ID) |
 | `background.js` | protocol operations, session, integrity token, limits, cache |
 | `content.js` | page ↔ background bridge, nothing else |
+| `redirect.js` | twitch.tv → site, only while *Open twitch.tv on TwitchUnblock* is on |
 | `popup.html`, `popup.js` | window: status, settings, diagnostic |
 | `_locales/*/messages.json` | texts in en, fr, es, ru, it, ja |
 | `icons/` | PNG icons, rebuilt by `node dev/make-icons.mjs` |

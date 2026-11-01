@@ -27,7 +27,7 @@ const NEEDED_ORIGINS = (() => {
     return [];
   }
 })();
-const DEFAULT_SETTINGS = { siteEnabled: true, autoClaim: true, allowSpend: true };
+const DEFAULT_SETTINGS = { siteEnabled: true, autoClaim: true, allowSpend: true, openOnSite: false };
 
 const $ = (id) => document.getElementById(id);
 
@@ -145,6 +145,7 @@ function updateDependents() {
   const on = $("set-siteEnabled").checked;
   $("set-autoClaim").disabled = !on;
   $("set-allowSpend").disabled = !on;
+  $("set-openOnSite").disabled = !on;
 }
 
 async function saveSetting(key, value) {

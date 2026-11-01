@@ -120,7 +120,9 @@ with its own source code zip. Upload it from the add-on's page in the Developer 
 > - scripting: Twitch requires a Client-Integrity token for mutations; a www.twitch.tv tab
 >   (an open one, or an inactive, muted tab opened and closed for it) makes Twitch's own
 >   POST https://gql.twitch.tv/integrity via scripting.executeScript (world MAIN, a function
->   bundled in background.js). Tabs are found through the host permissions: no "tabs";
+>   bundled in background.js). Tabs are found through the host permissions: no "tabs".
+>   Only with "Open twitch.tv on TwitchUnblock" on (off by default), registerContentScripts
+>   adds redirect.js: channel/VOD/clip/category pages go to twitchunblock.vercel.app;
 > - hosts: *.twitch.tv; static.twitchcdn.net (settings file with the watch statistics
 >   address); usher.ttvnw.net and *.playlist.ttvnw.net (live playlists: drops, 1440p);
 >   *.hls.ttvnw.net (HEAD on segments, drops); the website's origin (content script).
@@ -158,6 +160,12 @@ version's release notes and the notes for reviewers.
 
 One per version, under a `### <version>` heading, as a quote. The CI sends the one that
 matches `manifest.json` (paragraphs joined, in English).
+
+### 0.4.0
+
+> New option, off by default: open twitch.tv on TwitchUnblock. Channel, VOD, clip and
+> category pages of twitch.tv then open on the website; sign-in, settings and other Twitch
+> pages stay on Twitch, and ?tu=0 in the address keeps any page there. No new permission.
 
 ### 0.3.0
 

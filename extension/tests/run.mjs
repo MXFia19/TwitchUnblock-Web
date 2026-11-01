@@ -570,7 +570,7 @@ function loadBackground(opts = {}) {
   const local = opts.local || {};
   const consoleLines = [];
   const tabs = new Map((opts.tabs || []).map((t) => [t.id, { status: "complete", active: false, discarded: false, incognito: false, ...t }]));
-  const tabLog = { created: [], updated: [], removed: [], scripts: [], injected: [], messages: [] };
+  const tabLog = { created: [], updated: [], removed: [], scripts: [], injected: [], messages: [], registered: [] };
   const windows = opts.windows || [{ id: 1, type: "normal", focused: true, incognito: false }];
   let nextTab = 500;
   const cookies = { "auth-token": AUTH_TOKEN, unique_id: UNIQUE_ID, ...(opts.cookies || {}) };
@@ -641,6 +641,16 @@ function loadBackground(opts = {}) {
       }
     },
     scripting: {
+      // Scripts enregistrés à la volée (redirect.js, réglage openOnSite).
+      async getRegisteredContentScripts({ ids } = {}) {
+        return clone(tabLog.registered.filter((s) => !ids || ids.includes(s.id)));
+      },
+      async registerContentScripts(list) {
+        tabLog.registered.push(...clone(list));
+      },
+      async unregisterContentScripts({ ids } = {}) {
+        tabLog.registered = tabLog.registered.filter((s) => ids && !ids.includes(s.id));
+      },
       async executeScript({ target, world, func, args, files }) {
         const tab = tabs.get(target.tabId);
         if (files) {
@@ -2314,6 +2324,49 @@ test("réglage changé : nouvelle annonce ; installation ou mise à jour : conte
     [{ tuConnect: 1, dir: "hello", protocol: 1, version: MANIFEST.version, enabled: false }]);
 });
 
+test("« Ouvrir twitch.tv sur TwitchUnblock » : redirect.js enregistré seulement réglage allumé", async () => {
+  const h = loadBackground({ local: { settings: { siteEnabled: true, autoClaim: true, allowSpend: true } } });
+  await ticks(5);
+  assert.deepEqual(h.tabLog.registered, [], "coupé d'office");
+  const change = (settings) => h.chrome.storage.onChanged.listeners[0]({ settings: { newValue: settings } }, "local");
+  change({ siteEnabled: true, autoClaim: true, allowSpend: true, openOnSite: true });
+  await ticks(5);
+  assert.deepEqual(h.tabLog.registered.map((s) => [s.id, s.js, s.runAt, s.allFrames]),
+    [["tu-open-on-site", ["redirect.js"], "document_start", false]]);
+  assert.ok(h.tabLog.registered[0].matches.every((m) => m.startsWith("https://") && /(^https:..|[.])twitch[.]tv[/][*]$/.test(m)), "twitch.tv seulement");
+  change({ siteEnabled: true, autoClaim: true, allowSpend: true, openOnSite: true });
+  await ticks(5);
+  assert.equal(h.tabLog.registered.length, 1, "pas de doublon");
+  change({ siteEnabled: false, autoClaim: true, allowSpend: true, openOnSite: true });
+  await ticks(5);
+  assert.deepEqual(h.tabLog.registered, [], "connexion au site coupée : plus de redirection");
+});
+
+test("redirect.js : seules les pages que le site a, jamais depuis le site ni avec ?tu=0", () => {
+  const src = readFileSync(join(DIR, "redirect.js"), "utf8");
+  const run = (href, referrer = "", top = true) => {
+    let to = null;
+    const win = {};
+    win.top = top ? win : {};
+    vm.runInNewContext(src, { window: win, location: { href, replace: (u) => { to = u; } }, document: { referrer }, URL });
+    return to;
+  };
+  assert.equal(run("https://www.twitch.tv/"), SITE + "/");
+  assert.equal(run("https://www.twitch.tv/xqc"), SITE + "/xqc");
+  assert.equal(run("https://m.twitch.tv/xqc/videos?filter=highlights"), SITE + "/xqc/videos?filter=highlights");
+  assert.equal(run("https://www.twitch.tv/videos/2915720164?t=1h2m3s"), SITE + "/videos/2915720164?t=1h2m3s");
+  assert.equal(run("https://www.twitch.tv/xqc/clip/FunnySlug-abc"), SITE + "/xqc/clip/FunnySlug-abc");
+  assert.equal(run("https://clips.twitch.tv/FunnySlug-abc"), SITE + "/clip/FunnySlug-abc");
+  assert.equal(run("https://www.twitch.tv/directory/category/just-chatting"), SITE + "/directory/category/just-chatting");
+  for (const stay of ["https://www.twitch.tv/login", "https://www.twitch.tv/settings/profile", "https://www.twitch.tv/subscriptions",
+    "https://www.twitch.tv/popout/xqc/chat", "https://www.twitch.tv/xqc/chat", "https://www.twitch.tv/xqc?tu=0",
+    "https://clips.twitch.tv/embed?clip=x"]) {
+    assert.equal(run(stay), null, stay);
+  }
+  assert.equal(run("https://www.twitch.tv/xqc", SITE + "/xqc"), null, "ouverte depuis le site");
+  assert.equal(run("https://www.twitch.tv/xqc", "", false), null, "jamais dans un cadre");
+});
+
 // --- Manifeste ---------------------------------------------------------------------------------------------
 
 test("manifeste : origines, permissions et arrière-plan attendus", () => {
@@ -2326,7 +2379,9 @@ test("manifeste : origines, permissions et arrière-plan attendus", () => {
   // declarativeNetRequest ni de webRequest : la page ne lit pas les playlists
   // de Twitch elle-même, l'extension les lui rend (hq.playlist). 0.3.0
   // (suivre, compte sans pub) : rien de plus non plus.
-  assert.equal(MANIFEST.version, "0.3.0");
+  // 0.4.0 (ouvrir twitch.tv sur le site) : rien de plus non plus — redirect.js
+  // s'enregistre avec « scripting » et l'accès à *.twitch.tv déjà là.
+  assert.equal(MANIFEST.version, "0.4.0");
   // 0.3.0 : plus de « tabs » — les accès d'hôte suffisent pour chercher les
   // onglets du site et de twitch.tv par leur adresse.
   assert.deepEqual([...MANIFEST.permissions].sort(), ["cookies", "scripting", "storage"]);

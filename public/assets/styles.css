@@ -586,6 +586,15 @@ a.card, a.cat-card { display: block; }
 .watch:not(.chat-hidden) .watch-body:-webkit-full-screen .p-bottom,
 .watch:not(.chat-hidden) .watch-body:-webkit-full-screen .p-menu { margin-right: min(340px, 34vw); }
 .watch:not(.chat-hidden) .watch-body:-webkit-full-screen .p-big { margin-left: calc(min(340px, 34vw) / -2); }
+/* Chat en plein écran à gauche, ou dans un coin (moitié haute ou basse) :
+   réglage « Chat en plein écran ». Les commandes s'écartent de son côté ;
+   dans la moitié haute, la barre du bas reste entière. */
+:root[data-fschat^="left"] :is(.watch-body:fullscreen, .watch-body:-webkit-full-screen) .watch-chat { right: auto; left: 0; }
+:root[data-fschat$="-top"] :is(.watch-body:fullscreen, .watch-body:-webkit-full-screen) .watch-chat { bottom: 50%; }
+:root[data-fschat$="-bottom"] :is(.watch-body:fullscreen, .watch-body:-webkit-full-screen) .watch-chat { top: 50%; }
+:root[data-fschat^="left"] .watch:not(.chat-hidden) :is(.watch-body:fullscreen, .watch-body:-webkit-full-screen) :is(.p-bottom, .p-menu) { margin-right: 0; margin-left: min(340px, 34vw); }
+:root[data-fschat^="left"] .watch:not(.chat-hidden) :is(.watch-body:fullscreen, .watch-body:-webkit-full-screen) .p-big { margin-left: calc(min(340px, 34vw) / 2); }
+:root[data-fschat$="-top"] .watch:not(.chat-hidden) :is(.watch-body:fullscreen, .watch-body:-webkit-full-screen) :is(.p-bottom, .p-menu) { margin-left: 0; margin-right: 0; }
 
 /* Réduit : petite fenêtre flottante, la lecture continue. */
 .watch-mini { display: none; align-items: center; gap: 2px; padding: 8px 6px 8px 12px; min-width: 0; }

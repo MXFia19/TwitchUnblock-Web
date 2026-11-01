@@ -78,6 +78,12 @@
   "setSpendHelp": {
     "message": "サイトでの実際のクリックと確認の後にだけ行います。"
   },
+  "setOpenOnSite": {
+    "message": "twitch.tv を TwitchUnblock で開く"
+  },
+  "setOpenOnSiteHelp": {
+    "message": "twitch.tv のチャンネル、VOD、クリップ、カテゴリのページをサイトで開きます。ログインと設定は Twitch のままです。アドレスに ?tu=0 を付けると Twitch に留まります。"
+  },
   "diagTitle": {
     "message": "診断"
   },

@@ -31,6 +31,7 @@ export const DEFAULT_PREFS = {
   pinned: [],        // streamers épinglés en tête des suivis (logins en minuscules)     // langue du top des lives ; null = celle de l'appareil
   pinnedByViewers: true, // leurs directs triés entre eux par spectateurs (sinon : ordre d'épinglage)
   timestamps: false,
+  fsChat: 'right-full', // chat sur l'image en plein écran : côté (left/right) et hauteur (full/top/bottom)
   timeFormat: 'auto', // heure du chat : 'auto' (celle de l'appareil), '12' ou '24'
   keepDeleted: true,
   loadHistory: true,
@@ -142,7 +143,22 @@ export const store = {
 
   // ── Historique (VODs + streamers), même forme que l'ancien site ────────
   history: read('twitch_vod_history', []),
-  saveHistory() { write('twitch_vod_history', this.history) },
+  // Vide, la clé disparaît : rien ne reste quand « Reprendre les VODs » et
+  // « Chaînes récentes » sont coupés (demande de 4).
+  saveHistory() {
+    if (this.history.length) write('twitch_vod_history', this.history)
+    else { try { localStorage.removeItem('twitch_vod_history') } catch {} }
+  },
+
+  /** Types d'entrées que l'historique ne garde pas dans ce navigateur :
+   *  « vod » quand « Reprendre les VODs » est coupé, « channel » quand
+   *  « Chaînes récentes » l'est. */
+  hiddenTypes() {
+    const out = new Set()
+    if (this.prefs.vodProgress === false) out.add('vod')
+    if (this.prefs.showRecent === false) out.add('channel')
+    return out
+  },
 
   /** Réglages ou historique réécrits par un autre onglet (événement
    *  `storage`, main.js) : relus en place. L'onglet resté ouvert réécrivait
@@ -165,8 +181,8 @@ export const store = {
   },
 
   addHistory(term, type, display, extra = {}) {
-    // « Reprendre les VODs » coupé : aucune VOD dans l'historique.
-    if (type === 'vod' && this.prefs.vodProgress === false) return
+    // « Reprendre les VODs » ou « Chaînes récentes » coupé : rien de ce type.
+    if (this.hiddenTypes().has(type)) return
     const key = String(term).toLowerCase()
     this.history = this.history.filter((h) => String(h.term).toLowerCase() !== key)
     // `addedAt` : l'app iOS l'exige pour relire l'historique ; sans lui, un
@@ -186,15 +202,17 @@ export const store = {
     this.saveHistory()
   },
 
-  /** « Reprendre les VODs » coupé : plus rien sur les VODs dans ce
-   *  navigateur — leurs entrées de l'historique (la clé garde les chaînes
-   *  récentes), leurs positions et leurs durées. Rend les entrées retirées. */
-  forgetVods() {
-    const vods = this.history.filter((h) => h.type === 'vod')
-    if (vods.length) {
-      this.history = this.history.filter((h) => h.type !== 'vod')
+  /** Réglages de l'historique coupés : leurs entrées quittent ce navigateur.
+   *  « Reprendre les VODs » emporte aussi les positions et les durées des
+   *  VODs. Rend les entrées retirées. */
+  forgetHidden() {
+    const hidden = this.hiddenTypes()
+    const removed = this.history.filter((h) => hidden.has(h.type))
+    if (removed.length) {
+      this.history = this.history.filter((h) => !hidden.has(h.type))
       this.saveHistory()
     }
+    if (!hidden.has('vod')) return removed
     try {
       const keys = []
       for (let i = 0; i < localStorage.length; i++) {
@@ -204,7 +222,7 @@ export const store = {
       for (const k of keys) localStorage.removeItem(k)
       localStorage.removeItem('tu_lengths')
     } catch {}
-    return vods
+    return removed
   },
 
   // ── Progression des VODs ────────────────────────────────────────────────

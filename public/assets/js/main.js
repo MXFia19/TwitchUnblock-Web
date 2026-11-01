@@ -65,6 +65,13 @@ const lightScheme = matchMedia('(prefers-color-scheme: light)')
 const themeBg = () => (THEME_BGS.includes(store.prefs.themeBg) ? store.prefs.themeBg : 'dark')
 const themeAccent = () => (THEME_ACCENTS.some(([id]) => id === store.prefs.themeAccent) ? store.prefs.themeAccent : 'twitch')
 
+/** Chat posé sur l'image en plein écran : côté et hauteur, comme dans les
+ *  apps iPhone et TV (demande d'Alarez). Lu par la feuille de style. */
+const FS_CHAT = ['right-full', 'right-top', 'right-bottom', 'left-full', 'left-top', 'left-bottom']
+function applyFsChat() {
+  document.documentElement.dataset.fschat = FS_CHAT.includes(store.prefs.fsChat) ? store.prefs.fsChat : 'right-full'
+}
+
 function applyTheme() {
   const root = document.documentElement
   const bg = themeBg() === 'auto' ? (lightScheme.matches ? 'light' : 'dark') : themeBg()
@@ -82,9 +89,10 @@ document.addEventListener('DOMContentLoaded', boot)
 async function boot() {
   // Avant tout rendu : la langue et le thème en dépendent.
   applySiteDefaults()
-  // Coupé avant cette version : ce qui restait sur les VODs s'efface.
-  if (store.prefs.vodProgress === false) store.forgetVods()
+  // Coupés avant cette version : ce qui restait de l'historique s'efface.
+  if (store.hiddenTypes().size) store.forgetHidden()
   applyTheme()
+  applyFsChat()
   initLang(store.prefs.lang)
   loadHls()   // prêt avant le premier clic
   applyStatic()
@@ -592,12 +600,17 @@ async function pullSync() {
   try { localStorage.setItem(HISTORY_OWNER_KEY, String(userId)) } catch {}
   const data = await api.syncPull(userId)
   if (session.userId !== userId) return
-  if (data && Array.isArray(data.history) && data.history.length) {
-    // « Reprendre les VODs » coupé : les VODs du compte ne reviennent pas
-    // dans ce navigateur, elles restent en mémoire pour ses envois.
-    const off = store.prefs.vodProgress === false
-    if (off) accountVods = { userId, items: data.history.filter((h) => h?.type === 'vod') }
-    store.history = mergeHistory(store.history, off ? data.history.filter((h) => h?.type !== 'vod') : data.history)
+  if (data) {
+    // « Reprendre les VODs » ou « Chaînes récentes » coupé : ces entrées du
+    // compte (relues, ou rangées ici à sa dernière déconnexion) ne restent
+    // pas dans ce navigateur ; gardées en mémoire pour ses envois.
+    const hidden = store.hiddenTypes()
+    const isHidden = (h) => hidden.has(h?.type)
+    const server = Array.isArray(data.history) ? data.history : []
+    accountHidden = hidden.size
+      ? { userId, items: mergeHistory(store.history.filter(isHidden), server.filter(isHidden)) }
+      : null
+    store.history = mergeHistory(store.history.filter((h) => !isHidden(h)), server.filter((h) => !isHidden(h)))
   }
   store.saveHistory()
   if (data) {
@@ -625,21 +638,21 @@ let lastSyncAt = 0
  *  ratée laissait l'envoi suivant écraser toute la sauvegarde du serveur). */
 let pulledFor = null
 let pulling = false
-/** VODs de l'historique du compte quand « Reprendre les VODs » est coupé :
- *  gardées en mémoire seulement (rien sur les VODs dans ce navigateur), et
- *  renvoyées avec chaque envoi — le serveur prend l'historique envoyé tel
- *  quel, l'iPhone les aurait perdues. { userId, items } */
-let accountVods = null
+/** Entrées de l'historique du compte que ce navigateur ne garde pas
+ *  (« Reprendre les VODs » ou « Chaînes récentes » coupé) : en mémoire
+ *  seulement, et renvoyées avec chaque envoi — le serveur prend l'historique
+ *  envoyé tel quel, l'iPhone les aurait perdues. { userId, items } */
+let accountHidden = null
 
-/** « Reprendre les VODs » coupé (réglage, ou déjà coupé au démarrage) :
- *  rien sur les VODs ne reste dans ce navigateur (demande de 4 : la clé
- *  twitch_vod_history en gardait). Celles du compte relu restent en mémoire
- *  pour ses envois, et reviennent ici quand on réactive. */
-function forgetVods() {
-  const removed = store.forgetVods()
+/** Réglage de l'historique coupé (ou déjà coupé au démarrage) : ses entrées
+ *  quittent ce navigateur (demande de 4 : la clé twitch_vod_history en
+ *  gardait). Celles du compte relu restent en mémoire pour ses envois, et
+ *  reviennent ici quand on réactive (relecture). */
+function forgetHidden() {
+  const removed = store.forgetHidden()
   if (removed.length && session.userId && pulledFor === session.userId) {
-    const kept = accountVods?.userId === session.userId ? accountVods.items : []
-    accountVods = { userId: session.userId, items: mergeHistory(kept, removed) }
+    const kept = accountHidden?.userId === session.userId ? accountHidden.items : []
+    accountHidden = { userId: session.userId, items: mergeHistory(kept, removed) }
   }
 }
 
@@ -659,8 +672,8 @@ function flushSync({ force = false } = {}) {
   const vods = new Set(store.history.filter((h) => h.type === 'vod').map((h) => String(h.term)))
   const progress = Object.fromEntries(Object.entries(store.allProgress())
     .filter(([id]) => vods.has(id)).map(([id, t]) => [id, Math.round(t)]))
-  // VODs du compte gardées hors de ce navigateur : renvoyées telles quelles.
-  const kept = store.prefs.vodProgress === false && accountVods?.userId === session.userId ? accountVods.items : []
+  // Entrées du compte gardées hors de ce navigateur : renvoyées telles quelles.
+  const kept = accountHidden?.userId === session.userId ? accountHidden.items : []
   const data = { history: kept.length ? mergeHistory(store.history, kept) : store.history, progress }
   const body = JSON.stringify(data)
   syncDirty = false
@@ -862,6 +875,7 @@ function swapAccountPrefs(from, to) {
 /** Réglages changés d'un coup (autre onglet, autre compte) : ce qui en
  *  dépend est repeint. */
 function repaintPrefs() {
+  applyFsChat()
   chat?.applyPrefs()
   multiChat?.applyPrefs()
   renderRecentChannels()
@@ -976,6 +990,8 @@ function prefsApplied(names, topBefore) {
     // ouverts suit.
     const emotesBox = $('#set-emotes')
     if (emotesBox) emotesBox.innerHTML = hiddenEmotesInner()
+    // « Chaînes récentes » coupé depuis un autre appareil : comme ici.
+    if (store.prefs.showRecent === false) forgetHidden()
     renderRecentChannels()
     if (store.prefs.topLang !== topBefore) {
       renderTopLocal()
@@ -2035,7 +2051,7 @@ function openPushSettings() {
 /** Grille de cartes ou liste façon Twitch, au choix (bouton + réglage). */
 function applyLayout() {
   const list = Boolean(store.prefs.homeList)
-  for (const id of ['#followed-grid', '#top-grid']) $(id)?.classList.toggle('as-list', list)
+  for (const id of ['#followed-grid', '#top-grid', '#cat-streams']) $(id)?.classList.toggle('as-list', list)
   const b = $('#layout-toggle')
   if (b) {
     b.innerHTML = icon(list ? 'grid' : 'list', 18)
@@ -4709,13 +4725,20 @@ actions['clip-create'] = () => {
 }
 
 /** Clip créé : son lien à copier ou à ouvrir sur Twitch ; le direct continue. */
+/** Lien vers Twitch ouvert depuis le site, sans référent (noreferrer) :
+ *  ?tu=0, que l'extension (« Ouvrir twitch.tv sur TwitchUnblock ») le
+ *  laisse sur Twitch. */
+function twitchOut(url) {
+  try { const u = new URL(url); u.searchParams.set('tu', '0'); return u.href } catch { return url }
+}
+
 function openClipMade(r) {
   openSheet(`
     <div class="sheet-head"><h2>${esc(t('clip_made_title'))}</h2><button class="icon-btn" type="button" data-sheet-close>${icon('x', 20)}</button></div>
     <p class="muted sheet-sub">${esc(t('clip_made_sub'))}</p>
     <div class="sheet-group">
       <button class="sheet-row" type="button" data-sheet="copy">${icon('copy', 18)}<span>${esc(t('clip_copy'))}</span></button>
-      <a class="sheet-row" href="${esc(r.url)}" target="_blank" rel="noopener noreferrer">${icon('external', 18)}<span>${esc(t('clip_open_twitch'))}</span></a>
+      <a class="sheet-row" href="${esc(twitchOut(r.url))}" target="_blank" rel="noopener noreferrer">${icon('external', 18)}<span>${esc(t('clip_open_twitch'))}</span></a>
     </div>
     <input class="link-box" readonly value="${esc(r.url)}">`)
   const sheet = $('#sheet')
@@ -6051,6 +6074,10 @@ function openSettings() {
         <span class="setting-text"><span>${esc(t('time_format'))}</span><small>${esc(t('time_format_sub'))}</small></span>
         <select class="text-input" id="set-timefmt">${[['auto', t('time_auto')], ['12', '12 h'], ['24', '24 h']].map(([v, l]) => `<option value="${v}"${(p.timeFormat || 'auto') === v ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select>
       </label>
+      <label class="setting setting-col">
+        <span class="setting-text"><span>${esc(t('fs_chat'))}</span><small>${esc(t('fs_chat_sub'))}</small></span>
+        <select class="text-input" id="set-fschat">${FS_CHAT.map((v) => `<option value="${v}"${(p.fsChat || 'right-full') === v ? ' selected' : ''}>${esc(t('fs_chat_' + v.replace('-', '_')))}</option>`).join('')}</select>
+      </label>
       ${toggle('set-deleted', t('keep_deleted'), p.keepDeleted)}
       ${toggle('set-history', t('load_history'), p.loadHistory)}
       ${toggle('set-bots', t('hide_bots'), p.hideBots, t('hide_bots_sub'))}
@@ -6180,6 +6207,7 @@ function openSettings() {
     const id = e.target.id
     if (id === 'set-ts') p.timestamps = e.target.checked
     if (id === 'set-timefmt') p.timeFormat = ['12', '24'].includes(e.target.value) ? e.target.value : 'auto'
+    if (id === 'set-fschat') { p.fsChat = FS_CHAT.includes(e.target.value) ? e.target.value : 'right-full'; applyFsChat() }
     if (id === 'set-sync') p.chatSync = e.target.checked
     if (id === 'set-multichat') { setMultiChat(e.target.checked); return }
     if (id === 'set-push') { togglePush(e.target); return }
@@ -6222,13 +6250,22 @@ function openSettings() {
       return
     }
     if (id === 'set-homelist') { p.homeList = e.target.checked; store.savePrefs(); applyLayout(); return }
-    if (id === 'set-recent') { p.showRecent = e.target.checked; store.savePrefs(); renderRecentChannels(); return }
+    if (id === 'set-recent') {
+      p.showRecent = e.target.checked
+      store.savePrefs()
+      // Coupé : les chaînes de l'historique s'effacent d'ici. Réactivé : le
+      // compte rend les siennes (relecture).
+      if (!p.showRecent) forgetHidden()
+      else if (session.userId) pullSync().then(renderRecentChannels, () => {})
+      renderRecentChannels()
+      return
+    }
     if (id === 'set-vodprogress') {
       p.vodProgress = e.target.checked
       store.savePrefs()
       // Coupé : tout ce qui touche aux VODs s'efface d'ici. Réactivé : le
       // compte rend son historique et ses positions (relecture).
-      if (!p.vodProgress) forgetVods()
+      if (!p.vodProgress) forgetHidden()
       else if (session.userId) pullSync().then(renderContinue, () => {})
       renderContinue()
       return
@@ -6310,6 +6347,7 @@ const BACKUP_SETTINGS = {
   themeAccent: (v) => (THEME_ACCENTS.some(([id]) => id === v) ? v : undefined),
   timestamps: okBool,
   timeFormat: (v) => (['auto', '12', '24'].includes(v) ? v : undefined),
+  fsChat: (v) => (FS_CHAT.includes(v) ? v : undefined),
   keepDeleted: okBool,
   loadHistory: okBool,
   chatSize: (v) => (Number.isFinite(v) ? Math.min(20, Math.max(12, Math.round(v))) : undefined),

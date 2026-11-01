@@ -78,6 +78,12 @@
   "setSpendHelp": {
     "message": "Sempre dopo un vero clic sul sito e la sua conferma."
   },
+  "setOpenOnSite": {
+    "message": "Apri twitch.tv su TwitchUnblock"
+  },
+  "setOpenOnSiteHelp": {
+    "message": "Le pagine di canale, VOD, clip e categoria di twitch.tv si aprono sul sito. Accesso e impostazioni restano su Twitch; aggiungi ?tu=0 all’indirizzo per restarci."
+  },
   "diagTitle": {
     "message": "Diagnostica"
   },

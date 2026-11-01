@@ -158,7 +158,8 @@ const ERROR_CODES = [
   "rate_limited", "integrity", "twitch", "offline", "no_claim", "timeout", "internal"
 ];
 
-const DEFAULT_SETTINGS = { siteEnabled: true, autoClaim: true, allowSpend: true };
+// openOnSite : pages de twitch.tv ouvertes sur le site (redirect.js), coupé d'office.
+const DEFAULT_SETTINGS = { siteEnabled: true, autoClaim: true, allowSpend: true, openOnSite: false };
 
 const CHANNEL_RE = /^[a-z0-9_]{1,25}$/;
 const TWITCH_ID_RE = /^[A-Za-z0-9._:-]{1,64}$/;
@@ -2984,6 +2985,36 @@ async function injectIntoSiteTabs() {
   }
 }
 
+// --- Ouvrir twitch.tv sur TwitchUnblock (réglage openOnSite) ------------------
+
+// redirect.js n'est enregistré qu'allumé : coupé, rien ne tourne sur twitch.tv.
+// Aucune permission de plus (accès à *.twitch.tv et « scripting » déjà là).
+// Revu à chaque réveil de l'arrière-plan : un enregistrement peut ne pas
+// survivre au redémarrage du navigateur (Firefox).
+const REDIRECT_ID = "tu-open-on-site";
+
+async function syncRedirect(settings) {
+  const s = api.scripting;
+  if (!s || typeof s.getRegisteredContentScripts !== "function") return;
+  const on = Boolean(settings && settings.siteEnabled !== false && settings.openOnSite);
+  try {
+    const current = await s.getRegisteredContentScripts({ ids: [REDIRECT_ID] });
+    if (on && !current.length) {
+      await s.registerContentScripts([{
+        id: REDIRECT_ID,
+        matches: ["https://www.twitch.tv/*", "https://twitch.tv/*", "https://m.twitch.tv/*", "https://clips.twitch.tv/*"],
+        js: ["redirect.js"],
+        runAt: "document_start",
+        allFrames: false
+      }]);
+    } else if (!on && current.length) {
+      await s.unregisterContentScripts({ ids: [REDIRECT_ID] });
+    }
+  } catch (e) {
+    // navigateur sans enregistrement dynamique : la page reste sur Twitch
+  }
+}
+
 api.runtime.onInstalled.addListener(() => {
   getSettings()
     .then((s) => api.storage.local.set({ settings: s }))
@@ -2997,8 +3028,11 @@ api.storage.onChanged.addListener((changes, area) => {
     // Connexion au site coupée : plus d'événements du compte.
     const next = changes.settings.newValue;
     if (next && next.siteEnabled === false) hermesClose();
+    syncRedirect(next).catch(() => {});
   }
 });
+
+getSettings().then(syncRedirect).catch(() => {});
 
 // storage.session reste fermé aux content scripts (valeur par défaut sous
 // Chrome, redite ici) ; storage.local aussi quand le navigateur le permet.

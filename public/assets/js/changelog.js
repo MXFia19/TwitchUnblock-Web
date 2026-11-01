@@ -6,6 +6,41 @@
 
 export const CHANGELOG = [
   {
+    version: '2026.11.01b',
+    items: {
+      fr: [
+        'Plein écran : le chat se place à gauche ou à droite, sur toute la hauteur ou dans un coin (Réglages → Chat → Chat en plein écran), comme dans les apps iPhone et Apple TV. Les commandes du lecteur s’écartent de son côté.',
+        '« Lives en liste » (miniature à gauche, comme sur Twitch) vaut aussi dans les catégories.',
+        '« Chaînes récentes » coupé : les chaînes ouvertes ne sont plus gardées sur ce navigateur. Avec « Reprendre les VODs » coupé aussi, plus rien de l’historique n’y reste. La sauvegarde de ton compte les garde pour tes autres appareils.',
+        'Extension TwitchUnblock Connect 0.4.0 : nouvelle option « Ouvrir twitch.tv sur TwitchUnblock », coupée d’office. Les pages de chaîne, de VOD, de clip et de catégorie de twitch.tv s’ouvrent alors ici.',
+      ],
+      en: [
+        'Fullscreen: the chat can sit left or right, full height or in a corner (Settings → Chat → Chat in fullscreen), like in the iPhone and Apple TV apps. The player controls move out of its way.',
+        '“Streams as a list” (thumbnail on the left, like on Twitch) now also applies to categories.',
+        'With “Recent channels” off, opened channels are no longer kept in this browser. With “Continue watching” off too, nothing of the history stays here. Your account’s backup keeps them for your other devices.',
+        'TwitchUnblock Connect extension 0.4.0: new option “Open twitch.tv on TwitchUnblock”, off by default. Channel, VOD, clip and category pages of twitch.tv then open here.',
+      ],
+      es: [
+        'Pantalla completa: el chat puede ir a la izquierda o a la derecha, a toda altura o en una esquina (Ajustes → Chat → Chat en pantalla completa), como en las apps de iPhone y Apple TV. Los controles del reproductor se apartan de su lado.',
+        '«Directos en lista» (miniatura a la izquierda, como en Twitch) ahora también se aplica a las categorías.',
+        'Con «Canales recientes» desactivado, los canales abiertos ya no se guardan en este navegador. Con «Seguir viendo» desactivado también, no queda nada del historial aquí. La copia de tu cuenta los conserva para tus otros dispositivos.',
+        'Extensión TwitchUnblock Connect 0.4.0: nueva opción «Abrir twitch.tv en TwitchUnblock», desactivada por defecto. Las páginas de canal, VOD, clip y categoría de twitch.tv se abren entonces aquí.',
+      ],
+      ru: [
+        'Полноэкранный режим: чат можно разместить слева или справа, на всю высоту или в углу (Настройки → Чат → Чат в полноэкранном режиме), как в приложениях для iPhone и Apple TV. Кнопки плеера сдвигаются в сторону от него.',
+        '«Трансляции списком» (миниатюра слева, как на Twitch) теперь действует и в категориях.',
+        'Если «Недавние каналы» выключены, открытые каналы больше не сохраняются в этом браузере. Если выключено и «Продолжить просмотр», здесь не остаётся ничего из истории. Резервная копия аккаунта сохраняет их для других устройств.',
+        'Расширение TwitchUnblock Connect 0.4.0: новая опция «Открывать twitch.tv в TwitchUnblock», по умолчанию выключена. Страницы каналов, VOD, клипов и категорий twitch.tv тогда открываются здесь.',
+      ],
+      'zh-Hant': [
+        '全螢幕：聊天室可以放在左側或右側，佔滿整個高度或放在角落（設定 → 聊天室 → 全螢幕聊天室），就像 iPhone 與 Apple TV App 一樣。播放器控制項會避開它。',
+        '「直播以清單顯示」（縮圖在左，像 Twitch 一樣）現在也適用於分類。',
+        '關閉「最近的頻道」後，開啟過的頻道不再保留在這個瀏覽器。若「繼續觀看」也關閉，這裡不會留下任何紀錄。帳號的備份仍會為你的其他裝置保留它們。',
+        'TwitchUnblock Connect 擴充功能 0.4.0：新增「在 TwitchUnblock 開啟 twitch.tv」選項，預設關閉。開啟後，twitch.tv 的頻道、VOD、剪輯與分類頁面會在這裡開啟。',
+      ],
+    },
+  },
+  {
     version: '2026.11.01a',
     items: {
       fr: [
