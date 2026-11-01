@@ -6,6 +6,23 @@
 
 export const CHANGELOG = [
   {
+    version: '2026.11.01g',
+    items: {
+      fr: [
+        'Lecteur : quand le 1440p manque parce que la vidéo passe par le relais sur cet appareil, le bouton « Réessayer sans le relais » relance le direct depuis les serveurs de Twitch — le relais revient de lui-même s’ils ne répondent toujours pas.',
+      ],
+      en: [
+        'Player: when 1440p is missing because the video goes through the relay on this device, the “Try again without the relay” button restarts the live from Twitch’s servers — the relay comes back by itself if they still don’t answer.',
+      ],
+      es: [
+        'Reproductor: cuando falta el 1440p porque el vídeo pasa por el relé en este dispositivo, el botón «Reintentar sin el relé» reinicia el directo desde los servidores de Twitch; el relé vuelve solo si siguen sin responder.',
+      ],
+      ru: [
+        'Плеер: если 1440p нет, потому что на этом устройстве видео идёт через ретранслятор, кнопка «Попробовать без ретранслятора» перезапускает трансляцию с серверов Twitch — ретранслятор вернётся сам, если они по-прежнему не отвечают.',
+      ],
+    },
+  },
+  {
     version: '2026.11.01f',
     items: {
       fr: [

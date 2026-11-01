@@ -161,7 +161,8 @@ export function buildHq(variants, codecs, { canPlay = defaultCanPlay, any = fals
  * segments par le relais sur cet appareil ; `conn` : état de connect.js ;
  * `codecs` : browserCodecs ; `got` : réponse de la liste du compte
  * ({ variants } ou { error }), s'il y en a eu une. `action` : la page des
- * réglages qui y remédie (player, connect).
+ * réglages qui y remédie (player, connect), ou relay (retenter sans le
+ * relais).
  */
 export function hqMissing({ format, hq, relay, conn, codecs, got }) {
   if (!(format?.height > 1080)) return null
@@ -170,7 +171,7 @@ export function hqMissing({ format, hq, relay, conn, codecs, got }) {
   const codec = fam === 'h265' || fam === 'av1' ? CODEC_NAMES[fam] : ''
   const why = (reason, action = null, e = '') => ({ reason, action, q, codec, e })
   if (!hq) return why('setting', 'player')
-  if (relay) return why('relay')
+  if (relay) return why('relay', 'relay')
   if (conn?.availability !== 'on') return why('ext', 'connect')
   if (!versionAtLeast(conn.version)) return why('ext_old', 'connect')
   if (conn.session === null) return why('ext_login', 'connect')

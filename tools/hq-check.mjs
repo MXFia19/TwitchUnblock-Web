@@ -479,7 +479,7 @@ test('hqMissing : pourquoi la chaîne dépasse 1080p mais pas le direct, dans l�
   assert.equal(r({ format: { height: 1080, fps: 60, codec: 'avc1.4D401F' } }), null, '1080p : rien à dire')
   assert.equal(r({ format: null }), null, 'format inconnu')
   assert.deepEqual(r({ hq: false }), { reason: 'setting', action: 'player', q: '1440p60', codec: 'HEVC', e: '' })
-  assert.equal(r({ relay: true }).reason, 'relay')
+  assert.deepEqual([r({ relay: true }).reason, r({ relay: true }).action], ['relay', 'relay'], 'bouton « Réessayer sans le relais »')
   assert.deepEqual([r({ conn: { availability: 'absent' } }).reason, r({ conn: { availability: 'off' } }).action], ['ext', 'connect'])
   assert.equal(r({ conn: { ...on, version: '0.1.0' } }).reason, 'ext_old')
   assert.equal(r({ conn: { ...on, session: null } }).reason, 'ext_login')

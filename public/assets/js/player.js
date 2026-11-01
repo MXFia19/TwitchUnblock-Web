@@ -54,6 +54,11 @@ export function segmentProxyOn() {
 function enableSegmentProxy() {
   try { localStorage.setItem(SEG_PROXY_KEY, String(Date.now() + SEG_PROXY_DAYS * 86400000)) } catch {}
 }
+/** « Réessayer sans le relais » (menu de qualité) : l'appareil retente le
+ *  CDN ; trois ratés de suite le remettent sur le relais. */
+export function clearSegmentProxy() {
+  try { localStorage.removeItem(SEG_PROXY_KEY) } catch {}
+}
 let directRecheckAt = 0
 /** Sur le relais : le CDN répond-il de nouveau ? HEAD sur le segment demandé
  *  (requête simple : pas de contrôle préalable CORS, rien de téléchargé). */
@@ -2722,9 +2727,12 @@ export class Player {
     // showHqMissing) : pourquoi, puis la qualité grisée, comme twitch.tv.
     const note = this.kind === 'live' ? this.qualityNote : null
     if (note) {
-      const act = note.action
-        ? `<button type="button" data-settings="${esc(note.action)}">${esc(t(note.action === 'player' ? 'hq_why_open_setting' : 'hq_why_open_connect'))}</button>`
-        : ''
+      // Relais : retenter les serveurs de Twitch ; sinon la page des réglages.
+      const act = note.action === 'relay'
+        ? `<button type="button" data-relay-off="1">${esc(t('hq_why_retry_direct'))}</button>`
+        : note.action
+          ? `<button type="button" data-settings="${esc(note.action)}">${esc(t(note.action === 'player' ? 'hq_why_open_setting' : 'hq_why_open_connect'))}</button>`
+          : ''
       html += `<div class="p-q-why">${icon('info', 15)}<div><p>${esc(note.text)}</p>${act}</div></div>`
       html += `<button type="button" class="p-q-off" disabled><span>${esc(note.label)}</span></button>`
     }
@@ -2862,6 +2870,7 @@ export class Player {
     if (!b) return
     if (b.dataset.report) { this.closeMenu(); this.o.onReport?.(); return }
     if (b.dataset.settings) { this.closeMenu(); this.o.onSettings?.(b.dataset.settings); return }
+    if (b.dataset.relayOff) { this.closeMenu(); clearSegmentProxy(); this.o.onReload?.(); return }
     if (b.dataset.goto) {
       // Hors de la VOD : le menu reste ouvert, avec l'avis.
       if (!this.gotoClock(this.el.menu.querySelector('.p-goto-time')?.value)) return

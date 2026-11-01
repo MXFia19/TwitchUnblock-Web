@@ -3919,6 +3919,9 @@ function setupPlayer() {
     // lecture, plein écran compris (openSheet la pose dans l'élément en
     // plein écran).
     onSettings: (page) => openSettings(['chat', 'player', 'connect'].includes(page) ? page : 'menu'),
+    // « Réessayer sans le relais » (menu de qualité) : le direct relancé, ses
+    // segments de nouveau demandés au CDN de Twitch.
+    onReload: () => { if (state.watch?.kind === 'live') openLive(state.watch.login) },
     // Qualités supérieures (hq.js) : playlists du flux du compte par
     // l'extension, pauses pub et erreur fatale de ce flux.
     hqText: (url) => state.watch?.hq?.text(url) ?? Promise.reject(new Error('hq: none')),
