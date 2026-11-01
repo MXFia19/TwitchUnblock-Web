@@ -116,7 +116,7 @@ export const ZH_HANT = {
   hq_ad_fallback: 'Twitch 廣告時間：改以 {q} 無廣告播放',
   hq_ad_back: '廣告時間結束：回到 {q}',
   src_account: '你的 Twitch 帳號',
-  go_live: '回到直播', back_to_live: '回到直播',
+  go_live: '回到直播', back_to_live: '回到直播', set_general: '一般', set_general_sub: '語言、首頁、紀錄、隱藏的頻道', set_appearance_sub: '主題與顏色', set_player_sub: '畫質、延遲、直播來源', set_chat_sub: '顯示、全螢幕、過濾、行為', set_push_sub: '追隨頻道開台', set_connect_sub: '忠誠點數、掉寶、瀏覽器擴充功能', set_data: '備份與統計', set_data_sub: '匯出、匯入、匿名統計', set_expert_sub: '個人 Worker', set_about_sub: '原始碼、Discord、紀錄、更新內容', chat_group_display: '顯示', chat_group_filters: '過濾訊息', chat_group_behavior: '行為', set_chat_open: '聊天室設定', set_all: '所有設定',
   chat: '聊天室',
   pip: '子母畫面',
   fullscreen: '全螢幕',

@@ -1390,7 +1390,7 @@ const actions = {
     refreshHidden()
   },
   'manage-hidden': () => {
-    openSettings()
+    openSettings('general')
     requestAnimationFrame(() => $('#set-hidden')?.scrollIntoView({ block: 'start' }))
   },
   'unhide-all': () => unhideAll(),
@@ -1415,7 +1415,7 @@ const actions = {
     store.prefs.blockedUsers = []
     store.savePrefs()
     toast(t('hidden_cleared'))
-    openSettings()
+    openSettings('chat')
   },
   'clear-channels': () => { store.clearHistory('channel'); pushSync(); renderRecentChannels() },
   'watch-minimize': () => minimizeWatch(),
@@ -1848,7 +1848,7 @@ function openPushChannels() {
   const sheet = $('#sheet')
   sheet.onclick = (e) => {
     if (e.target.closest('[data-sheet-close]')) return closeSheet()
-    if (e.target.closest('[data-push-back]')) return openSettings()
+    if (e.target.closest('[data-push-back]')) return openSettings('push')
     const allBtn = e.target.closest('[data-push-all]')
     if (!allBtn) return
     const on = allBtn.dataset.pushAll === 'on'
@@ -2044,7 +2044,7 @@ function openNotifInstall() {
 
 /** Réglages ouverts sur les notifications de live. */
 function openPushSettings() {
-  openSettings()
+  openSettings('push')
   requestAnimationFrame(() => $('#set-push')?.closest('.sheet-section')?.scrollIntoView({ block: 'start' }))
 }
 
@@ -3915,6 +3915,10 @@ function setupPlayer() {
       if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {})
       openFeedback('bug')
     },
+    // Réglages depuis le menu du lecteur : la feuille s'ouvre par-dessus la
+    // lecture, plein écran compris (openSheet la pose dans l'élément en
+    // plein écran).
+    onSettings: (page) => openSettings(page === 'chat' ? 'chat' : 'menu'),
     // Qualités supérieures (hq.js) : playlists du flux du compte par
     // l'extension, pauses pub et erreur fatale de ce flux.
     hqText: (url) => state.watch?.hq?.text(url) ?? Promise.reject(new Error('hq: none')),
@@ -5754,12 +5758,24 @@ function openFeedbackThread(id) {
 }
 
 // ── Feuilles : ouvrir dans…, réglages ─────────────────────────────────────
+/** En plein écran, seul l'élément en plein écran s'affiche : la feuille et
+ *  son fond y passent le temps de leur ouverture (réglages ouverts depuis le
+ *  lecteur), puis reviennent dans la page. */
+function placeSheet() {
+  const host = document.fullscreenElement || document.webkitFullscreenElement || document.body
+  for (const el of [$('#sheet-backdrop'), $('#sheet')]) if (el.parentElement !== host) host.appendChild(el)
+}
+for (const ev of ['fullscreenchange', 'webkitfullscreenchange']) {
+  document.addEventListener(ev, () => { if (!$('#sheet').hidden) placeSheet() })
+}
+
 function openSheet(html) {
   const sheet = $('#sheet')
   // Chaque feuille pose ses propres gestionnaires : ceux de la précédente partent.
   sheet.onclick = sheet.oninput = sheet.onchange = null
   sheet.innerHTML = html
   renderIcons(sheet)
+  placeSheet()
   $('#sheet-backdrop').hidden = false
   sheet.hidden = false
   requestAnimationFrame(() => { sheet.classList.add('open'); $('#sheet-backdrop').classList.add('open') })
@@ -5769,7 +5785,12 @@ function closeSheet() {
   const sheet = $('#sheet')
   sheet.classList.remove('open')
   $('#sheet-backdrop').classList.remove('open')
-  setTimeout(() => { sheet.hidden = true; $('#sheet-backdrop').hidden = true }, 200)
+  setTimeout(() => {
+    sheet.hidden = true
+    $('#sheet-backdrop').hidden = true
+    // Ouverte en plein écran : rendue à la page.
+    if (sheet.parentElement !== document.body) document.body.append($('#sheet-backdrop'), sheet)
+  }, 200)
 }
 
 /** Qualité de la source habituelle à donner aux applis : celle du lecteur,
@@ -6000,7 +6021,39 @@ function refreshConnectUi() {
   if (el) el.innerHTML = connectSectionInner()
 }
 
-function openSettings() {
+/** Pages des réglages : un menu, puis une page par rubrique (la feuille
+ *  était devenue une longue liste). [id, icône, titre, sous-titre] */
+const SETTINGS_PAGES = () => [
+  ['general', 'globe', t('set_general'), t('set_general_sub')],
+  ['appearance', 'layers', t('appearance'), t('set_appearance_sub')],
+  ['player', 'play', t('player_settings'), t('set_player_sub')],
+  ['chat', 'chat', t('chat_settings'), t('set_chat_sub')],
+  ['push', 'megaphone', t('push_title'), t('set_push_sub')],
+  ['connect', 'points', t('connect_title'), t('set_connect_sub')],
+  ['data', 'download', t('set_data'), t('set_data_sub')],
+  ['expert', 'terminal', t('expert'), t('set_expert_sub')],
+  ['about', 'heart', t('about'), t('set_about_sub')],
+]
+/** Page des réglages affichée : gardée quand la feuille est refaite. */
+let settingsPage = 'menu'
+
+/** Montre le menu des réglages, ou les rubriques d'une page. Le titre de
+ *  rubrique qui redit celui de la page est masqué. */
+function showSettingsPage(page) {
+  const sheet = $('#sheet')
+  const entry = SETTINGS_PAGES().find(([id]) => id === page)
+  settingsPage = entry ? page : 'menu'
+  for (const el of sheet.querySelectorAll('[data-cat]')) el.hidden = el.dataset.cat !== settingsPage
+  const head = sheet.querySelector('[data-set-head]')
+  if (head) head.hidden = !entry
+  const title = sheet.querySelector('#set-page-title')
+  if (title) title.textContent = entry ? entry[2] : ''
+  for (const h of sheet.querySelectorAll('[data-cat] > h3')) h.hidden = Boolean(entry) && h.textContent === entry[2]
+  sheet.scrollTop = 0
+}
+
+/** Réglages, sur le menu ou sur une page (« chat », depuis le lecteur). */
+function openSettings(page = 'menu') {
   const p = store.prefs
   const toggle = (id, label, checked, sub = '') => `
     <label class="setting">
@@ -6009,16 +6062,27 @@ function openSettings() {
     </label>`
   openSheet(`
     <div class="sheet-head"><h2>${esc(t('settings'))}</h2><button class="icon-btn" type="button" data-sheet-close>${icon('x', 20)}</button></div>
-    <div class="sheet-section" id="settings-account"></div>
-    <div class="sheet-section">
+    <div class="set-page-head" data-set-head hidden>
+      <button class="icon-btn" type="button" data-set-back aria-label="${esc(t('back'))}" title="${esc(t('back'))}">${icon('chevronLeft', 20)}</button>
+      <h3 id="set-page-title"></h3>
+    </div>
+    <div class="sheet-section" id="settings-account" data-cat="menu"></div>
+    <div class="sheet-section" data-cat="menu">
       <button class="feedback-card" type="button" data-action="feedback">
         <span class="feedback-card-ic">${icon('bug', 18)}</span>
         <span class="feedback-card-text"><b>${esc(t('feedback'))}</b><small>${esc(t('feedback_sub'))}</small></span>
         ${icon('chevronRight', 16)}
       </button>
     </div>
-    ${installCardHtml()}
-    <div class="sheet-section">
+    ${installCardHtml().replace('class="sheet-section"', 'class="sheet-section" data-cat="menu"')}
+    <div class="sheet-section set-nav" data-cat="menu">
+      ${SETTINGS_PAGES().map(([id, ic, label, sub]) => `<button class="set-nav-row" type="button" data-set-page="${id}">
+        <span class="set-nav-ic">${icon(ic, 18)}</span>
+        <span class="set-nav-text"><b>${esc(label)}</b><small>${esc(sub)}</small></span>
+        ${icon('chevronRight', 16)}
+      </button>`).join('')}
+    </div>
+    <div class="sheet-section" data-cat="general">
       <h3>${esc(t('language'))}</h3>
       <div class="segmented full langs" id="set-lang">
         <button type="button" data-l="auto" class="${p.lang ? '' : 'active'}">${esc(t('lang_auto'))}</button>
@@ -6036,8 +6100,8 @@ function openSettings() {
       ${toggle('set-vodprogress', t('vod_progress'), p.vodProgress !== false, t('vod_progress_sub'))}
       ${toggle('set-pinsort', t('pinned_by_viewers'), p.pinnedByViewers !== false, t('pinned_by_viewers_sub'))}
     </div>
-    <div class="sheet-section" id="set-hidden">${hiddenSectionInner()}</div>
-    <div class="sheet-section">
+    <div class="sheet-section" id="set-hidden" data-cat="general">${hiddenSectionInner()}</div>
+    <div class="sheet-section" data-cat="appearance">
       <h3>${esc(t('appearance'))}</h3>
       <div class="setting setting-col">
         <span class="setting-text"><span>${esc(t('background_theme'))}</span></span>
@@ -6052,7 +6116,7 @@ function openSettings() {
         </div>
       </div>
     </div>
-    <div class="sheet-section">
+    <div class="sheet-section" data-cat="player">
       <h3>${esc(t('player_settings'))}</h3>
       <label class="setting setting-col">
         <span class="setting-text"><span>${esc(t('pref_quality'))}</span><small>${esc(t('pref_quality_sub'))}</small></span>
@@ -6071,7 +6135,7 @@ function openSettings() {
         <input class="text-input" id="set-src-custom" type="url" inputmode="url" placeholder="https://…" spellcheck="false" autocomplete="off" value="${esc(api.customSourceBase(p.customSource) ?? '')}">
       </label>
     </div>
-    <div class="sheet-section">
+    <div class="sheet-section" data-cat="push">
       <h3>${esc(t('push_title'))}</h3>
       ${toggle('set-push', t('push_live'), pushOn(), t(isIOS && !isStandalone() ? 'push_live_sub_ios' : 'push_live_sub'))}
       <p class="muted small push-status" id="push-status" ${pushOn() ? '' : 'hidden'}>${esc(pushStatusText())}</p>
@@ -6085,11 +6149,13 @@ function openSettings() {
         <select class="text-input" id="set-notifapp">${[['', t('notif_app_off')], ['app', 'TwitchUnblock'], ['test', 'TU Test']].map(([v, l]) => `<option value="${v}"${(p.notifApp || '') === v ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select>
       </label>` : ''}
     </div>
-    <div class="sheet-section">
+    <div class="sheet-section" data-cat="chat">
       <h3>${esc(t('chat_settings'))}</h3>
-      ${toggle('set-sync', t('chat_sync'), p.chatSync, t('chat_sync_sub'))}
-      ${toggle('set-multichat', t('multi_chat'), p.multiChat !== false, t('multi_chat_sub'))}
-      ${toggle('set-raid', t('auto_raid'), p.autoRaid, t('auto_raid_sub'))}
+      <h4>${esc(t('chat_group_display'))}</h4>
+      <label class="setting">
+        <span class="setting-text"><span>${esc(t('chat_size'))}</span></span>
+        <span class="size-ctl"><input type="range" id="set-size" min="12" max="20" step="1" value="${p.chatSize}"><output>${p.chatSize}</output></span>
+      </label>
       ${toggle('set-ts', t('timestamps'), p.timestamps)}
       <label class="setting setting-col">
         <span class="setting-text"><span>${esc(t('time_format'))}</span><small>${esc(t('time_format_sub'))}</small></span>
@@ -6100,7 +6166,7 @@ function openSettings() {
         <select class="text-input" id="set-fschat">${FS_CHAT.map((v) => `<option value="${v}"${(p.fsChat || 'right-full') === v ? ' selected' : ''}>${esc(t('fs_chat_' + v.replace('-', '_')))}</option>`).join('')}</select>
       </label>
       ${toggle('set-deleted', t('keep_deleted'), p.keepDeleted)}
-      ${toggle('set-history', t('load_history'), p.loadHistory)}
+      <h4>${esc(t('chat_group_filters'))}</h4>
       ${toggle('set-bots', t('hide_bots'), p.hideBots, t('hide_bots_sub'))}
       ${toggle('set-cmds', t('hide_commands'), p.hideCommands, t('hide_commands_sub'))}
       <label class="setting setting-col">
@@ -6116,13 +6182,14 @@ function openSettings() {
         <span class="setting-text"><span>${esc(t('highlight_words'))}</span><small>${esc(t('highlight_words_sub'))}</small></span>
         <input class="text-input" type="text" id="set-words" autocomplete="off" spellcheck="false" maxlength="300" value="${esc((p.highlightWords ?? []).join(', '))}">
       </label>
-      <label class="setting">
-        <span class="setting-text"><span>${esc(t('chat_size'))}</span></span>
-        <span class="size-ctl"><input type="range" id="set-size" min="12" max="20" step="1" value="${p.chatSize}"><output>${p.chatSize}</output></span>
-      </label>
+      <h4>${esc(t('chat_group_behavior'))}</h4>
+      ${toggle('set-sync', t('chat_sync'), p.chatSync, t('chat_sync_sub'))}
+      ${toggle('set-multichat', t('multi_chat'), p.multiChat !== false, t('multi_chat_sub'))}
+      ${toggle('set-raid', t('auto_raid'), p.autoRaid, t('auto_raid_sub'))}
+      ${toggle('set-history', t('load_history'), p.loadHistory)}
     </div>
-    <div class="sheet-section" id="set-connect">${connectSectionInner()}</div>
-    <div class="sheet-section">
+    <div class="sheet-section" id="set-connect" data-cat="connect">${connectSectionInner()}</div>
+    <div class="sheet-section" data-cat="data">
       <h3>${esc(t('backup'))}</h3>
       <p class="muted small">${esc(t('backup_sub'))}</p>
       <div class="sheet-group">
@@ -6131,13 +6198,13 @@ function openSettings() {
       </div>
       <input type="file" id="import-file" accept="application/json,.json" hidden>
     </div>
-    <div class="sheet-section">
+    <div class="sheet-section" data-cat="data">
       <h3>${esc(t('usage'))}</h3>
       <div class="usage-stats" id="usage-stats"><p class="muted small">${esc(t('loading'))}</p></div>
       <a class="sheet-row" href="/stats" target="_blank" rel="noopener">${icon('trending', 18)}<span>${esc(t('usage_details'))}</span>${icon('external', 16)}</a>
       ${toggle('set-usage', t('share_usage'), p.shareUsage, t('share_usage_sub'))}
     </div>
-    <div class="sheet-section">
+    <div class="sheet-section" data-cat="expert">
       <h3>${esc(t('expert'))}</h3>
       <div class="setting setting-col">
         <span class="setting-text"><span>${esc(t('expert_worker'))}</span><small>${esc(t('expert_worker_sub'))}</small></span>
@@ -6151,7 +6218,7 @@ function openSettings() {
       </div>
       ${api.CUSTOM_WORKER ? toggle('set-worker-all', t('expert_all'), Boolean(p.customWorkerAll), t('expert_all_sub')) : ''}
     </div>
-    <div class="sheet-section">
+    <div class="sheet-section" data-cat="about">
       <h3>${esc(t('about'))}</h3>
       <p class="muted small">${esc(t('about_text'))}</p>
       <div class="sheet-group">
@@ -6167,6 +6234,7 @@ function openSettings() {
     </div>`)
   renderSettingsAccount()
   renderUsageStats()
+  showSettingsPage(page)
   // Session et réglages de l'extension relus : la section suit (onChange).
   // Coupée aussi : la connexion a pu être rallumée dans sa fenêtre, qui ne
   // prévient pas la page.
@@ -6175,6 +6243,10 @@ function openSettings() {
   const sheet = $('#sheet')
   sheet.onclick = (e) => {
     if (e.target.closest('[data-sheet-close]')) return closeSheet()
+    // Menu des réglages : une page, ou retour au menu.
+    const pageBtn = e.target.closest('[data-set-page]')
+    if (pageBtn) return showSettingsPage(pageBtn.dataset.setPage)
+    if (e.target.closest('[data-set-back]')) return showSettingsPage('menu')
     // Emotes masquées : ✕ d'une emote, ou « Tout réafficher ». Les messages
     // suivants la montrent de nouveau (ceux déjà affichés gardent son mot).
     const unhideEmote = e.target.closest('[data-unhide-emote], [data-unhide-emotes]')
@@ -6220,7 +6292,7 @@ function openSettings() {
       refreshTexts()
       // La feuille elle-même est refaite dans la nouvelle langue.
       const scroll = sheet.scrollTop
-      openSettings()
+      openSettings(settingsPage)
       $('#sheet').scrollTop = scroll
     }
   }
@@ -6495,7 +6567,7 @@ async function importData(file) {
   if (state.tab !== 'discover') loadFollowed()   // … sinon les suivis (et leurs notifications) quand même
   refreshHidden()
   toast(t('import_done', { n: added }), 'success')
-  openSettings()
+  openSettings('data')
 }
 
 // ── Langue du top des lives ────────────────────────────────────────────

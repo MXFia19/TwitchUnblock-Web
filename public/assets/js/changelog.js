@@ -6,6 +6,36 @@
 
 export const CHANGELOG = [
   {
+    version: '2026.11.01d',
+    items: {
+      fr: [
+        'Réglages rangés par pages : un menu (Général, Apparence, Lecteur, Chat, Notifications, Connect, Sauvegarde, Réglages experts, À propos), et les réglages du chat regroupés en Affichage, Messages filtrés et Comportement.',
+        'Réglages pendant un live : bouton ⚙ en haut du lecteur, et « Réglages du chat » ou « Tous les réglages » dans le menu ⚙ de la barre du lecteur — plein écran compris, sans quitter le direct.',
+        'Chat en plein écran : « en haut » et « en bas » prennent bien la moitié de la hauteur ; le chat restait sur toute la hauteur et cachait les boutons en bas à droite.',
+      ],
+      en: [
+        'Settings are now organized in pages: a menu (General, Appearance, Player, Chat, Notifications, Connect, Backup, Expert settings, About), with chat settings grouped into Display, Filtered messages and Behavior.',
+        'Settings while watching: a ⚙ button at the top of the player, plus “Chat settings” and “All settings” in the player bar’s ⚙ menu — in fullscreen too, without leaving the live.',
+        'Fullscreen chat: “top” and “bottom” now really take half the height; the chat stayed full height and covered the buttons at the bottom right.',
+      ],
+      es: [
+        'Ajustes ordenados en páginas: un menú (General, Apariencia, Reproductor, Chat, Notificaciones, Connect, Copia, Ajustes avanzados, Acerca de), y los ajustes del chat agrupados en Visualización, Mensajes filtrados y Comportamiento.',
+        'Ajustes mientras ves un directo: botón ⚙ arriba del reproductor, y «Ajustes del chat» o «Todos los ajustes» en el menú ⚙ de la barra del reproductor, también en pantalla completa, sin salir del directo.',
+        'Chat en pantalla completa: «arriba» y «abajo» ahora ocupan la mitad de la altura; el chat se quedaba a toda altura y tapaba los botones de abajo a la derecha.',
+      ],
+      ru: [
+        'Настройки разложены по страницам: меню (Основные, Внешний вид, Плеер, Чат, Уведомления, Connect, Резервная копия, Расширенные настройки, О проекте), а настройки чата сгруппированы: Вид, Фильтры сообщений, Поведение.',
+        'Настройки во время эфира: кнопка ⚙ вверху плеера, а также «Настройки чата» и «Все настройки» в меню ⚙ панели плеера — и в полноэкранном режиме, не выходя из эфира.',
+        'Чат в полноэкранном режиме: «сверху» и «снизу» теперь занимают половину высоты; раньше чат оставался на всю высоту и закрывал кнопки внизу справа.',
+      ],
+      'zh-Hant': [
+        '設定改以頁面整理：一個選單（一般、外觀、播放器、聊天室、通知、Connect、備份、進階設定、關於），聊天室設定分成顯示、過濾訊息與行為。',
+        '看直播時也能調整設定：播放器上方的 ⚙ 按鈕，以及播放器列 ⚙ 選單中的「聊天室設定」與「所有設定」，全螢幕時也能用，不必離開直播。',
+        '全螢幕聊天室：「上方」與「下方」現在只佔一半高度；之前聊天室仍佔滿整個高度，擋住右下角的按鈕。',
+      ],
+    },
+  },
+  {
     version: '2026.11.01c',
     items: {
       fr: [

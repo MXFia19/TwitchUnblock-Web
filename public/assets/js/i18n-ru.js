@@ -115,7 +115,7 @@ export const RU = {
   hq_ad_fallback: 'Реклама Twitch: {q} без рекламы',
   hq_ad_back: 'Реклама закончилась: снова {q}',
   src_account: 'Ваш аккаунт Twitch',
-  go_live: 'К прямому эфиру', back_to_live: 'Вернуться к эфиру',
+  go_live: 'К прямому эфиру', back_to_live: 'Вернуться к эфиру', set_general: 'Основные', set_general_sub: 'Язык, главная, история, скрытые каналы', set_appearance_sub: 'Тема и цвет', set_player_sub: 'Качество, задержка, источники эфира', set_chat_sub: 'Вид, полноэкранный режим, фильтры, поведение', set_push_sub: 'Эфиры отслеживаемых каналов', set_connect_sub: 'Баллы, дропы, расширение браузера', set_data: 'Резервная копия и статистика', set_data_sub: 'Экспорт, импорт, анонимный подсчёт', set_expert_sub: 'Личный Worker', set_about_sub: 'Исходный код, Discord, журнал, новое', chat_group_display: 'Вид', chat_group_filters: 'Фильтры сообщений', chat_group_behavior: 'Поведение', set_chat_open: 'Настройки чата', set_all: 'Все настройки',
   chat: 'Чат',
   pip: 'Картинка в картинке',
   fullscreen: 'Полный экран',

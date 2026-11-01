@@ -2748,6 +2748,9 @@ export class Player {
     html += `<div class="p-menu-title">${esc(t('sleep_timer'))}${left ? ` · ${esc(t('sleep_left', { m: left }))}` : ''}</div><div class="p-speeds">`
     html += SLEEP_CHOICES.map((m) => `<button type="button" data-sleep="${m}" class="${(m ? left && m === this.sleepMinutes : !left) ? 'on' : ''}">${m ? `${m} min` : esc(t('sleep_off'))}</button>`).join('')
     html += '</div>'
+    // Réglages sans quitter la lecture (plein écran compris) : ceux du chat, ou tous.
+    html += `<button type="button" class="p-menu-report" data-settings="chat">${icon('chat', 15)}<span>${esc(t('set_chat_open'))}</span></button>`
+    html += `<button type="button" class="p-menu-report" data-settings="menu">${icon('settings', 15)}<span>${esc(t('set_all'))}</span></button>`
     // Un souci pendant la lecture : le signaler d'ici, avec ce qui se lit.
     html += `<button type="button" class="p-menu-report" data-report="1">${icon('bug', 15)}<span>${esc(t('report_problem'))}</span></button>`
     this.el.menu.innerHTML = html
@@ -2842,6 +2845,7 @@ export class Player {
     const b = e.target.closest('button')
     if (!b) return
     if (b.dataset.report) { this.closeMenu(); this.o.onReport?.(); return }
+    if (b.dataset.settings) { this.closeMenu(); this.o.onSettings?.(b.dataset.settings); return }
     if (b.dataset.goto) {
       // Hors de la VOD : le menu reste ouvert, avec l'avis.
       if (!this.gotoClock(this.el.menu.querySelector('.p-goto-time')?.value)) return
