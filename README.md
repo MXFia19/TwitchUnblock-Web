@@ -809,7 +809,8 @@ Setting it up:
      main Worker's account, and that account's ID (*Workers & Pages*,
      right-hand column). Read-only: it can't change anything. Not the same
      token as the database backup's.
-5. **Channels**: run `/setup` in the private channel (*Alerts, daily summary
+5. **Whole layout at once** (optional): `/server-setup` shows a preview of the server layout — 📢 Info (rules, announcements, roles), 💬 Community (general, suggestions, clips, voice), 🆘 Help (iPhone install, website and extension, Android and TV), 🧪 Testing (testers only) and 🔒 Staff (the reports forum, to-do, alerts, notes), with the roles Moderator, Contributor, Tester and Releases. `/server-setup apply:True` then creates what's missing, moves the existing channels into their category (their names and permissions are kept; a staff or testers channel visible to everyone is pointed out), renames a matching category (“Text Channels” → “💬 Community”), fills the `/setup` choices still empty, posts the rules in a new #rules and the roles menu in #roles. Nothing is deleted, and running it again only does what's still missing. The bot only grants permissions it has: with the invite link above, the Moderator role is created without its moderation permissions (add them in *Server Settings → Roles*, or give the bot Administrator).
+6. **Channels**: run `/setup` in the private channel (*Alerts, daily summary
    and release drafts*), in the announcements channel (*Release
    announcements*, optionally with the role to mention at each release), in
    the test builds channel (*Test builds*, with the role to mention) and in

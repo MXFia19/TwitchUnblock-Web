@@ -172,6 +172,10 @@ const COMMANDS = [
       { type: 8, name: 'role', description: 'Role to mention (release announcements or test builds)', required: false },
     ],
   },
+  {
+    name: 'server-setup', description: 'Build the server layout: categories, channels, roles (a preview first)', default_member_permissions: ADMIN,
+    options: [{ type: 5, name: 'apply', description: 'Apply the changes (without it: a preview only)', required: false }],
+  },
   { name: 'summary', description: 'Post the daily summary now', default_member_permissions: ADMIN },
   // Menu « Apps » d'un message (clic droit, ou appui long sur mobile).
   { type: 3, name: 'Add to to-do', default_member_permissions: ADMIN },
@@ -362,6 +366,7 @@ const I18N = {
     h_replies: 'Replies to your reports come in a direct message: answer with the buttons under them.',
     h_admin: '**Developer only**',
     h_setup: 'use this channel for alerts, release announcements, test builds, the to-do list, suggestions or welcome messages',
+    h_server_setup: 'build the server layout (categories, channels, roles) without deleting anything: a preview first, then apply:True',
     h_announce: 'banner in the app and on the website, and remove it',
     h_poll: 'poll in the app and on the website, and end it (results posted)',
     h_todo: 'add to the to-do channel (or a message’s Apps menu → Add to to-do, or Add conversation to to-do for several messages)',
@@ -490,6 +495,7 @@ const I18N = {
     h_replies: 'Les réponses à tes retours arrivent en message privé : réponds avec les boutons dessous.',
     h_admin: '**Réservé au développeur**',
     h_setup: 'ce salon pour les alertes, les annonces de version, les builds de test, la liste à faire, les suggestions ou la bienvenue',
+    h_server_setup: 'construire la structure du serveur (catégories, salons, rôles) sans rien supprimer : un aperçu d’abord, puis apply:True',
     h_announce: 'bandeau dans l’app et sur le site, et le retirer',
     h_poll: 'sondage dans l’app et sur le site, et le clore (résultats postés)',
     h_todo: 'ajouter à la liste à faire (ou menu Apps d’un message → Add to to-do, ou Add conversation to to-do pour plusieurs messages)',
@@ -617,6 +623,7 @@ const I18N = {
     h_replies: 'Las respuestas a tus informes llegan por mensaje directo: contesta con los botones de debajo.',
     h_admin: '**Solo para el desarrollador**',
     h_setup: 'usar este canal para alertas, anuncios de versiones, versiones de prueba, la lista de tareas, sugerencias o bienvenidas',
+    h_server_setup: 'crear la estructura del servidor (categorías, canales, roles) sin borrar nada: primero una vista previa, luego apply:True',
     h_announce: 'aviso en la app y el sitio web, y quitarlo',
     h_poll: 'encuesta en la app y el sitio web, y cerrarla (resultados publicados)',
     h_todo: 'añadir a la lista de tareas (o menú Apps de un mensaje → Add to to-do, o Add conversation to to-do para varios mensajes)',
@@ -744,6 +751,7 @@ const I18N = {
     h_replies: 'Ответы на твои сообщения приходят в личку: отвечай кнопками под ними.',
     h_admin: '**Только для разработчика**',
     h_setup: 'этот канал для оповещений, анонсов версий, тестовых сборок, списка задач, предложений или приветствий',
+    h_server_setup: 'создать структуру сервера (категории, каналы, роли), ничего не удаляя: сначала предпросмотр, затем apply:True',
     h_announce: 'баннер в приложении и на сайте, и убрать его',
     h_poll: 'опрос в приложении и на сайте, и завершить его (итоги публикуются)',
     h_todo: 'добавить в список задач (или меню «Приложения» у сообщения → Add to to-do, или Add conversation to to-do для нескольких сообщений)',
@@ -833,7 +841,7 @@ function lang(locale) {
 const EN = lang('en')
 // /help : commandes du développeur, montrées à lui seul.
 const ADMIN_HELP = [
-  ['/setup', 'h_setup'], ['/announce · /announce-clear', 'h_announce'], ['/app-announce', 'h_app_announce'], ['/poll · /poll-end', 'h_poll'],
+  ['/setup', 'h_setup'], ['/server-setup', 'h_server_setup'], ['/announce · /announce-clear', 'h_announce'], ['/app-announce', 'h_app_announce'], ['/poll · /poll-end', 'h_poll'],
   ['/todo', 'h_todo'], ['/summary', 'h_summary'], ['/status', 'h_status'], ['/roles-config', 'h_roles_config'],
   ['/roles public:True · /download public:True', 'h_public'], ['/delete · /block · /merge', 'h_report'], ['/forget-user', 'h_forget'],
 ]
@@ -1134,6 +1142,163 @@ export function todoActionPlan(value) {
   const latest = new Map()
   for (const x of entries) latest.set(x.id, x.done)
   return { cards: [...latest].map(([id, done]) => ({ id, done })), entries }
+}
+
+// ── /server-setup : la structure du serveur ───────────────────────────────
+// Permissions de Discord utilisées par les catégories et les rôles créés.
+const P = {
+  view: 1n << 10n, send: 1n << 11n, embed: 1n << 14n, attach: 1n << 15n,
+  manageMessages: 1n << 13n, sendThreads: 1n << 38n, newThreads: 1n << 35n,
+  manageThreads: 1n << 34n, moderate: 1n << 40n, kick: 1n << 1n, mute: 1n << 22n, move: 1n << 24n,
+}
+
+/** Catégories et salons voulus, en anglais comme ce que poste le bot.
+ *  `access` : public, readonly (lecture seule), testers ou staff (cachés).
+ *  Salon : `key` = réglage de /setup qui le désigne déjà ; `aliases` = noms
+ *  d'un salon existant à ranger là plutôt que d'en créer un autre ; `type`
+ *  2 = vocal (texte sinon) ; `forum` = le salon des retours (celui du
+ *  webhook), jamais créé, seulement rangé ; `rules` / `roles` = salon des
+ *  règles / du menu des rôles. */
+export const SERVER_LAYOUT = [
+  {
+    key: 'info', name: '📢 Info', access: 'readonly', aliases: ['info', 'infos', 'information', 'start', 'startHere'],
+    channels: [
+      { name: 'rules', topic: 'Read this first.', aliases: ['rules', 'regles', 'reglement', 'rule'], rules: true },
+      { name: 'announcements', key: 'announcements', topic: 'New versions of TwitchUnblock: app, website, extension.', aliases: ['announcements', 'annonces', 'news', 'releases', 'updates'] },
+      { name: 'roles', topic: 'Pick your roles.', aliases: ['roles', 'getroles', 'pickroles'], roles: true },
+    ],
+  },
+  {
+    key: 'community', name: '💬 Community', access: 'public', aliases: ['community', 'communaute', 'textchannels', 'salonstextuels'],
+    channels: [
+      { name: 'general', aliases: ['general', 'generalchat', 'chat', 'discussion', 'discussions'] },
+      { name: 'suggestions', key: 'suggestions', topic: 'Ideas for TwitchUnblock: send yours with /suggest, then vote.', aliases: ['suggestions', 'ideas', 'idees', 'suggestion'] },
+      { name: 'clips', topic: 'Share your best moments.', aliases: ['clips', 'media', 'medias', 'clip'] },
+      { name: 'Lounge', type: 2, aliases: ['lounge', 'general', 'vocal', 'voice', 'generalvoice'] },
+    ],
+  },
+  {
+    key: 'help', name: '🆘 Help', access: 'public', aliases: ['help', 'aide', 'support'],
+    channels: [
+      { name: 'install-iphone', topic: 'Installing the iPhone app: AltStore, SideStore, Feather, LiveContainer, TrollStore.', aliases: ['installiphone', 'installios', 'ioshelp', 'helpios', 'aideios', 'installation', 'install', 'iphone', 'ios'] },
+      { name: 'website-and-extension', topic: 'The website and the TwitchUnblock Connect extension.', aliases: ['websiteandextension', 'website', 'site', 'extension', 'websitehelp', 'web'] },
+      { name: 'android-and-tv', topic: 'Android, Android TV and Apple TV apps.', aliases: ['androidandtv', 'android', 'androidtv', 'appletv', 'tv'] },
+    ],
+  },
+  {
+    key: 'testing', name: '🧪 Testing', access: 'testers', aliases: ['testing', 'tests', 'test', 'beta', 'testers'],
+    channels: [
+      { name: 'test-builds', key: 'testers', topic: 'New test builds: TU Test, the TV test app.', aliases: ['testbuilds', 'testers', 'beta', 'tests', 'tutest'] },
+      { name: 'testers-chat', topic: 'Feedback on the test builds.', aliases: ['testerschat', 'betachat', 'testchat'] },
+    ],
+  },
+  {
+    key: 'staff', name: '🔒 Staff', access: 'staff', aliases: ['staff', 'admin', 'admins', 'mod', 'mods', 'moderation', 'private', 'prive'],
+    channels: [
+      { name: 'reports', forum: true, aliases: [] },
+      { name: 'todo', key: 'todo', aliases: ['todo', 'aFaire', 'tasks'] },
+      { name: 'alerts', key: 'alerts', aliases: ['alerts', 'botalerts', 'monitoring', 'alertes', 'logs'] },
+      { name: 'staff-notes', aliases: ['staffnotes', 'staff', 'notes', 'staffchat'] },
+    ],
+  },
+]
+
+/** Rôles voulus. `setting` : réglage de /setup qui désigne déjà ce rôle. */
+export const SERVER_ROLES = [
+  {
+    key: 'moderator', name: 'Moderator', color: 0x2ecc71, hoist: true, aliases: ['moderator', 'moderateur', 'mod', 'mods', 'moderators'],
+    permissions: P.manageMessages | P.manageThreads | P.moderate | P.kick | P.mute | P.move,
+  },
+  { key: 'contributor', name: 'Contributor', color: 0xf1c40f, hoist: true, aliases: ['contributor', 'contributors', 'contributeur', 'translator', 'traducteur'] },
+  { key: 'tester', name: 'Tester', color: 0x9b59b6, setting: 'testersRole', aliases: ['tester', 'testers', 'testeur', 'testeurs', 'beta', 'betatester'] },
+  { key: 'releases', name: 'Releases', mentionable: true, setting: 'announcementsRole', aliases: ['releases', 'releasepings', 'updates', 'sorties'] },
+]
+
+/** Nom ramené à ses lettres et chiffres, sans accents ni emoji : « 📢・Annonces » → « annonces ». */
+const layoutName = (s) => String(s || '').normalize('NFD').toLowerCase().replace(/[^a-z0-9]+/g, '')
+const TEXT_TYPES = new Set([0, 5])   // texte, annonces
+
+/** Plan de /server-setup : ce qui existe (gardé tel quel, rangé dans sa
+ *  catégorie) et ce qui manque (créé). Rien n'est supprimé ni renommé, et
+ *  les permissions d'un salon existant ne changent pas. `guild` : son id,
+ *  qui est aussi celui de @everyone ; `forum` : salon des retours. */
+export function serverPlan({ guild, channels = [], roles = [], settings = {}, forum = null }) {
+  const used = new Set()
+  const byId = new Map(channels.map((c) => [c.id, c]))
+  const visibleToAll = (c) => {
+    const o = (c.permission_overwrites || []).find((x) => x.id === guild)
+    return !(o && (BigInt(o.deny || 0) & P.view))
+  }
+  const findRole = (r) => {
+    if (r.setting && settings[r.setting] && roles.some((x) => x.id === settings[r.setting])) return roles.find((x) => x.id === settings[r.setting])
+    const names = new Set(r.aliases.map(layoutName))
+    return roles.find((x) => !x.managed && x.id !== guild && names.has(layoutName(x.name)))
+  }
+  const planRoles = SERVER_ROLES.map((r) => {
+    const found = findRole(r)
+    return { ...r, id: found?.id || null, found: found?.name || null }
+  })
+  const pick = (spec) => {
+    if (spec.forum) return forum && byId.has(forum) ? byId.get(forum) : null
+    if (spec.key && settings[spec.key] && byId.has(settings[spec.key]) && !used.has(settings[spec.key])) return byId.get(settings[spec.key])
+    const names = new Set(spec.aliases.map(layoutName))
+    const ok = (c) => !used.has(c.id) && names.has(layoutName(c.name))
+      && (spec.type === 2 ? c.type === 2 : TEXT_TYPES.has(c.type))
+    return channels.find(ok) || null
+  }
+  // D'abord les salons désignés par /setup (ou le forum) : un alias ne doit
+  // pas les prendre pour un autre salon du plan.
+  const assigned = new Map()
+  for (const cat of SERVER_LAYOUT) for (const spec of cat.channels) {
+    if (!(spec.forum || spec.key)) continue
+    const c = pick(spec)
+    if (c) { used.add(c.id); assigned.set(spec, c) }
+  }
+  const categories = SERVER_LAYOUT.map((cat) => {
+    const catNames = new Set(cat.aliases.map(layoutName))
+    const existing = channels.find((c) => c.type === 4 && !used.has(c.id) && catNames.has(layoutName(c.name))) || null
+    if (existing) used.add(existing.id)
+    const list = cat.channels.map((spec) => {
+      let c = assigned.get(spec) ?? null
+      if (!c && !spec.forum && !(spec.key && settings[spec.key] && byId.has(settings[spec.key]))) {
+        c = pick(spec)
+        if (c) used.add(c.id)
+      }
+      return {
+        spec,
+        id: c?.id || null,
+        create: !c && !spec.forum,
+        move: Boolean(c) && (!existing || c.parent_id !== existing.id),
+        exposed: Boolean(c) && (cat.access === 'staff' || cat.access === 'testers') && visibleToAll(c),
+      }
+    })
+    // Catégorie reconnue sous un autre nom (« Salons textuels ») : renommée.
+    return { key: cat.key, name: cat.name, access: cat.access, id: existing?.id || null, rename: existing && existing.name !== cat.name ? existing.name : null, channels: list }
+  })
+  const untouched = channels.filter((c) => !used.has(c.id) && c.type !== 4 && !c.thread_metadata).map((c) => c.id)
+  return { roles: planRoles, categories, untouched }
+}
+
+/** Lignes de l'aperçu (et du compte rendu) d'un plan de /server-setup. */
+export function serverPlanLines(plan) {
+  const out = []
+  out.push(`**Roles:** ${plan.roles.map((r) => (r.id ? `✓ <@&${r.id}>` : `+ ${r.name}`)).join(' · ')}`)
+  const warn = []
+  for (const cat of plan.categories) {
+    out.push('', `**${cat.name}**${cat.id ? (cat.rename ? ` (renamed from “${cat.rename}”)` : '') : ' (new category)'}`)
+    for (const ch of cat.channels) {
+      if (ch.id) out.push(`${ch.move ? '→' : '✓'} <#${ch.id}>${ch.move ? ' (moved here)' : ''}`)
+      else if (ch.create) out.push(`+ ${ch.spec.type === 2 ? '🔊 ' : '#'}${ch.spec.name} (new)`)
+      else out.push('· reports forum: not found (the webhook’s channel)')
+      if (ch.exposed) warn.push(`⚠️ <#${ch.id}> is visible to everyone but goes in ${cat.name}: make it private if it should be (its permissions aren’t changed).`)
+    }
+  }
+  if (plan.untouched.length) {
+    const shown = plan.untouched.slice(0, 25).map((id) => `<#${id}>`).join(' ')
+    out.push('', `**Left as they are:** ${shown}${plan.untouched.length > 25 ? ` … +${plan.untouched.length - 25}` : ''}`)
+  }
+  if (warn.length) out.push('', ...warn)
+  return out
 }
 
 export function startDiscordBridge({
@@ -1915,6 +2080,7 @@ export function startDiscordBridge({
           return st.settings.alerts ? `Poll ended: its results are in <#${st.settings.alerts}>.` : 'Poll ended (pick an alerts channel with /setup to get its results).'
         })
       case 'setup': return deferred(i, () => setup(i))
+      case 'server-setup': return deferred(i, () => serverSetup(i, user, opt(i, 'apply') === true))
       case 'summary':
         return deferred(i, async () => ((await postSummary(st.settings.alerts || i.channel_id)) ? 'Summary posted.' : 'Nothing to post.'))
       case 'status': return deferred(i, statusText)
@@ -2004,6 +2170,153 @@ export function startDiscordBridge({
       welcome: 'New members will be welcomed here, with Download, Pick roles and Help buttons. This needs the **Server Members Intent** (developer portal → your application → Bot → Privileged Gateway Intents): if it’s off, Discord refuses the connection — I then reconnect without it, turn the welcome off and say so in the alerts channel.',
       'welcome-off': 'Welcome messages are off.',
     }[use]
+  }
+
+  // ── /server-setup : catégories, salons et rôles (SERVER_LAYOUT) ─────────
+  /** Sans `apply` : l'aperçu seul. Avec : les rôles et salons qui manquent
+   *  sont créés, les salons existants rangés dans leur catégorie (leurs
+   *  noms et permissions gardés), les réglages de /setup encore vides
+   *  remplis ; rien n'est supprimé. Relancée, elle ne refait que ce qui
+   *  manque. */
+  async function serverSetup(i, user, apply) {
+    const guild = i.guild_id || st.guild
+    if (!guild) return 'Run this in the server.'
+    const [channels, roles] = await Promise.all([
+      rest('GET', `/guilds/${guild}/channels`),
+      rest('GET', `/guilds/${guild}/roles`),
+    ])
+    const settings = { ...((await kvGet('settings').catch(() => null)) || st.settings) }
+    const plan = serverPlan({ guild, channels, roles, settings, forum: st.forum })
+    if (!apply) {
+      return {
+        content: '**Server setup — preview.** Nothing is deleted or renamed, and existing channels keep their permissions. Run `/server-setup apply:True` to apply.',
+        embeds: [{ color: 0x9146ff, description: serverPlanLines(plan).join('\n').slice(0, 4000) }],
+      }
+    }
+    try {
+      // Permissions du bot : Discord refuse qu'il accorde ou retire dans un
+      // salon, ou donne à un rôle, une permission qu'il n'a pas lui-même.
+      const meMember = st.me ? await rest('GET', `/guilds/${guild}/members/${st.me}`).catch(() => null) : null
+      const mine = new Set([guild, ...(meMember?.roles || [])])
+      const botPerms = roles.filter((r) => mine.has(r.id)).reduce((a, r) => a | BigInt(r.permissions || 0), 0n)
+      const admin = Boolean(botPerms & (1n << 3n))
+      const can = (bits) => (admin ? bits : bits & botPerms)
+      const notes = []
+      // Rôles qui manquent (en bas de la liste, au-dessus de @everyone).
+      const roleId = {}
+      for (const r of plan.roles) {
+        if (r.id) { roleId[r.key] = r.id; continue }
+        const want = r.permissions || 0n
+        const made = await rest('POST', `/guilds/${guild}/roles`, {
+          name: r.name, color: r.color || 0, hoist: Boolean(r.hoist), mentionable: Boolean(r.mentionable),
+          permissions: String(can(want)),
+        })
+        if (want & ~can(want)) notes.push(`⚠️ <@&${made.id}> was created without some of its permissions (I don’t have them): add Manage Messages, Timeout Members, Kick Members, Mute and Move Members in Server Settings → Roles.`)
+        r.id = made.id
+        roleId[r.key] = made.id
+      }
+      // Droits d'une catégorie (et des salons créés dedans). Le bot y garde
+      // toujours accès : sans « Administrateur », une catégorie cachée le
+      // cachait aussi.
+      const bot = st.me ? [{ id: st.me, type: 1, allow: String(can(P.view | P.send | P.embed | P.attach | P.manageMessages | P.manageThreads | P.sendThreads)), deny: '0' }] : []
+      const mod = roleId.moderator
+      const overwrites = (access) => {
+        if (access === 'readonly') {
+          return [
+            { id: guild, type: 0, allow: String(can(P.view)), deny: String(can(P.send | P.sendThreads | P.newThreads)) },
+            ...(mod ? [{ id: mod, type: 0, allow: String(can(P.send)), deny: '0' }] : []), ...bot,
+          ]
+        }
+        if (access === 'testers' || access === 'staff') {
+          return [
+            { id: guild, type: 0, allow: '0', deny: String(can(P.view)) },
+            ...(access === 'testers' && roleId.tester ? [{ id: roleId.tester, type: 0, allow: String(can(P.view)), deny: '0' }] : []),
+            ...(mod ? [{ id: mod, type: 0, allow: String(can(P.view)), deny: '0' }] : []), ...bot,
+          ]
+        }
+        return []
+      }
+      const created = []
+      const moved = []
+      let rulesChannel = null
+      let rolesChannel = null
+      for (const [n, cat] of plan.categories.entries()) {
+        if (!cat.id) {
+          const made = await rest('POST', `/guilds/${guild}/channels`, { name: cat.name, type: 4, position: n, permission_overwrites: overwrites(cat.access) })
+          cat.id = made.id
+        } else if (cat.rename) {
+          await rest('PATCH', `/channels/${cat.id}`, { name: cat.name })
+        }
+        for (const ch of cat.channels) {
+          if (ch.id) {
+            if (ch.move) { await rest('PATCH', `/channels/${ch.id}`, { parent_id: cat.id }); moved.push(ch.id) }
+          } else if (ch.create) {
+            const voice = ch.spec.type === 2
+            const made = await rest('POST', `/guilds/${guild}/channels`, {
+              name: ch.spec.name, type: voice ? 2 : 0, parent_id: cat.id,
+              ...(voice || !ch.spec.topic ? {} : { topic: ch.spec.topic }),
+              permission_overwrites: overwrites(cat.access),
+            })
+            ch.id = made.id
+            created.push(made.id)
+            if (ch.spec.rules) rulesChannel = made.id
+          }
+          if (ch.spec.roles) rolesChannel = ch.id
+        }
+      }
+      // Réglages de /setup encore vides : les salons et rôles du plan.
+      const patch = {}
+      for (const cat of plan.categories) for (const ch of cat.channels) {
+        if (ch.spec.key && ch.id && !settings[ch.spec.key]) patch[ch.spec.key] = ch.id
+      }
+      for (const r of plan.roles) if (r.setting && r.id && !settings[r.setting]) patch[r.setting] = r.id
+      if (Object.keys(patch).length) await saveSettings(patch)
+      forgetFacts()
+      // Salon des règles tout neuf : son message (le seul à poster).
+      if (rulesChannel) {
+        await rest('POST', `/channels/${rulesChannel}/messages`, {
+          content: [
+            '**📜 Rules**',
+            '1. Be respectful: no insults, harassment or hate.',
+            '2. No spam, self-promotion or ads.',
+            '3. Keep it safe for work.',
+            '4. Use the right channel: setup help in 🆘 Help, ideas with `/suggest`, bugs with `/bug`.',
+            '5. Never share accounts, tokens or personal data.',
+            '6. Follow Discord’s Terms of Service.',
+            '',
+            `Get the app: \`/download\` · Help: \`/help\` · Website: <${site}>`,
+          ].join('\n'),
+          allowed_mentions: { parse: [] },
+        }).catch((e) => log.warn(`Discord bridge: rules message not posted (${e.message})`))
+      }
+      // Menu des rôles pour tous dans #roles, s'il n'y en a pas encore.
+      let rolesPosted = false
+      if (rolesChannel && !st.settings.rolesMsg?.id) {
+        const options = roleOptions(await guildFacts(guild, true), EN)
+        if (options.length) {
+          const m = await withEmojiFallback((emojis) => rest('POST', `/channels/${rolesChannel}/messages`, rolesPublicMessage(options, emojis)))
+          await saveSettings({ rolesMsg: { channel: rolesChannel, id: m?.id } })
+          rolesPosted = true
+        }
+      }
+      // Rôle des sorties tout juste choisi : son bouton dans les annonces.
+      if (patch.announcementsRole || (patch.announcements && st.settings.announcementsRole)) {
+        await postReleasePing(st.settings.announcements).catch((e) => log.warn(`Discord bridge: release pings button not posted (${e.message})`))
+      }
+      refreshRolesMessage().catch(() => {})
+      call({ action: 'audit', what: 'bot.server-setup', detail: `${created.length} created, ${moved.length} moved`, by: byOf(user) }).catch(() => {})
+      const set = Object.entries(patch).map(([k, v]) => (k.endsWith('Role') ? `${k} → <@&${v}>` : `${k} → <#${v}>`))
+      return {
+        content: `✅ Server set up: ${created.length} channel(s) created, ${moved.length} moved${rolesPosted ? ', roles menu posted' : ''}. Nothing was deleted.`,
+        embeds: [{
+          color: 0x2ecc71,
+          description: [...serverPlanLines(plan), ...(set.length ? ['', `**Bot settings filled:** ${set.join(' · ')}`] : []), ...(notes.length ? ['', ...notes] : [])].join('\n').slice(0, 4000),
+        }],
+      }
+    } catch (e) {
+      if (e.code === 50013) throw new Error('Missing permissions: I need “Manage Channels” and “Manage Roles” (or Administrator), with my role above the roles I create. What was done so far stays; run it again once fixed.')
+      throw e
+    }
   }
 
   // ── Bouton du rôle des sorties, toujours en bas du salon des annonces ──
