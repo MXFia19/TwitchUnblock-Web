@@ -26,7 +26,7 @@ export const AMO_URL = 'https://addons.mozilla.org/firefox/addon/twitchunblock-c
  *  (extension/dev/check-site-version.mjs le vérifie en CI). Installée à la
  *  main depuis GitHub (Chrome, Edge, Brave), l'extension ne se met jamais à
  *  jour seule : plus ancienne, le site le dit (connect-update.js). */
-export const CONNECT_LATEST = '0.4.0'
+export const CONNECT_LATEST = '0.4.1'
 /** Première version qui suit une chaîne (follow.*) et dit si le compte est
  *  sans pub (hq.master `account`). */
 export const ACCOUNT_MIN_VERSION = '0.3.0'

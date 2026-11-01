@@ -100,7 +100,8 @@ published one.
   - *Open twitch.tv on TwitchUnblock* (off by default, 0.4.0): channel, VOD, clip and
     category pages of twitch.tv open on the site, at the same path. Sign-in, settings and
     the other Twitch pages stay on Twitch, and so does a page opened from the site or with
-    `?tu=0` in its address. `redirect.js` is only registered while the option is on
+    `?tu=0` in its address — like the tab the extension opens for its integrity token
+    (0.4.1). `redirect.js` is only registered while the option is on
     (`scripting.registerContentScripts`), with no new permission.
 - **Diagnostic**: checks the session again and gets a new integrity token. Tokens only
   show masked (first 4 characters and length).
@@ -191,8 +192,10 @@ www.twitch.tv page make the `POST https://gql.twitch.tv/integrity`
 (`scripting.executeScript`, `world: "MAIN"`), then sends the mutations itself with that
 token (valid for several hours) and `X-Device-Id` = the `unique_id` cookie. It uses a
 www.twitch.tv tab that is already open; otherwise it opens
-`https://www.twitch.tv/directory` in an inactive, muted tab (no video), then the home
-page as a fallback, and closes the tab. Only one fetch at a time; a mutation refused for
+`https://www.twitch.tv/directory?tu=0` in an inactive, muted tab (no video), then the
+home page as a fallback, and closes the tab — `?tu=0` keeps it on Twitch when *Open
+twitch.tv on TwitchUnblock* is on (before 0.4.1 it went to the site, and no token came).
+Only one fetch at a time; a mutation refused for
 integrity: token forgotten, new fetch, a single retry. After a failure, no new tab
 before 30 s (5 min for the automatic chest).
 

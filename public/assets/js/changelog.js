@@ -6,6 +6,23 @@
 
 export const CHANGELOG = [
   {
+    version: '2026.11.01f',
+    items: {
+      fr: [
+        'TwitchUnblock Connect 0.4.1 : avec « Ouvrir twitch.tv sur TwitchUnblock » allumé, les coffres, paris, votes, récompenses et drops remarchent — l’onglet Twitch dont l’extension a besoin pour son jeton partait lui aussi sur le site.',
+      ],
+      en: [
+        'TwitchUnblock Connect 0.4.1: with “Open twitch.tv on TwitchUnblock” on, chests, bets, votes, rewards and drops work again — the Twitch tab the extension needs for its token was sent to the site too.',
+      ],
+      es: [
+        'TwitchUnblock Connect 0.4.1: con «Abrir twitch.tv en TwitchUnblock» activado, los cofres, apuestas, votos, recompensas y drops vuelven a funcionar; la pestaña de Twitch que la extensión necesita para su token también se enviaba al sitio.',
+      ],
+      ru: [
+        'TwitchUnblock Connect 0.4.1: при включённом «Открывать twitch.tv в TwitchUnblock» сундуки, ставки, голосования, награды и дропсы снова работают — вкладка Twitch, нужная расширению для его токена, тоже уходила на сайт.',
+      ],
+    },
+  },
+  {
     version: '2026.11.01e',
     items: {
       fr: [

@@ -916,7 +916,10 @@ async function mintIntegrity(session) {
   }
 
   // 2) Sinon un onglet temporaire : /directory (pas de vidéo), puis l'accueil.
-  for (const url of [TWITCH_WWW + "/directory", TWITCH_WWW + "/"]) {
+  //    Avec ?tu=0 : « Ouvrir twitch.tv sur TwitchUnblock » (redirect.js) le
+  //    laisse sur Twitch — sans, il partait sur le site, n'était jamais prêt,
+  //    et le jeton ne s'obtenait plus.
+  for (const url of [TWITCH_WWW + "/directory?tu=0", TWITCH_WWW + "/?tu=0"]) {
     if (deadline - Date.now() < LIMIT.warmMs + 5000) break;
     const r = await mintInTempTab(url, session.token, did, deadline);
     if (r.token) return keepIntegrity(r, session, "temp");

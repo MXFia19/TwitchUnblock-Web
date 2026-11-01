@@ -161,6 +161,12 @@ version's release notes and the notes for reviewers.
 One per version, under a `### <version>` heading, as a quote. The CI sends the one that
 matches `manifest.json` (paragraphs joined, in English).
 
+### 0.4.1
+
+> Fix: with "Open twitch.tv on TwitchUnblock" on, the Twitch tab the extension opens to get
+> its integrity token was sent to the website too, so chests, bets, votes, rewards and
+> drops failed. That tab now stays on Twitch.
+
 ### 0.4.0
 
 > New option, off by default: open twitch.tv on TwitchUnblock. Channel, VOD, clip and

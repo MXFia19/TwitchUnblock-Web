@@ -619,7 +619,9 @@ function loadBackground(opts = {}) {
         tabLog.created.push(clone(props));
         setImmediate(() => {
           if (!tabs.has(tab.id)) return;
-          tab.url = props.url;
+          // redirect.js enregistré (« Ouvrir twitch.tv sur TwitchUnblock ») :
+          // la page part sur le site, comme dans le navigateur.
+          tab.url = (tabLog.registered.length && redirectOf(props.url)) || props.url;
           tab.status = "complete";
           for (const f of [...onUpdated.listeners]) f(tab.id, { status: "complete" }, clone(tab));
         });
@@ -1185,7 +1187,7 @@ test("une seule obtention à la fois", async () => {
 test("sans onglet twitch.tv : onglet inactif et coupé sur /directory, refermé", async () => {
   const h = loadBackground();
   assert.equal(code(await h.op("points.claim", { channel: CHANNEL })), "ok");
-  assert.deepEqual(h.tabLog.created, [{ url: "https://www.twitch.tv/directory", active: false, windowId: 1 }]);
+  assert.deepEqual(h.tabLog.created, [{ url: "https://www.twitch.tv/directory?tu=0", active: false, windowId: 1 }]);
   assert.ok(h.tabLog.updated.some((u) => u.muted === true), "onglet coupé");
   assert.equal(h.tabLog.removed.length, 1, "onglet refermé");
   assert.equal(h.tabs.size, 0);
@@ -1214,8 +1216,24 @@ test("repli sur l'accueil quand /directory ne donne pas de jeton", async () => {
   const h = loadBackground();
   h.tw.mintFailNext = 2; // deux essais sur /directory
   assert.equal(code(await h.op("points.claim", { channel: CHANNEL })), "ok");
-  assert.deepEqual(h.tabLog.created.map((c) => c.url), ["https://www.twitch.tv/directory", "https://www.twitch.tv/"]);
+  assert.deepEqual(h.tabLog.created.map((c) => c.url), ["https://www.twitch.tv/directory?tu=0", "https://www.twitch.tv/?tu=0"]);
   assert.equal(h.tabs.size, 0, "les deux onglets refermés");
+});
+
+test("« Ouvrir twitch.tv sur TwitchUnblock » allumé : l'onglet du jeton reste sur Twitch (?tu=0)", async () => {
+  const h = loadBackground({ local: { settings: { siteEnabled: true, autoClaim: true, allowSpend: true, openOnSite: true } } });
+  await ticks(5);
+  assert.equal(h.tabLog.registered.length, 1, "redirect.js enregistré");
+  assert.equal(redirectOf("https://www.twitch.tv/directory"), SITE + "/directory", "sans ?tu=0, l'onglet partirait sur le site");
+  // Parti sur le site, l'onglet n'est jamais prêt : l'obtention attendrait
+  // sans fin (minuteries longues figées ici), d'où la limite de 3 s.
+  let timer = 0;
+  const res = await Promise.race([h.op("points.claim", { channel: CHANNEL }), new Promise((r) => { timer = setTimeout(() => r(null), 3000); })]);
+  clearTimeout(timer);
+  assert.ok(res, "obtention bloquée : l'onglet du jeton est parti sur le site");
+  assert.equal(code(res), "ok");
+  assert.deepEqual(h.tabLog.created.map((c) => c.url), ["https://www.twitch.tv/directory?tu=0"]);
+  assert.equal(h.tabs.size, 0, "onglet refermé");
 });
 
 test("obtention impossible : integrity, puis pas de nouvel onglet avant 30 s", async () => {
@@ -2342,15 +2360,18 @@ test("« Ouvrir twitch.tv sur TwitchUnblock » : redirect.js enregistré seuleme
   assert.deepEqual(h.tabLog.registered, [], "connexion au site coupée : plus de redirection");
 });
 
+/** Où redirect.js envoie une page de twitch.tv (null : elle reste), le
+ *  script tel quel dans un bac à sable. */
+function redirectOf(href, referrer = "", top = true) {
+  let to = null;
+  const win = {};
+  win.top = top ? win : {};
+  vm.runInNewContext(readFileSync(join(DIR, "redirect.js"), "utf8"), { window: win, location: { href, replace: (u) => { to = u; } }, document: { referrer }, URL });
+  return to;
+}
+
 test("redirect.js : seules les pages que le site a, jamais depuis le site ni avec ?tu=0", () => {
-  const src = readFileSync(join(DIR, "redirect.js"), "utf8");
-  const run = (href, referrer = "", top = true) => {
-    let to = null;
-    const win = {};
-    win.top = top ? win : {};
-    vm.runInNewContext(src, { window: win, location: { href, replace: (u) => { to = u; } }, document: { referrer }, URL });
-    return to;
-  };
+  const run = redirectOf;
   assert.equal(run("https://www.twitch.tv/"), SITE + "/");
   assert.equal(run("https://www.twitch.tv/xqc"), SITE + "/xqc");
   assert.equal(run("https://m.twitch.tv/xqc/videos?filter=highlights"), SITE + "/xqc/videos?filter=highlights");
@@ -2381,7 +2402,8 @@ test("manifeste : origines, permissions et arrière-plan attendus", () => {
   // (suivre, compte sans pub) : rien de plus non plus.
   // 0.4.0 (ouvrir twitch.tv sur le site) : rien de plus non plus — redirect.js
   // s'enregistre avec « scripting » et l'accès à *.twitch.tv déjà là.
-  assert.equal(MANIFEST.version, "0.4.0");
+  // 0.4.1 (correctif : l'onglet du jeton d'intégrité garde ?tu=0) : rien de plus.
+  assert.equal(MANIFEST.version, "0.4.1");
   // 0.3.0 : plus de « tabs » — les accès d'hôte suffisent pour chercher les
   // onglets du site et de twitch.tv par leur adresse.
   assert.deepEqual([...MANIFEST.permissions].sort(), ["cookies", "scripting", "storage"]);
