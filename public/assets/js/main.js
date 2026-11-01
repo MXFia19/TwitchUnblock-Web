@@ -1278,22 +1278,29 @@ function bindGlobal() {
     if (b) loadTop(b.dataset.lang)
   })
 
-  // Streamer
-  $('#channel-form').addEventListener('submit', (e) => {
-    e.preventDefault()
-    hideSuggest()
-    searchChannel($('#channel-input').value)
-  })
+  // Streamer, et la même recherche sur l'accueil (sans passer par l'onglet).
   const debouncedSuggest = debounce(suggestChannels, 250)
-  $('#channel-input').addEventListener('input', () => debouncedSuggest(++suggestSeq))
-  $('#channel-input').addEventListener('keydown', onSuggestKey)
-  $('#channel-input').addEventListener('blur', () => setTimeout(hideSuggest, 150))
-  $('#channel-suggest').addEventListener('mousedown', (e) => {
-    const b = e.target.closest('[data-pick]')
-    if (!b) return
-    e.preventDefault()
-    pickSuggestion(b.dataset.pick)
-  })
+  for (const ui of [
+    { form: '#channel-form', input: '#channel-input', box: '#channel-suggest' },
+    { form: '#home-form', input: '#home-input', box: '#home-suggest', home: true },
+  ]) {
+    $(ui.form).addEventListener('submit', (e) => {
+      e.preventDefault()
+      useSuggest(ui)
+      hideSuggest()
+      searchFrom(ui, $(ui.input).value)
+    })
+    $(ui.input).addEventListener('input', () => { useSuggest(ui); debouncedSuggest(++suggestSeq) })
+    $(ui.input).addEventListener('keydown', (e) => { useSuggest(ui); onSuggestKey(e) })
+    $(ui.input).addEventListener('blur', () => setTimeout(hideSuggest, 150))
+    $(ui.box).addEventListener('mousedown', (e) => {
+      const b = e.target.closest('[data-pick]')
+      if (!b) return
+      e.preventDefault()
+      useSuggest(ui)
+      pickSuggestion(b.dataset.pick)
+    })
+  }
 
   // Lien / ID
   $('#link-form').addEventListener('submit', (e) => {
@@ -3148,10 +3155,31 @@ let suggestIndex = -1
  *  suggestion différée arrivée après coup ne rouvre plus la liste par-dessus
  *  les résultats. */
 let suggestSeq = 0
+/** Champ qui suggère maintenant : celui de l'onglet Streamer, ou celui de
+ *  l'accueil (même liste de suggestions, mêmes touches). */
+let suggestUi = { input: '#channel-input', box: '#channel-suggest' }
+
+/** Le champ tapé devient celui qui suggère ; la liste de l'autre se ferme. */
+function useSuggest(ui) {
+  if (ui.box !== suggestUi.box) hideSuggest()
+  suggestUi = ui
+}
+
+/** Recherche lancée d'un champ. Celui de l'accueil ouvre l'onglet Streamer,
+ *  son champ rempli, comme un lien vers une chaîne. */
+function searchFrom(ui, raw) {
+  if (!ui.home) return searchChannel(raw)
+  const text = String(raw || '').trim()
+  if (!text) return
+  $('#home-input').value = ''
+  setTab('channel', { url: false })
+  $('#channel-input').value = text
+  return searchChannel(text)
+}
 
 async function suggestChannels(seq) {
   if (seq !== suggestSeq) return
-  const raw = $('#channel-input').value
+  const raw = $(suggestUi.input).value
   const word = raw.trim().split(/\s+/)[0] ?? ''
   if (!word || raw.trim().includes(' ') || word.length < 2) return hideSuggest()
   const local = store.history
@@ -3167,7 +3195,7 @@ async function suggestChannels(seq) {
 }
 
 function renderSuggest() {
-  const box = $('#channel-suggest')
+  const box = $(suggestUi.box)
   if (!suggestions.length) return hideSuggest()
   box.innerHTML = suggestions.map((s, i) => `
     <button type="button" class="suggest-row${i === suggestIndex ? ' active' : ''}" data-pick="${esc(s.login)}">
@@ -3179,10 +3207,10 @@ function renderSuggest() {
   box.hidden = false
 }
 
-function hideSuggest() { suggestSeq++; $('#channel-suggest').hidden = true; suggestions = [] }
+function hideSuggest() { suggestSeq++; $(suggestUi.box).hidden = true; suggestions = [] }
 
 function onSuggestKey(e) {
-  if ($('#channel-suggest').hidden || !suggestions.length) return
+  if ($(suggestUi.box).hidden || !suggestions.length) return
   if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
     e.preventDefault()
     const n = suggestions.length
@@ -3195,9 +3223,9 @@ function onSuggestKey(e) {
 }
 
 function pickSuggestion(login) {
-  $('#channel-input').value = login
+  $(suggestUi.input).value = login
   hideSuggest()
-  searchChannel(login)
+  searchFrom(suggestUi, login)
 }
 
 let searchSeq = 0
@@ -4380,15 +4408,27 @@ async function showHqMissing(token) {
 }
 
 /** Avis montré une seule fois dans ce navigateur, comme dans l'app : on sait
- *  ensuite ce qu'il dit. */
-function noticeOnce(key, text) {
+ *  ensuite ce qu'il dit. `ms` : durée d'affichage (toast). */
+function noticeOnce(key, text, ms) {
   let seen = []
   try { seen = JSON.parse(localStorage.getItem('tu_seen_notices') || '[]') } catch {}
   if (!Array.isArray(seen)) seen = []
   if (seen.includes(key)) return
-  toast(text, 'info')
+  toast(text, 'info', ms)
   try { localStorage.setItem('tu_seen_notices', JSON.stringify([...seen, key].slice(-50))) } catch {}
 }
+
+// iPhone : une vidéo qui jouait quand la page est passée en arrière-plan,
+// hors image dans l'image, s'y arrête (Safari). Au retour, une fois, comment
+// la garder : l'image dans l'image avant de partir, ou le plein écran (le
+// lecteur de Safari s'y met de lui-même en glissant vers l'accueil).
+let playingWhenHidden = false
+document.addEventListener('visibilitychange', () => {
+  const v = player?.video
+  if (!isIOS || !v) return
+  if (document.hidden) playingWhenHidden = Boolean(state.watch) && !v.paused && v.webkitPresentationMode !== 'picture-in-picture'
+  else if (playingWhenHidden && v.paused) noticeOnce('ios_pip_tip', t('ios_pip_tip'), 10000)
+})
 
 /** Dernier recours quand aucune source ne répond (ou pas de réponse du tout)
  *  alors que la chaîne peut être en direct : le flux du compte par

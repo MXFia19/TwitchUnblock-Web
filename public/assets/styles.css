@@ -451,6 +451,8 @@ a.card, a.cat-card { display: block; }
 .search input { flex: 1; min-width: 0; height: 40px; background: none; border: 0; outline: none; color: var(--text); font-size: 16px; }
 .search input::placeholder { color: #75757e; }
 .search-icon { display: grid; color: var(--muted); }
+/* Accueil : la recherche de chaînes en haut, comme l'onglet Streamer. */
+.home-search { margin-bottom: 22px; }
 .suggest {
   position: absolute; top: calc(100% + 6px); left: 0; right: 0; z-index: 20;
   padding: 6px; border-radius: 12px; background: var(--card);

@@ -1000,7 +1000,7 @@ export class Player {
     this.root.classList.add('player')
     this.root.tabIndex = 0
     this.root.innerHTML = `
-      <video playsinline webkit-playsinline preload="auto"></video>
+      <video playsinline webkit-playsinline autopictureinpicture preload="auto"></video>
       <div class="p-spinner" hidden><span></span></div>
       <div class="p-flash" aria-hidden="true"></div>
       <button class="p-unmute" type="button" hidden>${icon('mute', 16)}<span></span></button>

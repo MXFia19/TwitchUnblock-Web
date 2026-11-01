@@ -120,6 +120,7 @@ export const ZH_HANT = {
   relay_hint_firefox: '在 Firefox 中通常是加強型追蹤保護：點擊網址左邊的盾牌，對此網站關閉它。',
   relay_hint_brave: '在 Brave 中通常是 Shields：點擊網址右邊的獅子，對此網站關閉它。',
   relay_hint_blocker: '通常是廣告封鎖器或受過濾的網路：請在封鎖器中把此網站設為例外。',
+  ios_pip_tip: '想在離開 Safari 後繼續觀看：離開前點子母畫面按鈕，或進入全螢幕後滑回主畫面。iPhone App 也能在背景繼續播放。',
   hq_why_ext: '此頻道以 {q} 播出：Twitch 只提供給已登入的帳號，需要在這個瀏覽器安裝已連線到網站的 TwitchUnblock Connect 擴充功能。',
   hq_why_ext_old: '此頻道以 {q} 播出：請更新 TwitchUnblock Connect 擴充功能（0.2.0 以上）。',
   hq_why_ext_login: '此頻道以 {q} 播出：請在這個瀏覽器登入 twitch.tv，擴充功能會用你的帳號播放直播。',

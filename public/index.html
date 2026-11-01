@@ -131,6 +131,14 @@
       <div id="connect-update" hidden></div>
       <!-- ── Découvrir ─────────────────────────────────────────────── -->
       <section class="view" id="view-discover">
+        <!-- Une chaîne dès l'accueil : la recherche de l'onglet Streamer
+             (suggestions pendant la frappe), sans changer d'onglet d'abord. -->
+        <form class="search home-search" id="home-form" autocomplete="off" role="search">
+          <span class="search-icon" data-icon="search" data-size="18"></span>
+          <input id="home-input" type="search" enterkeyhint="search" data-i18n-ph="search_channel_ph" autocapitalize="off" spellcheck="false">
+          <button class="btn primary" type="submit"><span data-i18n="search"></span></button>
+          <div class="suggest" id="home-suggest" hidden></div>
+        </form>
         <div id="announcement" hidden></div>
         <div id="poll" hidden></div>
         <section class="block" id="continue-block" hidden>

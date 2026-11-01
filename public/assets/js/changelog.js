@@ -6,6 +6,27 @@
 
 export const CHANGELOG = [
   {
+    version: '2026.11.02a',
+    items: {
+      fr: [
+        'Accueil : une barre de recherche en haut, comme dans l’onglet Streamer (suggestions pendant la frappe), pour ouvrir une chaîne sans changer d’onglet d’abord.',
+        'iPhone : la vidéo passe d’elle-même en image dans l’image en quittant la page quand le navigateur le permet ; si Safari l’a arrêtée, un conseil (une fois) dit comment continuer à regarder hors de Safari.',
+      ],
+      en: [
+        'Home: a search bar at the top, like in the Streamer tab (suggestions as you type), to open a channel without switching tabs first.',
+        'iPhone: the video goes into picture-in-picture by itself when you leave the page, where the browser allows it; if Safari stopped it, a tip (once) says how to keep watching outside Safari.',
+      ],
+      es: [
+        'Inicio: una barra de búsqueda arriba, como en la pestaña Streamer (sugerencias mientras escribes), para abrir un canal sin cambiar de pestaña antes.',
+        'iPhone: el vídeo pasa solo a imagen en imagen al salir de la página, donde el navegador lo permite; si Safari lo detuvo, un consejo (una vez) explica cómo seguir viendo fuera de Safari.',
+      ],
+      ru: [
+        'Главная: строка поиска вверху, как во вкладке «Стример» (подсказки при вводе), чтобы открыть канал, не переключая вкладку.',
+        'iPhone: видео само переходит в режим «картинка в картинке», когда вы уходите со страницы, если браузер это позволяет; если Safari его остановил, подсказка (один раз) объясняет, как смотреть вне Safari.',
+      ],
+    },
+  },
+  {
     version: '2026.11.01h',
     items: {
       fr: [
