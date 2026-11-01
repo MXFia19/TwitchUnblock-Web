@@ -163,6 +163,8 @@ const COMMANDS = [
           { name: 'Alerts, daily summary and release drafts (private)', value: 'alerts' },
           { name: 'Release announcements', value: 'announcements' },
           { name: 'Test builds', value: 'testers' },
+          { name: 'Apple TV testers role (with role:)', value: 'testers-tv' },
+          { name: 'Android testers role (with role:)', value: 'testers-android' },
           { name: 'To-do list (suggestions to keep)', value: 'todo' },
           { name: 'Suggestions (/suggest cards, members vote)', value: 'suggestions' },
           { name: 'Welcome messages for new members', value: 'welcome' },
@@ -1152,27 +1154,35 @@ const P = {
   manageThreads: 1n << 34n, moderate: 1n << 40n, kick: 1n << 1n, mute: 1n << 22n, move: 1n << 24n,
 }
 
-/** Catégories et salons voulus, en anglais comme ce que poste le bot.
- *  `access` : public, readonly (lecture seule), testers ou staff (cachés).
+/** Catégories et salons voulus, en anglais comme ce que poste le bot, et
+ *  calés sur le serveur tel qu’il est (ses salons repris, pas doublés).
+ *  `access` : public, readonly (lecture seule) ou staff (cachée).
  *  Salon : `key` = réglage de /setup qui le désigne déjà ; `aliases` = noms
- *  d'un salon existant à ranger là plutôt que d'en créer un autre ; `type`
- *  2 = vocal (texte sinon) ; `forum` = le salon des retours (celui du
- *  webhook), jamais créé, seulement rangé ; `rules` / `roles` = salon des
- *  règles / du menu des rôles. */
+ *  d’un salon existant à ranger là plutôt que d’en créer un autre ; `fix`
+ *  = fautes de frappe, renommées ; `keep` = seulement rangé s’il existe,
+ *  jamais créé ; `type` 2 = vocal (texte sinon) ; `forum` = le salon des
+ *  retours (celui du webhook) ; `rules` / `roles` = salon des règles / du
+ *  menu des rôles. */
 export const SERVER_LAYOUT = [
   {
-    key: 'info', name: '📢 Info', access: 'readonly', aliases: ['info', 'infos', 'information', 'start', 'startHere'],
+    key: 'info', name: '📢 Info', access: 'readonly', aliases: ['info', 'infos', 'information', 'informations', 'start', 'startHere'],
     channels: [
       { name: 'rules', topic: 'Read this first.', aliases: ['rules', 'regles', 'reglement', 'rule'], rules: true },
       { name: 'announcements', key: 'announcements', topic: 'New versions of TwitchUnblock: app, website, extension.', aliases: ['announcements', 'annonces', 'news', 'releases', 'updates'] },
-      { name: 'roles', topic: 'Pick your roles.', aliases: ['roles', 'getroles', 'pickroles'], roles: true },
+      { name: 'roles', topic: 'Pick your roles: release pings, test builds.', aliases: ['roles', 'getroles', 'pickroles'], roles: true },
+      { name: 'twitch-unblock', keep: true, aliases: ['twitchunblock', 'about', 'links', 'liens'] },
+      { name: 'twitch-unblock-github', keep: true, aliases: ['twitchunblockgithub', 'github', 'commits'] },
     ],
   },
   {
-    key: 'community', name: '💬 Community', access: 'public', aliases: ['community', 'communaute', 'textchannels', 'salonstextuels'],
+    key: 'community', name: '💬 Community', access: 'public', aliases: ['community', 'communaute', 'general', 'textchannels', 'salonstextuels'],
     channels: [
-      { name: 'general', aliases: ['general', 'generalchat', 'chat', 'discussion', 'discussions'] },
+      { name: 'general', fix: ['gerenal', 'genral', 'generale'], aliases: ['general', 'generalchat', 'chat', 'discussion', 'discussions'] },
       { name: 'suggestions', key: 'suggestions', topic: 'Ideas for TwitchUnblock: send yours with /suggest, then vote.', aliases: ['suggestions', 'ideas', 'idees', 'suggestion'] },
+      { name: 'suggestions-ios', keep: true, aliases: ['suggestionsios', 'suggestionsiphone'] },
+      { name: 'suggestions-web', keep: true, aliases: ['suggestionsweb', 'suggestionssite', 'suggestionswebsite'] },
+      { name: 'suggestions-tvos', keep: true, aliases: ['suggestionstvos', 'suggestionstv', 'suggestionsappletv'] },
+      { name: 'commandes', keep: true, aliases: ['commandes', 'commands', 'botcommands', 'bot', 'commandesbot'] },
       { name: 'clips', topic: 'Share your best moments.', aliases: ['clips', 'media', 'medias', 'clip'] },
       { name: 'Lounge', type: 2, aliases: ['lounge', 'general', 'vocal', 'voice', 'generalvoice'] },
     ],
@@ -1180,22 +1190,22 @@ export const SERVER_LAYOUT = [
   {
     key: 'help', name: '🆘 Help', access: 'public', aliases: ['help', 'aide', 'support'],
     channels: [
-      { name: 'install-iphone', topic: 'Installing the iPhone app: AltStore, SideStore, Feather, LiveContainer, TrollStore.', aliases: ['installiphone', 'installios', 'ioshelp', 'helpios', 'aideios', 'installation', 'install', 'iphone', 'ios'] },
-      { name: 'website-and-extension', topic: 'The website and the TwitchUnblock Connect extension.', aliases: ['websiteandextension', 'website', 'site', 'extension', 'websitehelp', 'web'] },
-      { name: 'android-and-tv', topic: 'Android, Android TV and Apple TV apps.', aliases: ['androidandtv', 'android', 'androidtv', 'appletv', 'tv'] },
+      { name: 'support', keep: true, aliases: ['support', 'help', 'aide'] },
+      { name: 'report-bugs', keep: true, aliases: ['reportbugs', 'bugs', 'bugreports', 'reportbug', 'bug'] },
+      { name: 'install-iphone', topic: 'Installing the iPhone app: AltStore, SideStore, Feather, LiveContainer, TrollStore.', aliases: ['installiphone', 'installios', 'ioshelp', 'helpios', 'aideios', 'installation', 'install'] },
     ],
   },
   {
-    key: 'testing', name: '🧪 Testing', access: 'testers', aliases: ['testing', 'tests', 'test', 'beta', 'testers'],
+    key: 'testing', name: '🧪 Testing', access: 'public', aliases: ['testing', 'tests', 'test', 'beta', 'testers'],
     channels: [
-      { name: 'test-builds', key: 'testers', topic: 'New test builds: TU Test, the TV test app.', aliases: ['testbuilds', 'testers', 'beta', 'tests', 'tutest'] },
+      { name: 'test-build', key: 'testers', topic: 'New test builds: iPhone (TU Test), Apple TV and Android. Pick your tester roles in #roles to get pinged.', aliases: ['testbuild', 'testbuilds', 'testers', 'beta', 'tests', 'tutest'] },
       { name: 'testers-chat', topic: 'Feedback on the test builds.', aliases: ['testerschat', 'betachat', 'testchat'] },
     ],
   },
   {
-    key: 'staff', name: '🔒 Staff', access: 'staff', aliases: ['staff', 'admin', 'admins', 'mod', 'mods', 'moderation', 'private', 'prive'],
+    key: 'staff', name: '🔒 Staff', access: 'staff', aliases: ['staff', 'feedback', 'admin', 'admins', 'mod', 'mods', 'moderation', 'private', 'prive'],
     channels: [
-      { name: 'reports', forum: true, aliases: [] },
+      { name: 'feedback', forum: true, aliases: [] },
       { name: 'todo', key: 'todo', aliases: ['todo', 'aFaire', 'tasks'] },
       { name: 'alerts', key: 'alerts', aliases: ['alerts', 'botalerts', 'monitoring', 'alertes', 'logs'] },
       { name: 'staff-notes', aliases: ['staffnotes', 'staff', 'notes', 'staffchat'] },
@@ -1203,20 +1213,36 @@ export const SERVER_LAYOUT = [
   },
 ]
 
-/** Rôles voulus. `setting` : réglage de /setup qui désigne déjà ce rôle. */
+/** Rôles voulus. `setting` : réglage de /setup qui désigne déjà ce rôle ;
+ *  `self` : proposé dans le menu des rôles (/roles, #roles), avec cette
+ *  description et cet emoji — sans permission ni salon réservé, donc sûr. */
 export const SERVER_ROLES = [
   {
     key: 'moderator', name: 'Moderator', color: 0x2ecc71, hoist: true, aliases: ['moderator', 'moderateur', 'mod', 'mods', 'moderators'],
     permissions: P.manageMessages | P.manageThreads | P.moderate | P.kick | P.mute | P.move,
   },
   { key: 'contributor', name: 'Contributor', color: 0xf1c40f, hoist: true, aliases: ['contributor', 'contributors', 'contributeur', 'translator', 'traducteur'] },
-  { key: 'tester', name: 'Tester', color: 0x9b59b6, setting: 'testersRole', aliases: ['tester', 'testers', 'testeur', 'testeurs', 'beta', 'betatester'] },
   { key: 'releases', name: 'Releases', mentionable: true, setting: 'announcementsRole', aliases: ['releases', 'releasepings', 'updates', 'sorties'] },
+  {
+    key: 'tester', name: 'iOS Tester', color: 0x9b59b6, mentionable: true, setting: 'testersRole',
+    aliases: ['iostester', 'tester', 'testers', 'testeur', 'testeurs', 'testios', 'testeriphone', 'betatester'],
+    self: { description: 'Pings for new iPhone test builds (TU Test)', emoji: '🧪' },
+  },
+  {
+    key: 'testerTv', name: 'tvOS Tester', color: 0x3498db, mentionable: true, setting: 'testersRoleTv',
+    aliases: ['tvostester', 'testertvos', 'testtvos', 'testtv', 'tvtester', 'appletvtester'],
+    self: { description: 'Pings for new Apple TV test builds', emoji: '📺' },
+  },
+  {
+    key: 'testerAndroid', name: 'Android Tester', color: 0x2ecc71, mentionable: true, setting: 'testersRoleAndroid',
+    aliases: ['androidtester', 'testerandroid', 'testandroid', 'android'],
+    self: { description: 'Pings for new Android test builds', emoji: '🤖' },
+  },
 ]
 
 /** Nom ramené à ses lettres et chiffres, sans accents ni emoji : « 📢・Annonces » → « annonces ». */
 const layoutName = (s) => String(s || '').normalize('NFD').toLowerCase().replace(/[^a-z0-9]+/g, '')
-const TEXT_TYPES = new Set([0, 5])   // texte, annonces
+const TEXT_TYPES = new Set([0, 5, 15])   // texte, annonces, forum
 
 /** Plan de /server-setup : ce qui existe (gardé tel quel, rangé dans sa
  *  catégorie) et ce qui manque (créé). Rien n'est supprimé ni renommé, et
@@ -1241,7 +1267,7 @@ export function serverPlan({ guild, channels = [], roles = [], settings = {}, fo
   const pick = (spec) => {
     if (spec.forum) return forum && byId.has(forum) ? byId.get(forum) : null
     if (spec.key && settings[spec.key] && byId.has(settings[spec.key]) && !used.has(settings[spec.key])) return byId.get(settings[spec.key])
-    const names = new Set(spec.aliases.map(layoutName))
+    const names = new Set([...spec.aliases, ...(spec.fix || [])].map(layoutName))
     const ok = (c) => !used.has(c.id) && names.has(layoutName(c.name))
       && (spec.type === 2 ? c.type === 2 : TEXT_TYPES.has(c.type))
     return channels.find(ok) || null
@@ -1267,7 +1293,9 @@ export function serverPlan({ guild, channels = [], roles = [], settings = {}, fo
       return {
         spec,
         id: c?.id || null,
-        create: !c && !spec.forum,
+        create: !c && !spec.forum && !spec.keep,
+        // Faute de frappe (« gerenal ») : renommé.
+        rename: c && (spec.fix || []).map(layoutName).includes(layoutName(c.name)) ? spec.name : null,
         move: Boolean(c) && (!existing || c.parent_id !== existing.id),
         exposed: Boolean(c) && (cat.access === 'staff' || cat.access === 'testers') && visibleToAll(c),
       }
@@ -1287,9 +1315,10 @@ export function serverPlanLines(plan) {
   for (const cat of plan.categories) {
     out.push('', `**${cat.name}**${cat.id ? (cat.rename ? ` (renamed from “${cat.rename}”)` : '') : ' (new category)'}`)
     for (const ch of cat.channels) {
-      if (ch.id) out.push(`${ch.move ? '→' : '✓'} <#${ch.id}>${ch.move ? ' (moved here)' : ''}`)
+      const notes = [ch.move ? 'moved here' : '', ch.rename ? `renamed to #${ch.rename}` : ''].filter(Boolean)
+      if (ch.id) out.push(`${ch.move || ch.rename ? '→' : '✓'} <#${ch.id}>${notes.length ? ` (${notes.join(', ')})` : ''}`)
       else if (ch.create) out.push(`+ ${ch.spec.type === 2 ? '🔊 ' : '#'}${ch.spec.name} (new)`)
-      else out.push('· reports forum: not found (the webhook’s channel)')
+      else if (ch.spec.forum) out.push('· reports forum: not found (the webhook’s channel)')
       if (ch.exposed) warn.push(`⚠️ <#${ch.id}> is visible to everyone but goes in ${cat.name}: make it private if it should be (its permissions aren’t changed).`)
     }
   }
@@ -2139,6 +2168,8 @@ export function startDiscordBridge({
     if (use === 'alerts') settings.alerts = i.channel_id
     else if (use === 'announcements') { settings.announcements = i.channel_id; settings.announcementsRole = role }
     else if (use === 'testers') { settings.testers = i.channel_id; settings.testersRole = role }
+    else if (use === 'testers-tv') settings.testersRoleTv = role
+    else if (use === 'testers-android') settings.testersRoleAndroid = role
     else if (use === 'todo') settings.todo = i.channel_id
     else if (use === 'suggestions') settings.suggestions = i.channel_id
     // Bienvenue : choisie (ou coupée) de nouveau, l'intent est redemandée.
@@ -2165,6 +2196,8 @@ export function startDiscordBridge({
           + 'Members take or drop it with /release-pings or the button I just posted — I need “Manage Roles”, above that role.'
         : 'Published release notes will go to this channel (add a role to mention it at each release).',
       testers: `New test builds will be posted here${role ? ` and mention <@&${role}> (the role must be mentionable)` : ''}.`,
+      'testers-tv': role ? `Apple TV test builds will mention <@&${role}>.` : 'Apple TV test builds will mention the testers role again.',
+      'testers-android': role ? `Android test builds will mention <@&${role}>.` : 'Android test builds won’t mention anyone.',
       todo: 'To-do items will be listed here: right-click a message → Apps → “Add to to-do” (or “Add conversation to to-do” on the first message of a conversation), or /todo.',
       suggestions: 'Suggestions (/suggest) will be posted here as public cards that members vote on. Their report also gets a post in the forum, tagged “Suggestion”.',
       welcome: 'New members will be welcomed here, with Download, Pick roles and Help buttons. This needs the **Server Members Intent** (developer portal → your application → Bot → Privileged Gateway Intents): if it’s off, Discord refuses the connection — I then reconnect without it, turn the welcome off and say so in the alerts channel.',
@@ -2249,7 +2282,10 @@ export function startDiscordBridge({
         }
         for (const ch of cat.channels) {
           if (ch.id) {
-            if (ch.move) { await rest('PATCH', `/channels/${ch.id}`, { parent_id: cat.id }); moved.push(ch.id) }
+            if (ch.move || ch.rename) {
+              await rest('PATCH', `/channels/${ch.id}`, { ...(ch.move ? { parent_id: cat.id } : {}), ...(ch.rename ? { name: ch.rename } : {}) })
+              if (ch.move) moved.push(ch.id)
+            }
           } else if (ch.create) {
             const voice = ch.spec.type === 2
             const made = await rest('POST', `/guilds/${guild}/channels`, {
@@ -2270,6 +2306,10 @@ export function startDiscordBridge({
         if (ch.spec.key && ch.id && !settings[ch.spec.key]) patch[ch.spec.key] = ch.id
       }
       for (const r of plan.roles) if (r.setting && r.id && !settings[r.setting]) patch[r.setting] = r.id
+      // Rôles des testeurs dans le menu des rôles (/roles, #roles), s'ils n'y sont pas.
+      const selfRoles = (Array.isArray(settings.selfRoles) ? settings.selfRoles : []).filter((x) => x?.id)
+      const added = plan.roles.filter((r) => r.self && r.id && !selfRoles.some((x) => x.id === r.id))
+      if (added.length) patch.selfRoles = [...selfRoles, ...added.map((r) => ({ id: r.id, description: r.self.description, emoji: r.self.emoji }))].slice(0, 25)
       if (Object.keys(patch).length) await saveSettings(patch)
       forgetFacts()
       // Salon des règles tout neuf : son message (le seul à poster).
@@ -2305,7 +2345,8 @@ export function startDiscordBridge({
       }
       refreshRolesMessage().catch(() => {})
       call({ action: 'audit', what: 'bot.server-setup', detail: `${created.length} created, ${moved.length} moved`, by: byOf(user) }).catch(() => {})
-      const set = Object.entries(patch).map(([k, v]) => (k.endsWith('Role') ? `${k} → <@&${v}>` : `${k} → <#${v}>`))
+      const set = Object.entries(patch).map(([k, v]) => (k === 'selfRoles' ? `roles menu → ${added.map((r) => `<@&${r.id}>`).join(' ')}`
+        : /Role|RoleTv|RoleAndroid$/.test(k) ? `${k} → <@&${v}>` : `${k} → <#${v}>`))
       return {
         content: `✅ Server set up: ${created.length} channel(s) created, ${moved.length} moved${rolesPosted ? ', roles menu posted' : ''}. Nothing was deleted.`,
         embeds: [{
@@ -4066,18 +4107,24 @@ export function startDiscordBridge({
     })
   }
 
-  async function postTestBuild(rel) {
+  async function postTestBuild(rel, platform = /^tv-test-/.test(rel.tag_name || '') ? 'tv' : 'ios') {
     const channel = st.settings.testers
     if (!channel) return
-    const role = st.settings.testersRole
-    const tv = /^tv-test-/.test(rel.tag_name || '')
+    const tv = platform === 'tv'
+    const android = platform === 'android'
+    // Rôle des testeurs de la plateforme (Apple TV, Android) ; Apple TV sans
+    // le sien : celui des testeurs, comme avant.
+    const role = tv ? (st.settings.testersRoleTv || st.settings.testersRole)
+      : android ? st.settings.testersRoleAndroid : st.settings.testersRole
     const items = bullets(rel.body).slice(0, 12)
     // Apple TV : sa source (apps-tv.json, à côté de celle de test) pour
     // ATVLoadly, qui se met alors à jour seul.
-    const how = tv
+    const how = android
+      ? `Android build: download the APK (phone and Android TV): <${rel.html_url}>`
+      : tv
       ? `Apple TV build: add the source <${testSource.replace(/apps-test\.json$/, 'apps-tv.json')}> in ATVLoadly for automatic updates, or install it with Xcode (see the README): <${rel.html_url}>`
       : `Install it from the test source <${testSource}>, or download the IPA: <${rel.html_url}>`
-    await sendChunks(channel, `${role ? `<@&${role}> ` : ''}🧪 **New test build: ${rel.name}**\n${items.join('\n')}\n\n${how}`,
+    await sendChunks(channel, `${role ? `<@&${role}> ` : ''}🧪 **New ${android ? 'Android ' : tv ? 'Apple TV ' : ''}test build: ${rel.name}**\n${items.join('\n')}\n\n${how}`,
       { allowed_mentions: role ? { parse: [], roles: [role] } : { parse: [] } })
   }
 
@@ -4108,7 +4155,7 @@ export function startDiscordBridge({
       }
       const num = (tag) => Number(String(tag || '').match(/(\d+)$/)?.[1]) || 0
       if (test && num(test.tag_name) > num(seen.iosTest)) { if (seen.iosTest) await postTestBuild(test); next.iosTest = test.tag_name }
-      if (tv && num(tv.tag_name) > num(seen.tvTest)) { if (seen.tvTest) await postTestBuild(tv); next.tvTest = tv.tag_name }
+      if (tv && num(tv.tag_name) > num(seen.tvTest)) { if (seen.tvTest) await postTestBuild(tv, 'tv'); next.tvTest = tv.tag_name }
       // App Apple TV stable (« TwitchUnblock TV 0.1.N ») : retenue pour
       // prévenir les retours qui attendaient son correctif, sans brouillon.
       const tvStable = latest((r) => !r.prerelease && !r.draft && /^TwitchUnblock TV \d/.test(r.name || ''))
@@ -4122,6 +4169,15 @@ export function startDiscordBridge({
         .sort((a, b) => Date.parse(b.published_at || b.created_at || 0) - Date.parse(a.published_at || a.created_at || 0))[0]
       const android = stable?.name.replace(/^TwitchUnblock\s+/, '').trim()
       if (android && (!seen.android || compareVersions(android, seen.android) > 0)) next.android = android
+      // Build de test Android (« TU Test 0.1.N », étiquette test-N) : annoncé
+      // aux testeurs Android, comme ceux de l'iPhone et de l'Apple TV.
+      const anum = (tag) => Number(String(tag || '').match(/(\d+)$/)?.[1]) || 0
+      const atest = apks.filter((r) => r.prerelease && !r.draft && /^test-/.test(r.tag_name || ''))
+        .sort((x, y) => anum(y.tag_name) - anum(x.tag_name))[0]
+      if (atest && anum(atest.tag_name) > anum(seen.androidTest)) {
+        if (seen.androidTest) await postTestBuild(atest, 'android')
+        next.androidTest = atest.tag_name
+      }
     }
     const web = await siteVersion()
     if (web && (!seen.web || compareVersions(web, seen.web) > 0)) {
