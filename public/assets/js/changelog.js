@@ -6,6 +6,26 @@
 
 export const CHANGELOG = [
   {
+    version: '2026.11.01a',
+    items: {
+      fr: [
+        'Signalements et idées : connecté, ils sont signés avec ton compte Twitch (case cochée d’office, décochable) ; sinon, un pseudo facultatif. Le développeur sait ainsi que c’est toi d’un message à l’autre, et le choix est retenu sur cet appareil.',
+      ],
+      en: [
+        'Bug reports and ideas: when you’re logged in, they’re signed with your Twitch account (checked by default, you can untick it); otherwise, an optional nickname. The developer knows it’s you from one message to the next, and your choice is remembered on this device.',
+      ],
+      es: [
+        'Reportes e ideas: con la sesión iniciada, se firman con tu cuenta de Twitch (marcado por defecto, puedes desmarcarlo); si no, un apodo opcional. Así el desarrollador sabe que eres tú de un mensaje a otro, y tu elección se recuerda en este dispositivo.',
+      ],
+      ru: [
+        'Сообщения об ошибках и идеи: при входе в аккаунт они подписываются твоим аккаунтом Twitch (включено по умолчанию, можно отключить); без входа — необязательный псевдоним. Так разработчик узнаёт тебя от сообщения к сообщению, а выбор запоминается на этом устройстве.',
+      ],
+      'zh-Hant': [
+        '錯誤回報與點子：登入時會以你的 Twitch 帳號署名（預設勾選，可取消）；未登入時可填寫選填的暱稱。開發者就能在不同訊息間認出你，而你的選擇會記在這台裝置上。',
+      ],
+    },
+  },
+  {
     version: '2026.10.30c',
     items: {
       fr: [

@@ -5476,6 +5476,20 @@ function openErrorLog() {
   }
 }
 
+/** Nom joint au retour (formulaire ouvert), pour que le développeur
+ *  reconnaisse qui revient : le compte Twitch du site si sa case est cochée,
+ *  sinon le pseudo écrit ; le choix et le pseudo sont retenus ici. */
+function feedbackName(login) {
+  const sign = $('#fb-sign')
+  const pseudo = ($('#fb-name')?.value || '').trim().replace(/\s+/g, ' ').slice(0, 30)
+  try {
+    if (sign) localStorage.setItem('tu_fb_sign', sign.checked ? '1' : '0')
+    else localStorage.setItem('tu_fb_name', pseudo)
+  } catch {}
+  if (sign) return sign.checked && login ? { name: login, nameSource: 'twitch' } : {}
+  return pseudo ? { name: pseudo, nameSource: 'pseudo' } : {}
+}
+
 function openFeedback(kind = 'bug', { prefill = '' } = {}) {
   // Une vidéo à l'écran : l'état de sa lecture (décrochages, images perdues,
   // tampon…) va au journal joint, pour un saccadement qui ne laisse aucune
@@ -5487,6 +5501,15 @@ function openFeedback(kind = 'bug', { prefill = '' } = {}) {
     errCount ? t('fb_errors_attached', { n: errCount }) : null].filter(Boolean).join(' · ')
   let current = FEEDBACK_KINDS.includes(kind) ? kind : 'bug'
   const mine = myFeedback()
+  // Connecté : case « Signer avec mon compte Twitch », cochée d'office et
+  // décochable. Sinon : un pseudo facultatif (feedbackName).
+  const signLogin = session.login || ''
+  let signOn = true
+  let pseudo = ''
+  try {
+    signOn = localStorage.getItem('tu_fb_sign') !== '0'
+    pseudo = localStorage.getItem('tu_fb_name') || ''
+  } catch {}
   openSheet(`
     <div class="sheet-head"><h2>${esc(t('feedback'))}</h2>
       ${mine.length ? `<button class="btn sm ghost fb-mine-btn" type="button" data-fb-mine>${icon('inbox', 15)}<span>${esc(t('fb_mine'))}</span></button>` : ''}
@@ -5498,6 +5521,10 @@ function openFeedback(kind = 'bug', { prefill = '' } = {}) {
       <textarea class="text-input" id="fb-message" rows="6" maxlength="2000" placeholder="${esc(t(`fb_ph_${current}`))}">${esc(prefill)}</textarea>
       <div class="fb-photos" id="fb-photos"></div>
       <label class="btn sm ghost fb-attach" id="fb-attach">${icon('image', 15)}<span>${esc(t('fb_add_photos'))}</span><input type="file" id="fb-file" accept="image/*" multiple hidden></label>
+      ${signLogin ? `<label class="setting fb-sign">
+        <span class="setting-text"><span>${esc(t('fb_sign'))}</span><small>${esc(t('fb_sign_sub', { login: signLogin }))}</small></span>
+        <input type="checkbox" class="switch" id="fb-sign" ${signOn ? 'checked' : ''}>
+      </label>` : `<input class="text-input" id="fb-name" type="text" maxlength="30" autocomplete="nickname" placeholder="${esc(t('fb_name_ph'))}" value="${esc(pseudo)}">`}
       <input class="text-input" id="fb-contact" type="text" maxlength="100" autocomplete="off" placeholder="${esc(t('fb_contact_ph'))}">
       <p class="muted small">${esc(t('fb_info'))}<br><span class="fb-info">${esc(summary)}</span></p>
       <button class="btn primary" type="submit" id="fb-send">${icon('send', 16)}<span>${esc(t('fb_send'))}</span></button>
@@ -5525,7 +5552,7 @@ function openFeedback(kind = 'bug', { prefill = '' } = {}) {
     btn.disabled = true
     try {
       const r = await api.sendFeedback({
-        kind: current, message, contact: $('#fb-contact').value.trim(),
+        kind: current, message, contact: $('#fb-contact').value.trim(), ...feedbackName(signLogin),
         platform: 'web', version: usage.SITE_VERSION, info, photos: picker.photos,
         errors: errorLines(20),
       })

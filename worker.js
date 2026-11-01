@@ -2121,7 +2121,7 @@ async function handleAdminAnnouncement(request, env) {
 //  Retours (bug, idée, autre) envoyés depuis le site et l'app, et la
 //  discussion qui suit avec la personne.
 //
-//  POST /api/feedback        { kind, message, contact?, platform, version, info?, photos? }
+//  POST /api/feedback        { kind, message, contact?, name?, nameSource?, platform, version, info?, photos? }
 //                            → { ok, id, token }
 //  POST /api/feedback/thread { items: [{ id, token }] } → état et messages
 //  POST /api/feedback/reply  { id, token, message, photos? }
@@ -2140,8 +2140,10 @@ async function handleAdminAnnouncement(request, env) {
 //  photos jointes. Dans un salon « Forum », chaque retour a son post, où
 //  arrivent aussi ses réponses ; avec le bot du relais (FEEDBACK_BOT_SECRET,
 //  docker/discord-bot.mjs), on y répond et on y change l'état directement
-//  (/api/feedback/discord). Ni adresse IP ni compte Twitch stockés : ce que la
-//  personne écrit, et les infos techniques affichées avant l'envoi.
+//  (/api/feedback/discord). Pas d'adresse IP stockée : ce que la personne
+//  écrit, le nom qu'elle choisit de joindre (son compte Twitch, case cochée
+//  d'office et décochable, sinon un pseudo facultatif) et les infos
+//  techniques affichées avant l'envoi.
 // ═══════════════════════════════════════════════════════════════════════════
 const FEEDBACK_PREFIX = 'fb_';
 const FEEDBACK_PHOTO_PREFIX = 'fbimg_';
@@ -2533,6 +2535,16 @@ function publicFeedback(id, meta, thread) {
              ...(meta.bl ? { closed: true } : {}), ...(thread.length >= FEEDBACK_MAX_MESSAGES ? { full: true } : {}) };
 }
 
+/** Nom joint à un retour, pour reconnaître qui revient d'un retour à
+ *  l'autre : `nm` (30 caractères, une ligne) et sa source `ns` — 't' pour le
+ *  compte Twitch connecté (forme d'un login Twitch), 'p' pour un pseudo écrit
+ *  à la main. Rien quand la personne ne signe pas. */
+function feedbackName(body) {
+    const nm = cleanText(String(body?.name ?? '').replace(/\s+/g, ' '), 30);
+    if (!nm) return {};
+    return { nm, ns: body.nameSource === 'twitch' && LOGIN_RE.test(nm) ? 't' : 'p' };
+}
+
 async function handleFeedback(request, env, ctx) {
     if (request.method !== 'POST') return jsonError('Method Not Allowed', 405);
     if (!env.DB) return jsonError("Base D1 'DB' non liée au Worker.", 500);
@@ -2570,6 +2582,7 @@ async function handleFeedback(request, env, ctx) {
         k: FEEDBACK_KINDS.includes(body.kind) ? body.kind : 'other',
         m: message,
         c: cleanText(body.contact, 100) || null,
+        ...feedbackName(body),
         p: PLATFORMS.includes(body.platform) ? body.platform : 'web',
         v: cleanText(body.version, 32) || '?',
         i: cleanText(info, 600) || null,
@@ -2713,6 +2726,11 @@ async function postFeedbackToDiscord(webhook, e, photos = [], { inReplyTo = null
     const kind = e.sg ? '💡 Suggestion' : KINDS[e.k] || KINDS.other;
     const PLACES = { ios: 'iOS app', tvos: 'Apple TV app', android: 'Android app', discord: 'Discord', web: 'Website' };
     const fields = [{ name: 'Platform', value: `${PLACES[e.p] || PLACES.web} · ${e.v}`, inline: true }];
+    // Nom joint (compte Twitch ou pseudo), sa mise en forme Discord échappée.
+    if (e.nm) {
+        const name = String(e.nm).replace(/[\\*_~|`>[\]()]/g, '\\$&');
+        fields.push({ name: 'Name', value: `${name} (${e.ns === 't' ? 'Twitch' : 'nickname'})`, inline: true });
+    }
     if (e.c) fields.push({ name: 'Contact', value: e.c, inline: true });
     if (inReplyTo) fields.push({ name: 'In reply to', value: inReplyTo.slice(0, 300) });
     else if (e.i) fields.push({ name: 'Info', value: readableInfo(e.i).slice(0, 1000) });
@@ -2736,10 +2754,11 @@ async function postFeedbackToDiscord(webhook, e, photos = [], { inReplyTo = null
             timestamp: new Date(e.u || e.at).toISOString(),
         }],
     };
-    // Nom du post (salon forum) : genre et début du premier message (le titre
-    // d'une suggestion).
+    // Nom du post (salon forum) : genre, nom joint s'il y en a un et début du
+    // premier message (le titre d'une suggestion).
     const first = String(inReplyTo ?? (e.sg && e.st ? e.st : e.m) ?? '').replace(/\s+/g, ' ').trim();
-    const threadName = test ? 'Webhook test' : `${kind} · ${first || '📷'}`.slice(0, 100);
+    const who = e.nm ? `${e.nm} · ` : '';
+    const threadName = test ? 'Webhook test' : `${kind} · ${who}${first || '📷'}`.slice(0, 100);
     return discordHook(webhook, payload, photoFiles(photos), { threadId: e.dt, threadName, requireThread });
 }
 
@@ -3738,6 +3757,7 @@ async function handleAdminFeedback(request, env, ctx) {
     const listAll = (prefix) => listStoreKeys(env, prefix);
     const summary = (key, m) => ({
         key, kind: m.k || 'other', message: m.m || '', contact: m.c || null, platform: m.p || '?',
+        name: m.nm || null, nameSource: m.nm ? (m.ns === 't' ? 'twitch' : 'pseudo') : null,
         version: m.v || '?', info: m.i || null, errors: m.el || null, at: m.at || 0,
         status: m.s || 'new', updatedAt: m.u || m.at || 0, lastFrom: m.r || 'u', count: m.n || 1, photos: m.ph || 0,
         // Dernière fois que l'admin l'a vu (« Vu », réponse ou nouvel état).
@@ -3959,6 +3979,8 @@ function reportView(key, m, value, votes, full) {
     }));
     return {
         key, kind: FEEDBACK_KINDS.includes(m.k) ? m.k : 'other', suggestion: Boolean(m.sg),
+        // Nom joint par la personne (jamais son contact).
+        name: m.nm ? String(m.nm) : null, nameSource: m.nm ? (m.ns === 't' ? 'twitch' : 'pseudo') : null,
         platform: cleanText(m.p, 20) || 'web', version: cleanText(m.v, 60) || '?',
         build: typeof info?.build === 'string' ? info.build : null,
         createdAt: isoDate(m.at), updatedAt: isoDate(m.u || m.at),

@@ -309,7 +309,7 @@ export const ZH_HANT = {
   fb_ph_bug: '發生了什麼？你預期會怎樣？在哪個頻道或 VOD？',
   fb_ph_idea: '你的想法，以及它能解決什麼。',
   fb_ph_other: '你的訊息。',
-  fb_contact_ph: 'Discord 名稱或電子郵件（選填，方便我們回覆）',
+  fb_contact_ph: 'Discord 名稱或電子郵件（選填，方便我們回覆）', fb_name_ph: '你的暱稱（選填，方便我們認出你）', fb_sign: '以我的 Twitch 帳號署名', fb_sign_sub: '{login}：開發者會知道是你',
   fb_info: '自動附上：',
   fb_send: '送出',
   fb_thanks: '謝謝！你的訊息已送出。',

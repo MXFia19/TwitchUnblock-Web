@@ -258,6 +258,8 @@ function facts(r) {
     r.open && r.lastFrom === 'user' ? 'réponse attendue (dernier message : l\'utilisateur)' : null,
     r.closed ? 'discussion fermée' : null, r.mergedInto ? `fusionné dans ${r.mergedInto}` : null]
   const lines = [`- ${line1.filter(Boolean).join(' · ')}`, `- ${line2.filter(Boolean).join(' · ')}`]
+  // Nom joint par la personne : son compte Twitch (case cochée) ou un pseudo écrit à la main.
+  if (r.name) lines.push(`- De : ${oneLine(r.name)} (${r.nameSource === 'twitch' ? 'compte Twitch' : 'pseudo'})`)
   const info = Object.entries(r.info || {}).filter(([k]) => k !== 'build')
   if (info.length) lines.push(`- Infos : ${info.map(([k, v]) => `${k} ${oneLine(v)}`).join(' · ')}`)
   return lines.join('\n')

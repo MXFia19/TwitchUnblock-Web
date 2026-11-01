@@ -111,7 +111,7 @@ Watch Twitch lives and VODs in your browser, no subscription needed, with the re
 - French, English, Spanish, Russian and Traditional Chinese (繁體中文, Taiwan wording, contributed by [trend0522](https://github.com/trend0522)) — follows your device language by default; any Chinese browser (zh-TW, zh-HK, zh-CN…) gets Traditional Chinese, the only Chinese the site has. The Russian and Chinese translations were made with AI: the settings say so, with a button to report a mistake. Live notifications come in the site's language, Chinese included, and the usage count keeps the script (`zh-Hant`, like the apps) instead of only two letters
 - **Twitch-style links**: replace `twitch.tv` with the site's address — `/xqc`, `/xqc/clips`, `/xqc/about`, `/videos/123?t=1h2m3s`, `/directory/category/just-chatting` — and the browser's back/forward buttons move between pages
 - Streams, VODs, clips, categories and channels are real links: middle-click or Ctrl/Cmd + click opens them in a new tab
-- **Bug reports & ideas** from the top bar, the settings or the player, screenshots included (pick them or paste with Ctrl+V). **My reports** shows where each one stands (received, seen, accepted, in progress, done, declined) and the developer's reply, and lets you answer back — updated on its own; a banner tells you when the developer replies. A report that's done or declined, with the developer having the last word, is no longer checked (opening it still looks once); answering it brings it back
+- **Bug reports & ideas** from the top bar, the settings or the player, screenshots included (pick them or paste with Ctrl+V). Logged in, a report is signed with your Twitch account (checked by default, you can untick it); otherwise you can add a nickname — so the developer knows it's you from one report to the next (the choice and the nickname are remembered in this browser). **My reports** shows where each one stands (received, seen, accepted, in progress, done, declined) and the developer's reply, and lets you answer back — updated on its own; a banner tells you when the developer replies. A report that's done or declined, with the developer having the last word, is no longer checked (opening it still looks once); answering it brings it back
 - **Switch account** in the settings; after logging out, Twitch asks which account to use instead of signing the old one back in
 - Logging in without a popup (phones, blocked popups) brings you back to the page you were on, live or VOD included; declining on Twitch's page says so. When Twitch can't be reached as the site opens, you stay logged in with the account last checked on this device, and the login is checked again once the connection is back
 - History and progress synced across devices when logged in, merged by date (the most recent first); each Twitch account keeps its own history on a shared device (set aside at logout, back at the next login), and nothing is sent before the backup was read
@@ -260,7 +260,7 @@ The Worker sends it again the way the app does — `POST url`, body `data=<base6
 - The Discord bot's actions on the Worker all carry the shared secret (`FEEDBACK_BOT_SECRET`); `/live` and `/top` go through at most 120 Twitch lookups a minute, `/my-reports` and `/suggestions` 30 a minute per member — and as each of those two reads every report in D1, the bot keeps their answers 60 seconds (`/suggestions top` the same for everyone, `/my-reports` per member; read again once that member sends something or votes). `/api/open/live` (the **Open in the app** button) only takes a valid Twitch name and only redirects to `twitchunblock://live/<name>`.
 - The developer tools only accept Twitch tokens issued to the official website and apps (or to `TWITCH_CLIENT_ID`): a token of the owner's account issued to another Twitch app doesn't open them.
 - **Admin log**: every admin action — from `/stats`, the apps or Discord: deleting, closing or merging a report, replies and statuses, announcements, polls, erasing someone's data… — and everything done with the reports key (reading the reports or the bot's to-do list, a report's new status, to-do cards marked done or reopened) is kept 90 days (who, what, when, from where) and listed at the bottom of the developer tools on `/stats`.
-- **Reports on the developer's computer** (`/api/admin/reports`, `tools/reports.mjs`): opened only by the `REPORTS_KEY` secret (constant-time check, 10 wrong keys an hour per address); it reads, and makes two changes only — a report's status (exactly as in `/stats`) and marking the Discord bot's to-do cards done or open again —: no reply, no deletion, no merge (a new status reaches the person just as after `/stats`). It never returns contacts, install IDs, addresses or tokens, and screenshots only one at a time, as a download checked to be a JPEG, PNG or WebP image; the same route and key (and nothing else but the bot's own secret) read the Discord bot's copy of its to-do list, with the Discord links of its cards' attachments (the files themselves never go through the Worker) — see [Reading reports from your computer](#reading-reports-from-your-computer).
+- **Reports on the developer's computer** (`/api/admin/reports`, `tools/reports.mjs`): opened only by the `REPORTS_KEY` secret (constant-time check, 10 wrong keys an hour per address); it reads, and makes two changes only — a report's status (exactly as in `/stats`) and marking the Discord bot's to-do cards done or open again —: no reply, no deletion, no merge (a new status reaches the person just as after `/stats`). It never returns contacts, install IDs, addresses or tokens (only the name a person chose to sign with: their Twitch account or a nickname), and screenshots only one at a time, as a download checked to be a JPEG, PNG or WebP image; the same route and key (and nothing else but the bot's own secret) read the Discord bot's copy of its to-do list, with the Discord links of its cards' attachments (the files themselves never go through the Worker) — see [Reading reports from your computer](#reading-reports-from-your-computer).
 - **Erasing someone's data** (`/stats` → developer tools, or `/forget-user` on Discord): shows what will go first — with the Twitch account found, ID and current username —, then erases exactly that; the admin log only notes what kind of data went and how much, nothing that identifies the person — see [Discord bot](#discord-bot-feedback-alerts-releases), *Operations*.
 
 ---
@@ -548,7 +548,8 @@ limited to server admins in Discord.
 **Feedback bridge** (a private **forum** channel):
 
 - Each bug report or idea gets its own post, where the person's replies land
-  too. Writing in the post sends your reply, screenshots included (JPEG, PNG
+  too; its title (and its **Name** field) carries the name the person signed
+  with — Twitch account or nickname —, to spot who comes back. Writing in the post sends your reply, screenshots included (JPEG, PNG
   or WebP) — the person reads it in **My reports**, no account needed. The bot
   reacts ✅ once it's sent, ❌ with the reason otherwise; start a message with
   `//` for a private note.
@@ -964,8 +965,10 @@ user or developer —, text, date; in a list the last 5 messages, cut at 600
 characters, all of them with `id`), votes for a suggestion, the number of
 screenshots and, for each message, their numbers (`photoNumbers`; the
 pictures themselves only one at a time with `view=photo`), the technical info shown before sending
-(device, system, browser, page without its query string…) and the attached
-error log. Never: the contact (e-mail, Discord account), install ID, IP
+(device, system, browser, page without its query string…), the attached
+error log and the name the person signed with, if any (`name`; `nameSource`
+is `twitch` for the account they were logged in with, `pseudo` for a nickname
+typed in — neither is checked). Never: the contact (e-mail, Discord account), install ID, IP
 address, token or its hash, Discord links (only the to-do list has some: its
 cards and the messages they quote, which open only for the server's members).
 
