@@ -529,15 +529,24 @@ export async function searchCategories(q) {
   return (data?.searchCategories?.edges ?? []).map((e) => catFrom(e.node))
 }
 
-/** Audience et jaquette à jour de catégories connues (suivies). */
+/** Audience et jaquette à jour de catégories connues (suivies). Un alias
+ *  par catégorie (pas de filtre par identifiants), 15 au plus par requête :
+ *  Twitch refuse au-delà (« root field aliases limit allowed (15) », vu le
+ *  04/11 — la requête de 60 ne rendait plus rien). Paquets envoyés ensemble ;
+ *  l'erreur ne remonte que si aucun n'a répondu. */
 export async function getCategoriesByIds(ids) {
   ids = ids.slice(0, 60)
   if (!ids.length) return []
-  // Une requête, un alias par catégorie (pas de filtre par identifiants).
-  const vars = Object.fromEntries(ids.map((id, i) => [`i${i}`, String(id)]))
-  const q = `query(${ids.map((_, i) => `$i${i}: ID`).join(', ')}) { ${ids.map((_, i) => `g${i}: game(id: $i${i}) { ${CAT_FIELDS} }`).join(' ')} }`
-  const data = await gql(q, vars)
-  return ids.map((_, i) => data?.[`g${i}`]).filter(Boolean).map(catFrom)
+  const chunks = []
+  for (let i = 0; i < ids.length; i += 15) chunks.push(ids.slice(i, i + 15))
+  const parts = await Promise.allSettled(chunks.map(async (part) => {
+    const vars = Object.fromEntries(part.map((id, i) => [`i${i}`, String(id)]))
+    const q = `query(${part.map((_, i) => `$i${i}: ID`).join(', ')}) { ${part.map((_, i) => `g${i}: game(id: $i${i}) { ${CAT_FIELDS} }`).join(' ')} }`
+    const data = await gql(q, vars)
+    return part.map((_, i) => data?.[`g${i}`]).filter(Boolean).map(catFrom)
+  }))
+  if (parts.every((p) => p.status === 'rejected')) throw parts[0].reason
+  return parts.flatMap((p) => (p.status === 'fulfilled' ? p.value : []))
 }
 
 /** Lives d'une catégorie, par tranches de 30, d'une seule langue si

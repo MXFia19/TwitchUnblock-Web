@@ -15,6 +15,7 @@ export const CHANGELOG = [
         'L’onglet du navigateur affiche la chaîne regardée (« xQc - TwitchUnblock »).',
         'Catégories : le nom de la catégorie ne se répète plus sous chaque live.',
         'Réglages → Général : « Sans compte Twitch » masque tout ce qui invite à se connecter (sans effet une fois connecté).',
+        'Catégories suivies : leur audience s’affiche de nouveau (Twitch refusait la requête qui la demandait).',
       ],
       en: [
         'Favorite emotes: “Add to favorites” in an emote’s card (click, right-click or long-press), and a Favorites tab at the top of the emote picker — synced with the iPhone app.',
@@ -23,6 +24,7 @@ export const CHANGELOG = [
         'The browser tab shows the channel you’re watching (“xQc - TwitchUnblock”).',
         'Categories: the category name no longer repeats under every live.',
         'Settings → General: “No Twitch account” hides everything that asks you to log in (no effect once logged in).',
+        'Followed categories: their viewer counts show again (Twitch was refusing the request that asked for them).',
       ],
       es: [
         'Emotes favoritos: «Añadir a favoritos» en la ficha de un emote (clic, clic derecho o pulsación larga) y una pestaña Favoritos al principio del selector, sincronizados con la app de iPhone.',
@@ -31,6 +33,7 @@ export const CHANGELOG = [
         'La pestaña del navegador muestra el canal que estás viendo («xQc - TwitchUnblock»).',
         'Categorías: el nombre de la categoría ya no se repite bajo cada directo.',
         'Ajustes → General: «Sin cuenta de Twitch» oculta todo lo que invita a iniciar sesión (sin efecto con la sesión iniciada).',
+        'Categorías seguidas: vuelve a mostrarse su audiencia (Twitch rechazaba la petición que la pedía).',
       ],
       ru: [
         'Избранные эмоуты: «Добавить в избранное» в карточке эмоута (клик, правый клик или долгое нажатие) и вкладка «Избранное» первой в выборе эмоутов — синхронизируется с приложением для iPhone.',
@@ -39,6 +42,7 @@ export const CHANGELOG = [
         'Вкладка браузера показывает канал, который вы смотрите («xQc - TwitchUnblock»).',
         'Категории: название категории больше не повторяется под каждой трансляцией.',
         'Настройки → Общие: «Без аккаунта Twitch» скрывает всё, что предлагает войти (не действует, пока вы вошли).',
+        'Отслеживаемые категории: снова показывается число зрителей (Twitch отклонял запрос, который его получал).',
       ],
     },
   },
