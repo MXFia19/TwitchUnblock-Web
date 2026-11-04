@@ -778,6 +778,14 @@ connection (code 4014): the bot reconnects without it, turns the welcome off
 and says so once in the alerts channel — enable the intent, then run `/setup`
 again in the welcome channel.
 
+**Votes** (`/setup use: Votes: ✅ and ❌ under every message` in the channel,
+for example one where members suggest names; *Stop the votes in this channel*
+to turn it off there): every message a member posts there gets ✅ then ❌ from
+the bot — replies included, not bots or system messages — so the others vote
+with a tap. Up to 10 channels. When a channel is picked, its last 100
+messages get them too; after a restart, so do those posted while the bot was
+off.
+
 **To-do**: right-click a message (long-press on mobile) → *Apps* → **Add to
 to-do** sends a good suggestion to the to-do channel — author, text, a link to
 the message, with a **Done** / **Reopen** button — and adds 📝 to the original
@@ -837,7 +845,7 @@ Setting it up:
    the to-do channel (*To-do list*). Make the roles mentionable. Optionally:
    the public suggestions channel (*Suggestions*), the welcome channel
    (*Welcome messages for new members*, once the Server Members Intent is on),
-   and a webhook of the private channel in the Worker's `ALERT_WEBHOOK`
+   channels where every message gets ✅ and ❌ (*Votes*), and a webhook of the private channel in the Worker's `ALERT_WEBHOOK`
    secret. The bot must be able to send messages with embeds in the
    suggestions and welcome channels.
 

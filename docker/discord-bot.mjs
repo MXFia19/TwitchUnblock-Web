@@ -175,6 +175,8 @@ const COMMANDS = [
           { name: 'Suggestions (/suggest cards, members vote)', value: 'suggestions' },
           { name: 'Welcome messages for new members', value: 'welcome' },
           { name: 'Stop the welcome messages', value: 'welcome-off' },
+          { name: 'Votes: ✅ and ❌ under every message', value: 'votes' },
+          { name: 'Stop the votes in this channel', value: 'votes-off' },
         ],
       },
       { type: 8, name: 'role', description: 'Role to mention (releases, test builds) or the polls role', required: false },
@@ -395,7 +397,7 @@ const I18N = {
     h_help: 'this list',
     h_replies: 'Replies to your reports come in a direct message: answer with the buttons under them.',
     h_admin: '**Developer only**',
-    h_setup: 'use this channel for alerts, release announcements, test builds, the to-do list, suggestions or welcome messages',
+    h_setup: 'use this channel for alerts, release announcements, test builds, the to-do list, suggestions, welcome messages or votes (✅ and ❌ under every message)',
     h_server_setup: 'build the server layout (categories, channels, roles) without deleting anything: a preview first, then apply:True',
     h_onboarding: 'better onboarding questions (pings, test builds per platform) that keep the roles everyone gets: a preview first, then apply:True',
     h_announce: 'banner in the app and on the website, and remove it',
@@ -533,7 +535,7 @@ const I18N = {
     h_help: 'cette liste',
     h_replies: 'Les réponses à tes retours arrivent en message privé : réponds avec les boutons dessous.',
     h_admin: '**Réservé au développeur**',
-    h_setup: 'ce salon pour les alertes, les annonces de version, les builds de test, la liste à faire, les suggestions ou la bienvenue',
+    h_setup: 'ce salon pour les alertes, les annonces de version, les builds de test, la liste à faire, les suggestions, la bienvenue ou les votes (✅ et ❌ sous chaque message)',
     h_server_setup: 'construire la structure du serveur (catégories, salons, rôles) sans rien supprimer : un aperçu d’abord, puis apply:True',
     h_onboarding: 'de meilleures questions d’accueil (pings, builds de test par plateforme) qui gardent les rôles donnés à tous : un aperçu d’abord, puis apply:True',
     h_announce: 'bandeau dans l’app et sur le site, et le retirer',
@@ -670,7 +672,7 @@ const I18N = {
     h_help: 'esta lista',
     h_replies: 'Las respuestas a tus informes llegan por mensaje directo: contesta con los botones de debajo.',
     h_admin: '**Solo para el desarrollador**',
-    h_setup: 'usar este canal para alertas, anuncios de versiones, versiones de prueba, la lista de tareas, sugerencias o bienvenidas',
+    h_setup: 'usar este canal para alertas, anuncios de versiones, versiones de prueba, la lista de tareas, sugerencias, bienvenidas o votos (✅ y ❌ bajo cada mensaje)',
     h_server_setup: 'crear la estructura del servidor (categorías, canales, roles) sin borrar nada: primero una vista previa, luego apply:True',
     h_onboarding: 'mejores preguntas de bienvenida (avisos, versiones de prueba por plataforma) que mantienen los roles que reciben todos: primero una vista previa, luego apply:True',
     h_announce: 'aviso en la app y el sitio web, y quitarlo',
@@ -807,7 +809,7 @@ const I18N = {
     h_help: 'этот список',
     h_replies: 'Ответы на твои сообщения приходят в личку: отвечай кнопками под ними.',
     h_admin: '**Только для разработчика**',
-    h_setup: 'этот канал для оповещений, анонсов версий, тестовых сборок, списка задач, предложений или приветствий',
+    h_setup: 'этот канал для оповещений, анонсов версий, тестовых сборок, списка задач, предложений, приветствий или голосований (✅ и ❌ под каждым сообщением)',
     h_server_setup: 'создать структуру сервера (категории, каналы, роли), ничего не удаляя: сначала предпросмотр, затем apply:True',
     h_onboarding: 'улучшенные вопросы при входе (уведомления, тестовые сборки по платформам), сохраняющие роли, которые получают все: сначала предпросмотр, затем apply:True',
     h_announce: 'баннер в приложении и на сайте, и убрать его',
@@ -2078,10 +2080,41 @@ export function startDiscordBridge({
     await say(m.channel_id, 'ℹ️ I don’t read messages sent here. To answer about your report, use the buttons under my last message: **Reply** for text, **Send screenshots** for pictures. To report something new, use /bug or /idea in the server.')
   }
 
+  // ── Salons de votes (/setup « Votes ») ──────────────────────────────────
+  // Chaque message d'un membre (réponses comprises ; ni les bots, ni les
+  // messages du système comme un épinglage) reçoit ✅ puis ❌. Discord
+  // n'accepte qu'une réaction par quart de seconde et par salon : 300 ms
+  // entre deux.
+  const VOTE_EMOJIS = ['✅', '❌']
+  const votable = (m) => !m.author?.bot && !m.webhook_id && (m.type === 0 || m.type === 19)
+  async function addVotes(channel, m) {
+    for (const emoji of VOTE_EMOJIS) {
+      if (m.reactions?.some((r) => r.me && r.emoji?.name === emoji)) continue
+      await react(channel, m.id, emoji)
+      await sleep(300)
+    }
+  }
+  /** Les 100 derniers messages du salon reçoivent ce qui leur manque :
+   *  postés avant qu'il soit choisi, ou pendant que le bot était arrêté. */
+  async function catchUpVotes(channel) {
+    let list = []
+    try { list = (await rest('GET', `/channels/${channel}/messages?limit=100`)) || [] } catch (e) {
+      log.warn(`Discord bridge: votes not caught up in ${channel} (${e.message})`)
+    }
+    for (const m of list.reverse()) {
+      if (stopped || !st.settings.votes?.includes(channel)) return
+      if (votable(m)) await addVotes(channel, m)
+    }
+  }
+
   async function onMessage(m) {
     if (!m.guild_id) return onDirectMessage(m)
     if (m.guild_id === st.guild && m.channel_id && m.channel_id === st.settings.testers) noteTestBuilds(m)
     if (m.guild_id === st.guild && m.channel_id && m.channel_id === st.settings.announcements) return noteAnnouncement(m)
+    if (m.guild_id === st.guild && st.settings.votes?.includes(m.channel_id)) {
+      if (votable(m)) await addVotes(m.channel_id, m)
+      return
+    }
     if (m.guild_id !== st.guild || !st.forum) return
     if (m.author?.id && m.author.id === st.me) return
     if (await parentOf(m.channel_id) !== st.forum) return
@@ -2360,11 +2393,17 @@ export function startDiscordBridge({
     // Bienvenue : choisie (ou coupée) de nouveau, l'intent est redemandée.
     else if (use === 'welcome') { settings.welcome = i.channel_id; delete settings.welcomeBlocked }
     else if (use === 'welcome-off') { settings.welcome = null; delete settings.welcomeBlocked }
+    // Votes : plusieurs salons possibles (10 au plus).
+    else if (use === 'votes') settings.votes = [...new Set([...(settings.votes || []), i.channel_id])].slice(-10)
+    else if (use === 'votes-off') settings.votes = (settings.votes || []).filter((c) => c !== i.channel_id)
     else return 'Unknown choice.'
     await kvSet('settings', settings)
     st.settings = settings
     // Autre salon à faire : sa copie dans le Worker le suit.
     if (use === 'todo') todoSoon()
+    // Salon de votes choisi : les messages déjà postés reçoivent les leurs
+    // (dans la file du salon, avant les nouveaux).
+    if (use === 'votes') serial(i.channel_id, () => catchUpVotes(i.channel_id))
     // GUILD_MEMBERS se demande à l'identification : nouvelle session s'il
     // faut la demander, ou ne plus la demander.
     if (Boolean(intents & GUILD_MEMBERS) !== wantsMembers()) reidentify()
@@ -2397,6 +2436,8 @@ export function startDiscordBridge({
       suggestions: 'Suggestions (/suggest) will be posted here as public cards that members vote on. Their report also gets a post in the forum, tagged “Suggestion”.',
       welcome: 'New members will be welcomed here, with Download, Pick roles and Help buttons. This needs the **Server Members Intent** (developer portal → your application → Bot → Privileged Gateway Intents): if it’s off, Discord refuses the connection — I then reconnect without it, turn the welcome off and say so in the alerts channel.',
       'welcome-off': 'Welcome messages are off.',
+      votes: 'Every message posted in this channel now gets ✅ and ❌ so members can vote (replies included; not bots). The last 100 messages get them too — it takes about a minute.',
+      'votes-off': 'New messages in this channel won’t get ✅ and ❌ anymore (the ones already added stay).',
       'polls-role': role ? `<@&${role}> is now offered in /roles, for the polls pings.` : 'No polls role anymore.',
     }[use]
     return unsafe ? `${text}\n⚠️ Not offered in /roles: ${unsafe}` : text
@@ -5153,7 +5194,11 @@ export function startDiscordBridge({
         gwState('ready')
         break
       case 'GUILD_CREATE':
-        if (d.id === st.guild) await onGuild(d)
+        if (d.id === st.guild) {
+          // Messages des salons de votes postés pendant l'arrêt.
+          for (const channel of st.settings.votes || []) serial(channel, () => catchUpVotes(channel))
+          await onGuild(d)
+        }
         break
       case 'CHANNEL_UPDATE':
         if (d.id === st.forum) readTags(d)
