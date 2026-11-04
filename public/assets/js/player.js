@@ -227,6 +227,36 @@ const LIVE_PROXY_EXTRA = 2
 const LIVE_SEGMENT_PROXY_EXTRA = 2
 // Minuteur de veille (menu du lecteur), en minutes ; 0 : coupé.
 const SLEEP_CHOICES = [0, 15, 30, 60, 90]
+
+// ── Compresseur audio (retour fb_mvziarku) ──────────────────────────────────
+// Comme celui de FrankerFaceZ, et avec ses réglages : les pics de son rabotés,
+// les passages calmes remontés (gain automatique du DynamicsCompressorNode).
+// Le son de la vidéo passe alors par Web Audio, et ce lien ne se défait plus :
+// coupé, il va tout droit à la sortie. Pas sur iPhone ni iPad : Safari y lit
+// parfois le HLS lui-même (le son sortirait muet du graphe) et suspend Web
+// Audio en arrière-plan, écran verrouillé compris.
+export const canCompress = !isIOS && typeof window.AudioContext === 'function'
+let audioCtx = null
+let audioWaking = null
+
+/** Web Audio ne démarre qu'après un geste sur la page (clic, touche) : la
+ *  promesse se résout une fois le contexte en marche. D'ici là, le son ne
+ *  passe pas par lui — il serait muet. */
+function wakeAudio() {
+  audioWaking ??= new Promise((resolve) => {
+    const kinds = ['pointerdown', 'keydown']
+    const tryResume = () => {
+      audioCtx.resume().then(() => {
+        for (const k of kinds) window.removeEventListener(k, tryResume, true)
+        audioWaking = null
+        resolve()
+      }, () => {})
+    }
+    for (const k of kinds) window.addEventListener(k, tryResume, true)
+    tryResume()
+  })
+  return audioWaking
+}
 // Rattrapage du direct : jamais en changeant la vitesse — hls.js passait à
 // ×1,05-×1,1 plusieurs fois par minute, et le son finissait décalé de
 // l'image jusqu'au prochain saut (+10 s ou Direct, retours du 14/10). On
@@ -1249,7 +1279,37 @@ export class Player {
     this.quality = pickQuality(Object.keys(links), this.o.prefs.qualityPref, this.variants)
     this.updateQualityLabel()
     this.attach(links[this.quality], startAt)
+    this.applyCompressor()
     this.showUI()
+  }
+
+  /** Compresseur audio branché ou non, selon le réglage. */
+  applyCompressor() {
+    const on = canCompress && Boolean(this.o.prefs.audioCompressor)
+    if (!this.audioGraph) {
+      if (!on) return
+      audioCtx ??= new AudioContext()
+      if (audioCtx.state !== 'running') { wakeAudio().then(() => this.applyCompressor()); return }
+      const comp = audioCtx.createDynamicsCompressor()
+      comp.threshold.value = -50
+      comp.knee.value = 40
+      comp.ratio.value = 12
+      comp.attack.value = 0
+      comp.release.value = 0.25
+      comp.connect(audioCtx.destination)
+      this.audioGraph = { src: audioCtx.createMediaElementSource(this.video), comp, on: null }
+    }
+    const g = this.audioGraph
+    if (g.on === on) return
+    g.src.disconnect()
+    g.src.connect(on ? g.comp : audioCtx.destination)
+    g.on = on
+  }
+
+  setCompressor(on) {
+    this.o.prefs.audioCompressor = on
+    this.o.savePrefs()
+    this.applyCompressor()
   }
 
   async attach(url, startAt = 0) {
@@ -2774,6 +2834,12 @@ export class Player {
       html += `<div class="p-menu-title">${esc(t('vod_goto_time'))}</div>
         <div class="p-goto"><input type="time" class="text-input p-goto-time" value="${hhmm}" aria-label="${esc(t('vod_goto_time'))}"><button type="button" data-goto="1">${esc(t('vod_goto_btn'))}</button></div>`
     }
+    if (canCompress) {
+      const comp = Boolean(this.o.prefs.audioCompressor)
+      html += `<div class="p-menu-title" title="${esc(t('audio_comp_sub'))}">${esc(t('audio_comp'))}</div><div class="p-speeds">`
+      html += [false, true].map((on) => `<button type="button" data-comp="${on ? 1 : 0}" class="${on === comp ? 'on' : ''}">${esc(t(on ? 'comp_on' : 'comp_off'))}</button>`).join('')
+      html += '</div>'
+    }
     // Minuteur de veille : la lecture s'arrête, et le lecteur se ferme.
     const left = this.sleepLeft()
     html += `<div class="p-menu-title">${esc(t('sleep_timer'))}${left ? ` · ${esc(t('sleep_left', { m: left }))}` : ''}</div><div class="p-speeds">`
@@ -2901,6 +2967,7 @@ export class Player {
     if (b.dataset.q) this.setQuality(b.dataset.q)
     if (b.dataset.s) this.setSpeed(Number(b.dataset.s))
     if (b.dataset.sleep !== undefined) this.setSleep(Number(b.dataset.sleep))
+    if (b.dataset.comp !== undefined) this.setCompressor(b.dataset.comp === '1')
     if (b.dataset.c) { this.video.currentTime = Number(b.dataset.c); this.updateChapterLabel() }
     this.closeMenu()
   }

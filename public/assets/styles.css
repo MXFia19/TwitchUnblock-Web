@@ -766,6 +766,9 @@ a.card, a.cat-card { display: block; }
    d'image de Safari sur iPhone et iPad. */
 .chat-list img.emote, .chat-pinned img.emote, .user-card img.emote { -webkit-touch-callout: none; }
 .chat-info .ci-hide { margin-top: 2px; }
+.chat-info .ci-fav { margin-top: 2px; }
+.chat-info .ci-fav.on { color: var(--purple); }
+.chat-info .ci-fav.on svg { fill: currentColor; }
 /* Plus haute qu'avant (chaîne, autres emotes) : elle défile dans un petit
    chat, comme celui du multi-live, au lieu d'en déborder. */
 .chat-info {
@@ -1041,6 +1044,11 @@ a.card, a.cat-card { display: block; }
 .dl-time-head b { min-width: 64px; text-align: center; font-variant-numeric: tabular-nums; }
 .dl-time input[type='range'] { width: 100%; margin-top: 6px; accent-color: var(--primary); }
 .dl-presets { display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0 8px; }
+.dl-chaps { display: flex; flex-direction: column; gap: 4px; max-height: 204px; overflow-y: auto; }
+.dl-chap { display: flex; align-items: baseline; gap: 8px; padding: 8px 10px; border: 1px solid var(--line-strong); border-radius: var(--r-control); background: none; color: var(--text); font: inherit; font-size: 14px; text-align: left; cursor: pointer; }
+.dl-chap b { min-width: 56px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.dl-chap.active { border-color: var(--primary); background: color-mix(in srgb, var(--primary) 14%, transparent); }
+.dl-chap.active b { color: var(--purple); }
 .dl-summary { margin: 6px 0 4px; font-weight: 700; }
 .dl-warn { margin: 8px 0; padding: 10px 12px; border-radius: var(--r-control); background: rgba(255, 79, 77, 0.1); color: var(--danger); font-size: 13px; line-height: 1.45; }
 .dl-note { margin-top: 10px; line-height: 1.45; }

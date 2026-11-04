@@ -59,6 +59,10 @@ export const DEFAULT_PREFS = {
   // emote ») : codes exacts, plus récentes en dernier, 200 au plus. Même
   // nom que dans l'app iPhone (synchro des réglages, sauvegarde).
   hiddenEmotes: [],
+  // Emotes favorites (étoile de leur fiche) : onglet « Favoris » du
+  // sélecteur. Codes exacts, plus récentes en dernier, 100 au plus ; même
+  // nom que dans l'app iPhone.
+  favoriteEmotes: [],
   volume: 1,
   muted: false,
   // Qualité préférée : 'auto', 'source', une hauteur ('1080', '720'…) ou
@@ -67,6 +71,11 @@ export const DEFAULT_PREFS = {
   // Qualités supérieures (1440p et plus) par l'extension TwitchUnblock
   // Connect 0.2.0 (hq.js) : coupé par défaut, comme dans l'app.
   higherQualities: false,
+  // Compresseur audio du lecteur (menu ⚙ du lecteur, player.js).
+  audioCompressor: false,
+  // « Sans compte Twitch » : plus d'invitation à se connecter tant qu'aucun
+  // compte ne l'est (Réglages → Général ; même idée que dans l'app).
+  hideAccount: false,
   // Sans pub avec mon abonnement (ou Turbo) : tout le direct par le compte
   // de l'extension 0.3.0 quand Twitch ne lui sert pas de pub (hq.js).
   subAdFree: true,

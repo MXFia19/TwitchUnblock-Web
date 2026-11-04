@@ -30,8 +30,8 @@ const MEMORY_HARD_LIMIT = MEMORY_LIMIT * 1.3
 const canStream = typeof window.showSaveFilePicker === 'function'
 
 let hooks = {}
-let ctx = null          // VOD proposée : { id, title, streamer, links, position, quality }
-let setup = null        // choix en cours : { quality, start, end, restore, plans: Map }
+let ctx = null          // VOD proposée : { id, title, streamer, links, position, chapters }
+let setup = null        // choix en cours : { quality, start, end, restore, plans: Map, chaps }
 let job = null          // téléchargement en cours (un seul à la fois)
 
 /** @param {{ openSheet: (html: string) => void, closeSheet: () => void }} o */
@@ -50,7 +50,7 @@ export function open(vod) {
   ctx = vod
   const qualities = qualitiesOf(vod.links)
   const quality = qualities.find((q) => /^720p/i.test(q)) ?? qualities.find((q) => !/audio/i.test(q)) ?? qualities[0]
-  setup = { quality, start: 0, end: 0, duration: 0, restore: true, plans: new Map(), first: true }
+  setup = { quality, start: 0, end: 0, duration: 0, restore: true, plans: new Map(), first: true, chaps: [], byChapter: false }
   renderSetup()
   loadPlan()
 }
@@ -86,6 +86,8 @@ function renderSetup() {
       const [which, delta] = step.dataset.step.split(':')
       return setRange(which, setup[which] + Number(delta))
     }
+    const chap = e.target.closest('[data-chap]')?.dataset.chap
+    if (chap != null) return pickChapter(Number(chap))
     const preset = e.target.closest('[data-preset]')?.dataset.preset
     if (preset) return applyPreset(preset)
     if (e.target.closest('#dl-go')) return start()
@@ -129,7 +131,9 @@ async function loadPlan() {
     setup.end = Math.min(Math.max(setup.end, setup.start + 10), plan.duration)
   }
   const max = Math.ceil(plan.duration)
+  setup.chaps = chapterSpans(plan.duration)
   $('#dl-range').innerHTML = `
+    ${setup.chaps.length > 1 ? chaptersRow() : ''}
     ${timeRow('start', t('dl_start'), max)}
     ${timeRow('end', t('dl_end'), max)}
     <div class="dl-presets">
@@ -158,6 +162,7 @@ function timeRow(which, label, max) {
 function setRange(which, value) {
   const d = setup.duration
   if (!d) return
+  setup.byChapter = false
   if (which === 'start') {
     setup.start = Math.max(0, Math.min(value, d - 10))
     if (setup.end < setup.start + 10) setup.end = Math.min(d, setup.start + 10)
@@ -168,9 +173,54 @@ function setRange(which, value) {
   refreshRange()
 }
 
+// ── Chapitres (retour fb_mvzd7r2q) ───────────────────────────────────────
+/** Passage de chaque chapitre (changement de jeu) : jusqu'au suivant, le
+ *  dernier jusqu'à la fin. */
+function chapterSpans(d) {
+  const list = (ctx.chapters ?? []).filter((c) => c.start < d - 10)
+  return list.map((c, i) => ({
+    title: c.title,
+    start: Math.floor(c.start),
+    end: i + 1 < list.length ? Math.floor(list[i + 1].start) : d,
+  }))
+}
+
+function chaptersRow() {
+  return `
+    <div class="dl-block">
+      <span class="dl-label">${esc(t('chapters'))}</span>
+      <div class="dl-chaps">${setup.chaps.map((c, i) => `<button type="button" class="dl-chap" data-chap="${i}"><b>${esc(formatClock(c.start))}</b><span>${esc(c.title)}</span></button>`).join('')}</div>
+      <small class="muted">${esc(t('dl_chapters_sub'))}</small>
+    </div>`
+}
+
+const chapInside = (c) => c.start >= setup.start - 1 && c.end <= setup.end + 1
+
+/** Un chapitre touché : seul gardé au premier choix (le passage venait des
+ *  curseurs ou des raccourcis) ; ensuite, ajouté avec ceux d'entre les
+ *  deux, retiré s'il est au bord du passage, seul gardé s'il est au milieu.
+ *  Le passage reste d'un seul tenant. */
+function pickChapter(i) {
+  const list = setup.chaps
+  const c = list[i]
+  if (!c || !setup.duration) return
+  const inside = list.map(chapInside)
+  const first = inside.indexOf(true)
+  const last = inside.lastIndexOf(true)
+  if (!setup.byChapter || first < 0) { setup.start = c.start; setup.end = c.end; setup.byChapter = true }
+  else if (!inside[i]) { setup.start = Math.min(setup.start, c.start); setup.end = Math.max(setup.end, c.end) }
+  else if (first === last) return
+  else if (i === first) setup.start = list[i + 1].start
+  else if (i === last) setup.end = list[i - 1].end
+  else { setup.start = c.start; setup.end = c.end }
+  if (setup.end - setup.start < 10) setup.end = Math.min(setup.duration, setup.start + 10)
+  refreshRange()
+}
+
 function applyPreset(p) {
   const d = setup.duration
   const here = Math.min(Math.floor(ctx.position), d - 10)
+  setup.byChapter = false
   if (p === 'all') { setup.start = 0; setup.end = d }
   if (p === 'here') { setup.start = Math.max(0, here); setup.end = d }
   if (p === 'ten') { setup.start = Math.max(0, here); setup.end = Math.min(d, setup.start + 600) }
@@ -183,6 +233,9 @@ function refreshRange() {
     if (!input) return
     if (Number(input.value) !== Math.round(setup[which])) input.value = String(Math.round(setup[which]))
     $(`#dl-${which}-text`).textContent = formatClock(setup[which])
+  }
+  for (const b of document.querySelectorAll('#dl-range [data-chap]')) {
+    b.classList.toggle('active', chapInside(setup.chaps[Number(b.dataset.chap)]))
   }
   const length = Math.max(0, setup.end - setup.start)
   const size = estimateBytes(setup.quality) * length

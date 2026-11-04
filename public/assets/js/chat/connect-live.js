@@ -430,7 +430,11 @@ export class ConnectLive {
     const events = this.view.el.events
     const s = this.connect.state()
     let note = $('.cx-note', events)
-    if (!(this.channel && s.availability === 'on' && s.session === null && !loginNoteClosed)) { note?.remove(); return }
+    // « Sans compte Twitch » (Réglages), sans compte sur le site non plus :
+    // pas d'invitation.
+    const site = this.view.o.session()
+    const hidden = this.view.o.prefs.hideAccount && !site.login && !site.token
+    if (!(this.channel && s.availability === 'on' && s.session === null && !loginNoteClosed && !hidden)) { note?.remove(); return }
     if (note) return
     note = document.createElement('div')
     note.className = 'cx-note'

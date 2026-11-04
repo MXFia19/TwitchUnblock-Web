@@ -7,7 +7,7 @@ import { DEFAULT_PREFS, qualityPrefOf, store } from './store.js'
 import { LANGS, applyStatic, deviceLang, initLang, setLang, t, lang } from './i18n.js'
 import { Player, QUALITY_PREFS, blockHintKey, loadHls, pickQuality, qualityText, segmentProxyOn, validQualityPref, validSpeed } from './player.js'
 import { HqLive, browserCodecs, buildHq, codecLabel, hqAvailable, hqCanAsk, hqMissing } from './hq.js'
-import { ChatView, HIDDEN_EMOTES_MAX, timeLabel, validEmoteCode } from './chat/view.js'
+import { ChatView, FAVORITE_EMOTES_MAX, HIDDEN_EMOTES_MAX, timeLabel, validEmoteCode } from './chat/view.js'
 import { linkifyHtml } from './chat/message.js'
 import { copyBotCommand, showBotCommands } from './chat/botcmds.js'
 import { Hermes } from './chat/hermes.js'
@@ -518,6 +518,11 @@ window.addEventListener('message', (e) => {
   adoptToken(token)
 })
 
+/** « Sans compte Twitch » (Réglages → Général, comme dans l'app) : plus
+ *  d'invitation à se connecter tant qu'aucun compte ne l'est (carte de
+ *  suggestion du 02/11). */
+const noAccountMode = () => Boolean(store.prefs.hideAccount) && !session.login && !store.token
+
 function renderAccount() {
   // Dépenses et suivis par l'extension : seulement au compte du site.
   connect.setSiteLogin(session.login)
@@ -533,6 +538,7 @@ function renderAccount() {
     btn.title = t('login')
     btn.classList.remove('logged')
   }
+  btn.hidden = noAccountMode()
   renderSettingsAccount()
 }
 
@@ -736,13 +742,13 @@ window.addEventListener('pagehide', () => { flushSync({ force: true }); flushPre
 // depuis le dernier échange : fusion pour les masqués et les épinglés (avec
 // la liste du dernier échange, un retrait fait d'un côté tient), la date la
 // plus récente pour les réglages.
-const PREFS_COMMON = ['topLang', 'showRecent', 'timestamps', 'timeFormat', 'keepDeleted', 'loadHistory', 'hideBots', 'hideCommands', 'mutedWords', 'blockedUsers', 'highlightWords', 'vodSpeed', 'hiddenEmotes']
+const PREFS_COMMON = ['topLang', 'showRecent', 'timestamps', 'timeFormat', 'keepDeleted', 'loadHistory', 'hideBots', 'hideCommands', 'mutedWords', 'blockedUsers', 'highlightWords', 'vodSpeed', 'hiddenEmotes', 'favoriteEmotes']
 // Clés ajoutées à `common` après coup (toujours en fin de liste) : une
 // empreinte gardée d'avant leur arrivée, calculée sans elles, n'est pas un
 // changement fait ici (notePrefsChanges). Sinon, au premier passage de la
 // nouvelle version, la section d'ici, datée du moment, écrasait celle du
 // serveur — jusqu'aux emotes masquées venues de l'app iPhone.
-const PREFS_COMMON_ADDED = ['hiddenEmotes']
+const PREFS_COMMON_ADDED = ['hiddenEmotes', 'favoriteEmotes']
 const PREFS_SECTIONS = ['common', 'pinned', 'hidden']
 const PREFS_STATE_KEY = 'tu_prefs_sync'
 const PREFS_DELAY = 4000
@@ -813,14 +819,17 @@ function notePrefsChanges(st) {
 /** L'empreinte gardée `sum` est-elle celle de la section commune d'avant
  *  les clés ajoutées (PREFS_COMMON_ADDED), restées à leur valeur par
  *  défaut ? Alors rien n'a changé ici : seule la forme de la section a
- *  grandi. Une emote déjà masquée ici, elle, est un vrai changement. */
+ *  grandi. Une emote déjà masquée ici, elle, est un vrai changement. Les
+ *  clés partent une à une, de la dernière ajoutée à la première :
+ *  l'empreinte a pu être prise entre deux ajouts. */
 function commonOnlyGrew(sum) {
   const c = prefsSection('common')
-  for (const k of PREFS_COMMON_ADDED) {
+  for (const k of [...PREFS_COMMON_ADDED].reverse()) {
     if (prefsSum(c[k]) !== prefsSum(DEFAULT_PREFS[k] ?? null)) return false
     delete c[k]
+    if (prefsSum(c) === sum) return true
   }
-  return prefsSum(c) === sum
+  return false
 }
 
 /** Dates gardées pour un autre compte, ou d'avant toute connexion : elles ne
@@ -952,10 +961,10 @@ function prefsFirstMerge(name, mine, theirs) {
   if (name === 'pinned') return mergePins(mine, theirs, null)
   if (name === 'hidden') return mergeHiddenSync(mine, theirs, null)
   const out = theirs && typeof theirs === 'object' && !Array.isArray(theirs) ? { ...theirs } : {}
-  for (const [k, max] of [['mutedWords', 50], ['highlightWords', 30], ['blockedUsers', 500], ['hiddenEmotes', HIDDEN_EMOTES_MAX]]) {
+  for (const [k, max] of [['mutedWords', 50], ['highlightWords', 30], ['blockedUsers', 500], ['hiddenEmotes', HIDDEN_EMOTES_MAX], ['favoriteEmotes', FAVORITE_EMOTES_MAX]]) {
     const all = [...new Set([...(Array.isArray(out[k]) ? out[k] : []), ...(mine[k] ?? [])])]
-    // Emotes masquées : les plus récentes sont en fin de liste.
-    out[k] = k === 'hiddenEmotes' ? all.slice(-max) : all.slice(0, max)
+    // Emotes masquées et favorites : les plus récentes sont en fin de liste.
+    out[k] = k.endsWith('Emotes') ? all.slice(-max) : all.slice(0, max)
   }
   return out
 }
@@ -1346,6 +1355,7 @@ const actions = {
       streamer: w.info?.owner?.displayName || w.login || '',
       links: w.links,
       position: player.video?.currentTime || 0,
+      chapters: player.chapters ?? [],
     })
   },
   'multi-add-current': () => {
@@ -1487,8 +1497,10 @@ function hideButton(s, hideCat) {
 }
 
 /** `pinnable` : chaîne suivie, qu'on peut épingler en tête des suivies.
- *  `hideable` : carte de découverte, qu'on peut masquer (voir hideButton). */
-function streamCard(s, { pinnable = false, hideable = false, hideCat = true } = {}) {
+ *  `hideable` : carte de découverte, qu'on peut masquer (voir hideButton).
+ *  `showGame` coupé : lives d'une catégorie ouverte, qui ont tous la même
+ *  (retour fb_mvzfampl). */
+function streamCard(s, { pinnable = false, hideable = false, hideCat = true, showGame = true } = {}) {
   const inMulti = multi.has(s.login)
   return `
     <a class="card stream-card" href="/${esc(s.login)}" data-live="${esc(s.login)}">
@@ -1505,7 +1517,7 @@ function streamCard(s, { pinnable = false, hideable = false, hideCat = true } = 
         <div class="card-text">
           <h3 title="${esc(s.title)}">${esc(s.title)}</h3>
           <p class="name"><span class="card-link" data-channel="${esc(s.login)}">${esc(s.name)}</span></p>
-          ${s.game ? `<p class="meta">${gameLink(s.gameId, s.game)}</p>` : ''}
+          ${s.game && showGame ? `<p class="meta">${gameLink(s.gameId, s.game)}</p>` : ''}
           ${tagsHtml(s.tags)}
         </div>
       </div>
@@ -2085,7 +2097,7 @@ async function loadFollowed({ silent = false } = {}) {
         <p>${esc(t(compact ? 'login_optional' : 'login_prompt_local'))}</p>
         <button class="btn primary${compact ? ' sm' : ''}" type="button" data-action="login">${icon('twitch', 18)}<span>${esc(t('login'))}</span></button>
       </div>`
-    if (!local.length) { grid.innerHTML = loginCard(false); renderOffline([]); return }
+    if (!local.length) { grid.innerHTML = noAccountMode() ? emptyState(t('offline_none'), 'heart') : loginCard(false); renderOffline([]); return }
     // Sans compte : les chaînes suivies sur cet appareil, par la requête publique.
     if (!silent) { grid.innerHTML = skeleton(Math.min(4, local.length)); offlinePending() }
     try {
@@ -2094,7 +2106,7 @@ async function loadFollowed({ silent = false } = {}) {
       state.followedView = {
         live: channels.filter((c) => c.stream).map((c) => c.stream),
         offline: channels.filter((c) => !c.stream),
-        after: loginCard(true),
+        after: noAccountMode() ? '' : loginCard(true),
       }
       paintFollowed()
       syncPush()
@@ -2553,7 +2565,7 @@ function paintCats() {
  *  suite sans compte et que seul Helix peut la donner (voir api.servePage). */
 function moreHtml(page, action) {
   if (page?.cursor) return `<button class="btn ghost" type="button" data-action="${action}">${esc(t('load_more'))}</button>`
-  return page?.locked ? `<p class="muted small">${esc(t('more_needs_login'))}</p>` : ''
+  return page?.locked ? `<p class="muted small">${esc(t(noAccountMode() ? 'more_unavailable' : 'more_needs_login'))}</p>` : ''
 }
 
 // Chargement continu (demande de 4) : un « Charger plus » arrivé à moins de
@@ -2638,7 +2650,7 @@ function paintCatStreams() {
   const grid = $('#cat-streams')
   if (!grid || !cat.streams) return
   const list = cat.streams.filter((s) => showsChannel(s.login))
-  grid.innerHTML = list.length ? list.map((s) => streamCard(s, { hideable: true, hideCat: false })).join('') : emptyState(t('no_live'))
+  grid.innerHTML = list.length ? list.map((s) => streamCard(s, { hideable: true, hideCat: false, showGame: false })).join('') : emptyState(t('no_live'))
 }
 
 function closeCategory() {
@@ -3712,7 +3724,7 @@ function playRecovered(rec, links) {
   if (state.watch !== tok) return
   $('#watch-loading').hidden = true
   player.load({ links, kind: 'vod', startAt: 0 })
-  $('#watch-title').textContent = title || login
+  setWatchTitle(title || login)
   $('#mini-title').textContent = title || login
   setWatchChannel(login)
   // À télécharger avant qu'elle ne quitte le CDN.
@@ -4270,7 +4282,7 @@ function showWatch(kind, title) {
   watch.dataset.kind = kind
   document.documentElement.classList.add('watching')
   $('#watch-loading').hidden = false
-  $('#watch-title').textContent = title || ''
+  setWatchTitle(title || '')
   setWatchChannel(kind === 'live' ? state.watch?.login : null)
   $('#watch-sub').innerHTML = ''
   $('#watch-avatar').hidden = true
@@ -4672,7 +4684,7 @@ function renderLiveInfo(info, links) {
     player?.setLiveTimeline(state.watch.archiveId && s?.createdAt
       ? { startedAt: Date.parse(s.createdAt), onRewind: rewindLive } : null)
   }
-  $('#watch-title').textContent = name
+  setWatchTitle(name)
   setWatchChannel(state.watch?.login)
   $('#mini-title').textContent = `${name}${title ? ` · ${title}` : ''}`
   setAvatar(avatar)
@@ -5029,7 +5041,7 @@ async function openClip(slug) {
     chat.openVod({ videoId: clip.video.id, channelId: clip.broadcaster?.id ?? null, channelLogin: token.login, startAt: token.offset })
   }
   const name = clip.broadcaster?.displayName || token.login || ''
-  $('#watch-title').textContent = name
+  setWatchTitle(name)
   setWatchChannel(clip.broadcaster?.login || token.login)
   $('#mini-title').textContent = clip.title || t('clip')
   setAvatar(clip.broadcaster?.profileImageURL)
@@ -5251,7 +5263,7 @@ async function openVod(id, preset, { keepPlaylist = false, at = null, fromLive =
   store.addHistory(vodId, 'vod', title, { thumb: thumbUrl, streamer })
   pushSync()
 
-  $('#watch-title').textContent = streamer || title
+  setWatchTitle(streamer || title)
   setWatchChannel(meta?.owner?.login)
   $('#mini-title').textContent = title
   setAvatar(meta?.owner?.profileImageURL)
@@ -5342,6 +5354,14 @@ function stopPlayback() {
   lastSave = 0
 }
 
+/** Nom en tête du lecteur, repris dans l'onglet du navigateur (« xQc -
+ *  TwitchUnblock ») tant que le lecteur reste ouvert, mini-lecteur compris
+ *  (retour fb_mvzmdf4f). */
+function setWatchTitle(text) {
+  $('#watch-title').textContent = text
+  document.title = text ? `${text} - TwitchUnblock` : 'TwitchUnblock'
+}
+
 /** Pseudo et avatar du lecteur cliquables : ouvrent la page de la chaîne. */
 function setWatchChannel(login) {
   for (const el of [$('#watch-title'), $('#watch-avatar')]) {
@@ -5376,6 +5396,7 @@ function closeWatch({ url = true } = {}) {
   stopPlayback()
   flushSync({ force: true })
   state.watch = null
+  document.title = 'TwitchUnblock'
   if ('mediaSession' in navigator) navigator.mediaSession.metadata = null
   watch.classList.remove('open')
   document.documentElement.classList.remove('watching')
@@ -6162,6 +6183,8 @@ function openSettings(page = 'menu') {
       ${toggle('set-recent', t('show_recent'), p.showRecent !== false, t('show_recent_sub'))}
       ${toggle('set-vodprogress', t('vod_progress'), p.vodProgress !== false, t('vod_progress_sub'))}
       ${toggle('set-pinsort', t('pinned_by_viewers'), p.pinnedByViewers !== false, t('pinned_by_viewers_sub'))}
+      ${toggle('set-noaccount', t('no_account'), Boolean(p.hideAccount), t(session.login ? 'no_account_logged' : 'no_account_sub'))
+        .replace('class="switch"', session.login ? 'class="switch" disabled' : 'class="switch"')}
     </div>
     <div class="sheet-section" id="set-hidden" data-cat="general">${hiddenSectionInner()}</div>
     <div class="sheet-section" data-cat="appearance">
@@ -6406,6 +6429,14 @@ function openSettings(page = 'menu') {
       return
     }
     if (id === 'set-homelist') { p.homeList = e.target.checked; store.savePrefs(); applyLayout(); return }
+    if (id === 'set-noaccount') {
+      p.hideAccount = e.target.checked
+      store.savePrefs()
+      renderAccount()
+      chat?.refreshComposer()
+      loadFollowed({ silent: true })
+      return
+    }
     if (id === 'set-recent') {
       p.showRecent = e.target.checked
       store.savePrefs()
@@ -6516,6 +6547,9 @@ const BACKUP_SETTINGS = {
   highlightWords: okWords(30),
   blockedUsers: okLogins(500),
   hiddenEmotes: okEmoteCodes(HIDDEN_EMOTES_MAX),
+  favoriteEmotes: okEmoteCodes(FAVORITE_EMOTES_MAX),
+  hideAccount: okBool,
+  audioCompressor: okBool,
   clickPause: okBool,
   lowLatency: okBool,
   theatre: okBool,
@@ -6910,6 +6944,7 @@ async function renderUsageStats() {
 function renderSettingsAccount() {
   const box = $('#settings-account')
   if (!box) return
+  box.hidden = noAccountMode()
   box.innerHTML = session.login ? `
     <h3>${esc(t('account'))}</h3>
     <div class="account-row">

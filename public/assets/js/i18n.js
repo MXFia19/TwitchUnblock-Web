@@ -201,6 +201,12 @@ const STRINGS = {
     reward_err_unavailable: 'Récompense indisponible pour l’instant (en pause, épuisée, en recharge ou limitée).', reward_err_changed: 'La récompense a changé : rouvre la liste.',
     drops_progress: '{c} / {r} min', drops_claimed_state: 'Réclamé', drops_claim: 'Réclamer', drops_claimed_toast: 'Drop réclamé : {n}',
     drops_not_claimed: 'Drop pas encore réclamé : réessaie dans un moment.',
+    dl_chapters_sub: 'Choisis un chapitre pour ne garder que lui, puis d’autres pour allonger le passage.',
+    emotes_fav: 'Favoris', emote_fav_add: 'Ajouter aux favoris', emote_fav_remove: 'Retirer des favoris',
+    emote_fav_added: '« {n} » ajoutée aux favoris : onglet Favoris du sélecteur d’emotes.', emote_fav_removed: '« {n} » retirée des favoris.',
+    audio_comp: 'Compresseur audio', audio_comp_sub: 'Rabote les pics de son et remonte les passages calmes, comme celui de FrankerFaceZ.', comp_on: 'Oui', comp_off: 'Non',
+    no_account: 'Sans compte Twitch', no_account_sub: 'Masque ce qui invite à se connecter : bouton de connexion, cartes de l’accueil, compte dans les réglages, rappels du chat.',
+    no_account_logged: 'Sans effet tant que tu es connecté : déconnecte-toi d’abord.',
   },
   en: {
     nav_discover: 'Discover', nav_channel: 'Streamer', nav_link: 'Link / ID',
@@ -394,6 +400,12 @@ const STRINGS = {
     reward_err_unavailable: 'Reward unavailable right now (paused, out of stock, on cooldown or limited).', reward_err_changed: 'The reward changed: open the list again.',
     drops_progress: '{c} / {r} min', drops_claimed_state: 'Claimed', drops_claim: 'Claim', drops_claimed_toast: 'Drop claimed: {n}',
     drops_not_claimed: 'Drop not claimed yet: try again in a moment.',
+    dl_chapters_sub: 'Pick a chapter to keep just that part, then others to extend it.',
+    emotes_fav: 'Favorites', emote_fav_add: 'Add to favorites', emote_fav_remove: 'Remove from favorites',
+    emote_fav_added: '“{n}” added to favorites: Favorites tab of the emote picker.', emote_fav_removed: '“{n}” removed from favorites.',
+    audio_comp: 'Audio compressor', audio_comp_sub: 'Evens out loud peaks and quiet parts, like FrankerFaceZ’s.', comp_on: 'On', comp_off: 'Off',
+    no_account: 'No Twitch account', no_account_sub: 'Hides everything that asks you to log in: login button, home cards, account in settings, chat reminders.',
+    no_account_logged: 'No effect while you’re logged in: log out first.',
   },
   es: {
     nav_discover: 'Descubrir', nav_channel: 'Streamer', nav_link: 'Enlace / ID',
@@ -587,6 +599,12 @@ const STRINGS = {
     reward_err_unavailable: 'Recompensa no disponible por ahora (en pausa, agotada, en recarga o limitada).', reward_err_changed: 'La recompensa cambió: vuelve a abrir la lista.',
     drops_progress: '{c} / {r} min', drops_claimed_state: 'Reclamado', drops_claim: 'Reclamar', drops_claimed_toast: 'Drop reclamado: {n}',
     drops_not_claimed: 'Drop aún no reclamado: inténtalo dentro de un momento.',
+    dl_chapters_sub: 'Elige un capítulo para quedarte solo con esa parte y luego otros para ampliarla.',
+    emotes_fav: 'Favoritos', emote_fav_add: 'Añadir a favoritos', emote_fav_remove: 'Quitar de favoritos',
+    emote_fav_added: '«{n}» añadido a favoritos: pestaña Favoritos del selector de emotes.', emote_fav_removed: '«{n}» quitado de favoritos.',
+    audio_comp: 'Compresor de audio', audio_comp_sub: 'Suaviza los picos de volumen y sube las partes bajas, como el de FrankerFaceZ.', comp_on: 'Sí', comp_off: 'No',
+    no_account: 'Sin cuenta de Twitch', no_account_sub: 'Oculta todo lo que invita a iniciar sesión: botón de inicio de sesión, tarjetas del inicio, cuenta en los ajustes, avisos del chat.',
+    no_account_logged: 'Sin efecto mientras tengas la sesión iniciada: ciérrala primero.',
   },
 }
 

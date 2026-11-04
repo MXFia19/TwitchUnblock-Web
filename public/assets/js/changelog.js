@@ -6,6 +6,43 @@
 
 export const CHANGELOG = [
   {
+    version: '2026.11.04a',
+    items: {
+      fr: [
+        'Emotes favorites : « Ajouter aux favoris » dans la fiche d’une emote (clic, clic droit ou appui long), et un onglet Favoris en tête du sélecteur — synchronisés avec l’app iPhone.',
+        'Lecteur : un compresseur audio dans le menu ⚙ (comme celui de FrankerFaceZ) lisse les pics de son et remonte les passages calmes. Pas sur iPhone ni iPad.',
+        'Télécharger une VOD : choix des chapitres, pour ne garder qu’un jeu ou une partie du live.',
+        'L’onglet du navigateur affiche la chaîne regardée (« xQc - TwitchUnblock »).',
+        'Catégories : le nom de la catégorie ne se répète plus sous chaque live.',
+        'Réglages → Général : « Sans compte Twitch » masque tout ce qui invite à se connecter (sans effet une fois connecté).',
+      ],
+      en: [
+        'Favorite emotes: “Add to favorites” in an emote’s card (click, right-click or long-press), and a Favorites tab at the top of the emote picker — synced with the iPhone app.',
+        'Player: an audio compressor in the ⚙ menu (like FrankerFaceZ’s) evens out loud peaks and brings up quiet parts. Not on iPhone or iPad.',
+        'Downloading a VOD: pick chapters, to keep just one game or part of the stream.',
+        'The browser tab shows the channel you’re watching (“xQc - TwitchUnblock”).',
+        'Categories: the category name no longer repeats under every live.',
+        'Settings → General: “No Twitch account” hides everything that asks you to log in (no effect once logged in).',
+      ],
+      es: [
+        'Emotes favoritos: «Añadir a favoritos» en la ficha de un emote (clic, clic derecho o pulsación larga) y una pestaña Favoritos al principio del selector, sincronizados con la app de iPhone.',
+        'Reproductor: un compresor de audio en el menú ⚙ (como el de FrankerFaceZ) suaviza los picos de volumen y sube las partes bajas. No en iPhone ni iPad.',
+        'Descargar un VOD: elige capítulos para quedarte solo con un juego o una parte del directo.',
+        'La pestaña del navegador muestra el canal que estás viendo («xQc - TwitchUnblock»).',
+        'Categorías: el nombre de la categoría ya no se repite bajo cada directo.',
+        'Ajustes → General: «Sin cuenta de Twitch» oculta todo lo que invita a iniciar sesión (sin efecto con la sesión iniciada).',
+      ],
+      ru: [
+        'Избранные эмоуты: «Добавить в избранное» в карточке эмоута (клик, правый клик или долгое нажатие) и вкладка «Избранное» первой в выборе эмоутов — синхронизируется с приложением для iPhone.',
+        'Плеер: компрессор звука в меню ⚙ (как в FrankerFaceZ) сглаживает громкие пики и поднимает тихие места. Не на iPhone и iPad.',
+        'Скачивание VOD: выбор глав, чтобы сохранить только одну игру или часть трансляции.',
+        'Вкладка браузера показывает канал, который вы смотрите («xQc - TwitchUnblock»).',
+        'Категории: название категории больше не повторяется под каждой трансляцией.',
+        'Настройки → Общие: «Без аккаунта Twitch» скрывает всё, что предлагает войти (не действует, пока вы вошли).',
+      ],
+    },
+  },
+  {
     version: '2026.11.02a',
     items: {
       fr: [

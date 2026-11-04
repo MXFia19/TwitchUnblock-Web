@@ -273,6 +273,12 @@ function watchedWords(words) {
 // de liste, HIDDEN_EMOTES_MAX au plus.
 export const HIDDEN_EMOTES_MAX = 200
 
+// Emotes favorites (étoile de leur fiche ; to-do du 04/11) : onglet
+// « Favoris » en tête du sélecteur, avec celles qu'on peut utiliser dans ce
+// chat. Codes exacts dans prefs.favoriteEmotes, comme les masquées (même clé
+// que l'app iPhone, synchro et sauvegarde), les plus récentes en fin de liste.
+export const FAVORITE_EMOTES_MAX = 100
+
 /** Code d'emote valable : un mot (sans espace ni caractère de contrôle), 100
  *  caractères au plus. Sert aussi à la sauvegarde et à la synchro (main.js). */
 export const validEmoteCode = (x) => typeof x === 'string' && /^\S{1,100}$/.test(x) && !/[\u0000-\u001f\u007f]/.test(x)
@@ -440,12 +446,14 @@ export class ChatView {
     // Clic droit ou appui long sur une emote (liste, message épinglé, fiche
     // d'une personne) : sa fiche, comme un clic — c'est là qu'on la masque.
     for (const box of [this.el.list, this.el.pinned, this.el.card]) this.pressForInfo(box)
-    // Fiche d'une emote ou d'un badge : copier, ajouter au message, masquer,
-    // fermer.
+    // Fiche d'une emote ou d'un badge : copier, ajouter au message, favori,
+    // masquer, fermer.
     this.el.info.addEventListener('click', async (e) => {
       if (e.target.closest('[data-ci-close]')) { this.el.info.hidden = true; return }
       const hide = e.target.closest('[data-ci-hide]')
       if (hide) { this.el.info.hidden = true; this.hideEmote(hide.dataset.ciHide); return }
+      const fav = e.target.closest('[data-ci-fav]')
+      if (fav) { this.el.info.hidden = true; this.toggleFavEmote(fav.dataset.ciFav); return }
       // Chaîne propriétaire : la délégation globale de [data-channel]
       // (main.js) ouvre sa page ; la fiche, elle, se referme. Ctrl, Cmd ou
       // Maj + clic ouvrent un autre onglet : on reste ici, la fiche aussi.
@@ -518,7 +526,7 @@ export class ChatView {
     this.el.send.addEventListener('click', () => this.submit())
     this.el.emoteBtn.addEventListener('click', () => this.togglePicker())
     this.el.emoteSearch.addEventListener('input', debounce(() => this.renderPicker(), 120))
-    // Onglets du sélecteur : « Mes emotes », la chaîne, les globales.
+    // Onglets du sélecteur : favoris, « Mes emotes », la chaîne, les globales.
     this.el.emoteTabs.addEventListener('click', (e) => {
       const b = e.target.closest('[data-tab]')
       if (!b) return
@@ -632,6 +640,19 @@ export class ChatView {
     // Sélecteur ouvert (appui long sur une de ses cases) : elle en sort.
     if (!this.el.picker.hidden) this.renderPicker()
     toast(t('emote_hidden_toast', { n: name }))
+  }
+
+  /** Étoile de la fiche d'une emote : ajoutée aux favoris (onglet en tête
+   *  du sélecteur), ou retirée. */
+  toggleFavEmote(name) {
+    if (!validEmoteCode(name)) return
+    const p = this.o.prefs
+    const list = p.favoriteEmotes ?? []
+    const add = !list.includes(name)
+    p.favoriteEmotes = add ? [...list, name].slice(-FAVORITE_EMOTES_MAX) : list.filter((x) => x !== name)
+    this.o.onPrefsChange?.()
+    if (!this.el.picker.hidden) this.renderPicker()
+    toast(t(add ? 'emote_fav_added' : 'emote_fav_removed', { n: name }))
   }
 
   /** Emotes masquées déjà affichées (liste, message épinglé, fiche d'une
@@ -878,6 +899,7 @@ export class ChatView {
       // Hors connexion, le champ est caché : « Ajouter » y écrirait en vain.
       const canInsert = !this.el.composer.hidden && !this.el.inputRow.hidden && !this.el.input.disabled
       if (source === 'twitch' && id) twitchId = id
+      const fav = (this.o.prefs.favoriteEmotes ?? []).includes(name)
       html = `<img class="ci-img" src="${esc(e?.large ?? largeEmote(small, source))}" alt="${esc(name)}">
         <strong class="ci-name">${esc(name)}</strong>
         ${label ? `<p class="ci-src ci-type">${esc(label)}</p>` : ''}
@@ -888,7 +910,8 @@ export class ChatView {
           <button class="btn sm primary" type="button" data-ci-copy="${esc(name)}">${icon('copy', 15)}<span>${esc(t('chat_info_copy'))}</span></button>
           ${canInsert ? `<button class="btn sm" type="button" data-ci-insert="${esc(name)}"><span>${esc(t('chat_info_insert'))}</span></button>` : ''}
         </div>
-        ${validEmoteCode(name) ? `<button class="btn sm ghost ci-hide" type="button" data-ci-hide="${esc(name)}">${icon('eyeOff', 15)}<span>${esc(t('emote_hide'))}</span></button>` : ''}`
+        ${validEmoteCode(name) ? `<button class="btn sm ghost ci-fav${fav ? ' on' : ''}" type="button" data-ci-fav="${esc(name)}">${icon('star', 15)}<span>${esc(t(fav ? 'emote_fav_remove' : 'emote_fav_add'))}</span></button>
+          <button class="btn sm ghost ci-hide" type="button" data-ci-hide="${esc(name)}">${icon('eyeOff', 15)}<span>${esc(t('emote_hide'))}</span></button>` : ''}`
     }
     this.el.info.innerHTML = `<button class="icon-btn xs ci-close" type="button" data-ci-close aria-label="${esc(t('close'))}">${icon('x', 14)}</button>${html}`
     // Grande image absente (FFZ sans taille 4, badge sans /3) : celle du chat.
@@ -1838,7 +1861,8 @@ export class ChatView {
     // à chaque ouverture pour quelqu'un de déjà connecté.
     const writable = s.canChat && !this.authFailed
     this.el.inputRow.hidden = !writable
-    this.el.login.hidden = writable
+    // « Sans compte Twitch » (Réglages) : pas d'invitation à se connecter.
+    this.el.login.hidden = writable || Boolean(this.o.prefs.hideAccount && !s.login && !s.token)
     if (writable) {
       const ready = Boolean(this.client?.canSend)
       this.el.input.placeholder = ready ? t('chat_send_ph') : t('chat_connecting')
@@ -2055,9 +2079,10 @@ export class ChatView {
     this.el.grid.replaceChildren()
   }
 
-  /** Onglets « Mes emotes » (jeux du compte, une section par chaîne),
-   *  « Cette chaîne » et « Globales » : seul l'onglet ouvert est dessiné. La
-   *  recherche, elle, couvre les trois, sans onglets. */
+  /** Onglets « Favoris » (ceux qu'on peut utiliser ici), « Mes emotes »
+   *  (jeux du compte, une section par chaîne), « Cette chaîne » et
+   *  « Globales » : seul l'onglet ouvert est dessiné. La recherche, elle,
+   *  couvre les quatre, sans onglets. */
   renderPicker() {
     const kw = this.el.emoteSearch.value.trim().toLowerCase()
     const { channel, global } = emoteCatalog()
@@ -2071,6 +2096,11 @@ export class ChatView {
       .filter((g) => g.emotes.length)
     const chan = channel.filter(keep)
     const glob = global.filter(keep)
+    // Favoris : la première emote de ce code parmi celles d'ici, dans
+    // l'ordre où ils ont été ajoutés.
+    const here = new Map()
+    for (const e of [...mine.flatMap((g) => g.emotes), ...chan, ...glob]) if (!here.has(e.name)) here.set(e.name, e)
+    const fav = (this.o.prefs.favoriteEmotes ?? []).map((n) => here.get(n)).filter(Boolean)
     const cells = (list) => `<div class="emote-cells">${list.slice(0, 400).map((e) =>
       `<button type="button" data-emote="${esc(e.name)}" data-emote-src="${esc(e.source ?? '')}" data-emote-id="${esc(e.id ?? '')}" title="${esc(e.name)}"><img src="${esc(e.url)}" alt="${esc(e.name)}" loading="lazy" decoding="async"></button>`).join('')}</div>`
     const section = (title, list, avatar) => list.length ? `
@@ -2086,22 +2116,24 @@ export class ChatView {
         return true
       })
       this.el.emoteTabs.hidden = true
-      this.el.grid.innerHTML = section(t('emotes_mine'), once(mine.flatMap((g) => g.emotes)))
+      this.el.grid.innerHTML = section(t('emotes_fav'), once(fav)) + section(t('emotes_mine'), once(mine.flatMap((g) => g.emotes)))
         + section(t('emotes_channel'), once(chan)) + section(t('emotes_global'), once(glob))
       return
     }
-    // « Mes emotes » en tête. L'onglet de la chaîne s'ouvre d'abord, comme
-    // avant ; sans lui, le premier. Celui qu'on choisit reste ouvert quand
-    // « Mes emotes » arrive après coup.
-    const tabs = [['mine', 'emotes_mine', mine.length], ['channel', 'emotes_channel', chan.length], ['global', 'emotes_global', glob.length]]
+    // « Favoris » puis « Mes emotes » en tête. Les favoris s'ouvrent d'abord
+    // s'il y en a ici, sinon l'onglet de la chaîne, comme avant ; sans lui,
+    // le premier. Celui qu'on choisit reste ouvert quand « Mes emotes »
+    // arrive après coup.
+    const tabs = [['fav', 'emotes_fav', fav.length], ['mine', 'emotes_mine', mine.length], ['channel', 'emotes_channel', chan.length], ['global', 'emotes_global', glob.length]]
       .filter(([, , n]) => n > 0)
-    const tab = (tabs.find(([id]) => id === (this.pickerTab ?? 'channel')) ?? tabs[0])?.[0]
+    const tab = (tabs.find(([id]) => id === (this.pickerTab ?? (fav.length ? 'fav' : 'channel'))) ?? tabs[0])?.[0]
     this.el.emoteTabs.hidden = tabs.length < 2
     this.el.emoteTabs.innerHTML = tabs.map(([id, key]) =>
       `<button type="button" role="tab" data-tab="${id}" aria-selected="${id === tab}" class="${id === tab ? 'active' : ''}">${esc(t(key))}</button>`).join('')
     // Un onglet seul, sans barre : son titre, comme avant.
     const alone = tabs.length < 2
-    if (tab === 'mine') this.el.grid.innerHTML = mine.map((g) => section(g.name, g.emotes, g.avatar)).join('')
+    if (tab === 'fav') this.el.grid.innerHTML = alone ? section(t('emotes_fav'), fav) : cells(fav)
+    else if (tab === 'mine') this.el.grid.innerHTML = mine.map((g) => section(g.name, g.emotes, g.avatar)).join('')
     else if (tab === 'channel') this.el.grid.innerHTML = alone ? section(t('emotes_channel'), chan) : cells(chan)
     else if (tab === 'global') this.el.grid.innerHTML = alone ? section(t('emotes_global'), glob) : cells(glob)
     else this.el.grid.replaceChildren()
