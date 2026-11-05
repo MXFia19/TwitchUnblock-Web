@@ -2965,7 +2965,9 @@ async function feedbackTeamUpdate(env, key, { message = '', photos = [], status 
 // Il s'annonce avec le secret FEEDBACK_BOT_SECRET, posé des deux côtés.
 //   POST /api/feedback/discord
 //     { action: 'config' }                          → { forum, guild, labels }
-//     { action: 'state', thread }                   → { key, status, lastFrom }
+//     { action: 'state', thread }                   → { key, status, lastFrom, kind, du }
+//                                                     (genre et auteur Discord :
+//                                                     rôles gagnés du bot)
 //     { action: 'reply', thread, message, photos? } → idem, après la réponse
 //     { action: 'status', thread, status }          → idem, après le changement
 //     { action: 'backfill' }                        → { done, remaining, retryAfter? }
@@ -2983,9 +2985,11 @@ async function feedbackTeamUpdate(env, key, { message = '', photos = [], status 
 //   userReply (/bug sur Discord, réponses en message privé, photos
 //   comprises), delete, block, merge, fix / released (« c'est en ligne »),
 //   summary, health, announce, poll / poll-end / poll-state (sondage).
-//   Communauté (communityBotTool) : live / top (/live et /top), my-reports,
-//   suggest / suggest-card / suggest-vote / suggest-status / suggestion /
-//   suggestions (/suggest et ses votes).
+//   Communauté (communityBotTool) : live / top (/live et /top, le jeu
+//   /higher-lower et le statut du bot), lives (/live-alerts), awards (rôles
+//   gagnés : Bug Hunter, Idea Maker), my-reports, suggest / suggest-card /
+//   suggest-vote / suggest-status / suggestion / suggestions (/suggest et
+//   ses votes).
 //   Exploitation (opsBotTool, en fin de fichier) : ops (état du serveur),
 //   forget (effacer les données d'une personne), audit (note au journal).
 //   Messages d'erreur en anglais : le bot les
@@ -3151,6 +3155,9 @@ const FEEDBACK_LIVE_MESSAGES = {
 const FEEDBACK_RELEASE_PLATFORMS = ['ios', 'web', 'tvos', 'android'];
 const FEEDBACK_RELEASE_WHERE = { ios: 'the app', web: 'the website', tvos: 'the Apple TV app', android: 'the Android app' };
 const BOT_STORE_PREFIX = 'dcbot_';
+// Valeurs du bot qui grandissent avec le serveur : alertes de live de chaque
+// membre, lives déjà vus, scores du jeu (une ligne D1 tient bien plus).
+const BOT_BIG_KEYS = new Set(['live_alerts', 'live_seen', 'hl_scores', 'awards_given']);
 const discordReportHits = new Map();
 const discordReplyHits = new Map();
 
@@ -3175,7 +3182,7 @@ async function feedbackBotTool(env, body) {
             const text = JSON.stringify(body.value ?? null);
             // La copie de la liste à faire peut être longue (300 éléments) :
             // une ligne D1 tient bien plus que 20 000 caractères.
-            const max = k === 'todo_mirror' ? 400_000 : 20000;
+            const max = k === 'todo_mirror' ? 400_000 : BOT_BIG_KEYS.has(k) ? 300_000 : 20000;
             if (!/^[a-z0-9_:-]{1,60}$/.test(k) || text.length > max) return jsonError('Bad key or value too big', 400);
             const ttl = Number(body.ttl) || 0;
             await store(env).put(BOT_STORE_PREFIX + k, text, ttl > 0 ? { expirationTtl: Math.max(60, ttl) } : {});
@@ -3365,6 +3372,9 @@ function botReportState(key, m) {
     return {
         key, status: m.s || 'new', lastFrom: m.r || 'u',
         fix: m.fx || null, blocked: Boolean(m.bl), discord: Boolean(m.du), mergedInto: m.mg || null,
+        // Genre et auteur Discord : le bot donne Bug Hunter ou Idea Maker
+        // quand le retour passe à « Fait ».
+        kind: FEEDBACK_KINDS.includes(m.k) ? m.k : 'other', du: m.du ? String(m.du) : null,
         // Suggestion (/suggest) : sa carte publique, que le bot remet à jour.
         ...(m.sg ? { suggestion: { card: m.sc || null } } : {}),
     };
@@ -3451,8 +3461,11 @@ async function communityBotTool(env, body) {
             });
         }
         // /top : les 10 plus gros directs, d'une catégorie (cherchée par son
-        // nom, comme la recherche du site) et d'une langue s'il le faut.
+        // nom, comme la recherche du site) et d'une langue s'il le faut ;
+        // `first` jusqu'à 30 (le jeu /higher-lower) : Twitch refuse plus, et
+        // la page suivante demande un jeton d'intégrité.
         case 'top': {
+            const first = Math.min(30, Math.max(1, Math.floor(Number(body.first)) || 10));
             const language = String(body.language || '').toLowerCase();
             if (language && !BOT_TOP_LANGUAGES.has(language)) return jsonError('Unknown language', 400);
             const category = cleanText(body.category, 100).replace(/\s+/g, ' ');
@@ -3470,17 +3483,47 @@ async function communityBotTool(env, body) {
             }
             const fields = 'title viewersCount createdAt previewImageURL(width: 640, height: 360) game { displayName } broadcaster { login displayName profileImageURL(width: 70) }';
             const data = await twitchGQL(game
-                ? `query($id: ID!, $langs: [Language!]) { game(id: $id) { streams(first: 10, options: { broadcasterLanguages: $langs }) { edges { node { ${fields} } } } } }`
-                : `query($langs: [Language!]) { streams(first: 10, options: { broadcasterLanguages: $langs }) { edges { node { ${fields} } } } }`,
+                ? `query($id: ID!, $langs: [Language!]) { game(id: $id) { streams(first: ${first}, options: { broadcasterLanguages: $langs }) { edges { node { ${fields} } } } } }`
+                : `query($langs: [Language!]) { streams(first: ${first}, options: { broadcasterLanguages: $langs }) { edges { node { ${fields} } } } }`,
             game ? { id: String(game.id), langs } : { langs }).catch(failed('bot/top'));
             if (!data?.data) return twitchDown();
             const edges = (game ? data.data.game?.streams?.edges : data.data.streams?.edges) || [];
-            const streams = edges.map((e) => e?.node).filter((n) => LOGIN_RE.test(String(n?.broadcaster?.login || ''))).slice(0, 10)
+            const streams = edges.map((e) => e?.node).filter((n) => LOGIN_RE.test(String(n?.broadcaster?.login || ''))).slice(0, first)
                 .map((n) => ({
                     login: n.broadcaster.login.toLowerCase(), name: cleanText(n.broadcaster.displayName, 40) || n.broadcaster.login,
                     avatar: twitchPicture(n.broadcaster.profileImageURL), ...botStream(n),
                 }));
             return jsonResponse({ category: game ? cleanText(game.displayName || game.name, 100) : null, language: language || null, streams });
+        }
+        // /live-alerts : l'état de 100 chaînes au plus, en une requête
+        // (users(logins:) : une liste, pas des alias — la limite de 15 alias
+        // de Twitch ne compte pas).
+        case 'lives': {
+            const logins = [...new Set((Array.isArray(body.logins) ? body.logins : []).map((l) => String(l || '').trim().toLowerCase()))]
+                .filter((l) => LOGIN_RE.test(l)).slice(0, 100);
+            if (!logins.length) return jsonResponse({ channels: [] });
+            if (overLimit(botLookupHits, 'twitch', BOT_LOOKUPS_PER_MINUTE, 60000)) return busy();
+            const data = await twitchGQL(`query($l: [String!]) { users(logins: $l) { login displayName profileImageURL(width: 70)
+                stream { title viewersCount createdAt previewImageURL(width: 640, height: 360) game { displayName } } } }`, { l: logins })
+                .catch(failed('bot/lives'));
+            if (!data?.data) return twitchDown();
+            const channels = (data.data.users || []).filter((u) => u && LOGIN_RE.test(String(u.login || ''))).map((u) => ({
+                login: u.login.toLowerCase(), name: cleanText(u.displayName, 40) || u.login,
+                avatar: twitchPicture(u.profileImageURL), live: u.stream ? botStream(u.stream) : null,
+            }));
+            return jsonResponse({ channels });
+        }
+        // Rôles gagnés (Bug Hunter, Idea Maker) donnés après coup : les
+        // auteurs Discord des retours faits, avec leur genre.
+        case 'awards': {
+            await ensureSchema(env);
+            const { results } = await env.DB.prepare(`SELECT DISTINCT json_extract(${SUGGEST_META_SQL}, '$.du') AS du, json_extract(${SUGGEST_META_SQL}, '$.k') AS k FROM kv f
+                WHERE f.key >= 'fb_' AND f.key < 'fb\`' AND (f.expires IS NULL OR f.expires > ?1)
+                  AND json_extract(${SUGGEST_META_SQL}, '$.s') = 'done' AND json_extract(${SUGGEST_META_SQL}, '$.du') IS NOT NULL
+                LIMIT 1000`).bind(Date.now()).all();
+            const awards = (results || []).map((r) => ({ du: String(r.du), kind: FEEDBACK_KINDS.includes(r.k) ? r.k : 'other' }))
+                .filter((x) => /^\d{5,25}$/.test(x.du));
+            return jsonResponse({ awards });
         }
         // /my-reports : ce que ce membre a envoyé depuis Discord (/bug, /idea,
         // /suggest), le plus récent d'abord. Le sien seulement : le bot passe

@@ -683,7 +683,9 @@ and nothing goes out before **Publish** (**Cancel** drops it; a preview lasts
 the admin log, as from `/stats`. When a new app or website version is
 out, a draft of its release notes appears in the private channel — **Publish**
 posts it in the announcements channel, mentioning the release role if you
-picked one. Members take or drop that role with `/release-pings` or the
+picked one, and the role of its platform (*iPhone & iPad* for the app,
+*Website* for the website — see `/roles-setup`): someone who uses only one
+app is only pinged for it. Members take or drop that role with `/release-pings` or the
 **🔔 Release pings** button the bot posts there — so anyone can get it: the
 bot refuses a role managed by an integration, with permissions, or allowed
 into a channel. New test builds are posted in the test builds channel, one
@@ -707,7 +709,10 @@ in a channel stays in English):
   [emoji]` (again to change them), `remove` and `list`; the roles chosen with
   `/setup` — release pings, polls (*Polls role*), and the iPhone, Apple TV and
   Android testers — are always in the list (one that isn't safe is only used
-  for mentions). Only safe roles are taken, and they're checked
+  for mentions). One menu per group: pings and test builds (with those of
+  `/roles-config`), the apps the person uses, the languages they speak, and
+  helping out (Translator, Helper) — the last three made by `/roles-setup`;
+  a menu never touches the roles of another. Only safe roles are taken, and they're checked
   again each time one is given: not managed by an integration, without
   permissions, not named in any channel's permissions, below the bot's own
   role. A role that stops being safe is no longer shown nor given, and the
@@ -730,8 +735,8 @@ in a channel stays in English):
   the raw source files and the public releases API on GitHub (no token), the
   website and Firefox Add-ons, kept 10 minutes; one that can't be read shows
   as unknown.
-- `/help`: the commands useful to the person (the developer's too, for the
-  developer).
+- `/help`: the commands useful to the person (the developer's too, in a box below
+  the list, for the developer).
 - `/live channel:` (a name, `@name` or a twitch.tv link): if the channel is
   live, its title, category, viewers, uptime and thumbnail; otherwise
   "offline" with when its last live started. `/top [category] [language]`:
@@ -744,6 +749,30 @@ in a channel stays in English):
   `FEEDBACK_WORKER` isn't an `https://` address). The data comes from the
   Worker (Twitch's public GQL, like the website), kept 60 seconds per channel
   or search; one new lookup every 5 seconds per person.
+- `/live-alerts add channel:` (a name, `@name` or a twitch.tv link): a direct
+  message when that channel goes live — the `/live` card, in the person's
+  language. The first one sends a test message: with direct messages closed,
+  nothing is kept and the bot says how to open them. `remove` (the person's
+  channels are suggested) and `list`. 25 channels per person, 500 on the
+  server. Every 2 minutes the bot asks the Worker (`lives`: up to 100
+  channels in one Twitch request) and alerts once per new live, recognized by
+  its start time and kept in the bot's memory (`live_seen`), so a restart
+  doesn't repeat it; a channel already live when added, or live again within
+  30 minutes, doesn't alert.
+- `/higher-lower`: who has more viewers right now? Two lives, two buttons; a
+  right answer brings the next pair, closer and closer (at most ×4 apart at
+  first, ×1.15 after 8 in a row), a wrong one ends the game with the
+  person's best streak. Only the player sees it; **Play again** and
+  **Leaderboard** (the 10 best streaks, kept in the bot's memory,
+  `hl_scores`). A new server record (5 at least) is posted in the channel,
+  without a mention. The lives come from the Worker's `top`: the global top
+  30 and those of seven languages (Twitch gives no more without an integrity
+  token), kept 5 minutes.
+- `/emote name:` posts a 7TV emote in the channel (a GIF when animated, a PNG
+  otherwise), with its name and author. Names are suggested as you type
+  (7TV's public search, kept 10 minutes); private, unlisted and flagged
+  emotes (sexual, epilepsy, edgy, refused on Twitch) are left out. One emote
+  every 10 seconds per person.
 - `/suggest`: a form (title, description). The suggestion becomes a report
   (in the forum, `/stats` and `/my-reports`; the developer's replies come in
   a direct message, as for `/bug`) and a public card in the suggestions
@@ -785,6 +814,38 @@ the bot — replies included, not bots or system messages — so the others vote
 with a tap. Up to 10 channels. When a channel is picked, its last 100
 messages get them too; after a restart, so do those posted while the bot was
 off.
+
+**More roles** (`/roles-setup`, a preview first, then `apply:True`): creates
+what's missing among the apps roles (*iPhone & iPad*, *Apple TV*, *Android*,
+*Website* — the release notes of that platform mention it), the languages
+(*English*, *Français*, *Español*, *Русский*, *Português*, *Deutsch*,
+*Italiano*, *日本語*, *中文*), *Translator*, *Helper*, *Bug Hunter* and *Idea
+Maker* — without permissions, at the bottom of the list — and a public
+#translations channel. Unlike `/server-setup`, it moves, renames or changes
+nothing that exists; it fills the bot settings still empty (these roles, the
+support channel) and the roles menu follows. `/onboarding` then adds the
+apps and languages questions.
+
+**Earned roles**: *Bug Hunter* goes to whoever sent a `/bug` from Discord
+that's marked Done, *Idea Maker* for an idea or a suggestion — once each
+(`awards_given`, in the bot's memory: a role taken back by hand doesn't come
+back). Reports done earlier are caught up at each connection and after
+`/roles-setup` (the Worker's `awards`: the Discord authors of done reports).
+
+**Helper pings** (`/setup use: Support` in the help channel — `/roles-setup`
+picks #support if none is set; *Stop the Helper pings* to turn them off): a
+question there — a member's message that doesn't reply to someone else —
+still unanswered after 30 minutes gets a reply from the bot mentioning
+*Helper* (several waiting ones share one message). It's answered when a
+Helper or the developer writes, or when someone else replies to it or
+mentions its author. Kept in memory only: a restart forgets the questions
+waiting.
+
+**Bot status**: the bot shows it's watching the biggest live of the moment
+("Watching xQc ad-free · 21.5K viewers"), read again every 10 minutes.
+
+`/forget-user` also erases what the bot keeps itself about the person: live
+alerts, game score, earned roles given.
 
 **To-do**: right-click a message (long-press on mobile) → *Apps* → **Add to
 to-do** sends a good suggestion to the to-do channel — author, text, a link to
@@ -837,7 +898,7 @@ Setting it up:
      main Worker's account, and that account's ID (*Workers & Pages*,
      right-hand column). Read-only: it can't change anything. Not the same
      token as the database backup's.
-5. **Whole layout at once** (optional): `/server-setup` shows a preview of the server layout — 📢 Info (rules, announcements, roles, and the project’s own channels), 💬 Community (general, the suggestions forum and per-platform channels, bot commands, clips, voice), 🆘 Help (support, bug reports, iPhone install), 🧪 Testing (test builds, testers’ chat) and 🔒 Staff (the reports forum, to-do, alerts, notes), with the roles Moderator, Contributor, Releases, and iOS, tvOS and Android testers. `/server-setup apply:True` then creates what’s missing, moves the existing channels into their category (their names and permissions are kept, a typo like “gerenal” is fixed; a staff channel visible to everyone is pointed out), renames a matching category (“Information” → “📢 Info”), fills the `/setup` choices still empty, posts the rules in a new #rules and the roles menu in #roles, where the tester roles can be picked. Nothing is deleted, and running it again only does what’s still missing. The bot only grants permissions it has: with the invite link above, the Moderator role is created without its moderation permissions (add them in *Server Settings → Roles*, or give the bot Administrator). Test builds mention the tester role of their platform (iPhone, Apple TV, Android; `/setup` *Apple TV testers role* / *Android testers role* to change them). **Onboarding** (Community servers): `/onboarding` previews two questions built from these roles — *What should we ping you for?* (new versions, polls, or nothing for now) and *Want to try test builds before everyone else?* (iPhone & iPad, Apple TV, Android, each opening the 🧪 Testing channels) — in place of the questions that only gave those roles (the others stay). A role that every answer of a required question gave (like *Member*) is still given to everyone, and the public categories join the default channels (a category left out of the onboarding is hidden from new members). `/onboarding apply:True` applies it and fills the `/setup` roles still empty; the bot needs *Manage Server* and *Manage Roles* (or Administrator). The polls role is never created: pick yours with `/setup` *Polls role*.
+5. **Whole layout at once** (optional): `/server-setup` shows a preview of the server layout — 📢 Info (rules, announcements, roles, and the project’s own channels), 💬 Community (general, the suggestions forum and per-platform channels, bot commands, clips, voice), 🆘 Help (support, bug reports, iPhone install), 🧪 Testing (test builds, testers’ chat) and 🔒 Staff (the reports forum, to-do, alerts, notes), with the roles Moderator, Contributor, Releases, and iOS, tvOS and Android testers. `/server-setup apply:True` then creates what’s missing, moves the existing channels into their category (their names and permissions are kept, a typo like “gerenal” is fixed; a staff channel visible to everyone is pointed out), renames a matching category (“Information” → “📢 Info”), fills the `/setup` choices still empty, posts the rules in a new #rules and the roles menu in #roles, where the tester roles can be picked. Nothing is deleted, and running it again only does what’s still missing. The bot only grants permissions it has: with the invite link above, the Moderator role is created without its moderation permissions (add them in *Server Settings → Roles*, or give the bot Administrator). Test builds mention the tester role of their platform (iPhone, Apple TV, Android; `/setup` *Apple TV testers role* / *Android testers role* to change them). **Onboarding** (Community servers): `/onboarding` previews up to four questions built from these roles — *What should we ping you for?* (every new version, polls, or nothing for now), *Which TwitchUnblock apps do you use?* (iPhone & iPad, Apple TV, Android, Website: pinged when that one updates), *Which languages do you speak?* (the language roles) and *Want to try test builds before everyone else?* (iPhone & iPad, Apple TV, Android, each opening the 🧪 Testing channels); the apps and languages ones need the roles of `/roles-setup` — in place of the questions that only gave those roles (the others stay). A role that every answer of a required question gave (like *Member*) is still given to everyone, and the public categories join the default channels (a category left out of the onboarding is hidden from new members). `/onboarding apply:True` applies it and fills the `/setup` roles still empty; the bot needs *Manage Server* and *Manage Roles* (or Administrator). The polls role is never created: pick yours with `/setup` *Polls role*.
 6. **Channels**: run `/setup` in the private channel (*Alerts, daily summary
    and release drafts*), in the announcements channel (*Release
    announcements*, optionally with the role to mention at each release), in

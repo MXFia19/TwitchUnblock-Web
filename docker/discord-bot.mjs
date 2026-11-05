@@ -177,6 +177,8 @@ const COMMANDS = [
           { name: 'Stop the welcome messages', value: 'welcome-off' },
           { name: 'Votes: ✅ and ❌ under every message', value: 'votes' },
           { name: 'Stop the votes in this channel', value: 'votes-off' },
+          { name: 'Support: ping Helpers when a question waits 30 min', value: 'support' },
+          { name: 'Stop the Helper pings', value: 'support-off' },
         ],
       },
       { type: 8, name: 'role', description: 'Role to mention (releases, test builds) or the polls role', required: false },
@@ -187,7 +189,11 @@ const COMMANDS = [
     options: [{ type: 5, name: 'apply', description: 'Apply the changes (without it: a preview only)', required: false }],
   },
   {
-    name: 'onboarding', description: 'Better onboarding questions: pings and test builds (a preview first)', default_member_permissions: ADMIN,
+    name: 'onboarding', description: 'Better onboarding questions: pings, apps, languages, test builds (a preview first)', default_member_permissions: ADMIN,
+    options: [{ type: 5, name: 'apply', description: 'Apply the changes (without it: a preview only)', required: false }],
+  },
+  {
+    name: 'roles-setup', description: 'Create the app, language, helper and earned roles, and #translations (a preview first)', default_member_permissions: ADMIN,
     options: [{ type: 5, name: 'apply', description: 'Apply the changes (without it: a preview only)', required: false }],
   },
   { name: 'summary', description: 'Post the daily summary now', default_member_permissions: ADMIN },
@@ -240,6 +246,19 @@ const COMMANDS = [
         type: 3, name: 'language', description: 'Only streams in this language', required: false,
         choices: TOP_LANGUAGES.map((value) => ({ name: languageNames.of(value), value })),
       },
+    ],
+  },
+  { name: 'higher-lower', description: 'Who has more viewers right now? Keep the streak going' },
+  {
+    name: 'emote', description: 'Post a 7TV emote in the chat',
+    options: [{ type: 3, name: 'name', description: 'The emote’s name, e.g. catJAM', required: true, autocomplete: true, max_length: 100 }],
+  },
+  {
+    name: 'live-alerts', description: 'Get a direct message when a Twitch channel goes live',
+    options: [
+      { type: 1, name: 'add', description: 'Get an alert when this channel goes live', options: [{ type: 3, name: 'channel', description: 'The channel’s name (or its twitch.tv link)', required: true, max_length: 60 }] },
+      { type: 1, name: 'remove', description: 'Stop the alerts for a channel', options: [{ type: 3, name: 'channel', description: 'One of your channels', required: true, autocomplete: true, max_length: 60 }] },
+      { type: 1, name: 'list', description: 'The channels you get alerts for' },
     ],
   },
   { name: 'my-reports', description: 'What you sent with /bug, /idea or /suggest, and its status' },
@@ -341,6 +360,14 @@ const I18N = {
     rp_desc_ios: 'Pings for new iPhone test builds (TU Test)',
     rp_desc_tv: 'Pings for new Apple TV test builds',
     rp_desc_android: 'Pings for new Android test builds',
+    rp_desc_app_ios: 'You use the iPhone/iPad app: pinged when it updates',
+    rp_desc_app_tv: 'You use the Apple TV app: pinged when it updates',
+    rp_desc_app_android: 'You use the Android app: pinged when it updates',
+    rp_desc_app_web: 'You use the website: pinged when it updates',
+    rp_desc_translator: 'Help translate the app and the website (#translations)',
+    rp_desc_helper: 'Help others: pinged when a question waits 30 min',
+    rg_pings: '🔔 Pings & test builds', rg_apps: '📲 Apps you use', rg_langs: '🌍 Languages you speak', rg_help: '🤝 Help out',
+    pick_apps: 'Pick the apps you use', pick_langs: 'Pick the languages you speak', pick_help: 'Pick how you’d like to help',
     public_admin_only: 'ℹ️ Only the developer can post this in the channel — here it is, just for you.',
     posted: (c) => `✅ Posted in <#${c}>.`,
     post_failed: (m) => `Not posted (${m}): I need to see this channel and to send messages with embeds in it.`,
@@ -397,9 +424,9 @@ const I18N = {
     h_help: 'this list',
     h_replies: 'Replies to your reports come in a direct message: answer with the buttons under them.',
     h_admin: '**Developer only**',
-    h_setup: 'use this channel for alerts, release announcements, test builds, the to-do list, suggestions, welcome messages or votes (✅ and ❌ under every message)',
+    h_setup: 'use this channel for alerts, release announcements, test builds, the to-do list, suggestions, welcome messages, votes (✅ and ❌ under every message) or support (Helpers pinged)',
     h_server_setup: 'build the server layout (categories, channels, roles) without deleting anything: a preview first, then apply:True',
-    h_onboarding: 'better onboarding questions (pings, test builds per platform) that keep the roles everyone gets: a preview first, then apply:True',
+    h_onboarding: 'better onboarding questions (pings, apps, languages, test builds per platform) that keep the roles everyone gets: a preview first, then apply:True',
     h_announce: 'banner in the app and on the website, and remove it',
     h_poll: 'poll in the app and on the website, and end it (results posted)',
     h_todo: 'add to the to-do channel (or a message’s Apps menu → Add to to-do, or Add conversation to to-do for several messages)',
@@ -414,6 +441,37 @@ const I18N = {
     h_my_reports: 'what you sent (bugs, ideas, suggestions) and its status',
     h_live: 'is a channel live? Title, category, viewers',
     h_top: 'the biggest lives right now (by category, language)',
+    h_higher_lower: 'who has more viewers right now? Keep the streak going',
+    h_emote: 'post a 7TV emote in the chat',
+    h_live_alerts: 'a direct message when a channel goes live',
+    h_roles_setup: 'create the app, language, helper and earned roles, after a preview',
+    hl_q: 'Who has **more viewers** right now?',
+    hl_streak: (n) => `streak **${n}**`,
+    hl_right: (c) => `✅ Right! ${c}`,
+    hl_wrong: (c) => `❌ Nope! ${c}`,
+    hl_over: (n, best) => `Game over — streak of **${n}** (your best: **${best}**).`,
+    hl_new_best: '🎉 New personal best!',
+    hl_again: 'Play again', hl_board: 'Leaderboard',
+    hl_board_head: '🏆 **Higher or Lower — best streaks**',
+    hl_board_none: 'No scores yet — be the first with /higher-lower.',
+    hl_you: (rank, best) => `You: #${rank}, best ${best}`,
+    hl_expired: 'This game is over — start a new one with /higher-lower.',
+    hl_unavailable: '❌ Not enough lives to play right now — try again in a moment.',
+    em_none: (q) => `No 7TV emote called “${q}”.`,
+    em_wait: '⏳ One emote every 10 seconds — try again in a moment.',
+    em_error: '❌ 7TV didn’t answer — try again in a moment.',
+    la_added: (n) => `🔔 Done: I’ll send you a direct message when **${n}** goes live.`,
+    la_added_live: (n) => `🔔 Done: I’ll send you a direct message when **${n}** goes live (they’re live right now).`,
+    la_already: (n) => `You already get alerts for **${n}**.`,
+    la_removed: (n) => `🔕 No more alerts for **${n}**.`,
+    la_not_followed: (n) => `You don’t get alerts for **${n}**.`,
+    la_head: '🔔 **Your live alerts** (by direct message)',
+    la_none: 'No live alerts yet — add one with /live-alerts add.',
+    la_full: (n) => `You already get alerts for ${n} channels — remove one first.`,
+    la_server_full: 'Too many channels are followed on this server right now — try again later.',
+    la_dm_off: '❌ I can’t send you direct messages: allow DMs from this server’s members (Privacy settings), then try again.',
+    la_dm_hello: (n) => `👋 Live alerts are on: I’ll write here when **${n}** goes live. Stop them with /live-alerts remove.`,
+    la_now_live: (n) => `🔴 **${n}** is live!`,
     h_app_announce: 'announcement in the apps and on the website, after a preview (and remove it)',
     admin_only: 'Only the developer can use this.',
     live_bad: 'That isn’t a Twitch channel name (letters, digits and _, 25 at most).',
@@ -481,6 +539,14 @@ const I18N = {
     rp_desc_ios: 'Notifié pour les builds de test iPhone (TU Test)',
     rp_desc_tv: 'Notifié pour les builds de test Apple TV',
     rp_desc_android: 'Notifié pour les builds de test Android',
+    rp_desc_app_ios: 'Tu utilises l’app iPhone/iPad : notifié à ses mises à jour',
+    rp_desc_app_tv: 'Tu utilises l’app Apple TV : notifié à ses mises à jour',
+    rp_desc_app_android: 'Tu utilises l’app Android : notifié à ses mises à jour',
+    rp_desc_app_web: 'Tu utilises le site : notifié à ses mises à jour',
+    rp_desc_translator: 'Aider à traduire l’app et le site (#translations)',
+    rp_desc_helper: 'Aider les autres : notifié quand une question attend 30 min',
+    rg_pings: '🔔 Notifications et builds de test', rg_apps: '📲 Les apps que tu utilises', rg_langs: '🌍 Les langues que tu parles', rg_help: '🤝 Donner un coup de main',
+    pick_apps: 'Choisis les apps que tu utilises', pick_langs: 'Choisis les langues que tu parles', pick_help: 'Choisis comment aider',
     public_admin_only: 'ℹ️ Seul le développeur peut le poster dans le salon — le voici, pour toi seul.',
     posted: (c) => `✅ Posté dans <#${c}>.`,
     post_failed: (m) => `Pas posté (${m}) : je dois voir ce salon et pouvoir y envoyer des messages avec des encadrés.`,
@@ -535,9 +601,9 @@ const I18N = {
     h_help: 'cette liste',
     h_replies: 'Les réponses à tes retours arrivent en message privé : réponds avec les boutons dessous.',
     h_admin: '**Réservé au développeur**',
-    h_setup: 'ce salon pour les alertes, les annonces de version, les builds de test, la liste à faire, les suggestions, la bienvenue ou les votes (✅ et ❌ sous chaque message)',
+    h_setup: 'ce salon pour les alertes, les annonces de version, les builds de test, la liste à faire, les suggestions, la bienvenue, les votes (✅ et ❌ sous chaque message) ou l’entraide (Helpers notifiés)',
     h_server_setup: 'construire la structure du serveur (catégories, salons, rôles) sans rien supprimer : un aperçu d’abord, puis apply:True',
-    h_onboarding: 'de meilleures questions d’accueil (pings, builds de test par plateforme) qui gardent les rôles donnés à tous : un aperçu d’abord, puis apply:True',
+    h_onboarding: 'de meilleures questions d’accueil (pings, apps, langues, builds de test par plateforme) qui gardent les rôles donnés à tous : un aperçu d’abord, puis apply:True',
     h_announce: 'bandeau dans l’app et sur le site, et le retirer',
     h_poll: 'sondage dans l’app et sur le site, et le clore (résultats postés)',
     h_todo: 'ajouter à la liste à faire (ou menu Apps d’un message → Add to to-do, ou Add conversation to to-do pour plusieurs messages)',
@@ -552,6 +618,37 @@ const I18N = {
     h_my_reports: 'ce que tu as envoyé (bugs, idées, suggestions) et son état',
     h_live: 'une chaîne est-elle en live ? Titre, catégorie, spectateurs',
     h_top: 'les plus gros lives du moment (par catégorie, langue)',
+    h_higher_lower: 'qui a le plus de spectateurs en ce moment ? Enchaîne les bonnes réponses',
+    h_emote: 'poster une emote 7TV dans le salon',
+    h_live_alerts: 'un message privé quand une chaîne lance un live',
+    h_roles_setup: 'créer les rôles des apps, des langues, d’entraide et gagnés, après un aperçu',
+    hl_q: 'Qui a **le plus de spectateurs** en ce moment ?',
+    hl_streak: (n) => `série **${n}**`,
+    hl_right: (c) => `✅ Bien vu ! ${c}`,
+    hl_wrong: (c) => `❌ Raté ! ${c}`,
+    hl_over: (n, best) => `Partie finie — série de **${n}** (ton record : **${best}**).`,
+    hl_new_best: '🎉 Nouveau record perso !',
+    hl_again: 'Rejouer', hl_board: 'Classement',
+    hl_board_head: '🏆 **Higher or Lower — meilleures séries**',
+    hl_board_none: 'Aucun score pour l’instant — sois le premier avec /higher-lower.',
+    hl_you: (rank, best) => `Toi : n° ${rank}, record ${best}`,
+    hl_expired: 'Cette partie est finie — relance-en une avec /higher-lower.',
+    hl_unavailable: '❌ Pas assez de lives pour jouer pour l’instant — réessaie dans un instant.',
+    em_none: (q) => `Aucune emote 7TV ne s’appelle « ${q} ».`,
+    em_wait: '⏳ Une emote toutes les 10 secondes — réessaie dans un instant.',
+    em_error: '❌ 7TV n’a pas répondu — réessaie dans un instant.',
+    la_added: (n) => `🔔 C’est noté : je t’enverrai un message privé quand **${n}** lancera un live.`,
+    la_added_live: (n) => `🔔 C’est noté : je t’enverrai un message privé quand **${n}** lancera un live (en live en ce moment).`,
+    la_already: (n) => `Tu as déjà les alertes de **${n}**.`,
+    la_removed: (n) => `🔕 Plus d’alertes pour **${n}**.`,
+    la_not_followed: (n) => `Tu n’as pas d’alerte pour **${n}**.`,
+    la_head: '🔔 **Tes alertes de live** (par message privé)',
+    la_none: 'Aucune alerte de live pour l’instant — ajoutes-en une avec /live-alerts add.',
+    la_full: (n) => `Tu as déjà les alertes de ${n} chaînes — retires-en une d’abord.`,
+    la_server_full: 'Trop de chaînes suivies sur ce serveur pour l’instant — réessaie plus tard.',
+    la_dm_off: '❌ Je ne peux pas t’envoyer de message privé : autorise les MP des membres de ce serveur (Confidentialité), puis réessaie.',
+    la_dm_hello: (n) => `👋 Alertes de live activées : je t’écrirai ici quand **${n}** lancera un live. Pour arrêter : /live-alerts remove.`,
+    la_now_live: (n) => `🔴 **${n}** est en live !`,
     h_app_announce: 'annonce dans les apps et sur le site, après un aperçu (et la retirer)',
     admin_only: 'Seul le développeur peut s’en servir.',
     live_bad: 'Ce n’est pas un nom de chaîne Twitch (lettres, chiffres et _, 25 au plus).',
@@ -618,6 +715,14 @@ const I18N = {
     rp_desc_ios: 'Avisos de nuevas versiones de prueba para iPhone (TU Test)',
     rp_desc_tv: 'Avisos de nuevas versiones de prueba para Apple TV',
     rp_desc_android: 'Avisos de nuevas versiones de prueba para Android',
+    rp_desc_app_ios: 'Usas la app de iPhone/iPad: aviso cuando se actualiza',
+    rp_desc_app_tv: 'Usas la app de Apple TV: aviso cuando se actualiza',
+    rp_desc_app_android: 'Usas la app de Android: aviso cuando se actualiza',
+    rp_desc_app_web: 'Usas el sitio web: aviso cuando se actualiza',
+    rp_desc_translator: 'Ayudar a traducir la app y el sitio (#translations)',
+    rp_desc_helper: 'Ayudar a otros: aviso cuando una pregunta espera 30 min',
+    rg_pings: '🔔 Avisos y versiones de prueba', rg_apps: '📲 Las apps que usas', rg_langs: '🌍 Los idiomas que hablas', rg_help: '🤝 Echar una mano',
+    pick_apps: 'Elige las apps que usas', pick_langs: 'Elige los idiomas que hablas', pick_help: 'Elige cómo ayudar',
     public_admin_only: 'ℹ️ Solo el desarrollador puede publicarlo en el canal; aquí lo tienes, solo para ti.',
     posted: (c) => `✅ Publicado en <#${c}>.`,
     post_failed: (m) => `No publicado (${m}): necesito ver este canal y poder enviar en él mensajes con insertos.`,
@@ -672,9 +777,9 @@ const I18N = {
     h_help: 'esta lista',
     h_replies: 'Las respuestas a tus informes llegan por mensaje directo: contesta con los botones de debajo.',
     h_admin: '**Solo para el desarrollador**',
-    h_setup: 'usar este canal para alertas, anuncios de versiones, versiones de prueba, la lista de tareas, sugerencias, bienvenidas o votos (✅ y ❌ bajo cada mensaje)',
+    h_setup: 'usar este canal para alertas, anuncios de versiones, versiones de prueba, la lista de tareas, sugerencias, bienvenidas, votos (✅ y ❌ bajo cada mensaje) o soporte (aviso a los Helpers)',
     h_server_setup: 'crear la estructura del servidor (categorías, canales, roles) sin borrar nada: primero una vista previa, luego apply:True',
-    h_onboarding: 'mejores preguntas de bienvenida (avisos, versiones de prueba por plataforma) que mantienen los roles que reciben todos: primero una vista previa, luego apply:True',
+    h_onboarding: 'mejores preguntas de bienvenida (avisos, apps, idiomas, versiones de prueba por plataforma) que mantienen los roles que reciben todos: primero una vista previa, luego apply:True',
     h_announce: 'aviso en la app y el sitio web, y quitarlo',
     h_poll: 'encuesta en la app y el sitio web, y cerrarla (resultados publicados)',
     h_todo: 'añadir a la lista de tareas (o menú Apps de un mensaje → Add to to-do, o Add conversation to to-do para varios mensajes)',
@@ -689,6 +794,37 @@ const I18N = {
     h_my_reports: 'lo que enviaste (errores, ideas, sugerencias) y su estado',
     h_live: '¿está en directo un canal? Título, categoría, espectadores',
     h_top: 'los directos más grandes ahora (por categoría, idioma)',
+    h_higher_lower: '¿quién tiene más espectadores ahora mismo? Encadena aciertos',
+    h_emote: 'publicar un emote de 7TV en el chat',
+    h_live_alerts: 'un mensaje privado cuando un canal empieza un directo',
+    h_roles_setup: 'crear los roles de apps, idiomas, ayuda y ganados, tras una vista previa',
+    hl_q: '¿Quién tiene **más espectadores** ahora mismo?',
+    hl_streak: (n) => `racha **${n}**`,
+    hl_right: (c) => `✅ ¡Correcto! ${c}`,
+    hl_wrong: (c) => `❌ ¡Fallaste! ${c}`,
+    hl_over: (n, best) => `Fin de la partida: racha de **${n}** (tu récord: **${best}**).`,
+    hl_new_best: '🎉 ¡Nuevo récord personal!',
+    hl_again: 'Jugar otra vez', hl_board: 'Clasificación',
+    hl_board_head: '🏆 **Higher or Lower: mejores rachas**',
+    hl_board_none: 'Todavía no hay puntuaciones: sé el primero con /higher-lower.',
+    hl_you: (rank, best) => `Tú: n.º ${rank}, récord ${best}`,
+    hl_expired: 'Esta partida terminó: empieza otra con /higher-lower.',
+    hl_unavailable: '❌ Ahora no hay suficientes directos para jugar; inténtalo en un momento.',
+    em_none: (q) => `Ningún emote de 7TV se llama «${q}».`,
+    em_wait: '⏳ Un emote cada 10 segundos; inténtalo en un momento.',
+    em_error: '❌ 7TV no respondió; inténtalo en un momento.',
+    la_added: (n) => `🔔 Listo: te enviaré un mensaje privado cuando **${n}** empiece un directo.`,
+    la_added_live: (n) => `🔔 Listo: te enviaré un mensaje privado cuando **${n}** empiece un directo (ahora mismo está en directo).`,
+    la_already: (n) => `Ya recibes avisos de **${n}**.`,
+    la_removed: (n) => `🔕 Ya no recibirás avisos de **${n}**.`,
+    la_not_followed: (n) => `No recibes avisos de **${n}**.`,
+    la_head: '🔔 **Tus avisos de directos** (por mensaje privado)',
+    la_none: 'Todavía no tienes avisos de directos: añade uno con /live-alerts add.',
+    la_full: (n) => `Ya recibes avisos de ${n} canales: quita uno primero.`,
+    la_server_full: 'Hay demasiados canales seguidos en este servidor ahora mismo; inténtalo más tarde.',
+    la_dm_off: '❌ No puedo enviarte mensajes privados: permite los MD de los miembros de este servidor (Privacidad) y vuelve a intentarlo.',
+    la_dm_hello: (n) => `👋 Avisos de directos activados: te escribiré aquí cuando **${n}** empiece un directo. Para pararlos: /live-alerts remove.`,
+    la_now_live: (n) => `🔴 ¡**${n}** está en directo!`,
     h_app_announce: 'anuncio en las apps y el sitio web, tras una vista previa (y quitarlo)',
     admin_only: 'Solo el desarrollador puede usar esto.',
     live_bad: 'Eso no es un nombre de canal de Twitch (letras, números y _, 25 como máximo).',
@@ -755,6 +891,14 @@ const I18N = {
     rp_desc_ios: 'Уведомления о тестовых сборках для iPhone (TU Test)',
     rp_desc_tv: 'Уведомления о тестовых сборках для Apple TV',
     rp_desc_android: 'Уведомления о тестовых сборках для Android',
+    rp_desc_app_ios: 'Пользуешься приложением для iPhone/iPad: уведомления об обновлениях',
+    rp_desc_app_tv: 'Пользуешься приложением для Apple TV: уведомления об обновлениях',
+    rp_desc_app_android: 'Пользуешься приложением для Android: уведомления об обновлениях',
+    rp_desc_app_web: 'Пользуешься сайтом: уведомления об обновлениях',
+    rp_desc_translator: 'Помогать с переводом приложения и сайта (#translations)',
+    rp_desc_helper: 'Помогать другим: уведомление, если вопрос ждёт 30 мин',
+    rg_pings: '🔔 Уведомления и тестовые сборки', rg_apps: '📲 Приложения, которыми пользуешься', rg_langs: '🌍 Языки, на которых говоришь', rg_help: '🤝 Помогать',
+    pick_apps: 'Выбери приложения', pick_langs: 'Выбери языки', pick_help: 'Выбери, как помогать',
     public_admin_only: 'ℹ️ Публиковать это в канале может только разработчик — вот ответ только для тебя.',
     posted: (c) => `✅ Опубликовано в <#${c}>.`,
     post_failed: (m) => `Не опубликовано (${m}): мне нужно видеть этот канал и отправлять в него сообщения со вставками.`,
@@ -809,9 +953,9 @@ const I18N = {
     h_help: 'этот список',
     h_replies: 'Ответы на твои сообщения приходят в личку: отвечай кнопками под ними.',
     h_admin: '**Только для разработчика**',
-    h_setup: 'этот канал для оповещений, анонсов версий, тестовых сборок, списка задач, предложений, приветствий или голосований (✅ и ❌ под каждым сообщением)',
+    h_setup: 'этот канал для оповещений, анонсов версий, тестовых сборок, списка задач, предложений, приветствий, голосований (✅ и ❌ под каждым сообщением) или поддержки (уведомление Helpers)',
     h_server_setup: 'создать структуру сервера (категории, каналы, роли), ничего не удаляя: сначала предпросмотр, затем apply:True',
-    h_onboarding: 'улучшенные вопросы при входе (уведомления, тестовые сборки по платформам), сохраняющие роли, которые получают все: сначала предпросмотр, затем apply:True',
+    h_onboarding: 'улучшенные вопросы при входе (уведомления, приложения, языки, тестовые сборки по платформам), сохраняющие роли, которые получают все: сначала предпросмотр, затем apply:True',
     h_announce: 'баннер в приложении и на сайте, и убрать его',
     h_poll: 'опрос в приложении и на сайте, и завершить его (итоги публикуются)',
     h_todo: 'добавить в список задач (или меню «Приложения» у сообщения → Add to to-do, или Add conversation to to-do для нескольких сообщений)',
@@ -826,6 +970,37 @@ const I18N = {
     h_my_reports: 'что ты отправил (ошибки, идеи, предложения) и их статус',
     h_live: 'идёт ли трансляция на канале? Название, категория, зрители',
     h_top: 'самые популярные трансляции сейчас (по категории, языку)',
+    h_higher_lower: 'у кого больше зрителей прямо сейчас? Набери серию',
+    h_emote: 'отправить эмоут 7TV в чат',
+    h_live_alerts: 'личное сообщение, когда канал начинает трансляцию',
+    h_roles_setup: 'создать роли приложений, языков, помощи и наград — после предпросмотра',
+    hl_q: 'У кого **больше зрителей** прямо сейчас?',
+    hl_streak: (n) => `серия **${n}**`,
+    hl_right: (c) => `✅ Верно! ${c}`,
+    hl_wrong: (c) => `❌ Мимо! ${c}`,
+    hl_over: (n, best) => `Игра окончена — серия **${n}** (твой рекорд: **${best}**).`,
+    hl_new_best: '🎉 Новый личный рекорд!',
+    hl_again: 'Ещё раз', hl_board: 'Таблица лидеров',
+    hl_board_head: '🏆 **Higher or Lower — лучшие серии**',
+    hl_board_none: 'Пока нет результатов — стань первым с /higher-lower.',
+    hl_you: (rank, best) => `Ты: №${rank}, рекорд ${best}`,
+    hl_expired: 'Эта игра окончена — начни новую с /higher-lower.',
+    hl_unavailable: '❌ Сейчас недостаточно трансляций для игры — попробуй чуть позже.',
+    em_none: (q) => `Нет эмоута 7TV с именем «${q}».`,
+    em_wait: '⏳ Один эмоут раз в 10 секунд — попробуй чуть позже.',
+    em_error: '❌ 7TV не ответил — попробуй чуть позже.',
+    la_added: (n) => `🔔 Готово: я напишу тебе в личные сообщения, когда **${n}** начнёт трансляцию.`,
+    la_added_live: (n) => `🔔 Готово: я напишу тебе в личные сообщения, когда **${n}** начнёт трансляцию (трансляция идёт прямо сейчас).`,
+    la_already: (n) => `Ты уже получаешь уведомления о **${n}**.`,
+    la_removed: (n) => `🔕 Больше никаких уведомлений о **${n}**.`,
+    la_not_followed: (n) => `Ты не получаешь уведомления о **${n}**.`,
+    la_head: '🔔 **Твои уведомления о трансляциях** (в личных сообщениях)',
+    la_none: 'Пока нет уведомлений — добавь через /live-alerts add.',
+    la_full: (n) => `Ты уже получаешь уведомления о ${n} каналах — сначала удали один.`,
+    la_server_full: 'Сейчас на этом сервере отслеживается слишком много каналов — попробуй позже.',
+    la_dm_off: '❌ Не могу написать тебе в личные сообщения: разреши ЛС от участников этого сервера (Конфиденциальность) и попробуй снова.',
+    la_dm_hello: (n) => `👋 Уведомления включены: я напишу сюда, когда **${n}** начнёт трансляцию. Отключить: /live-alerts remove.`,
+    la_now_live: (n) => `🔴 **${n}** в эфире!`,
     h_app_announce: 'объявление в приложениях и на сайте после предпросмотра (и убрать его)',
     admin_only: 'Это может использовать только разработчик.',
     live_bad: 'Это не имя канала Twitch (буквы, цифры и _, не больше 25).',
@@ -901,7 +1076,7 @@ function lang(locale) {
 const EN = lang('en')
 // /help : commandes du développeur, montrées à lui seul.
 const ADMIN_HELP = [
-  ['/setup', 'h_setup'], ['/server-setup', 'h_server_setup'], ['/onboarding', 'h_onboarding'], ['/announce · /announce-clear', 'h_announce'], ['/app-announce', 'h_app_announce'], ['/poll · /poll-end', 'h_poll'],
+  ['/setup', 'h_setup'], ['/server-setup', 'h_server_setup'], ['/roles-setup', 'h_roles_setup'], ['/onboarding', 'h_onboarding'], ['/announce · /announce-clear', 'h_announce'], ['/app-announce', 'h_app_announce'], ['/poll · /poll-end', 'h_poll'],
   ['/todo', 'h_todo'], ['/summary', 'h_summary'], ['/status', 'h_status'], ['/roles-config', 'h_roles_config'],
   ['/roles public:True · /download public:True', 'h_public'], ['/delete · /block · /merge', 'h_report'], ['/forget-user', 'h_forget'],
 ]
@@ -1242,13 +1417,14 @@ export const SERVER_LAYOUT = [
       { name: 'suggestions-tvos', keep: true, aliases: ['suggestionstvos', 'suggestionstv', 'suggestionsappletv'] },
       { name: 'commandes', keep: true, aliases: ['commandes', 'commands', 'botcommands', 'bot', 'commandesbot'] },
       { name: 'clips', topic: 'Share your best moments.', aliases: ['clips', 'media', 'medias', 'clip'] },
+      { name: 'translations', topic: 'Help translate TwitchUnblock: post a better wording for any language here.', aliases: ['translations', 'translation', 'traductions', 'traduction', 'translate', 'i18n'] },
       { name: 'Lounge', type: 2, aliases: ['lounge', 'general', 'vocal', 'voice', 'generalvoice'] },
     ],
   },
   {
     key: 'help', name: '🆘 Help', access: 'public', aliases: ['help', 'aide', 'support'],
     channels: [
-      { name: 'support', keep: true, aliases: ['support', 'help', 'aide'] },
+      { name: 'support', key: 'support', keep: true, aliases: ['support', 'help', 'aide'] },
       { name: 'report-bugs', keep: true, aliases: ['reportbugs', 'bugs', 'bugreports', 'reportbug', 'bug'] },
       { name: 'install-iphone', topic: 'Installing the iPhone app: AltStore, SideStore, Feather, LiveContainer, TrollStore.', aliases: ['installiphone', 'installios', 'ioshelp', 'helpios', 'aideios', 'installation', 'install'] },
     ],
@@ -1279,7 +1455,7 @@ export const SERVER_ROLES = [
     key: 'moderator', name: 'Moderator', color: 0x2ecc71, hoist: true, aliases: ['moderator', 'moderateur', 'mod', 'mods', 'moderators'],
     permissions: P.manageMessages | P.manageThreads | P.moderate | P.kick | P.mute | P.move,
   },
-  { key: 'contributor', name: 'Contributor', color: 0xf1c40f, hoist: true, aliases: ['contributor', 'contributors', 'contributeur', 'translator', 'traducteur'] },
+  { key: 'contributor', name: 'Contributor', color: 0xf1c40f, hoist: true, aliases: ['contributor', 'contributors', 'contributeur'] },
   {
     key: 'releases', name: 'Releases', mentionable: true, setting: 'announcementsRole',
     aliases: ['releases', 'releasepings', 'releaseping', 'updates', 'updatepings', 'changelog', 'changelogs', 'sorties'],
@@ -1298,7 +1474,36 @@ export const SERVER_ROLES = [
     key: 'testerAndroid', name: 'Android Tester', color: 0x2ecc71, mentionable: true, setting: 'testersRoleAndroid',
     aliases: ['androidtester', 'testerandroid', 'testeurandroid', 'testandroid', 'android'],
   },
+  // Groupes de /roles (un menu chacun ; une question de l'onboarding pour
+  // les plateformes et les langues), créés par /roles-setup sans toucher
+  // aux salons : `group`, `emoji`, `desc` (texte traduit du menu),
+  // `onboarding` (sous-titre de la réponse). Les notes de version d'une
+  // plateforme mentionnent son rôle, avec celui des sorties.
+  { key: 'appIos', name: 'iPhone & iPad', mentionable: true, setting: 'platformRoleIos', group: 'apps', emoji: '📱', desc: 'rp_desc_app_ios', onboarding: 'Pinged when the iPhone app updates', aliases: ['iphoneipad', 'iphone', 'ipad', 'ios'] },
+  { key: 'appTv', name: 'Apple TV', mentionable: true, setting: 'platformRoleTv', group: 'apps', emoji: '📺', desc: 'rp_desc_app_tv', onboarding: 'Pinged when the Apple TV app updates', aliases: ['appletv', 'tvos'] },
+  { key: 'appAndroid', name: 'Android', mentionable: true, setting: 'platformRoleAndroid', group: 'apps', emoji: '🤖', desc: 'rp_desc_app_android', onboarding: 'Pinged when the Android app updates', aliases: ['android', 'androiduser'] },
+  { key: 'appWeb', name: 'Website', mentionable: true, setting: 'platformRoleWeb', group: 'apps', emoji: '💻', desc: 'rp_desc_app_web', onboarding: 'Pinged when the website updates', aliases: ['website', 'web', 'site'] },
+  // Langues parlées : sans permission ni salon, pour se reconnaître.
+  { key: 'langEn', name: 'English', setting: 'langRoleEn', group: 'langs', emoji: '🇬🇧', aliases: ['english', 'anglais', 'en'] },
+  { key: 'langFr', name: 'Français', setting: 'langRoleFr', group: 'langs', emoji: '🇫🇷', aliases: ['francais', 'french', 'fr'] },
+  { key: 'langEs', name: 'Español', setting: 'langRoleEs', group: 'langs', emoji: '🇪🇸', aliases: ['espanol', 'spanish', 'es'] },
+  { key: 'langRu', name: 'Русский', setting: 'langRoleRu', group: 'langs', emoji: '🇷🇺', aliases: ['russian', 'russe', 'ru'] },
+  { key: 'langPt', name: 'Português', setting: 'langRolePt', group: 'langs', emoji: '🇧🇷', aliases: ['portugues', 'portuguese', 'pt'] },
+  { key: 'langDe', name: 'Deutsch', setting: 'langRoleDe', group: 'langs', emoji: '🇩🇪', aliases: ['deutsch', 'german', 'allemand', 'de'] },
+  { key: 'langIt', name: 'Italiano', setting: 'langRoleIt', group: 'langs', emoji: '🇮🇹', aliases: ['italiano', 'italian', 'italien', 'it'] },
+  { key: 'langJa', name: '日本語', setting: 'langRoleJa', group: 'langs', emoji: '🇯🇵', aliases: ['japanese', 'japonais', 'ja'] },
+  { key: 'langZh', name: '中文', setting: 'langRoleZh', group: 'langs', emoji: '🀄', aliases: ['chinese', 'chinois', 'zh'] },
+  // Entraide : #translations, et les questions sans réponse du salon
+  // d'entraide (/setup « Support »), qui mentionnent Helper.
+  { key: 'translator', name: 'Translator', setting: 'translatorRole', group: 'help', emoji: '🌍', desc: 'rp_desc_translator', aliases: ['translator', 'translators', 'traducteur', 'traducteurs'] },
+  { key: 'helper', name: 'Helper', color: 0x5865f2, mentionable: true, setting: 'helperRole', group: 'help', emoji: '🆘', desc: 'rp_desc_helper', aliases: ['helper', 'helpers', 'supporter', 'supporters'] },
+  // Gagnés, jamais proposés : donnés quand un /bug (Bug Hunter) ou une idée
+  // (Idea Maker) envoyés depuis Discord passent à « Fait ».
+  { key: 'bugHunter', name: 'Bug Hunter', color: 0xe67e22, setting: 'bugHunterRole', award: 'bug', aliases: ['bughunter', 'bughunters'] },
+  { key: 'ideaMaker', name: 'Idea Maker', color: 0x1abc9c, setting: 'ideaMakerRole', award: 'idea', aliases: ['ideamaker', 'ideamakers'] },
 ]
+// Notes de version : le rôle de la plateforme, d'après le début du brouillon.
+const DRAFT_PLATFORM_ROLE = { ios: 'platformRoleIos', web: 'platformRoleWeb', tvos: 'platformRoleTv', android: 'platformRoleAndroid' }
 
 /** Nom ramené à ses lettres et chiffres, sans accents ni emoji : « 📢・Annonces » → « annonces ». */
 const layoutName = (s) => String(s || '').normalize('NFD').toLowerCase().replace(/[^a-z0-9]+/g, '')
@@ -1315,10 +1520,15 @@ export function serverPlan({ guild, channels = [], roles = [], settings = {}, fo
     const o = (c.permission_overwrites || []).find((x) => x.id === guild)
     return !(o && (BigInt(o.deny || 0) & P.view))
   }
+  // Un rôle du serveur ne sert qu'une fois : ceux que désigne un réglage
+  // d'abord, puis par leur nom (« Android » n'est pas aussi « Android Tester »).
+  const claimed = new Set(SERVER_ROLES.map((r) => r.setting && settings[r.setting]).filter((id) => id && roles.some((x) => x.id === id)))
   const findRole = (r) => {
     if (r.setting && settings[r.setting] && roles.some((x) => x.id === settings[r.setting])) return roles.find((x) => x.id === settings[r.setting])
     const names = new Set(r.aliases.map(layoutName))
-    return roles.find((x) => !x.managed && x.id !== guild && names.has(layoutName(x.name)))
+    const found = roles.find((x) => !x.managed && x.id !== guild && !claimed.has(x.id) && names.has(layoutName(x.name)))
+    if (found) claimed.add(found.id)
+    return found
   }
   const planRoles = SERVER_ROLES.map((r) => {
     const found = findRole(r)
@@ -1430,7 +1640,12 @@ export function onboardingPlan({ onboarding, plan, newId = snowflake }) {
   const role = (key) => plan.roles.find((r) => r.key === key)?.id || null
   const pingRoles = [role('releases'), role('polls')].filter(Boolean)
   const testRoles = [role('tester'), role('testerTv'), role('testerAndroid')].filter(Boolean)
-  const managed = [...pingRoles, ...testRoles]
+  // Plateformes et langues : une question chacune (plusieurs réponses).
+  const appSpecs = SERVER_ROLES.filter((r) => r.group === 'apps' && role(r.key))
+  const langSpecs = SERVER_ROLES.filter((r) => r.group === 'langs' && role(r.key))
+  const appRoles = appSpecs.map((r) => role(r.key))
+  const langRoles = langSpecs.map((r) => role(r.key))
+  const managed = [...pingRoles, ...testRoles, ...appRoles, ...langRoles]
   const prompts = Array.isArray(onboarding?.prompts) ? onboarding.prompts : []
   const rolesOf = (o) => o.role_ids || []
   const gives = (p, ids) => (p.options || []).some((o) => rolesOf(o).some((r) => ids.includes(r)))
@@ -1448,6 +1663,8 @@ export function onboardingPlan({ onboarding, plan, newId = snowflake }) {
     && (p.options || []).every((o) => rolesOf(o).every((r) => managed.includes(r) || base.includes(r))))
   const pingsFrom = replaced.find((p) => gives(p, pingRoles)) || null
   const testsFrom = replaced.find((p) => p !== pingsFrom && gives(p, testRoles)) || null
+  const appsFrom = replaced.find((p) => p !== pingsFrom && p !== testsFrom && gives(p, appRoles)) || null
+  const langsFrom = replaced.find((p) => ![pingsFrom, testsFrom, appsFrom].includes(p) && gives(p, langRoles)) || null
   const testing = (plan.categories.find((c) => c.key === 'testing')?.channels || [])
     .filter((c) => c.id && c.spec.type !== 2).map((c) => c.id)
   // Même réponse qu'avant (même rôle, dans la question reprise) : son id
@@ -1460,7 +1677,7 @@ export function onboardingPlan({ onboarding, plan, newId = snowflake }) {
     return { ...(same?.id ? { id: same.id } : {}), title, description, emoji_name: emoji, role_ids, channel_ids }
   }
   const pings = [
-    role('releases') && answer(pingsFrom, role('releases'), 'New versions', 'App, website and extension updates, with what’s new', '📣', [role('releases'), ...base]),
+    role('releases') && answer(pingsFrom, role('releases'), 'Every new version', 'All updates: apps, website, extension — or pick just your apps next', '📣', [role('releases'), ...base]),
     role('polls') && answer(pingsFrom, role('polls'), 'Polls', 'When there’s a new poll to vote in', '📊', [role('polls'), ...base]),
   ].filter(Boolean)
   if (pings.length && base.length) pings.push(answer(pingsFrom, null, 'Nothing for now', 'Change it anytime in Channels & Roles', '🔕', [...base]))
@@ -1469,9 +1686,13 @@ export function onboardingPlan({ onboarding, plan, newId = snowflake }) {
     role('testerTv') && answer(testsFrom, role('testerTv'), 'Apple TV', 'Test builds of the Apple TV app', '📺', [role('testerTv')], testing),
     role('testerAndroid') && answer(testsFrom, role('testerAndroid'), 'Android', 'Test builds for phones, tablets and Android TV', '🤖', [role('testerAndroid')], testing),
   ].filter(Boolean)
+  const apps = appSpecs.map((r) => answer(appsFrom, role(r.key), r.name, r.onboarding, r.emoji, [role(r.key)]))
+  const langs = langSpecs.map((r) => answer(langsFrom, role(r.key), r.name, null, r.emoji, [role(r.key)]))
   const question = (from, title, required, options) => ({ id: from?.id || newId(), title, single_select: false, required, in_onboarding: true, type: 0, options })
   const made = [
     ...(pings.length ? [question(pingsFrom, 'What should we ping you for?', base.length > 0, pings)] : []),
+    ...(apps.length ? [question(appsFrom, 'Which TwitchUnblock apps do you use?', false, apps)] : []),
+    ...(langs.length ? [question(langsFrom, 'Which languages do you speak?', false, langs)] : []),
     ...(tests.length ? [question(testsFrom, 'Want to try test builds before everyone else?', false, tests)] : []),
   ]
   const kept = prompts.filter((p) => !replaced.includes(p))
@@ -1490,6 +1711,7 @@ export function onboardingPlan({ onboarding, plan, newId = snowflake }) {
   return {
     prompts: next, defaults, added, base, made, kept, replaced,
     missing: ['releases', 'polls', 'tester', 'testerTv', 'testerAndroid'].filter((k) => !role(k)),
+    missingGroups: [...(appSpecs.length ? [] : ['apps']), ...(langSpecs.length ? [] : ['langs'])],
     unchanged: !added.length && shape(prompts) === shape(next),
   }
 }
@@ -1501,7 +1723,7 @@ export function onboardingPlanLines(o) {
   if (o.replaced.length) out.push(`**Replaced:** ${o.replaced.map((p) => `“${p.title}”`).join(' · ')}`)
   for (const [n, q] of o.made.entries()) {
     out.push('', `**${n + 1}. ${q.title}** (${q.required ? 'required' : 'optional'}, several answers)`)
-    for (const a of q.options) out.push(`${a.emoji_name} **${a.title}** — ${a.description} → ${targets(a)}`)
+    for (const a of q.options) out.push(`${a.emoji_name} **${a.title}**${a.description ? ` — ${a.description}` : ''} → ${targets(a)}`)
   }
   if (o.kept.length) out.push('', `**Kept as they are:** ${o.kept.map((p) => `“${p.title}”`).join(' · ')}`)
   out.push('', `**Default channels:** ${o.defaults.map((c) => `<#${c}>`).join(' ') || 'none'}`)
@@ -1509,6 +1731,7 @@ export function onboardingPlanLines(o) {
   if (o.base.length) out.push(`Everyone still gets ${o.base.map((r) => `<@&${r}>`).join(' ')} (the pings question stays required).`)
   const names = { releases: 'release pings', polls: 'polls', tester: 'iPhone testers', testerTv: 'Apple TV testers', testerAndroid: 'Android testers' }
   if (o.missing.length) out.push('', `No role for: ${o.missing.map((k) => names[k]).join(', ')} — \`/setup\` picks one (role:); \`/server-setup apply:True\` creates the others, not the polls one.`)
+  if (o.missingGroups?.length) out.push('', `No roles yet for the ${o.missingGroups.map((g) => (g === 'apps' ? 'apps' : 'languages')).join(' and ')} question: \`/roles-setup apply:True\` creates them.`)
   return out
 }
 
@@ -1959,6 +2182,7 @@ export function startDiscordBridge({
     // la question est posée quand même (une fois) — la personne n'était
     // sinon jamais prévenue.
     if (s.status === 'done' && prevStatus !== 'done' && !s.fix) await fixPrompt(thread)
+    if (s.status === 'done' && s.du) award(s.du, s.kind).catch(() => {})
     if (s.discord) await deliverDm(thread)
     if (card && s.suggestion?.card && s.status !== prevStatus) {
       await refreshCard(s.key).catch((e) => log.warn(`Discord bridge: suggestion card not updated (${e.message})`))
@@ -1969,6 +2193,7 @@ export function startDiscordBridge({
       const ds = await stateOf(dt, { fresh: true }).catch(() => null)
       if (!ds) continue
       await syncTags(dt, ds.status)
+      if (ds.status === 'done' && ds.du) award(ds.du, ds.kind).catch(() => {})
       if (ds.discord) await deliverDm(dt)
       if (ds.suggestion?.card) await refreshCard(ds.key).catch(() => {})
     }
@@ -2115,6 +2340,7 @@ export function startDiscordBridge({
       if (votable(m)) await addVotes(m.channel_id, m)
       return
     }
+    if (m.guild_id === st.guild && m.channel_id && m.channel_id === st.settings.support) return noteSupport(m)
     if (m.guild_id !== st.guild || !st.forum) return
     if (m.author?.id && m.author.id === st.me) return
     if (await parentOf(m.channel_id) !== st.forum) return
@@ -2251,6 +2477,9 @@ export function startDiscordBridge({
   /** /announce template: : les modèles enregistrés ; /app-announce
    *  duration: les durées de /stats (et celle tapée, si elle est valable). */
   async function onAutocomplete(i, user) {
+    // Pour tous : les emotes de 7TV, ses propres alertes de live.
+    if (i.data?.name === 'emote') return emoteAutocomplete(i)
+    if (i.data?.name === 'live-alerts') return alertsAutocomplete(i, user)
     if (!isAdmin(user.id)) return respond(i, 8, { choices: [] })
     if (i.data?.name === 'app-announce') {
       const typed = String((i.data.options?.[0]?.options || []).find((o) => o.focused)?.value || '').trim().toLowerCase()
@@ -2293,12 +2522,15 @@ export function startDiscordBridge({
     if (name === 'roles') return rolesCommand(i, user)
     if (name === 'download') return downloadCommand(i, user)
     if (name === 'version') return deferred(i, () => versionText(lang(i.locale)))
-    if (name === 'help') return respond(i, 4, { flags: 64, content: helpText(i, user), allowed_mentions: { parse: [] } })
+    if (name === 'help') return respond(i, 4, { flags: 64, ...helpMessage(i, user), allowed_mentions: { parse: [] } })
     if (name === 'live') return liveCommand(i, user, opt(i, 'channel'))
     if (name === 'top') return topCommand(i, user)
     if (name === 'my-reports') return deferred(i, () => myReports(i, user))
     if (name === 'suggest') return suggestCommand(i, user)
     if (name === 'suggestions') return deferred(i, () => topSuggestions(i, user))
+    if (name === 'higher-lower') return deferred(i, () => hlStart(i, user))
+    if (name === 'emote') return emoteCommand(i, user)
+    if (name === 'live-alerts') return deferred(i, () => liveAlertsCommand(i, user))
     if (!isAdmin(user.id)) return adminOnly(i)
     switch (name) {
       case 'app-announce': return appAnnounce(i, user)
@@ -2326,6 +2558,7 @@ export function startDiscordBridge({
         })
       case 'setup': return deferred(i, () => setup(i))
       case 'server-setup': return deferred(i, () => serverSetup(i, user, opt(i, 'apply') === true))
+      case 'roles-setup': return deferred(i, () => rolesSetup(i, user, opt(i, 'apply') === true))
       case 'onboarding': return deferred(i, () => onboardingSetup(i, user, opt(i, 'apply') === true))
       case 'summary':
         return deferred(i, async () => ((await postSummary(st.settings.alerts || i.channel_id)) ? 'Summary posted.' : 'Nothing to post.'))
@@ -2396,6 +2629,9 @@ export function startDiscordBridge({
     // Votes : plusieurs salons possibles (10 au plus).
     else if (use === 'votes') settings.votes = [...new Set([...(settings.votes || []), i.channel_id])].slice(-10)
     else if (use === 'votes-off') settings.votes = (settings.votes || []).filter((c) => c !== i.channel_id)
+    // Entraide : une question sans réponse depuis 30 min mentionne Helper.
+    else if (use === 'support') settings.support = i.channel_id
+    else if (use === 'support-off') settings.support = null
     else return 'Unknown choice.'
     await kvSet('settings', settings)
     st.settings = settings
@@ -2438,6 +2674,10 @@ export function startDiscordBridge({
       'welcome-off': 'Welcome messages are off.',
       votes: 'Every message posted in this channel now gets ✅ and ❌ so members can vote (replies included; not bots). The last 100 messages get them too — it takes about a minute.',
       'votes-off': 'New messages in this channel won’t get ✅ and ❌ anymore (the ones already added stay).',
+      support: settings.helperRole
+        ? `A question posted here that gets no answer within 30 minutes will ping <@&${settings.helperRole}> (members take it in /roles).`
+        : 'A question posted here that gets no answer within 30 minutes will ping the Helper role, once it exists: run `/roles-setup`.',
+      'support-off': 'No more Helper pings.',
       'polls-role': role ? `<@&${role}> is now offered in /roles, for the polls pings.` : 'No polls role anymore.',
     }[use]
     return unsafe ? `${text}\n⚠️ Not offered in /roles: ${unsafe}` : text
@@ -2449,6 +2689,38 @@ export function startDiscordBridge({
    *  noms et permissions gardés), les réglages de /setup encore vides
    *  remplis ; rien n'est supprimé. Relancée, elle ne refait que ce qui
    *  manque. */
+  /** Permissions du bot sur le serveur : Discord refuse qu'il accorde ou
+   *  retire dans un salon, ou donne à un rôle, une permission qu'il n'a pas
+   *  lui-même. */
+  async function botCan(guild, roles) {
+    const meMember = st.me ? await rest('GET', `/guilds/${guild}/members/${st.me}`).catch(() => null) : null
+    const mine = new Set([guild, ...(meMember?.roles || [])])
+    const botPerms = roles.filter((r) => mine.has(r.id)).reduce((a, r) => a | BigInt(r.permissions || 0), 0n)
+    const admin = Boolean(botPerms & (1n << 3n))
+    return (bits) => (admin ? bits : bits & botPerms)
+  }
+
+  /** Rôles du plan qui manquent (seulement ceux que garde `only`), créés en
+   *  bas de la liste, au-dessus de @everyone. Rend leurs identifiants par
+   *  clé et les remarques (permissions que le bot n'a pas). */
+  async function createMissingRoles(plan, guild, can, only = null) {
+    const roleId = {}
+    const notes = []
+    for (const r of plan.roles) {
+      if (r.id) { roleId[r.key] = r.id; continue }
+      if (r.keep || (only && !only(r))) continue
+      const want = r.permissions || 0n
+      const made = await rest('POST', `/guilds/${guild}/roles`, {
+        name: r.name, color: r.color || 0, hoist: Boolean(r.hoist), mentionable: Boolean(r.mentionable),
+        permissions: String(can(want)),
+      })
+      if (want & ~can(want)) notes.push(`⚠️ <@&${made.id}> was created without some of its permissions (I don’t have them): add Manage Messages, Timeout Members, Kick Members, Mute and Move Members in Server Settings → Roles.`)
+      r.id = made.id
+      roleId[r.key] = made.id
+    }
+    return { roleId, notes }
+  }
+
   async function serverSetup(i, user, apply) {
     const guild = i.guild_id || st.guild
     if (!guild) return 'Run this in the server.'
@@ -2465,28 +2737,8 @@ export function startDiscordBridge({
       }
     }
     try {
-      // Permissions du bot : Discord refuse qu'il accorde ou retire dans un
-      // salon, ou donne à un rôle, une permission qu'il n'a pas lui-même.
-      const meMember = st.me ? await rest('GET', `/guilds/${guild}/members/${st.me}`).catch(() => null) : null
-      const mine = new Set([guild, ...(meMember?.roles || [])])
-      const botPerms = roles.filter((r) => mine.has(r.id)).reduce((a, r) => a | BigInt(r.permissions || 0), 0n)
-      const admin = Boolean(botPerms & (1n << 3n))
-      const can = (bits) => (admin ? bits : bits & botPerms)
-      const notes = []
-      // Rôles qui manquent (en bas de la liste, au-dessus de @everyone).
-      const roleId = {}
-      for (const r of plan.roles) {
-        if (r.id) { roleId[r.key] = r.id; continue }
-        if (r.keep) continue
-        const want = r.permissions || 0n
-        const made = await rest('POST', `/guilds/${guild}/roles`, {
-          name: r.name, color: r.color || 0, hoist: Boolean(r.hoist), mentionable: Boolean(r.mentionable),
-          permissions: String(can(want)),
-        })
-        if (want & ~can(want)) notes.push(`⚠️ <@&${made.id}> was created without some of its permissions (I don’t have them): add Manage Messages, Timeout Members, Kick Members, Mute and Move Members in Server Settings → Roles.`)
-        r.id = made.id
-        roleId[r.key] = made.id
-      }
+      const can = await botCan(guild, roles)
+      const { roleId, notes } = await createMissingRoles(plan, guild, can)
       // Droits d'une catégorie (et des salons créés dedans). Le bot y garde
       // toujours accès : sans « Administrateur », une catégorie cachée le
       // cachait aussi.
@@ -2655,6 +2907,75 @@ export function startDiscordBridge({
     return {
       content: o.unchanged ? '✅ Onboarding already up to date.' : '✅ Onboarding updated: new members get these questions, the others find them in Channels & Roles.',
       embeds: embeds(0x2ecc71),
+    }
+  }
+
+  // ── /roles-setup : rôles des groupes de /roles et rôles gagnés ──────────
+  // Ceux de SERVER_ROLES qui ont un groupe (plateformes, langues, entraide)
+  // ou qui se gagnent (Bug Hunter, Idea Maker).
+  const ROLES_SETUP = new Set(SERVER_ROLES.filter((r) => r.group || r.award).map((r) => r.key))
+  /** Sans `apply` : l'aperçu. Avec : les rôles qui manquent, créés sans
+   *  permission en bas de la liste, et #translations s'il n'existe pas ;
+   *  les réglages encore vides remplis (ces rôles, le salon d'entraide) ;
+   *  le menu de #roles suit, et les rôles gagnés vont à qui les a mérités.
+   *  Contrairement à /server-setup, aucun salon existant n'est déplacé ni
+   *  renommé. */
+  async function rolesSetup(i, user, apply) {
+    const guild = i.guild_id || st.guild
+    if (!guild) return 'Run this in the server.'
+    const [channels, roles] = await Promise.all([
+      rest('GET', `/guilds/${guild}/channels`),
+      rest('GET', `/guilds/${guild}/roles`),
+    ])
+    const settings = { ...((await kvGet('settings').catch(() => null)) || st.settings) }
+    const plan = serverPlan({ guild, channels, roles, settings, forum: st.forum })
+    const wanted = plan.roles.filter((r) => ROLES_SETUP.has(r.key))
+    const community = plan.categories.find((c) => c.key === 'community')
+    const translations = community?.channels.find((c) => c.spec.name === 'translations')
+    const support = plan.categories.find((c) => c.key === 'help')?.channels.find((c) => c.spec.key === 'support')
+    const lines = () => [
+      `**Roles:** ${wanted.map((r) => (r.id ? `✓ <@&${r.id}>` : `+ ${r.emoji ? `${r.emoji} ` : ''}${r.name}`)).join(' · ')}`,
+      `**Translations channel:** ${translations?.id ? `✓ <#${translations.id}>` : `+ #translations (new${community?.id ? `, in <#${community.id}>` : ''})`}`,
+      `**Support channel** (Helpers pinged when a question waits 30 min): ${settings.support ? `✓ <#${settings.support}>` : support?.id ? `<#${support.id}>` : 'none yet — run `/setup use: Support` in it'}`,
+    ]
+    if (!apply) {
+      return {
+        content: '**Roles setup — preview.** Only roles (and #translations) are created: no existing channel or role is moved, renamed or changed. Run `/roles-setup apply:True` to apply, then `/onboarding` for the apps and languages questions.',
+        embeds: [{ color: 0x9146ff, description: lines().join('\n').slice(0, 4000) }],
+      }
+    }
+    try {
+      const can = await botCan(guild, roles)
+      const missing = wanted.filter((r) => !r.id).length
+      const { notes } = await createMissingRoles(plan, guild, can, (r) => ROLES_SETUP.has(r.key))
+      let made = 0
+      if (translations && !translations.id) {
+        const c = await rest('POST', `/guilds/${guild}/channels`, {
+          name: 'translations', type: 0, topic: translations.spec.topic, ...(community?.id ? { parent_id: community.id } : {}),
+        })
+        translations.id = c.id
+        made++
+      }
+      const patch = {}
+      for (const r of wanted) if (r.setting && r.id && !settings[r.setting]) patch[r.setting] = r.id
+      if (!settings.support && support?.id) patch.support = support.id
+      if (Object.keys(patch).length) await saveSettings(patch)
+      settings.support ||= patch.support
+      forgetFacts()
+      refreshRolesMessage().catch((e) => log.warn(`Discord bridge: roles message not updated (${e.message})`))
+      awardBackfill().catch((e) => log.warn(`Discord bridge: earned roles not given (${e.message})`))
+      call({ action: 'audit', what: 'bot.roles-setup', detail: `${missing} role(s), ${made} channel(s) created`, by: byOf(user) }).catch(() => {})
+      const set = filledLines(patch)
+      return {
+        content: `✅ Roles set up: ${missing} role(s) and ${made} channel(s) created. Next: \`/onboarding\` for the apps and languages questions (a preview first); the roles menu follows.`,
+        embeds: [{
+          color: 0x2ecc71,
+          description: [...lines(), ...(set.length ? ['', `**Bot settings filled:** ${set.join(' · ')}`] : []), ...(notes.length ? ['', ...notes] : [])].join('\n').slice(0, 4000),
+        }],
+      }
+    } catch (e) {
+      if (e.code === 50013) throw new Error('Missing permissions: I need “Manage Roles” and “Manage Channels” (or Administrator). What was done so far stays; run it again once fixed.')
+      throw e
     }
   }
 
@@ -2853,14 +3174,25 @@ export function startDiscordBridge({
     { setting: 'testersRole', emoji: '📱', desc: 'rp_desc_ios' },
     { setting: 'testersRoleTv', emoji: '📺', desc: 'rp_desc_tv' },
     { setting: 'testersRoleAndroid', emoji: '🤖', desc: 'rp_desc_android' },
+    // Un menu à part par groupe de SERVER_ROLES (plateformes, langues,
+    // entraide), rôles créés par /roles-setup.
+    ...SERVER_ROLES.filter((r) => r.group).map((r) => ({ setting: r.setting, emoji: r.emoji, desc: r.desc || null, group: r.group })),
+  ]
+  // Groupes de /roles, dans l'ordre des menus (5 rangées au plus par message).
+  const ROLE_GROUPS = [
+    { key: 'pings', title: 'rg_pings', pick: 'roles_pick' },
+    { key: 'apps', title: 'rg_apps', pick: 'pick_apps' },
+    { key: 'langs', title: 'rg_langs', pick: 'pick_langs' },
+    { key: 'help', title: 'rg_help', pick: 'pick_help' },
   ]
   // Ce que /server-setup écrivait pour les testeurs dans selfRoles, avant
   // qu'ils soient proposés d'office : remplacé par le texte traduit.
   const OLD_TESTER_DESC = new Set(['Pings for new iPhone test builds (TU Test)', 'Pings for new Apple TV test builds', 'Pings for new Android test builds'])
 
   /** Rôles proposés par /roles : ceux de /setup, puis ceux de /roles-config
-   *  — 25 au plus (un menu de Discord). Un rôle de /setup aussi ajouté par
-   *  /roles-config y prend sa description et son emoji. */
+   *  (groupe « pings », 25 au plus : un menu de Discord), puis les autres
+   *  groupes. Un rôle de /setup aussi ajouté par /roles-config y prend sa
+   *  description et son emoji. */
   function offeredRoles(settings = st.settings) {
     const list = (Array.isArray(settings.selfRoles) ? settings.selfRoles : []).filter((r) => r?.id)
     const auto = []
@@ -2868,9 +3200,10 @@ export function startDiscordBridge({
       const id = settings[s.setting]
       if (!id || auto.some((r) => r.id === id)) continue
       const own = list.find((r) => r.id === id)
-      auto.push({ id, setup: s, ...(own && !OLD_TESTER_DESC.has(own.description) ? { description: own.description, emoji: own.emoji } : {}) })
+      auto.push({ id, setup: s, group: s.group || 'pings', ...(own && !OLD_TESTER_DESC.has(own.description) ? { description: own.description, emoji: own.emoji } : {}) })
     }
-    return [...auto, ...list.filter((r) => !auto.some((a) => a.id === r.id))].slice(0, 25)
+    const custom = list.filter((r) => !auto.some((a) => a.id === r.id)).map((r) => ({ ...r, group: 'pings' }))
+    return [...[...auto.filter((r) => r.group === 'pings'), ...custom].slice(0, 25), ...auto.filter((r) => r.group !== 'pings')]
   }
 
   /** Rôle proposé qui n'est plus sûr : ni montré ni donné, et le développeur
@@ -2891,7 +3224,7 @@ export function startDiscordBridge({
       // Rôle de /setup qui ne convient pas (il ouvre un salon…) : passé sans
       // alerte, il sert encore aux mentions ; /roles-config list le signale.
       if (problem) { if (!r.setup) flagRole(r.id, problem); continue }
-      out.push({ id: r.id, name: info.name, description: r.description || (r.setup ? t(r.setup.desc) : ''), emoji: r.emoji || r.setup?.emoji || '' })
+      out.push({ id: r.id, name: info.name, group: r.group || 'pings', description: r.description || (r.setup?.desc ? t(r.setup.desc) : ''), emoji: r.emoji || r.setup?.emoji || '' })
     }
     return out
   }
@@ -2907,6 +3240,12 @@ export function startDiscordBridge({
       ...(have ? { default: have.has(o.id) } : {}),
     })),
   })
+  /** Un menu par groupe qui a des rôles (ROLE_GROUPS) ; `prefix` : roles:me
+   *  (sa réponse à soi) ou roles:pub (message pour tous). */
+  const rolesMenus = (prefix, options, t, opts) => ROLE_GROUPS
+    .map((g) => [g, options.filter((o) => (o.group || 'pings') === g.key).slice(0, 25)])
+    .filter(([, list]) => list.length)
+    .map(([g, list]) => row(rolesMenu(`${prefix}:${g.key}`, list, t(g.pick), opts)))
   const menuOptions = (components) => (components || []).flatMap((r) => r.components || [])
     .filter((c) => c.type === 3).flatMap((c) => c.options || [])
   /** Composants d'un message, son menu recoché d'après `have`. */
@@ -2918,15 +3257,17 @@ export function startDiscordBridge({
    *  descriptions, et le même menu, où rien n'est coché — chaque rôle choisi
    *  y est pris, ou rendu si on l'avait. */
   function rolesPublicMessage(options, emojis = true) {
-    const lines = options.map((o) => `${emojis && o.emoji ? `${o.emoji} ` : ''}<@&${o.id}>${o.description ? ` — ${o.description}` : ''}`)
+    const line = (o) => `${emojis && o.emoji ? `${o.emoji} ` : ''}<@&${o.id}>${o.description ? ` — ${o.description}` : ''}`
+    const groups = ROLE_GROUPS.map((g) => [g, options.filter((o) => (o.group || 'pings') === g.key)]).filter(([, l]) => l.length)
+    const body = groups.map(([g, l]) => `**${EN(g.title)}**\n${l.map(line).join('\n')}`).join('\n\n')
     return {
       embeds: [{
         title: '🏷️ Roles', color: 0x9146ff,
         description: (options.length
-          ? `Pick a role in the menu to get it — pick it again to drop it. Only you see the answer.\n\n${lines.join('\n')}`
+          ? `Pick a role in a menu to get it — pick it again to drop it. Only you see the answer.\n\n${body}`
           : 'No roles to pick right now.').slice(0, 4000),
       }],
-      components: options.length ? [row(rolesMenu('roles:pub', options, 'Pick a role to get it or drop it', { emojis }))] : [],
+      components: options.length ? rolesMenus('roles:pub', options, EN, { emojis }) : [],
       allowed_mentions: { parse: [] },
     }
   }
@@ -2975,7 +3316,7 @@ export function startDiscordBridge({
       }
       const have = new Set(i.member?.roles || [])
       const content = `${t('roles_intro')}${asked ? `\n${t('public_admin_only')}` : ''}`
-      const menu = (emojis) => [row(rolesMenu('roles:me', options, t('roles_pick'), { have, emojis }))]
+      const menu = (emojis) => rolesMenus('roles:me', options, t, { have, emojis })
       return { content, components: menu(true), plain: { content, components: menu(false) } }
     })
   }
@@ -3013,7 +3354,7 @@ export function startDiscordBridge({
     const content = `${t('roles_intro')}\n${r.text}`
     // Options illisibles (erreur) : le menu d'avant, recoché.
     const menu = (emojis) => (!r.options ? recheck(i.message?.components, r.have)
-      : r.options.length ? [row(rolesMenu('roles:me', r.options, t('roles_pick'), { have: r.have, emojis }))] : [])
+      : rolesMenus('roles:me', r.options, t, { have: r.have, emojis }))
     await withEmojiFallback((emojis) => rest('PATCH', `/webhooks/${st.app}/${i.token}/messages/@original`, { content, components: menu(emojis), allowed_mentions: { parse: [] } }))
       .catch((e) => log.warn(`Discord bridge: roles menu not updated (${e.message})`))
   }
@@ -3039,7 +3380,10 @@ export function startDiscordBridge({
       // parmi eux ceux qu'elle a cochés ou décochés — un rôle reçu ou perdu
       // ailleurs depuis l'affichage du menu reste tel quel. Coches du menu
       // illisibles : comparées à ses rôles actuels.
-      const shown = menuOptions(i.message?.components)
+      // Le menu touché seulement : les autres (un par groupe) ne disent rien
+      // des rôles de celui-ci.
+      const own = (i.message?.components || []).flatMap((r) => r.components || []).find((c) => c.custom_id === i.data?.custom_id)
+      const shown = own ? own.options || [] : menuOptions(i.message?.components)
       const ticked = shown.some((o) => 'default' in o) ? new Set(shown.filter((o) => o.default).map((o) => o.value)) : have
       const asked = new Set((toggle ? [...picked] : shown.map((o) => o.value).filter((id) => picked.has(id) !== ticked.has(id)))
         .filter((id) => offered.has(id)))
@@ -3118,7 +3462,7 @@ export function startDiscordBridge({
       // Déjà proposé : description et emoji remplacés s'ils sont donnés.
       const entry = { ...list[at], id: role, ...(description ? { description } : {}), ...(emoji ? { emoji } : {}) }
       const next = at >= 0 ? list.map((r, n) => (n === at ? entry : r)) : [...list, entry]
-      const ids = new Set([...SETUP_ROLES.map((s) => settings[s.setting]).filter(Boolean), ...next.map((r) => r.id)])
+      const ids = new Set([...SETUP_ROLES.filter((s) => !s.group).map((s) => settings[s.setting]).filter(Boolean), ...next.map((r) => r.id)])
       if (ids.size > 25) return t('rc_full')
       await save(next, `${at >= 0 ? 'update' : 'add'} ${role}`)
       return t(at >= 0 ? 'rc_updated' : 'rc_added', role)
@@ -3303,20 +3647,25 @@ export function startDiscordBridge({
 
   /** /help : les commandes utiles à la personne (celles du développeur, à
    *  lui seul). */
-  function helpText(i, user) {
+  function helpMessage(i, user) {
     const t = lang(i.locale)
     const admin = isAdmin(user.id)
     const cmd = (c) => c.split(' · ').map((x) => `\`${x}\``).join(' · ')
     const mine = [
       ['/bug', 'h_bug'], ['/idea', 'h_idea'], ['/suggest', 'h_suggest'], ['/suggestions top', 'h_suggestions'], ['/my-reports', 'h_my_reports'],
-      ['/live', 'h_live'], ['/top', 'h_top'],
+      ['/live', 'h_live'], ['/top', 'h_top'], ['/live-alerts', 'h_live_alerts'], ['/higher-lower', 'h_higher_lower'], ['/emote', 'h_emote'],
       ...(admin || offeredRoles().length ? [['/roles', 'h_roles']] : []),
       ...(admin || st.settings.announcementsRole ? [['/release-pings', 'h_release_pings']] : []),
       ['/download', 'h_download'], ['/version', 'h_version'], ['/help', 'h_help'],
     ]
     const lines = [t('h_head'), ...mine.map(([c, k]) => `${cmd(c)} — ${t(k)}`), `-# ${t('h_replies')}`]
-    if (admin) lines.push('', t('h_admin'), ...ADMIN_HELP.map(([c, k]) => `${cmd(c)} — ${t(k)}`))
-    return lines.join('\n').slice(0, 1900)
+    // Commandes du développeur dans un encadré (4 096 caractères) : à la
+    // suite du message (2 000 au plus), les dernières étaient coupées.
+    const own = admin ? [t('h_admin'), ...ADMIN_HELP.map(([c, k]) => `${cmd(c)} — ${t(k)}`)] : []
+    return {
+      content: lines.join('\n').slice(0, 1900),
+      ...(own.length ? { embeds: [{ color: 0x9146ff, description: own.join('\n').slice(0, 4000) }] } : {}),
+    }
   }
 
   // ── Petits outils des commandes pour tous ───────────────────────────────
@@ -4212,10 +4561,11 @@ export function startDiscordBridge({
     // (les réponses de /download, /roles et /help, pour soi seul).
     if (kind === 'top') return liveCommand(i, user, i.data?.values?.[0])
     if (kind === 'sv') return onVote(i, user, a)
+    if (kind === 'hl') return hlComponent(i, user, a, b)
     if (kind === 'wl') {
       if (a === 'dl') return downloadCommand(i, user)
       if (a === 'roles') return rolesCommand(i, user)
-      return respond(i, 4, { flags: 64, content: helpText(i, user), allowed_mentions: { parse: [] } })
+      return respond(i, 4, { flags: 64, ...helpMessage(i, user), allowed_mentions: { parse: [] } })
     }
     if (!isAdmin(user.id)) return adminOnly(i)
     const thread = i.channel_id
@@ -4304,9 +4654,13 @@ export function startDiscordBridge({
         try {
           const draft = await kvGet(`draft_${b}`).catch(() => null)
           if (!draft?.text) return editOriginal(i, { content: `${head}\n❌ This draft expired.`, components: [] })
-          const role = st.settings.announcementsRole
-          await sendChunks(channel, (role ? `<@&${role}> ` : '') + draft.text,
-            { allowed_mentions: role ? { parse: [], roles: [role] } : { parse: [] } })
+          // Rôle des sorties, et celui de la plateforme des notes de version
+          // (« iPhone & iPad », « Website »…) ; résultats d'un sondage : le
+          // rôle des sorties seul.
+          const platform = DRAFT_PLATFORM_ROLE[String(b).split('-')[0]]
+          const roles = [...new Set([st.settings.announcementsRole, platform && st.settings[platform]].filter(Boolean))]
+          await sendChunks(channel, (roles.length ? `${roles.map((r) => `<@&${r}>`).join(' ')} ` : '') + draft.text,
+            { allowed_mentions: { parse: [], roles } })
           await kvSet(`draft_${b}`, null, 60).catch(() => {})
           call({ action: 'audit', what: 'release.publish', detail: b, by: byOf(user) }).catch(() => {})
           await editOriginal(i, { content: `${head}\n✅ Published in <#${channel}>.`, components: [] })
@@ -5116,13 +5470,459 @@ export function startDiscordBridge({
     try {
       const r = await call({ action: 'forget', who: f.who, dry: false, by: byOf(user) })
       reads.clear()
+      // Ce que le bot garde lui-même (alertes de live, score, rôles gagnés).
+      const own = await forgetMember(String(f.who).match(/\d{15,25}/g) || []).catch(() => 0)
       // Posts Discord des retours et cartes des suggestions : dans la
       // corbeille du Worker, vidée tout de suite.
       if (r.found?.posts || r.found?.cards) emptyTrash().catch((e) => log.warn(`Discord bridge: trash — ${e.message}`))
-      await editOriginal(i, { content: `✅ **Erased.**\n${forgetSummary(r)}`.slice(0, 1900), components: [] })
+      await editOriginal(i, { content: `✅ **Erased.**\n${forgetSummary(r)}${own ? `\n${own} item(s) kept by the bot itself (live alerts, game score, earned roles)` : ''}`.slice(0, 1900), components: [] })
     } catch (e) {
       await editOriginal(i, { content: `❌ Not erased: ${forgetError(e)}`, components: [] })
     }
+  }
+
+  // ── Rôles gagnés : Bug Hunter, Idea Maker ───────────────────────────────
+  // Un /bug (Bug Hunter) ou une idée, suggestion comprise (Idea Maker),
+  // envoyés depuis Discord qui passent à « Fait » : le rôle va à leur
+  // auteur. `awards_given` (mémoire du Worker) retient ceux déjà donnés :
+  // rien n'est redemandé, et un rôle retiré à la main ne revient pas.
+  const AWARD_ROLES = Object.fromEntries(SERVER_ROLES.filter((r) => r.award).map((r) => [r.award, r.setting]))
+  let awarded = null   // « membre:genre », relus une fois
+  const award = (du, kind) => serial('awards', () => awardOnce(String(du || ''), kind))
+  async function awardOnce(du, kind) {
+    const role = st.settings[AWARD_ROLES[kind]]
+    if (!role || !st.guild || !/^\d{5,25}$/.test(du)) return false
+    awarded ||= new Set((await kvGet('awards_given')) || [])
+    const key = `${du}:${kind}`
+    if (awarded.has(key)) return false
+    const problem = roleProblem(await guildFacts(st.guild), st.guild, role)
+    if (problem) { log.warn(`Discord bridge: earned role not given — ${problem}`); return false }
+    try {
+      await rest('PUT', `/guilds/${st.guild}/members/${du}/roles/${role}`)
+    } catch (e) {
+      // Plus sur le serveur : noté comme donné, sans nouvel essai.
+      if (e.code !== 10007 && e.code !== 10013) { log.warn(`Discord bridge: earned role not given to ${du} (${e.message})`); return false }
+    }
+    awarded.add(key)
+    await kvSet('awards_given', [...awarded].slice(-5000)).catch((e) => log.warn(`Discord bridge: earned roles memory — ${e.message}`))
+    return true
+  }
+  /** Retours faits plus tôt : leurs auteurs Discord reçoivent leur rôle (à
+   *  la connexion, et après /roles-setup). */
+  async function awardBackfill() {
+    if (!st.guild || !Object.values(AWARD_ROLES).some((s) => st.settings[s])) return
+    const r = await call({ action: 'awards' })
+    let n = 0
+    for (const a of r?.awards || []) if (await award(a.du, a.kind)) n++
+    if (n) log.log(`Discord bridge: ${n} earned role(s) given for reports done earlier`)
+  }
+
+  // ── Entraide : une question sans réponse depuis 30 min mentionne Helper ──
+  // Dans le salon choisi avec /setup « Support ». Une question : le message
+  // d'un membre (ni Helper ni le développeur) qui ne répond pas à quelqu'un
+  // d'autre ; elle a sa réponse quand un Helper écrit, ou quand quelqu'un
+  // d'autre y répond ou mentionne son auteur. Une mention groupée par
+  // passage (chaque minute), en mémoire seulement.
+  const SUPPORT_WAIT = 30 * 60_000
+  const supportQuestions = new Map()   // message → { author, channel, at }
+  function noteSupport(m) {
+    const helper = st.settings.helperRole
+    if (!helper || m.author?.bot || m.webhook_id || (m.type !== 0 && m.type !== 19)) return
+    const author = m.author?.id
+    const staff = isAdmin(author) || (m.member?.roles || []).includes(helper)
+    const to = m.referenced_message
+    const mentioned = new Set((m.mentions || []).map((u) => u.id))
+    for (const [id, q] of supportQuestions) {
+      if (q.author !== author && (staff || to?.id === id || mentioned.has(q.author))) supportQuestions.delete(id)
+    }
+    if (staff || (to && to.author?.id !== author)) return
+    if ([...supportQuestions.values()].some((q) => q.author === author)) return
+    if (supportQuestions.size >= 200) supportQuestions.delete(supportQuestions.keys().next().value)
+    supportQuestions.set(m.id, { author, channel: m.channel_id, at: Date.now() })
+  }
+  async function checkSupport() {
+    if (!supportQuestions.size) return
+    const now = Date.now()
+    const due = [...supportQuestions].filter(([, q]) => now - q.at >= SUPPORT_WAIT)
+    for (const [id] of due) supportQuestions.delete(id)
+    const helper = st.settings.helperRole
+    const waiting = due.filter(([, q]) => q.channel === st.settings.support)
+    if (!helper || !waiting.length) return
+    await rest('POST', `/channels/${st.settings.support}/messages`, {
+      content: `🆘 <@&${helper}> ${waiting.length > 1 ? `${waiting.length} questions here have` : 'this question has'} been waiting for 30 minutes — can someone help?`,
+      message_reference: { message_id: waiting[0][0], fail_if_not_exists: false },
+      allowed_mentions: { parse: [], roles: [helper], replied_user: false },
+    }).catch((e) => log.warn(`Discord bridge: Helper ping not sent (${e.message})`))
+  }
+
+  // ── Lives du jeu et du statut ───────────────────────────────────────────
+  // Le top 30 mondial et celui de quelques langues (Twitch ne donne pas
+  // plus loin sans jeton d'intégrité) : des chiffres de toutes tailles.
+  // Gardés 5 min, une lecture à la fois.
+  const POOL_LANGUAGES = ['', 'es', 'pt', 'de', 'fr', 'ru', 'ja', 'ko']
+  const pool = { at: 0, list: [], loading: null }
+  function streamPool() {
+    if (Date.now() - pool.at < 5 * 60_000 && pool.list.length) return Promise.resolve(pool.list)
+    pool.loading ||= Promise.allSettled(POOL_LANGUAGES.map((language) => call({ action: 'top', first: 30, language })))
+      .then((parts) => {
+        const seen = new Map()
+        for (const p of parts) for (const s of p.status === 'fulfilled' ? p.value?.streams || [] : []) if (!seen.has(s.login)) seen.set(s.login, s)
+        if (seen.size) Object.assign(pool, { at: Date.now(), list: [...seen.values()].sort((a, b) => b.viewers - a.viewers) })
+        return pool.list
+      })
+      .finally(() => { pool.loading = null })
+    return pool.loading
+  }
+
+  // ── Statut du bot : il « regarde » le plus gros live du moment ──────────
+  // Relu toutes les 10 min ; envoyé à l'identification et à chaque
+  // changement (op 3 de la passerelle).
+  let activity = null
+  const presence = () => ({ since: null, status: 'online', afk: false, activities: activity ? [{ name: activity, type: 3 }] : [] })
+  const compactNum = new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 })
+  async function updatePresence() {
+    const top = (await streamPool())[0]
+    const next = top ? `${top.name} ad-free · ${compactNum.format(top.viewers)} viewers`.slice(0, 120) : null
+    if (!next || next === activity) return
+    activity = next
+    send(3, presence())
+  }
+
+  // ── /higher-lower : qui a le plus de spectateurs ? ──────────────────────
+  // Une partie par personne, pour elle seule (le message se met à jour à
+  // chaque réponse) : deux lives du stock, d'écart de plus en plus serré à
+  // mesure que la série monte. La manche est dans les boutons : un double
+  // appui ne compte pas deux fois. Meilleures séries : `hl_scores`
+  // ({ membre: { b, n, at } }, les 300 meilleures).
+  const HL_TTL = 15 * 60_000
+  const hlGames = new Map()   // partie → { id, user, a, b, streak, at }
+  /** Deux lives : ×4 d'écart au plus au début, ×1,15 vers 8 d'affilée. */
+  function hlPair(list, streak, avoid = []) {
+    const max = Math.max(1.15, 4 - streak * 0.35)
+    const any = () => list[Math.floor(Math.random() * list.length)]
+    let closest = null
+    for (let n = 0; n < 200; n++) {
+      const a = any()
+      const b = any()
+      if (!a || !b || a.login === b.login || a.viewers === b.viewers || avoid.includes(a.login) || avoid.includes(b.login)) continue
+      const ratio = Math.max(a.viewers, b.viewers) / Math.max(1, Math.min(a.viewers, b.viewers))
+      if (ratio <= max) return [a, b]
+      if (!closest || ratio < closest.ratio) closest = { ratio, pair: [a, b] }
+    }
+    return closest?.pair || null
+  }
+  function hlMessage(t, g, result = '') {
+    const card = (s, color) => ({
+      color, author: { name: s.name, url: `${site}/${s.login}`, ...(s.avatar ? { icon_url: s.avatar } : {}) },
+      description: `${md(String(s.title || '').slice(0, 140)) || '—'}${s.game ? `\n🎮 ${md(s.game)}` : ''}`,
+      ...(s.thumb ? { thumbnail: { url: s.thumb } } : {}),
+    })
+    const choice = (s, side) => ({ type: 2, style: 1, label: String(s.name).slice(0, 80), custom_id: `hl:${g.id}:${side}${g.streak}` })
+    return {
+      content: [result, `🎮 **Higher or Lower** · 🔥 ${t('hl_streak', g.streak)}`, t('hl_q')].filter(Boolean).join('\n'),
+      embeds: [card(g.a, 0x9146ff), card(g.b, 0x3b82f6)],
+      components: [row(choice(g.a, 'a'), choice(g.b, 'b'))],
+      allowed_mentions: { parse: [] },
+    }
+  }
+  async function hlStart(i, user) {
+    const t = lang(i.locale)
+    const list = await streamPool().catch(() => [])
+    const pair = list.length >= 4 ? hlPair(list, 0) : null
+    if (!pair) return t('hl_unavailable')
+    const now = Date.now()
+    for (const [k, g] of hlGames) if (now - g.at > HL_TTL) hlGames.delete(k)
+    const g = { id: crypto.randomUUID().slice(0, 8), user: user.id, a: pair[0], b: pair[1], streak: 0, at: now }
+    hlGames.set(g.id, g)
+    return hlMessage(t, g)
+  }
+  /** Réponse `pick` (« a3 » : le premier, à la manche 3) ; null si la
+   *  manche est déjà jouée (le message reste tel quel). */
+  async function hlAnswer(t, user, id, pick, channel) {
+    const g = hlGames.get(id)
+    if (!g || g.user !== user.id || Date.now() - g.at > HL_TTL) { hlGames.delete(id); return t('hl_expired') }
+    if (Number(pick.slice(1)) !== g.streak) return null
+    const [mine, other] = pick[0] === 'a' ? [g.a, g.b] : [g.b, g.a]
+    const right = mine.viewers > other.viewers
+    const counts = `**${md(g.a.name)}** ${t.num(g.a.viewers)} · **${md(g.b.name)}** ${t.num(g.b.viewers)}`
+    if (right) {
+      g.streak++
+      const pair = hlPair(await streamPool().catch(() => []), g.streak, [g.a.login, g.b.login])
+      if (pair) {
+        [g.a, g.b] = pair
+        g.at = Date.now()
+        return hlMessage(t, g, t('hl_right', counts))
+      }
+    }
+    hlGames.delete(id)
+    const r = await hlRecord(user, g.streak, channel)
+    return {
+      content: [t(right ? 'hl_right' : 'hl_wrong', counts), t('hl_over', g.streak, r.best), r.newBest ? t('hl_new_best') : ''].filter(Boolean).join('\n'),
+      embeds: [],
+      components: [row(button(t('hl_again'), 'hl:new', 1), button(t('hl_board'), 'hl:top'))],
+      allowed_mentions: { parse: [] },
+    }
+  }
+  /** Série finie : le record de la personne gardé s'il est battu ; un
+   *  record du serveur (5 au moins) est annoncé dans le salon, sans mention. */
+  function hlRecord(user, streak, channel) {
+    return serial('hl_scores', async () => {
+      const scores = (await kvGet('hl_scores').catch(() => null)) || {}
+      const mine = scores[user.id]?.b || 0
+      if (streak <= mine) return { best: mine, newBest: false }
+      const top = Math.max(0, ...Object.values(scores).map((s) => s?.b || 0))
+      scores[user.id] = { b: streak, n: String(user.global_name || user.username || '').slice(0, 32), at: Date.now() }
+      const kept = Object.fromEntries(Object.entries(scores).sort((a, b) => b[1].b - a[1].b).slice(0, 300))
+      await kvSet('hl_scores', kept).catch((e) => log.warn(`Discord bridge: game scores not saved (${e.message})`))
+      if (streak > top && streak >= 5 && channel) say(channel, `🏆 <@${user.id}> set a new **Higher or Lower** record: **${streak}** in a row!`)
+      return { best: streak, newBest: true }
+    })
+  }
+  async function hlBoard(t, user) {
+    const scores = (await kvGet('hl_scores').catch(() => null)) || {}
+    const list = Object.entries(scores).map(([id, s]) => ({ id, ...s })).filter((s) => s.b > 0)
+      .sort((a, b) => b.b - a.b || (a.at || 0) - (b.at || 0))
+    if (!list.length) return t('hl_board_none')
+    const medal = ['🥇', '🥈', '🥉']
+    const lines = list.slice(0, 10).map((s, n) => `${medal[n] || `**${n + 1}.**`} ${md(s.n) || '?'} — **${s.b}**`)
+    const me = list.findIndex((s) => s.id === user.id)
+    return [t('hl_board_head'), ...lines, ...(me >= 0 ? [`-# ${t('hl_you', me + 1, list[me].b)}`] : [])].join('\n')
+  }
+  /** Boutons du jeu : une réponse (hl:<partie>:<a|b><manche>), Rejouer, Classement. */
+  async function hlComponent(i, user, a, b) {
+    const t = lang(i.locale)
+    if (a === 'top') return deferred(i, () => hlBoard(t, user))
+    await respond(i, 6)
+    let out = a === 'new' ? await hlStart(i, user) : await hlAnswer(t, user, a, String(b || ''), i.channel_id)
+    if (out === null) return
+    if (typeof out === 'string') out = { content: out, embeds: [], components: [] }
+    await editOriginal(i, out)
+  }
+
+  // ── /emote : une emote 7TV postée dans le salon ─────────────────────────
+  // GQL v3 de 7TV (publique) ; ni privées ou non listées, ni marquées
+  // contenu sexuel, épilepsie, « edgy » ou refusées sur Twitch. GIF si
+  // animée, PNG sinon (Discord n'anime pas le WebP partout). Recherches
+  // gardées 10 min, emotes vues gardées pour l'envoi (autocomplétion) ;
+  // une emote toutes les 10 s par personne.
+  const SEVENTV_GQL = 'https://7tv.io/v3/gql'
+  const EMOTE_FIELDS = 'id name animated flags listed owner { username display_name } host { files { name format } }'
+  const EMOTE_HIDDEN = (1 << 0) | (1 << 16) | (1 << 17) | (1 << 18) | (1 << 24)
+  const EMOTE_COOLDOWN = 10_000
+  const emoteSearches = new Map()   // texte → { at, value: promesse }
+  const emoteCache = new Map()      // id → emote
+  const emotePosts = new Map()      // personne → dernière emote postée
+  async function seventv(query, variables) {
+    const r = await fetch(SEVENTV_GQL, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'User-Agent': 'TwitchUnblock-relay' },
+      body: JSON.stringify({ query, variables }), signal: AbortSignal.timeout(2500),
+    })
+    if (!r.ok) throw new Error(`7TV → ${r.status}`)
+    return r.json()
+  }
+  /** Emote prête à poster, ou null (cachée, ou sans GIF ni PNG). */
+  function emoteOf(e) {
+    if (!e?.listed || Number(e.flags) & EMOTE_HIDDEN || !/^[0-9A-Za-z]{20,30}$/.test(String(e.id || ''))) return null
+    const files = new Set((e.host?.files || []).map((f) => f.name))
+    const file = (e.animated ? ['4x.gif', '3x.gif', '2x.gif'] : ['4x.png', '3x.png', '2x.png']).find((f) => files.has(f))
+    if (!file) return null
+    const out = {
+      id: e.id, name: String(e.name || '').slice(0, 100), animated: Boolean(e.animated),
+      owner: String(e.owner?.display_name || e.owner?.username || '').slice(0, 40), url: `https://cdn.7tv.app/emote/${e.id}/${file}`,
+    }
+    if (emoteCache.size > 2000) emoteCache.clear()
+    emoteCache.set(out.id, out)
+    return out
+  }
+  function searchEmotes(query) {
+    const key = query.toLowerCase()
+    const now = Date.now()
+    const hit = emoteSearches.get(key)
+    if (hit && now - hit.at < 10 * 60_000) return hit.value
+    if (emoteSearches.size > 500) emoteSearches.clear()
+    const value = seventv(`query($q: String!) { emotes(query: $q, page: 1, limit: 25, filter: { exact_match: false, case_sensitive: false, ignore_tags: true }) { items { ${EMOTE_FIELDS} } } }`, { q: query })
+      .then((j) => (j?.data?.emotes?.items || []).map(emoteOf).filter(Boolean))
+    emoteSearches.set(key, { at: now, value })
+    value.catch(() => { if (emoteSearches.get(key)?.value === value) emoteSearches.delete(key) })
+    return value
+  }
+  async function emoteAutocomplete(i) {
+    const typed = String(i.data?.options?.find((o) => o.focused)?.value || '').trim().slice(0, 100)
+    const list = typed.length < 2 ? [] : await Promise.race([searchEmotes(typed).catch(() => []), sleep(2000).then(() => [])])
+    return respond(i, 8, {
+      choices: list.slice(0, 25).map((e) => ({ name: `${e.name}${e.animated ? ' · animated' : ''}${e.owner ? ` · by ${e.owner}` : ''}`.slice(0, 100), value: `7tv:${e.id}` })),
+    })
+  }
+  async function emoteCommand(i, user) {
+    const t = lang(i.locale)
+    const raw = String(opt(i, 'name') || '').trim().slice(0, 100)
+    const now = Date.now()
+    if (now - (emotePosts.get(user.id) || 0) < EMOTE_COOLDOWN) return respond(i, 4, quiet(t('em_wait')))
+    let e = null
+    try {
+      const id = raw.match(/^7tv:([0-9A-Za-z]{20,30})$/)?.[1]
+      if (id) e = emoteCache.get(id) || emoteOf((await seventv(`query($id: ObjectID!) { emote(id: $id) { ${EMOTE_FIELDS} } }`, { id }))?.data?.emote)
+      else if (raw) {
+        const list = await searchEmotes(raw)
+        e = list.find((x) => x.name === raw) || list.find((x) => x.name.toLowerCase() === raw.toLowerCase()) || null
+      }
+    } catch {
+      return respond(i, 4, quiet(t('em_error')))
+    }
+    if (!e) return respond(i, 4, quiet(t('em_none', md(raw.replace(/^7tv:/, '')))))
+    if (emotePosts.size > 5000) for (const [k, at] of emotePosts) if (now - at >= EMOTE_COOLDOWN) emotePosts.delete(k)
+    emotePosts.set(user.id, now)
+    return respond(i, 4, {
+      embeds: [{ color: 0x9146ff, image: { url: e.url }, footer: { text: `${e.name} · 7TV${e.owner ? ` · by ${e.owner}` : ''}` } }],
+      allowed_mentions: { parse: [] },
+    })
+  }
+
+  // ── /live-alerts : un message privé quand une chaîne passe en live ──────
+  // Abonnements dans `live_alerts` ({ membre: { c: [chaînes], l: langue } }),
+  // 25 chaînes par membre, 500 en tout. Toutes les 2 min, l'état de toutes
+  // les chaînes suivies (action lives du Worker, 100 par appel) ; une alerte
+  // par nouveau live, reconnu à son heure de début — `live_seen` garde la
+  // dernière de chaque chaîne, d'un redémarrage à l'autre. Un live relancé
+  // dans les 30 min n'alerte pas de nouveau.
+  const ALERTS_PER_MEMBER = 25
+  const ALERTS_MAX_CHANNELS = 500
+  const ALERT_AGAIN = 30 * 60_000
+  let alerts = null     // relus une fois
+  let liveSeen = null   // chaîne → début de son live ('' : hors ligne)
+  const alertedAt = new Map()
+  const loadAlerts = async () => (alerts ||= (await kvGet('live_alerts')) || {})
+  const alertChannels = () => [...new Set(Object.values(alerts || {}).flatMap((a) => a?.c || []))]
+  /** Abonnements changés l'un après l'autre, puis rangés. */
+  const editAlerts = (fn) => serial('live_alerts', async () => {
+    await loadAlerts()
+    fn(alerts)
+    await kvSet('live_alerts', alerts)
+  })
+  async function dmMember(userId, payload) {
+    let ch = dmChannels.get(userId)
+    if (!ch) {
+      ch = (await rest('POST', '/users/@me/channels', { recipient_id: userId }))?.id
+      if (!ch) throw new Error('no DM channel')
+      dmChannels.set(userId, ch)
+    }
+    return rest('POST', `/channels/${ch}/messages`, { allowed_mentions: { parse: [] }, ...payload })
+  }
+  async function liveAlertsCommand(i, user) {
+    const t = lang(i.locale)
+    const sub = i.data?.options?.[0]
+    const arg = (name) => sub?.options?.find((o) => o.name === name)?.value
+    await loadAlerts()
+    const mine = alerts[user.id]?.c || []
+    if (sub?.name === 'list') {
+      if (!mine.length) return t('la_none')
+      return fit([t('la_head'), ...mine.map((l) => `- [${md(l)}](${site}/${l})`)])
+    }
+    const login = channelName(arg('channel'))
+    if (!login) return t('live_bad')
+    if (sub?.name === 'remove') {
+      if (!mine.includes(login)) return t('la_not_followed', md(login))
+      await editAlerts((all) => {
+        const c = (all[user.id]?.c || []).filter((x) => x !== login)
+        if (c.length) all[user.id] = { ...all[user.id], c }
+        else delete all[user.id]
+      })
+      return t('la_removed', md(login))
+    }
+    if (mine.includes(login)) return t('la_already', md(login))
+    if (mine.length >= ALERTS_PER_MEMBER) return t('la_full', ALERTS_PER_MEMBER)
+    if (!alertChannels().includes(login) && alertChannels().length >= ALERTS_MAX_CHANNELS) return t('la_server_full')
+    let d
+    try { d = await call({ action: 'live', login }) } catch (e) { return lookupError(t, e) }
+    if (!d?.found) return t('live_none', md(login))
+    // Premier abonnement : un message privé d'essai ; refusé, rien n'est gardé.
+    if (!mine.length && !(await dmMember(user.id, { content: t('la_dm_hello', md(d.name)) }).then(() => true, () => false))) return t('la_dm_off')
+    // Un live déjà en cours n'alerte pas.
+    liveSeen ||= (await kvGet('live_seen').catch(() => null)) || {}
+    liveSeen[d.login] = d.live?.startedAt || ''
+    await editAlerts((all) => {
+      all[user.id] = { c: [...new Set([...(all[user.id]?.c || []), d.login])].slice(0, ALERTS_PER_MEMBER), l: String(i.locale || 'en').slice(0, 10) }
+    })
+    kvSet('live_seen', liveSeen).catch(() => {})
+    return t(d.live ? 'la_added_live' : 'la_added', md(d.name))
+  }
+  async function alertsAutocomplete(i, user) {
+    const typed = String((i.data?.options?.[0]?.options || []).find((o) => o.focused)?.value || '').toLowerCase()
+    const all = await loadAlerts().catch(() => ({}))
+    const mine = all[user.id]?.c || []
+    return respond(i, 8, { choices: mine.filter((l) => l.includes(typed)).slice(0, 25).map((l) => ({ name: l, value: l })) })
+  }
+  async function watchLiveAlerts() {
+    await loadAlerts()
+    const channels = alertChannels().slice(0, ALERTS_MAX_CHANNELS)
+    if (!channels.length) return
+    liveSeen ||= (await kvGet('live_seen').catch(() => null)) || {}
+    const found = new Map()
+    for (let n = 0; n < channels.length; n += 100) {
+      const r = await call({ action: 'lives', logins: channels.slice(n, n + 100) })
+        .catch((e) => { log.warn(`Discord bridge: live alerts — ${e.message}`); return null })
+      for (const c of r?.channels || []) found.set(c.login, c)
+    }
+    if (!found.size) return
+    const now = Date.now()
+    const news = []
+    let changed = false
+    for (const login of channels) {
+      const c = found.get(login)
+      if (!c) continue
+      const started = c.live?.startedAt || ''
+      const before = liveSeen[login]
+      if (before === started) continue
+      liveSeen[login] = started
+      changed = true
+      if (!started) continue
+      // Chaîne jamais vue (mémoire perdue) : seulement un live tout juste lancé.
+      if (before === undefined && now - Date.parse(started) > 10 * 60_000) continue
+      if (now - (alertedAt.get(login) || 0) < ALERT_AGAIN) continue
+      alertedAt.set(login, now)
+      news.push(c)
+    }
+    for (const login of Object.keys(liveSeen)) if (!channels.includes(login)) { delete liveSeen[login]; changed = true }
+    if (changed) await kvSet('live_seen', liveSeen).catch((e) => log.warn(`Discord bridge: live alerts memory — ${e.message}`))
+    for (const c of news) await notifyLive(c)
+  }
+  /** Un nouveau live : un message privé à chacun de ses abonnés, dans sa
+   *  langue — l'encadré de /live, avec ses boutons. */
+  async function notifyLive(c) {
+    for (const [member, a] of Object.entries(alerts || {})) {
+      if (!a?.c?.includes(c.login)) continue
+      const t = lang(a.l)
+      const msg = liveMessage(t, { found: true, lastLive: null, ...c })
+      await dmMember(member, { content: t('la_now_live', md(c.name)), ...(typeof msg === 'string' ? {} : msg) })
+        .catch((e) => log.warn(`Discord bridge: live alert to ${member} not sent (${e.message})`))
+      await sleep(300)
+    }
+  }
+
+  /** /forget-user : ce que le bot garde lui-même de ces membres (alertes de
+   *  live, score du jeu, rôles gagnés déjà donnés) part aussi. Rend le
+   *  nombre d'éléments effacés. */
+  async function forgetMember(ids) {
+    if (!ids.length) return 0
+    let n = 0
+    await editAlerts((all) => { for (const id of ids) if (all[id]) { delete all[id]; n++ } })
+    await serial('hl_scores', async () => {
+      const s = (await kvGet('hl_scores')) || {}
+      const gone = ids.filter((id) => s[id])
+      if (!gone.length) return
+      for (const id of gone) delete s[id]
+      await kvSet('hl_scores', s)
+      n += gone.length
+    })
+    await serial('awards', async () => {
+      awarded ||= new Set((await kvGet('awards_given')) || [])
+      const gone = [...awarded].filter((x) => ids.includes(x.split(':')[0]))
+      if (!gone.length) return
+      for (const x of gone) awarded.delete(x)
+      await kvSet('awards_given', [...awarded])
+      n += gone.length
+    })
+    return n
   }
 
   /** État de la passerelle pour /health du relais : `ok` faux quand le bot est
@@ -5155,8 +5955,12 @@ export function startDiscordBridge({
     every(15 * 60_000, syncTodoMirror)
     // Cartes marquées depuis l'outil du développeur (todo_actions).
     every(TODO_ACTIONS_EVERY, watchTodoActions)
+    // Questions sans réponse (Helper), alertes de live, statut du bot.
+    every(60_000, checkSupport)
+    every(2 * 60_000, watchLiveAlerts)
+    every(10 * 60_000, updatePresence)
     const first = setTimeout(() => {
-      for (const fn of [watchReleases, watchActions, watchHealth, tidy, watchOps, watchQuotas, watchVersions]) fn().catch((e) => log.warn(`Discord bridge: ${fn.name} — ${e.message}`))
+      for (const fn of [watchReleases, watchActions, watchHealth, tidy, watchOps, watchQuotas, watchVersions, watchLiveAlerts]) fn().catch((e) => log.warn(`Discord bridge: ${fn.name} — ${e.message}`))
     }, 30_000)
     first.unref?.()
     intervals.push(first)
@@ -5186,6 +5990,7 @@ export function startDiscordBridge({
           log.warn('Discord bridge: the bot isn’t on the webhook’s server — invite it (README, “Discord bot”)')
         }
         await registerCommands()
+        updatePresence().catch(() => {})
         // Copie de la liste à faire relue à chaque connexion (écrite si elle a changé).
         syncTodoMirror()
         break
@@ -5198,6 +6003,8 @@ export function startDiscordBridge({
           // Messages des salons de votes postés pendant l'arrêt.
           for (const channel of st.settings.votes || []) serial(channel, () => catchUpVotes(channel))
           await onGuild(d)
+          // Retours faits plus tôt : rôles gagnés donnés après coup.
+          awardBackfill().catch((e) => log.warn(`Discord bridge: earned roles — ${e.message}`))
         }
         break
       case 'CHANNEL_UPDATE':
@@ -5227,6 +6034,9 @@ export function startDiscordBridge({
         break
       case 'MESSAGE_CREATE':
         await serial(d.channel_id, () => onMessage(d))
+        break
+      case 'MESSAGE_DELETE':
+        supportQuestions.delete(d.id)
         break
       // Seulement avec GUILD_MEMBERS (bienvenue choisie avec /setup).
       case 'GUILD_MEMBER_ADD':
@@ -5281,7 +6091,7 @@ export function startDiscordBridge({
         else {
           // GUILD_MEMBERS (privilégiée) seulement pour la bienvenue.
           intents = INTENTS | (wantsMembers() ? GUILD_MEMBERS : 0)
-          send(2, { token, intents, properties: { os: 'linux', browser: 'twitchunblock-relay', device: 'twitchunblock-relay' } })
+          send(2, { token, intents, presence: presence(), properties: { os: 'linux', browser: 'twitchunblock-relay', device: 'twitchunblock-relay' } })
         }
         break
       }
