@@ -841,8 +841,11 @@ Helper or the developer writes, or when someone else replies to it or
 mentions its author. Kept in memory only: a restart forgets the questions
 waiting.
 
-**Bot status**: the bot shows it's watching the biggest live of the moment
-("Watching xQc ad-free · 21.5K viewers"), read again every 10 minutes.
+**Bot status**: a purple "streaming" badge — Discord only shows it with a
+twitch.tv link, the one of the biggest live of the moment (the Watch button
+of the bot's profile opens it) — and a line that changes every 2 minutes:
+that live ("🔴 xQc · 21.5K viewers", read again every 10 minutes at most),
+`/live-alerts`, then the website.
 
 `/forget-user` also erases what the bot keeps itself about the person: live
 alerts, game score, earned roles given.

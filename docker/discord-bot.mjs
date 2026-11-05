@@ -5574,16 +5574,28 @@ export function startDiscordBridge({
     return pool.loading
   }
 
-  // ── Statut du bot : il « regarde » le plus gros live du moment ──────────
-  // Relu toutes les 10 min ; envoyé à l'identification et à chaque
-  // changement (op 3 de la passerelle).
-  let activity = null
-  const presence = () => ({ since: null, status: 'online', afk: false, activities: activity ? [{ name: activity, type: 3 }] : [] })
+  // ── Statut du bot : pastille violette « en stream », texte qui tourne ──
+  // Type Streaming (1) : Discord n'affiche la pastille violette qu'avec un
+  // lien twitch.tv — celui du plus gros live du moment (le bouton du profil
+  // y mène). Le texte change toutes les 2 min : ce live, /live-alerts, le
+  // site ; le stock des lives est relu pour lui toutes les 10 min au plus.
+  // Envoyé à l'identification et à chaque changement (op 3).
+  let activity = null   // { name, url }
+  let presenceTurn = 0
+  const presence = () => ({ since: null, status: 'online', afk: false, activities: activity ? [{ type: 1, ...activity }] : [] })
   const compactNum = new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 })
+  const siteHost = (() => { try { return new URL(site).host } catch { return site } })()
   async function updatePresence() {
-    const top = (await streamPool())[0]
-    const next = top ? `${top.name} ad-free · ${compactNum.format(top.viewers)} viewers`.slice(0, 120) : null
-    if (!next || next === activity) return
+    const list = Date.now() - pool.at < 10 * 60_000 && pool.list.length ? pool.list : await streamPool()
+    const top = list[0]
+    if (!top) return
+    const texts = [
+      `🔴 ${top.name} · ${compactNum.format(top.viewers)} viewers`,
+      '🔔 /live-alerts · a DM when your streamer goes live',
+      `📺 Twitch without ads · ${siteHost}`,
+    ]
+    const next = { name: texts[presenceTurn++ % texts.length].slice(0, 120), url: `https://www.twitch.tv/${top.login}` }
+    if (activity?.name === next.name && activity?.url === next.url) return
     activity = next
     send(3, presence())
   }
@@ -5958,7 +5970,7 @@ export function startDiscordBridge({
     // Questions sans réponse (Helper), alertes de live, statut du bot.
     every(60_000, checkSupport)
     every(2 * 60_000, watchLiveAlerts)
-    every(10 * 60_000, updatePresence)
+    every(2 * 60_000, updatePresence)
     const first = setTimeout(() => {
       for (const fn of [watchReleases, watchActions, watchHealth, tidy, watchOps, watchQuotas, watchVersions, watchLiveAlerts]) fn().catch((e) => log.warn(`Discord bridge: ${fn.name} — ${e.message}`))
     }, 30_000)
