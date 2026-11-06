@@ -43,7 +43,7 @@ export const ZH_HANT = {
   bot_commands_none: '找不到指令（Nightbot、StreamElements、Fossabot、Moobot）。',
   bot_commands_failed: '{b} 沒有回應：重新開啟清單再試一次。',
   bot_commands_copy_hint: '點一下指令即可複製。',
-  chat_offline_hint: '頻道目前離線：仍可查看它的機器人指令。',
+  chat_offline_hint: '頻道目前離線：聊天室仍然開放。',
   react: '回應',
   react_failed: '回應未送出，請稍後再試',
   poll_title: '投票',

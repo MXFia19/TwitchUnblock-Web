@@ -42,7 +42,7 @@ export const RU = {
   bot_commands_none: 'Команды не найдены (Nightbot, StreamElements, Fossabot, Moobot).',
   bot_commands_failed: 'Нет ответа от {b}: откройте список снова, чтобы повторить попытку.',
   bot_commands_copy_hint: 'Нажмите на команду, чтобы скопировать её.',
-  chat_offline_hint: 'Канал не в сети: команды его ботов по-прежнему доступны.',
+  chat_offline_hint: 'Канал не в сети, но его чат открыт.',
   react: 'Отреагировать',
   react_failed: 'Реакция не отправлена, попробуйте позже',
   poll_title: 'Опрос',

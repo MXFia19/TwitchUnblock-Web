@@ -6,6 +6,23 @@
 
 export const CHANGELOG = [
   {
+    version: '2026.11.06a',
+    items: {
+      fr: [
+        'Chaîne hors ligne : son chat s’ouvre à côté du lecteur, pour lire et écrire comme pendant un live (Twitch le garde ouvert entre deux streams).',
+      ],
+      en: [
+        'Offline channel: its chat opens next to the player, to read and write as during a live (Twitch keeps it open between streams).',
+      ],
+      es: [
+        'Canal desconectado: su chat se abre junto al reproductor, para leer y escribir como durante un directo (Twitch lo mantiene abierto entre streams).',
+      ],
+      ru: [
+        'Канал не в сети: его чат открывается рядом с плеером — можно читать и писать, как во время трансляции (Twitch держит его открытым между стримами).',
+      ],
+    },
+  },
+  {
     version: '2026.11.04a',
     items: {
       fr: [

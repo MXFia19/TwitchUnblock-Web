@@ -429,8 +429,6 @@ export class ChatView {
 
     this.el.list.addEventListener('scroll', () => this.onScroll(), { passive: true })
     $('.chat-cmds-btn', this.root).addEventListener('click', () => this.toggleBotCommands())
-    // Chaîne hors ligne (openOffline) : le bouton du panneau vide aussi.
-    this.el.empty.addEventListener('click', (e) => { if (e.target.closest('[data-bot-cmds]')) this.toggleBotCommands() })
     // La liste change de hauteur (message épinglé déplié, clavier, fenêtre) :
     // on reste calé en bas si on suivait, sinon le suivi semble s'arrêter.
     if ('ResizeObserver' in window) {
@@ -672,7 +670,9 @@ export class ChatView {
   }
 
   // ── Ouverture / fermeture ──────────────────────────────────────────────
-  openLive({ channel, channelId }) {
+  /** `offline` : chaîne hors ligne (openOffline), sans train de la hype,
+   *  drops ni présence pour les points. */
+  openLive({ channel, channelId, offline = false }) {
     this.close()
     this.mode = 'live'
     this.channel = channel
@@ -692,10 +692,12 @@ export class ChatView {
     this.refreshComposer()
     this.client.start()
     this.startPinned(channel)
-    this.startHype(channel)
-    this.startDrops(channel)
+    if (!offline) {
+      this.startHype(channel)
+      this.startDrops(channel)
+    }
     this.loadChatSettings(channel)
-    this.cx?.start(channel)
+    if (!offline) this.cx?.start(channel)
   }
 
   /** Fin du direct : plus de présence ni de relecture par l'extension (le
@@ -704,19 +706,13 @@ export class ChatView {
     this.cx?.stop()
   }
 
-  /** Lecteur ouvert sur une chaîne hors ligne : pas de chat à suivre, mais
-   *  ses commandes de bots restent à portée — leurs API ne dépendent pas du
-   *  direct. Le bouton de l'en-tête ouvrait jusque-là celles de la chaîne
-   *  regardée avant, ou rien. */
-  openOffline(channel) {
-    this.close()
-    this.channel = channel
-    this.el.title.textContent = t('chat')
-    this.setStatus('offline')
-    this.refreshComposer()
-    this.el.empty.innerHTML = `<p>${esc(t('chat_offline_hint'))}</p>
-      <button class="btn ghost sm" type="button" data-bot-cmds>${icon('terminal', 16)}<span>${esc(t('bot_commands'))}</span></button>`
-    this.el.empty.hidden = false
+  /** Lecteur ouvert sur une chaîne hors ligne : Twitch garde son chat ouvert
+   *  hors direct, on le rejoint comme pendant un live (lire, écrire). Ses
+   *  commandes de bots restent dans l'en-tête. Avant, le panneau n'affichait
+   *  qu'un texte et ce bouton (to-do du 05/11 : « pas de chat hors ligne »). */
+  openOffline(channel, channelId = null) {
+    this.openLive({ channel, channelId, offline: true })
+    this.enqueue(systemMessage(t('chat_offline_hint')))
   }
 
   // ── Modes du salon et règles ───────────────────────────────────────────

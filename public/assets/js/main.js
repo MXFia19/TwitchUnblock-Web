@@ -4523,9 +4523,9 @@ async function openLive(rawLogin) {
       if (state.watch !== token) { fallback?.destroy(); return }
     }
     if (!fallback) {
-      // Hors ligne : pas de chat en direct, mais ses commandes de bots restent
-      // à portée dans le panneau du chat.
-      if (offline) chat.openOffline(login)
+      // Hors ligne : Twitch garde le chat de la chaîne ouvert, on le rejoint
+      // (ses commandes de bots restent dans l'en-tête du chat).
+      if (offline) chat.openOffline(login, info?.id ?? null)
       return showWatchError(links?.error === 'network' ? t('err_network')
         : links?.error === 'geo' ? t('err_geo_blocked')
         : sourcesDown ? t('err_live_sources')
