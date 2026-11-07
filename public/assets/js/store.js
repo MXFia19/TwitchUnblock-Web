@@ -32,6 +32,7 @@ export const DEFAULT_PREFS = {
   pinnedByViewers: true, // leurs directs triés entre eux par spectateurs (sinon : ordre d'épinglage)
   timestamps: false,
   fsChat: 'right-full', // chat sur l'image en plein écran : côté (left/right) et hauteur (full/top/bottom)
+  fsChatWidth: 0, // largeur de ce chat en % de l'écran (poignée) ; 0 : par défaut, min(340px, 34vw)
   timeFormat: 'auto', // heure du chat : 'auto' (celle de l'appareil), '12' ou '24'
   keepDeleted: true,
   loadHistory: true,

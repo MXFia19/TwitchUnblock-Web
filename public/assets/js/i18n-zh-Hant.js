@@ -58,7 +58,7 @@ export const ZH_HANT = {
   poll_closed: '這場投票已結束。',
   poll_failed: '投票未送出，請再試一次。',
   time_format: '時間格式',
-  time_format_sub: '聊天訊息的時間。自動會跟隨你的裝置。', fs_chat: '全螢幕聊天室', fs_chat_sub: '全螢幕時聊天室疊在影片上的位置：左側或右側，整個高度或角落。', fs_chat_right_full: '右側，整個高度', fs_chat_right_top: '右側，上方', fs_chat_right_bottom: '右側，下方', fs_chat_left_full: '左側，整個高度', fs_chat_left_top: '左側，上方', fs_chat_left_bottom: '左側，下方',
+  time_format_sub: '聊天訊息的時間。自動會跟隨你的裝置。', fs_chat: '全螢幕聊天室', fs_chat_sub: '全螢幕時聊天室疊在影片上的位置：左側或右側，整個高度或角落。拖曳邊緣可調整寬度（按兩下：預設寬度）。', fs_chat_grip: '拖曳以調整聊天室寬度 · 按兩下：預設寬度', fs_chat_right_full: '右側，整個高度', fs_chat_right_top: '右側，上方', fs_chat_right_bottom: '右側，下方', fs_chat_left_full: '左側，整個高度', fs_chat_left_top: '左側，上方', fs_chat_left_bottom: '左側，下方',
   time_auto: '自動',
   top_lang: '熱門直播',
   top_lang_sub: '「熱門直播」的實況主語言。預設為你的裝置語言（{l}）。',

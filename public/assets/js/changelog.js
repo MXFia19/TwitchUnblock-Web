@@ -6,6 +6,23 @@
 
 export const CHANGELOG = [
   {
+    version: '2026.11.07a',
+    items: {
+      fr: [
+        'Chat en plein écran : glisse son bord pour le rendre plus large ou plus étroit (double-clic : largeur par défaut). La largeur est gardée.',
+      ],
+      en: [
+        'Chat in fullscreen: drag its edge to make it wider or narrower (double-click: default width). The width is remembered.',
+      ],
+      es: [
+        'Chat en pantalla completa: arrastra su borde para hacerlo más ancho o más estrecho (doble clic: anchura por defecto). La anchura se guarda.',
+      ],
+      ru: [
+        'Чат в полноэкранном режиме: потяните за его край, чтобы сделать его шире или уже (двойной щелчок — ширина по умолчанию). Ширина запоминается.',
+      ],
+    },
+  },
+  {
     version: '2026.11.06a',
     items: {
       fr: [

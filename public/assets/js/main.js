@@ -70,7 +70,53 @@ const themeAccent = () => (THEME_ACCENTS.some(([id]) => id === store.prefs.theme
 const FS_CHAT = ['right-full', 'right-top', 'right-bottom', 'left-full', 'left-top', 'left-bottom']
 function applyFsChat() {
   document.documentElement.dataset.fschat = FS_CHAT.includes(store.prefs.fsChat) ? store.prefs.fsChat : 'right-full'
+  applyFsChatWidth()
 }
+
+/** Largeur de ce chat (demande de wishimiri) : la poignée posée sur son bord
+ *  intérieur se glisse en plein écran, entre 180 px et 60 % de l'écran ;
+ *  double-clic : largeur par défaut. Gardée en % de l'écran. */
+function applyFsChatWidth() {
+  const w = Number(store.prefs.fsChatWidth) || 0
+  if (w > 0) document.documentElement.style.setProperty('--fs-chat-w', `${w}vw`)
+  else document.documentElement.style.removeProperty('--fs-chat-w')
+}
+function setupFsChatGrip() {
+  const grip = document.getElementById('fs-chat-grip')
+  if (!grip) return
+  let drag = null
+  grip.addEventListener('pointerdown', (e) => {
+    drag = { id: e.pointerId, rect: grip.parentElement.getBoundingClientRect(),
+             left: (document.documentElement.dataset.fschat || '').startsWith('left') }
+    grip.setPointerCapture(e.pointerId)
+    grip.classList.add('dragging')
+    e.preventDefault()
+    e.stopPropagation()
+  })
+  grip.addEventListener('pointermove', (e) => {
+    if (!drag || e.pointerId !== drag.id) return
+    const { rect, left } = drag
+    const px = left ? e.clientX - rect.left : rect.right - e.clientX
+    const w = Math.min(rect.width * 0.6, Math.max(180, px))
+    store.prefs.fsChatWidth = Math.round((w / rect.width) * 1000) / 10
+    applyFsChatWidth()
+  })
+  const end = (e) => {
+    if (!drag || e.pointerId !== drag.id) return
+    drag = null
+    grip.classList.remove('dragging')
+    store.savePrefs()
+  }
+  grip.addEventListener('pointerup', end)
+  grip.addEventListener('pointercancel', end)
+  for (const ev of ['click', 'dblclick']) grip.addEventListener(ev, (e) => e.stopPropagation())
+  grip.addEventListener('dblclick', () => {
+    store.prefs.fsChatWidth = 0
+    applyFsChatWidth()
+    store.savePrefs()
+  })
+}
+setupFsChatGrip()
 
 function applyTheme() {
   const root = document.documentElement
@@ -6535,6 +6581,7 @@ const BACKUP_SETTINGS = {
   timestamps: okBool,
   timeFormat: (v) => (['auto', '12', '24'].includes(v) ? v : undefined),
   fsChat: (v) => (FS_CHAT.includes(v) ? v : undefined),
+  fsChatWidth: (v) => (Number.isFinite(v) ? (v <= 0 ? 0 : Math.min(60, Math.max(5, Math.round(v * 10) / 10))) : undefined),
   keepDeleted: okBool,
   loadHistory: okBool,
   chatSize: (v) => (Number.isFinite(v) ? Math.min(20, Math.max(12, Math.round(v))) : undefined),

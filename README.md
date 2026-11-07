@@ -37,7 +37,7 @@ Watch Twitch lives and VODs in your browser, no subscription needed, with the re
 - Recent streamers
 
 ### Player
-- Custom controls built around the chat: fullscreen keeps both the video **and** the chat, laid over it — on the right or the left, full height or in a corner (Settings → Chat → *Chat in fullscreen*, like the iPhone and Apple TV apps); the player controls move out of its way
+- Custom controls built around the chat: fullscreen keeps both the video **and** the chat, laid over it — on the right or the left, full height or in a corner (Settings → Chat → *Chat in fullscreen*, like the iPhone and Apple TV apps); drag its inner edge to make it wider or narrower (180 px to 60 % of the screen, remembered; double-click for the default width); the player controls move out of its way
 - **Rewind a live**, like with Twitch Turbo (and the iPhone app): when Twitch records the VOD, the player's bar covers the whole broadcast. Dragging left — or −10 s past the ~30 s the live keeps — opens that VOD at the moment aimed at, with **Back to live** to return
 - Quality picker, including “Auto”, which shows the quality actually in use on the player button (“Auto · 720p”); Auto usually starts higher than before (up to 720p, lives and VODs) and, on lives, climbs back up when the connection allows
 - **Preferred quality** (Settings → Player): Auto, Source, 1080p, 720p, 480p, 360p, 160p or audio only, used whenever a live or VOD starts; when a channel doesn't have it, the closest one below is used (the Worker gives each quality's real height, so a 720p60 “Source” counts as 720p). Picking a quality in the player replaces it. Audio only is available for VODs too

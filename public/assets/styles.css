@@ -569,26 +569,29 @@ a.card, a.cat-card { display: block; }
   animation: spin 0.8s linear infinite;
 }
 
-/* Plein écran : vidéo seule, chat posé par-dessus à droite. */
+/* Plein écran : vidéo seule, chat posé par-dessus à droite. Sa largeur
+   (--fs-chat-w) suit la poignée glissée (prefs.fsChatWidth, en % de
+   l'écran) ; par défaut min(340px, 34vw). */
+:root { --fs-chat-w: min(340px, 34vw); }
 .watch-body:fullscreen { display: block; position: relative; background: #000; }
 .watch-body:fullscreen .watch-video { position: absolute; inset: 0; aspect-ratio: auto; max-height: none; height: 100%; }
 .watch-body:fullscreen .watch-info { display: none; }
 .watch-body:fullscreen .watch-chat {
-  position: absolute; top: 0; right: 0; bottom: 0; width: min(340px, 34vw); z-index: 6;
+  position: absolute; top: 0; right: 0; bottom: 0; width: var(--fs-chat-w); z-index: 6;
   border-left: 0;
 }
 .watch-body:fullscreen .chat { background: rgba(14, 14, 16, 0.72); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); }
 .watch:not(.chat-hidden) .watch-body:fullscreen .p-bottom,
-.watch:not(.chat-hidden) .watch-body:fullscreen .p-menu { margin-right: min(340px, 34vw); }
-.watch:not(.chat-hidden) .watch-body:fullscreen .p-big { margin-left: calc(min(340px, 34vw) / -2); }
+.watch:not(.chat-hidden) .watch-body:fullscreen .p-menu { margin-right: var(--fs-chat-w); }
+.watch:not(.chat-hidden) .watch-body:fullscreen .p-big { margin-left: calc(var(--fs-chat-w) / -2); }
 .watch-body:-webkit-full-screen { display: block; position: relative; background: #000; }
 .watch-body:-webkit-full-screen .watch-video { position: absolute; inset: 0; aspect-ratio: auto; max-height: none; height: 100%; }
 .watch-body:-webkit-full-screen .watch-info { display: none; }
-.watch-body:-webkit-full-screen .watch-chat { position: absolute; top: 0; right: 0; bottom: 0; width: min(340px, 34vw); z-index: 6; border-left: 0; }
+.watch-body:-webkit-full-screen .watch-chat { position: absolute; top: 0; right: 0; bottom: 0; width: var(--fs-chat-w); z-index: 6; border-left: 0; }
 .watch-body:-webkit-full-screen .chat { background: rgba(14, 14, 16, 0.72); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); }
 .watch:not(.chat-hidden) .watch-body:-webkit-full-screen .p-bottom,
-.watch:not(.chat-hidden) .watch-body:-webkit-full-screen .p-menu { margin-right: min(340px, 34vw); }
-.watch:not(.chat-hidden) .watch-body:-webkit-full-screen .p-big { margin-left: calc(min(340px, 34vw) / -2); }
+.watch:not(.chat-hidden) .watch-body:-webkit-full-screen .p-menu { margin-right: var(--fs-chat-w); }
+.watch:not(.chat-hidden) .watch-body:-webkit-full-screen .p-big { margin-left: calc(var(--fs-chat-w) / -2); }
 /* Chat en plein écran à gauche, ou dans un coin (moitié haute ou basse) :
    réglage « Chat en plein écran ». Les commandes s'écartent de son côté ;
    dans la moitié haute, la barre du bas reste entière. Le chat est aussi
@@ -597,9 +600,25 @@ a.card, a.cat-card { display: block; }
 :root[data-fschat^="left"] :is(.watch-body:fullscreen, .watch-body:-webkit-full-screen) .watch-chat { right: auto; left: 0; }
 :root[data-fschat$="-top"] :is(.watch-body:fullscreen, .watch-body:-webkit-full-screen) .watch-chat { bottom: 50%; height: auto; }
 :root[data-fschat$="-bottom"] :is(.watch-body:fullscreen, .watch-body:-webkit-full-screen) .watch-chat { top: 50%; height: auto; }
-:root[data-fschat^="left"] .watch:not(.chat-hidden) :is(.watch-body:fullscreen, .watch-body:-webkit-full-screen) :is(.p-bottom, .p-menu) { margin-right: 0; margin-left: min(340px, 34vw); }
-:root[data-fschat^="left"] .watch:not(.chat-hidden) :is(.watch-body:fullscreen, .watch-body:-webkit-full-screen) .p-big { margin-left: calc(min(340px, 34vw) / 2); }
+:root[data-fschat^="left"] .watch:not(.chat-hidden) :is(.watch-body:fullscreen, .watch-body:-webkit-full-screen) :is(.p-bottom, .p-menu) { margin-right: 0; margin-left: var(--fs-chat-w); }
+:root[data-fschat^="left"] .watch:not(.chat-hidden) :is(.watch-body:fullscreen, .watch-body:-webkit-full-screen) .p-big { margin-left: calc(var(--fs-chat-w) / 2); }
 :root[data-fschat$="-top"] .watch:not(.chat-hidden) :is(.watch-body:fullscreen, .watch-body:-webkit-full-screen) :is(.p-bottom, .p-menu) { margin-left: 0; margin-right: 0; }
+/* Poignée sur le bord intérieur du chat : glissée, elle change sa largeur ;
+   double-clic, largeur par défaut. Visible au survol seulement. */
+.fs-chat-grip { display: none; }
+:is(.watch-body:fullscreen, .watch-body:-webkit-full-screen) .fs-chat-grip {
+  display: block; position: absolute; top: 0; bottom: 0; right: var(--fs-chat-w); width: 14px;
+  transform: translateX(50%); z-index: 7; cursor: ew-resize; touch-action: none;
+}
+:is(.watch-body:fullscreen, .watch-body:-webkit-full-screen) .fs-chat-grip::after {
+  content: ''; position: absolute; top: 50%; left: 50%; width: 4px; height: 48px; margin: -24px 0 0 -2px;
+  border-radius: 2px; background: rgba(255, 255, 255, 0.4); opacity: 0; transition: opacity 0.15s;
+}
+.fs-chat-grip:hover::after, .fs-chat-grip.dragging::after { opacity: 1; }
+:root[data-fschat^="left"] :is(.watch-body:fullscreen, .watch-body:-webkit-full-screen) .fs-chat-grip { right: auto; left: var(--fs-chat-w); transform: translateX(-50%); }
+:root[data-fschat$="-top"] :is(.watch-body:fullscreen, .watch-body:-webkit-full-screen) .fs-chat-grip { bottom: 50%; }
+:root[data-fschat$="-bottom"] :is(.watch-body:fullscreen, .watch-body:-webkit-full-screen) .fs-chat-grip { top: 50%; }
+.watch.chat-hidden .fs-chat-grip { display: none !important; }
 
 /* Réduit : petite fenêtre flottante, la lecture continue. */
 .watch-mini { display: none; align-items: center; gap: 2px; padding: 8px 6px 8px 12px; min-width: 0; }
