@@ -81,8 +81,9 @@ const LOOKUP_BASES = CUSTOM
 // segment de VOD, la playlist d'un direct toutes les ~2 s. Un relais sur un
 // VPS (docker/relay.mjs, README « Video relay ») exécute le même proxy, sans
 // quota : les liens de lecture du Worker y sont redirigés, le Worker garde
-// tout le reste. Relais injoignable → retour au Worker, comme pour un Worker
-// de secours (écarté 30 min). Une instance avec sa propre adresse
+// tout le reste. Relais injoignable → retour au Worker, le relais écarté
+// 2 min, et la lecture y revient dès que son /health répond (watchRelayBack).
+// Une instance avec sa propre adresse
 // (config.js) n'hérite pas du relais officiel : elle donne le sien dans
 // `relayUrl`, ou aucun.
 const DEFAULT_RELAY_URL = 'https://relais.mxfia19.duckdns.org'
@@ -97,6 +98,9 @@ export const RELAY_BASE = CUSTOM ? null : originOf(CFG.relayUrl ?? (CFG.apiUrl ?
 // son quota repart à minuit UTC.
 const DOWN_KEY = 'tu_worker_down'
 const DOWN_MS = 30 * 60_000
+// Le relais, lui, n'a pas de quota : une coupure vient d'un redémarrage (la
+// mise à jour du bot du VPS le relance avec lui) et dure une minute ou deux.
+const RELAY_DOWN_MS = 2 * 60_000
 // Copie en mémoire : la mise à l'écart tient aussi quand le navigateur refuse
 // le stockage (navigation privée, cookies bloqués) — sinon chaque requête
 // repassait d'abord par le Worker en panne.
@@ -114,12 +118,46 @@ export const hasOtherWorker = (base) => WORKER_BASES.length > 1 && WORKER_BASES.
 export function markWorkerDown(base) {
   // Le relais a toujours un recours : le Worker.
   if (base !== RELAY_BASE && !hasOtherWorker(base)) return false
-  const until = Date.now() + DOWN_MS
+  const until = Date.now() + (base === RELAY_BASE ? RELAY_DOWN_MS : DOWN_MS)
   downMem[base] = until
   const m = downStored()
   m[base] = until
   try { localStorage.setItem(DOWN_KEY, JSON.stringify(m)) } catch {}
+  if (base === RELAY_BASE) watchRelayBack()
   return true
+}
+
+/** Fin de la mise à l'écart (relais revenu avant la fin de son délai). */
+function clearWorkerDown(base) {
+  delete downMem[base]
+  const m = downStored()
+  if (!(base in m)) return
+  delete m[base]
+  try { localStorage.setItem(DOWN_KEY, JSON.stringify(m)) } catch {}
+}
+
+// Relais coupé : ce qui lisait par lui passait par un Worker — le secours
+// d'abord — jusqu'à la vidéo suivante ou au rechargement de la page, et en
+// usait le quota (alerte à 75 % le 05/11, après trois mises à jour du bot
+// dans la nuit). Son /health est revérifié toutes les 30 s, 30 min au plus ;
+// dès qu'il répond, l'événement « tu-relay-back » fait revenir la lecture
+// (main.js) et les tuiles du multi-live (multi.js).
+let relayWatch = null
+function watchRelayBack() {
+  if (!RELAY_BASE || relayWatch) return
+  let tries = 0
+  const tick = async () => {
+    if (++tries > 60) { relayWatch = null; return }
+    if (navigator.onLine === false || !(await answers(`${RELAY_BASE}/health`))) {
+      relayWatch = setTimeout(tick, 30_000)
+      return
+    }
+    relayWatch = null
+    clearWorkerDown(RELAY_BASE)
+    console.info('[TwitchUnblock] Relais vidéo revenu')
+    window.dispatchEvent(new Event('tu-relay-back'))
+  }
+  relayWatch = setTimeout(tick, 30_000)
 }
 
 /** Qui relaie cette adresse : le relais vidéo ou un Worker, sinon null. */
@@ -149,6 +187,11 @@ const viaRelay = (data) => (RELAY_BASE && !isDown(RELAY_BASE) && data?.links
  *  un secours d'abord, pour ménager le principal. */
 export const withoutRelay = (links) => moveLinks(links, (o) => o === RELAY_BASE,
   LOOKUP_BASES.find((b) => !isDown(b)) ?? LOOKUP_BASES[0])
+
+/** Relais revenu : les liens d'une lecture repassent par lui. */
+export const backToRelay = (links) => (RELAY_BASE
+  ? moveLinks(links, (o) => WORKER_BASES.includes(o), RELAY_BASE)
+  : links)
 
 /** Worker en panne en pleine lecture d'une VOD reconstruite (rien à
  *  redemander) : les mêmes liens, par un autre Worker ; null s'il n'y en a

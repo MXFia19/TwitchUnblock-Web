@@ -6,6 +6,23 @@
 
 export const CHANGELOG = [
   {
+    version: '2026.11.07b',
+    items: {
+      fr: [
+        'Après une coupure du relais vidéo, la lecture y revient d’elle-même dès qu’il répond, multi-live compris (elle restait sur le serveur de secours jusqu’à la vidéo suivante).',
+      ],
+      en: [
+        'After a video relay outage, playback goes back to it on its own as soon as it answers, multi-live included (it stayed on the fallback server until the next video).',
+      ],
+      es: [
+        'Tras un corte del relé de vídeo, la reproducción vuelve a él sola en cuanto responde, multi-directo incluido (se quedaba en el servidor de respaldo hasta el siguiente vídeo).',
+      ],
+      ru: [
+        'После сбоя видеоретранслятора воспроизведение само возвращается к нему, как только он отвечает, включая мульти-просмотр (раньше оно оставалось на резервном сервере до следующего видео).',
+      ],
+    },
+  },
+  {
     version: '2026.11.07a',
     items: {
       fr: [

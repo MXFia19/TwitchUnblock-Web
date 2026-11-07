@@ -448,6 +448,9 @@ async function startLive(tile, { avoid = null } = {}) {
     return setState(tile, res?.error === 'network' ? t('err_network') : res?.error === 'failed' ? t('err_live') : t('multi_offline'), true)
   }
   const url = pickLink(links, res.variants)
+  // Par un Worker (relais écarté) : la tuile repart par le relais à son
+  // retour (événement « tu-relay-back », plus bas).
+  tile.viaWorker = Boolean(api.RELAY_BASE) && ![null, api.RELAY_BASE].includes(api.proxyBaseOf(url))
   const v = tile.video
   v.onplaying = () => {
     if (tile.token !== token) return
@@ -515,6 +518,12 @@ async function startLive(tile, { avoid = null } = {}) {
  * par le même relais, et la tuile finissait « Hors ligne » alors que le
  * direct était en ligne (un direct fini, lui, l'est par startLive).
  */
+// Relais revenu : les tuiles de direct parties par un Worker pendant sa
+// coupure repartent par lui (sinon jusqu'à leur prochain redémarrage).
+window.addEventListener('tu-relay-back', () => {
+  for (const tile of tiles.values()) if (tile.viaWorker) startLive(tile)
+})
+
 function retryLive(tile, token, down, network) {
   if (tile.token !== token) return
   if (down && down === api.RELAY_BASE && api.markWorkerDown(down)) {
@@ -528,6 +537,7 @@ function retryLive(tile, token, down, network) {
 
 async function startVod(tile) {
   const token = ++tile.token
+  tile.viaWorker = false
   stopMedia(tile)
   setState(tile, 'loading')
   const id = tile.entry.vod

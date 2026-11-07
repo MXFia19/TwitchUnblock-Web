@@ -452,9 +452,15 @@ The website sends playback through the relay when one is set
 `public/config.js`), and falls back to the Worker on its own when the relay
 doesn't answer — even in the middle of a video, multi-live tiles included.
 A relay that fails its `/health` check when the page opens is only set aside
-(for 30 minutes) if a Worker answers meanwhile: a slow or offline phone
+(for 2 minutes) if a Worker answers meanwhile: a slow or offline phone
 connection doesn't count against it, and neither does a missing segment or
-playlist (404, as when a live ends). The iOS app reads Twitch's CDN directly
+playlist (404, as when a live ends). After a failure, `/health` is checked
+again every 30 s (for 30 minutes at most): as soon as it answers, the video
+playing through a Worker goes back to the relay where it was, and so do
+multi-live tiles (twice per video at most, so a relay that keeps dropping
+doesn't make it jump back and forth). Restarting the relay — updating the
+bot restarts it — used to leave viewers on the fallback Worker until their
+next video, using up its daily quota. The iOS app reads Twitch's CDN directly
 and doesn't need it.
 
 You need a server with Docker and a domain name pointing to it (a free

@@ -4158,6 +4158,24 @@ function setMultiChat(on) {
  * le lecteur retente alors lui-même, quelques fois, avant l'erreur.
  * `false` = rien fait.
  */
+// Relais revenu (api.js, watchRelayBack) : la vidéo qui passait par un
+// Worker depuis sa coupure y repasse, au même endroit — elle y restait
+// jusqu'à la vidéo suivante et usait le quota du Worker de secours. Deux
+// retours au plus par vidéo : un relais qui retombe aussitôt la laisse sur
+// le Worker plutôt que de la faire sauter de l'un à l'autre.
+window.addEventListener('tu-relay-back', () => {
+  const w = state.watch
+  if ((w?.kind !== 'live' && w?.kind !== 'vod') || !w.links) return
+  const moved = api.backToRelay(w.links)
+  if (JSON.stringify(moved) === JSON.stringify(w.links)) return
+  w.relayReturns = (w.relayReturns || 0) + 1
+  if (w.relayReturns > 2) return
+  console.info('[TwitchUnblock] La lecture repasse par le relais vidéo')
+  w.links = moved
+  if (w.hq) w.hq.updateAdFree({ links: w.links, variants: w.variants, source: w.source })
+  else player.swapLinks(w.links, w.variants)
+})
+
 let lastWorkerSwitch = 0
 function switchWorker(base) {
   const w = state.watch
