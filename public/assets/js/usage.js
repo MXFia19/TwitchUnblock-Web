@@ -25,6 +25,8 @@ export const SITE_VERSION = '2026.11.07b'
 const ID_KEY = 'tu_install_id'
 const LAST_KEY = 'tu_last_ping'
 const EV_KEY = 'tu_usage_ev'
+/** Heures (UTC) des pubs détectées pas encore envoyées : « 2026-11-09T13 » → nombre. */
+const ADH_KEY = 'tu_usage_adh'
 /** Un signal par heure au plus : le Worker ne compte qu'une fois par jour,
  *  inutile de lui écrire à chaque rechargement de page. */
 const PING_EVERY = 60 * 60 * 1000
@@ -99,7 +101,23 @@ export function count(event, enabled) {
     const all = JSON.parse(localStorage.getItem(EV_KEY) || '{}')
     all[event] = (all[event] || 0) + 1
     localStorage.setItem(EV_KEY, JSON.stringify(all))
+    // Pub détectée : son heure aussi, pour le graphique horaire de /stats.
+    if (event === 'live_ad_break') {
+      const hours = pendingAdHours()
+      const stamp = new Date().toISOString().slice(0, 13)
+      hours[stamp] = (hours[stamp] || 0) + 1
+      localStorage.setItem(ADH_KEY, JSON.stringify(hours))
+    }
   } catch {}
+}
+
+/** Heures des pubs pas encore envoyées, sur 48 h (le Worker ne garde
+ *  qu'aujourd'hui et hier). */
+function pendingAdHours() {
+  let all = {}
+  try { all = JSON.parse(localStorage.getItem(ADH_KEY) || '{}') || {} } catch {}
+  const oldest = new Date(Date.now() - 48 * 3600_000).toISOString().slice(0, 13)
+  return Object.fromEntries(Object.entries(all).filter(([k, n]) => k >= oldest && n > 0))
 }
 
 function pendingEvents() {
@@ -107,14 +125,14 @@ function pendingEvents() {
 }
 
 /** Retire ce qui vient de partir (ce qui est arrivé pendant l'envoi reste). */
-function clearSent(sent) {
+function clearSent(sent, key = EV_KEY, read = pendingEvents) {
   try {
-    const now = pendingEvents()
+    const now = read()
     for (const [k, n] of Object.entries(sent)) {
       now[k] = Math.max(0, (now[k] || 0) - n)
       if (!now[k]) delete now[k]
     }
-    localStorage.setItem(EV_KEY, JSON.stringify(now))
+    localStorage.setItem(key, JSON.stringify(now))
   } catch {}
 }
 
@@ -149,6 +167,7 @@ async function pingOnce(enabled) {
   if (Date.now() - last < PING_EVERY) return
   try {
     const ev = pendingEvents()
+    const adh = pendingAdHours()
     const res = await post({
       id: installId(), version: SITE_VERSION, platform: 'web',
       lang: usageLang(document.documentElement.lang),
@@ -156,10 +175,12 @@ async function pingOnce(enabled) {
       // Détection finie depuis longtemps (5 min de visite au moins).
       ...usageFields(connect.state()),
       ...(Object.keys(ev).length ? { ev } : {}),
+      ...(Object.keys(adh).length ? { adh } : {}),
     })
     if (res.ok) {
       try { localStorage.setItem(LAST_KEY, String(Date.now())) } catch {}
       clearSent(ev)
+      clearSent(adh, ADH_KEY, pendingAdHours)
     }
   } catch { /* le comptage ne doit jamais gêner le site */ }
 }
@@ -177,6 +198,7 @@ export async function forget() {
     await post({ id: installId(), forget: true })
     localStorage.removeItem(LAST_KEY)
     localStorage.removeItem(EV_KEY)
+    localStorage.removeItem(ADH_KEY)
   } catch {}
 }
 

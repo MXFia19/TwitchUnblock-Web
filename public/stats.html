@@ -274,6 +274,32 @@
 
   <section class="grid2">
     <div class="card">
+      <h2 data-t="adTitle"></h2>
+      <p class="sub" id="ad-sub"></p>
+      <p class="not-split" data-t="vNotSplit" hidden></p>
+      <div class="legend"><span><i class="dot ios"></i><span data-t="ios"></span></span><span><i class="dot tvos"></i><span data-t="tvos"></span></span><span><i class="dot android"></i><span data-t="android"></span></span><span><i class="dot web"></i><span data-t="web"></span></span></div>
+      <div class="chart" id="chart-ads"></div>
+      <details>
+        <summary data-t="showTable"></summary>
+        <table id="table-ads"></table>
+      </details>
+    </div>
+    <div class="card">
+      <h2 data-t="adHourTitle"></h2>
+      <p class="sub" id="ad-hour-sub"></p>
+      <p class="not-split" data-t="vNotSplit" hidden></p>
+      <div class="legend"><span><i class="dot ios"></i><span data-t="ios"></span></span><span><i class="dot tvos"></i><span data-t="tvos"></span></span><span><i class="dot android"></i><span data-t="android"></span></span><span><i class="dot web"></i><span data-t="web"></span></span></div>
+      <div class="chart" id="chart-ads-hour"></div>
+      <p class="sub push-line" id="ad-peak"></p>
+      <details>
+        <summary data-t="showTable"></summary>
+        <table id="table-ads-hour"></table>
+      </details>
+    </div>
+  </section>
+
+  <section class="grid2">
+    <div class="card">
       <h2 data-t="puSentTitle"></h2>
       <p class="sub" id="pu-sent-sub"></p>
       <p class="not-split" data-t="vNotSplit" hidden></p>
@@ -498,7 +524,7 @@
       rtTitle: 'Rétention', rtSub: 'Parmi les personnes arrivées depuis assez longtemps, la part revue au moins 1, 7 ou 14 jours après son premier jour. Par semaine d’arrivée, 5 dernières semaines.',
       rtD1: 'revenues un autre jour', rtD7: 'encore là 7 jours après', rtD14: 'encore là 14 jours après', rtOf: 'sur {n}', rtWeek: 'Arrivées', rtSize: 'Personnes', rtWeekOf: 'semaine du {d}', fbErrors: '{n} erreur(s) récente(s) jointe(s)', srvErrTitle: 'Erreurs du serveur : {n} (14 jours)', srvErrNone: 'Aucune erreur du serveur ces 14 derniers jours.', rtColD1: 'J+1', rtColD7: 'J+7', days3: '3 j', days7: '7 j', days30: '30 j',
       hlTitle: 'Santé du direct (7 jours)', hlSub: 'Source qui a servi chaque live lancé, et échecs. Compteurs anonymes : aucune chaîne, aucun titre.',
-      hlLives: '{n} lives lancés', hlVods: '{n} VODs lancées', hlFail: '{n} échecs au lancement ({p} %)', hlPlayFail: '{n} pendant la lecture', hlAdBreaks: '{n} pauses pub de la chaîne vues', hlNone: 'Pas encore de données : elles arrivent avec les nouvelles versions de l’app et du site.',
+      hlLives: '{n} lives lancés', hlVods: '{n} VODs lancées', hlFail: '{n} échecs au lancement ({p} %)', hlPlayFail: '{n} pendant la lecture', hlAdBreaks: '{n} pauses pub de la chaîne vues', adTitle: 'Pubs détectées par jour', adSub: 'Pauses pub de la chaîne repérées pendant un direct : une par pause et par appareil.', adNone: 'Aucune pub détectée pour l’instant.', adHourTitle: 'Pubs détectées par heure', adHourSub: '7 derniers jours, à l’heure de cet appareil, selon l’heure où chaque pub est arrivée.', adHourNone: 'Pas encore de pub avec son heure : le site l’envoie depuis le 9 novembre, les apps à leur prochaine version.', adPeak: 'Heure la plus chargée : {h} ({n} sur {total}).', hlNone: 'Pas encore de données : elles arrivent avec les nouvelles versions de l’app et du site.',
       hs_as: 'Luminous Asie', hs_pp: 'PerfProd Asie', hs_al: 'Proxy Albanie', hs_al2: 'Proxy Albanie 2', hs_eu: 'Luminous Europe', hs_eu2: 'Luminous Europe 2', hs_custom: 'Source perso', hs_twitch: 'Twitch officiel', hs_account: 'Compte abonné', hs_worker: 'Worker (secours)', hs_unknown: 'Inconnue',
       dvTitle: 'Appareils et langues', dvSub: 'Personnes actives sur 30 jours qui envoient ces infos : {ios} sur l’app, {tv} sur l’Apple TV, {web} sur le site (nouvelles versions seulement).', dvLangTv: 'Langue (Apple TV)',
       dvLangIos: 'Langue de l’app', dvLangWeb: 'Langue du site', dvOs: 'Version d’iOS', dvDevIos: 'Appareil (app)', dvDevWeb: 'Appareil (site)', dvMobile: 'Mobile ou tablette', dvDesktop: 'Ordinateur', dvNone: 'Pas encore de données : elles arrivent avec les nouvelles versions de l’app et du site.',
@@ -557,7 +583,7 @@
       rtTitle: 'Retention', rtSub: 'Among people who arrived long enough ago, the share seen again at least 1, 7 or 14 days after their first day. By arrival week, last 5 weeks.',
       rtD1: 'came back another day', rtD7: 'still there 7 days later', rtD14: 'still there 14 days later', rtOf: 'of {n}', rtWeek: 'Arrived', rtSize: 'People', rtWeekOf: 'week of {d}', fbErrors: '{n} recent error(s) attached', srvErrTitle: 'Server errors: {n} (14 days)', srvErrNone: 'No server errors in the last 14 days.', rtColD1: 'Day 1', rtColD7: 'Day 7', days3: '3 days', days7: '7 days', days30: '30 days',
       hlTitle: 'Live health (7 days)', hlSub: 'Source that served each live started, and failures. Anonymous counters: no channel, no title.',
-      hlLives: '{n} lives started', hlVods: '{n} VODs started', hlFail: '{n} failed to start ({p} %)', hlPlayFail: '{n} during playback', hlAdBreaks: '{n} channel ad breaks seen', hlNone: 'No data yet: it comes with the new versions of the app and the website.',
+      hlLives: '{n} lives started', hlVods: '{n} VODs started', hlFail: '{n} failed to start ({p} %)', hlPlayFail: '{n} during playback', hlAdBreaks: '{n} channel ad breaks seen', adTitle: 'Ads detected per day', adSub: 'Channel ad breaks spotted during a live stream: one per break and per device.', adNone: 'No ads detected yet.', adHourTitle: 'Ads detected per hour', adHourSub: 'Last 7 days, in this device’s time, by the hour each ad came.', adHourNone: 'No ad with its time yet: the website sends it since November 9, the apps from their next version.', adPeak: 'Busiest hour: {h} ({n} of {total}).', hlNone: 'No data yet: it comes with the new versions of the app and the website.',
       hs_as: 'Luminous Asia', hs_pp: 'PerfProd Asia', hs_al: 'Albania proxy', hs_al2: 'Albania proxy 2', hs_eu: 'Luminous Europe', hs_eu2: 'Luminous Europe 2', hs_custom: 'Own source', hs_twitch: 'Official Twitch', hs_account: 'Subscriber account', hs_worker: 'Worker (fallback)', hs_unknown: 'Unknown',
       dvTitle: 'Devices and languages', dvSub: 'People active over 30 days who send this info: {ios} on the app, {tv} on the Apple TV, {web} on the website (new versions only).', dvLangTv: 'Language (Apple TV)',
       dvLangIos: 'App language', dvLangWeb: 'Website language', dvOs: 'iOS version', dvDevIos: 'Device (app)', dvDevWeb: 'Device (website)', dvMobile: 'Phone or tablet', dvDesktop: 'Computer', dvNone: 'No data yet: it comes with the new versions of the app and the website.',
@@ -616,7 +642,7 @@
       rtTitle: 'Retención', rtSub: 'Entre las personas que llegaron hace suficiente tiempo, la parte que volvió al menos 1, 7 o 14 días después de su primer día. Por semana de llegada, últimas 5 semanas.',
       rtD1: 'volvieron otro día', rtD7: 'siguen 7 días después', rtD14: 'siguen 14 días después', rtOf: 'de {n}', rtWeek: 'Llegadas', rtSize: 'Personas', rtWeekOf: 'semana del {d}', fbErrors: '{n} error(es) reciente(s) adjunto(s)', srvErrTitle: 'Errores del servidor: {n} (14 días)', srvErrNone: 'Ningún error del servidor en los últimos 14 días.', rtColD1: 'Día 1', rtColD7: 'Día 7', days3: '3 días', days7: '7 días', days30: '30 días',
       hlTitle: 'Salud del directo (7 días)', hlSub: 'Fuente que sirvió cada directo iniciado, y fallos. Contadores anónimos: ningún canal, ningún título.',
-      hlLives: '{n} directos iniciados', hlVods: '{n} VODs iniciados', hlFail: '{n} fallos al iniciar ({p} %)', hlPlayFail: '{n} durante la reproducción', hlAdBreaks: '{n} pausas publicitarias del canal vistas', hlNone: 'Aún no hay datos: llegan con las nuevas versiones de la app y del sitio.',
+      hlLives: '{n} directos iniciados', hlVods: '{n} VODs iniciados', hlFail: '{n} fallos al iniciar ({p} %)', hlPlayFail: '{n} durante la reproducción', hlAdBreaks: '{n} pausas publicitarias del canal vistas', adTitle: 'Anuncios detectados por día', adSub: 'Pausas publicitarias del canal detectadas durante un directo: una por pausa y por dispositivo.', adNone: 'Ningún anuncio detectado por ahora.', adHourTitle: 'Anuncios detectados por hora', adHourSub: 'Últimos 7 días, en la hora de este dispositivo, según la hora de cada anuncio.', adHourNone: 'Aún no hay anuncios con su hora: la web la envía desde el 9 de noviembre, las apps desde su próxima versión.', adPeak: 'Hora con más anuncios: {h} ({n} de {total}).', hlNone: 'Aún no hay datos: llegan con las nuevas versiones de la app y del sitio.',
       hs_as: 'Luminous Asia', hs_pp: 'PerfProd Asia', hs_al: 'Proxy de Albania', hs_al2: 'Proxy de Albania 2', hs_eu: 'Luminous Europa', hs_eu2: 'Luminous Europa 2', hs_custom: 'Fuente propia', hs_twitch: 'Twitch oficial', hs_account: 'Cuenta suscrita', hs_worker: 'Worker (respaldo)', hs_unknown: 'Desconocida',
       dvTitle: 'Dispositivos e idiomas', dvSub: 'Personas activas en 30 días que envían estos datos: {ios} en la app, {tv} en el Apple TV, {web} en el sitio (solo versiones nuevas).', dvLangTv: 'Idioma (Apple TV)',
       dvLangIos: 'Idioma de la app', dvLangWeb: 'Idioma del sitio', dvOs: 'Versión de iOS', dvDevIos: 'Dispositivo (app)', dvDevWeb: 'Dispositivo (sitio)', dvMobile: 'Móvil o tableta', dvDesktop: 'Ordenador', dvNone: 'Aún no hay datos: llegan con las nuevas versiones de la app y del sitio.',
@@ -705,7 +731,11 @@
   /** Barres empilées (dans l'ordre des séries, de bas en haut), 2 px d'écart, haut arrondi. */
   function chartNew(days, opt = {}) {
     const { box: boxSel = '#chart-new', table = '#table-new', label = t('newTitle'), empty = t('noDaily'),
-      series = PLATFORM_SERIES(['newIos', 'newTv', 'newWeb', 'newAndroid']) } = opt
+      series = PLATFORM_SERIES(['newIos', 'newTv', 'newWeb', 'newAndroid']),
+      // Abscisse en jours (date) par défaut ; xLabel, tipLabel, rowLabel et tick
+      // la changent (pubs heure par heure), rows choisit les lignes du tableau.
+      xLabel = (d) => dayLabel(d.date), tipLabel = (d) => dayLabel(d.date, { weekday: 'long', day: 'numeric', month: 'long' }),
+      rowLabel = (d) => dayLabel(d.date, { weekday: 'short', day: 'numeric', month: 'short' }), tick = null, rows = null } = opt
     const val = (d, sr) => d[sr.key] || 0
     const box = $(boxSel)
     if (!days?.length) { box.innerHTML = `<p class="sub">${esc(empty)}</p>`; $(table).innerHTML = ''; return }
@@ -719,7 +749,8 @@
     const bw = (W - L - R) / days.length
     // Plafonnée : avec peu de jours (une mesure qui démarre), une barre seule
     // occupait toute la largeur.
-    const barW = Math.min(28, Math.max(3, bw - 4))
+    // Beaucoup de colonnes (168 heures) : une barre fine chacune, sans chevauchement.
+    const barW = Math.min(28, Math.max(bw < 5 ? Math.max(1, bw - 0.5) : 3, bw - 4))
     let svg = ''
     for (let v = 0; v <= top; v += step) {
       svg += `<line class="gridline" x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}"/>`
@@ -749,8 +780,8 @@
       // Un libellé tous les N jours, plus le dernier ; un libellé trop proche
       // du dernier est sauté pour ne pas le chevaucher.
       const last = i === days.length - 1
-      if (last || (i % labelEvery === 0 && days.length - 1 - i >= labelEvery / 2)) {
-        svg += `<text class="axis" x="${last ? x + barW : x + barW / 2}" y="${H - 6}" text-anchor="${last ? 'end' : 'middle'}">${esc(dayLabel(d.date))}</text>`
+      if (last || (tick ? tick(d, i) : (i % labelEvery === 0 && days.length - 1 - i >= labelEvery / 2))) {
+        svg += `<text class="axis" x="${last ? x + barW : x + barW / 2}" y="${H - 6}" text-anchor="${last ? 'end' : 'middle'}">${esc(xLabel(d))}</text>`
       }
     })
     box.innerHTML = `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="${esc(label)}">${svg}</svg><div class="tip" hidden></div>`
@@ -762,7 +793,7 @@
       const d = days[Number(g.dataset.i)]
       svgEl.classList.add('dim')
       for (const c of svgEl.querySelectorAll('.col')) c.classList.toggle('active', c === g)
-      tip.innerHTML = `<b>${esc(dayLabel(d.date, { weekday: 'long', day: 'numeric', month: 'long' }))}</b>
+      tip.innerHTML = `<b>${esc(tipLabel(d))}</b>
         ${series.map((sr) => `<div><i class="dot" style="background:${sr.color}"></i>${esc(sr.name)}<em>${fmt(val(d, sr))}</em></div>`).join('')}`
       const hit = g.querySelector('.hit').getBoundingClientRect()
       const host = box.getBoundingClientRect()
@@ -778,7 +809,7 @@
     svgEl.addEventListener('pointerleave', hide)
 
     $(table).innerHTML = `<thead><tr><th>${t('thDay')}</th>${series.map((sr) => `<th class="n">${esc(sr.name)}</th>`).join('')}</tr></thead><tbody>${
-      days.slice().reverse().map((d) => `<tr><td>${esc(dayLabel(d.date, { weekday: 'short', day: 'numeric', month: 'short' }))}</td>${series.map((sr) => `<td class="n">${fmt(val(d, sr))}</td>`).join('')}</tr>`).join('')}</tbody>`
+      (rows ?? days).slice().reverse().map((d) => `<tr><td>${esc(rowLabel(d))}</td>${series.map((sr) => `<td class="n">${fmt(val(d, sr))}</td>`).join('')}</tr>`).join('')}</tbody>`
   }
 
   /** Actifs par jour : depuis la mise en place de la mesure seulement. */
@@ -913,6 +944,47 @@
       ['puWeekLimit', both('limit')], ['puWeekRelay', w.relay_ntfy], ['puWeekGone', w.gone_web],
     ].filter(([, n, always]) => always || n).map(([k, n]) => t(k, { n: fmt(n) }))
     $('#pu-week').textContent = p?.since ? `${t('puWeek')} ${parts.join(' · ')}` : ''
+  }
+
+  /** Pubs détectées : par jour, et heure par heure sur 7 jours (à l'heure de
+   *  cet appareil), avec l'heure de la journée qui en compte le plus. */
+  function chartAds(s) {
+    const a = s.ads
+    const series = PLATFORM_SERIES(['ios', 'tvos', 'web', 'android'])
+    const since = (d) => (d ? ' ' + t('actSince', { d: dayLabel(d, { day: 'numeric', month: 'long' }) }) : '')
+    $('#ad-sub').textContent = t('adSub') + since(a?.since)
+    chartNew(a?.daily ?? [], { box: '#chart-ads', table: '#table-ads', series, label: t('adTitle'), empty: t(a ? 'adNone' : 'redeploy') })
+    // Heures UTC du Worker, montrées à l'heure de cet appareil.
+    const H = 3600000
+    const total = (d) => series.reduce((n, sr) => n + (d[sr.key] || 0), 0)
+    const byStamp = new Map((a?.hourly ?? []).map((h) => [h.t, h]))
+    const hours = []
+    if (a?.hourlySince) {
+      const end = Math.floor(Date.now() / H) * H
+      for (let at = Math.max(end - 167 * H, Date.parse(`${a.hourlySince}T00:00:00Z`)); at <= end; at += H) {
+        const h = byStamp.get(new Date(at).toISOString().slice(0, 13)) ?? {}
+        hours.push({ at: new Date(at), ios: h.ios || 0, web: h.web || 0, tvos: h.tvos || 0, android: h.android || 0 })
+      }
+    }
+    const hourOf = (at) => at.toLocaleTimeString(LOCALE, { hour: 'numeric' })
+    const span = (at) => `${hourOf(at)} – ${hourOf(new Date(at.getTime() + H))}`
+    $('#ad-hour-sub').textContent = t('adHourSub') + since(a?.hourlySince)
+    chartNew(hours, {
+      box: '#chart-ads-hour', table: '#table-ads-hour', series, label: t('adHourTitle'), empty: t(a ? 'adHourNone' : 'redeploy'),
+      xLabel: (d) => (d.at.getHours() === 0 ? d.at.toLocaleDateString(LOCALE, { weekday: 'short', day: 'numeric' }) : hourOf(d.at)),
+      tick: (d, i) => (i === 0 || d.at.getHours() === 0) && hours.length - 1 - i >= 6,
+      tipLabel: (d) => `${d.at.toLocaleDateString(LOCALE, { weekday: 'long', day: 'numeric', month: 'long' })} · ${span(d.at)}`,
+      rowLabel: (d) => `${d.at.toLocaleDateString(LOCALE, { weekday: 'short', day: 'numeric', month: 'short' })} · ${hourOf(d.at)}`,
+      rows: hours.filter((d) => total(d) > 0),
+    })
+    // L'heure de la journée qui en compte le plus, sur la période affichée.
+    const perHour = Array(24).fill(0)
+    for (const d of hours) perHour[d.at.getHours()] += total(d)
+    const sum = perHour.reduce((n, v) => n + v, 0)
+    const peak = perHour.indexOf(Math.max(...perHour))
+    const peakAt = new Date()
+    peakAt.setHours(peak, 0, 0, 0)
+    $('#ad-peak').textContent = sum ? t('adPeak', { h: span(peakAt), n: fmt(perHour[peak]), total: fmt(sum) }) : ''
   }
 
   function loyalty(s) {
@@ -1669,7 +1741,7 @@
     for (const el of document.querySelectorAll('.not-split')) el.hidden = viewKind === 'all'
     if (!s) return
     const v = viewOf(s)
-    tiles(v); kinds(s); chartNew(v.daily); chartActive(v); retention(v); health(s); devices(v); pushNow(s); chartPush(s)
+    tiles(v); kinds(s); chartNew(v.daily); chartActive(v); retention(v); health(s); chartAds(s); devices(v); pushNow(s); chartPush(s)
     loyalty(v); platformReturning(v); versions(v); extension(v)
   }
   $('#view-filter .seg').setAttribute('aria-label', t('vLabel'))

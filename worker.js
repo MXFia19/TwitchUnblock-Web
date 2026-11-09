@@ -1448,7 +1448,25 @@ async function handlePing(request, env) {
             if (n) counts[`ev_${platform}_${k}`] = n;
         }
     }
+    // Pubs détectées, à l'heure (UTC) où elles sont arrivées (« 2026-11-09T13 »
+    // → nombre) : le graphique horaire de /stats. Aujourd'hui et hier
+    // seulement (un signal part au plus une heure après), 48 heures et 50 par
+    // heure au plus, comme les autres compteurs.
+    const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+    const adYesterday = {};
+    if (body.adh && typeof body.adh === 'object' && !Array.isArray(body.adh)) {
+        const hourNow = new Date().toISOString().slice(0, 13);
+        for (const [stamp, raw] of Object.entries(body.adh).slice(0, 48)) {
+            const m = /^(\d{4}-\d{2}-\d{2})T([01]\d|2[0-3])$/.exec(stamp);
+            const n = Math.min(50, Math.max(0, Math.floor(Number(raw) || 0)));
+            if (!m || !n || stamp > hourNow) continue;
+            const metric = `adh_${platform}_${m[2]}`;
+            const into = m[1] === day ? counts : m[1] === yesterday ? adYesterday : null;
+            if (into) into[metric] = (into[metric] || 0) + n;
+        }
+    }
     try { await bumpDaily(env, day, counts); } catch (e) { console.warn('stats_day :', e.message); }
+    try { await bumpDaily(env, yesterday, adYesterday); } catch (e) { console.warn('stats_day :', e.message); }
 
     // Rien de neuf aujourd'hui : pas d'écriture.
     const same = (f) => prev[f] === meta[f];
@@ -1656,6 +1674,11 @@ async function handleStats(env) {
     const pushByDate = Object.fromEntries(pushDaily.map((d) => [d.date, d]));
     const pushWeek = {};
     let pushSince = null;
+    // Pubs détectées : par jour (ev_<plateforme>_live_ad_break, depuis
+    // health.since) et, sur 7 jours, par heure UTC où elles sont arrivées
+    // (adh_<plateforme>_<HH>, depuis adsSince).
+    const adsByDate = {}, adsHourly = {};
+    let adsSince = null;
     try {
         await ensureSchema(env);
         const { results } = await env.DB.prepare(`SELECT day, metric, n FROM stats_day WHERE day >= ?1`).bind(dayKey(29)).all();
@@ -1668,6 +1691,7 @@ async function handleStats(env) {
                 const key = rest.join('_');
                 if (!health.month[plat]) continue;
                 health.month[plat][key] = (health.month[plat][key] || 0) + n;
+                if (key === 'live_ad_break') (adsByDate[r.day] ??= { date: r.day, ios: 0, web: 0, tvos: 0, android: 0 })[plat] += n;
                 if (r.day >= weekStart) health.week[plat][key] = (health.week[plat][key] || 0) + n;
                 if (!health.since || r.day < health.since) health.since = r.day;
             } else if (m === 'a' || m.startsWith('a_')) {
@@ -1679,6 +1703,12 @@ async function handleStats(env) {
                 const k = kind && byKindDate[kind]?.[r.day];
                 if (k && plat in k) k[plat] += n;
                 if (m === 'a' && n > 0 && (!activeSince || r.day < activeSince)) activeSince = r.day;
+            } else if (m.startsWith('adh_')) {
+                const [, plat, hh] = m.split('_');
+                if (!health.month[plat] || !/^\d{2}$/.test(hh)) continue;
+                if (!adsSince || r.day < adsSince) adsSince = r.day;
+                if (r.day < weekStart) continue;
+                (adsHourly[`${r.day}T${hh}`] ??= { t: `${r.day}T${hh}`, ios: 0, web: 0, tvos: 0, android: 0 })[plat] += n;
             } else if (m.startsWith('pu_')) {
                 const key = m.slice(3);
                 const d = pushByDate[r.day];
@@ -1778,6 +1808,11 @@ async function handleStats(env) {
     const payload = {
         ...view(everyone), accounts: accounts.total, anonymous: anonymous.total,
         activeDaily, activeSince, health, push,
+        // Pubs détectées (pas séparées par type de compte, comme la santé).
+        ads: {
+            daily: health.since ? activeDaily.filter((d) => d.date >= health.since).map((d) => adsByDate[d.date] || { date: d.date, ios: 0, web: 0, tvos: 0, android: 0 }) : [],
+            since: health.since, hourly: Object.values(adsHourly), hourlySince: adsSince,
+        },
         // Filtre de /stats : la même chose, comptes seulement ou sans-compte
         // seulement. Santé de la lecture et notifications ne sont pas séparées.
         split: {
