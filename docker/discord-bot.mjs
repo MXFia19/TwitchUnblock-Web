@@ -2448,7 +2448,7 @@ export function startDiscordBridge({
     title: 'Poll (app and website)',
     components: [
       row(textInput('question', 'Question', 1, { max: 140 })),
-      row(textInput('options', 'Choices, one per line (2 to 6)', 2, { max: 400 })),
+      row(textInput('options', 'Choices, one per line (2 to 10)', 2, { max: 400 })),
       row(textInput('multi', 'Several choices per person? (yes / no)', 1, { max: 3, required: false, placeholder: 'no' })),
       row(textInput('hours', 'Open for how many hours? (default 24)', 1, { max: 4, required: false })),
     ],

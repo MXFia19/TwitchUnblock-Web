@@ -4601,14 +4601,14 @@ async function handlePollVote(request, env) {
     return jsonResponse({ ok: true, ...(await pollState(env, poll, device)) });
 }
 
-/** Nouveau sondage (/stats ou bot) : question, 2 à 6 choix, un ou plusieurs
+/** Nouveau sondage (/stats ou bot) : question, 2 à 10 choix, un ou plusieurs
  *  par personne, durée en heures. Remplace celui en cours. */
 async function createPoll(env, body) {
     const question = cleanText(body.question, 140);
     const raw = Array.isArray(body.options) ? body.options : String(body.options || '').split('\n');
     const options = [...new Set(raw.map((o) => cleanText(o, 60)).filter(Boolean))];
     if (!question) return { error: 'A question is needed' };
-    if (options.length < 2 || options.length > 6) return { error: 'Between 2 and 6 different choices' };
+    if (options.length < 2 || options.length > 10) return { error: 'Between 2 and 10 different choices' };
     const hours = Math.min(24 * 30, Math.max(1 / 60, Number(body.hours) || 24));
     const now = Date.now();
     // Le sondage remplacé, s'il était fini : ses résultats restent à poster

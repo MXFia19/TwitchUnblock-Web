@@ -687,7 +687,10 @@ link, 1 minute to 30 days — `30m`, `6h`, `3d`…, 24 hours by default): it
 first shows a preview only you see — with the announcement it would replace —
 and nothing goes out before **Publish** (**Cancel** drops it; a preview lasts
 15 minutes). `/app-announce clear` removes it. Publishing and removing go to
-the admin log, as from `/stats`. When a new app or website version is
+the admin log, as from `/stats`. `/poll` starts a poll in the app and on the
+website, as from `/stats` (2 to 10 choices, one or several per person, 24
+hours by default; it replaces the one running), and `/poll-end` ends it: its
+results come as a draft in the alerts channel. When a new app or website version is
 out, a draft of its release notes appears in the private channel — **Publish**
 posts it in the announcements channel, mentioning the release role if you
 picked one, and the role of its platform (*iPhone & iPad* for the app,
