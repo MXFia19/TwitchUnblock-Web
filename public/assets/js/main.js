@@ -6953,7 +6953,7 @@ function renderPoll() {
     <p class="poll-meta">${esc(t(voters === 1 ? 'poll_voter' : 'poll_voters', { n: voters }))} · ${esc(ended ? t('poll_ended') : t('poll_until', { time: pollTimeLeft(p.until) }))}${ended ? '' : ` · <button type="button" class="link-btn" data-poll-change>${esc(t('poll_change'))}</button>`}</p>`
   } else {
     const picks = pollPicks ?? mine
-    body = `<div class="poll-options">${p.options.map((o, i) => `<button type="button" data-poll-opt="${i}" class="${picks.includes(i) ? 'on' : ''}" aria-pressed="${picks.includes(i)}"${pollSending ? ' disabled' : ''}>${p.multi ? `<span class="poll-box">${picks.includes(i) ? icon('check', 12) : ''}</span>` : ''}${esc(o)}</button>`).join('')}</div>
+    body = `<div class="poll-options${p.options.length > 6 ? ' many' : ''}">${p.options.map((o, i) => `<button type="button" data-poll-opt="${i}" class="${picks.includes(i) ? 'on' : ''}" aria-pressed="${picks.includes(i)}"${pollSending ? ' disabled' : ''}>${p.multi ? `<span class="poll-box">${picks.includes(i) ? icon('check', 12) : ''}</span>` : ''}${esc(o)}</button>`).join('')}</div>
     <p class="poll-meta">${esc(t(p.multi ? 'poll_multi_hint' : 'poll_single_hint'))} · ${esc(ended ? t('poll_ended') : t('poll_until', { time: pollTimeLeft(p.until) }))}</p>
     ${p.multi ? `<button type="button" class="btn primary sm" data-poll-send${picks.length && !pollSending ? '' : ' disabled'}>${esc(t('poll_vote'))}</button>` : ''}`
   }
