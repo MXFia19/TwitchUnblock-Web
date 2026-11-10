@@ -333,14 +333,60 @@ test('pubs répétées, vérifications épuisées, flux injoignable : la source 
   assert.equal(b.live.settled, true)
   assert.ok(b.asked.length <= 22)
 
-  // Flux du compte injoignable pendant la pause : la source sans pub reste.
+  // Flux du compte injoignable pendant la pause : quatre essais à 15 s
+  // d'écart, puis la source sans pub reste, avec la raison et un avis.
   const c = setup()
   await c.start()
+  const logs = []
+  c.live.o.log = (m) => logs.push(m)
   c.live.onAdState(5)
   c.state.edge = new Error('timeout')
   await c.clock.advance(10_000)
+  assert.equal(c.live.settled, false, 'un échec ne suffit plus')
+  await c.clock.advance(60_000)
   assert.equal(c.live.settled, true)
   assert.equal(c.live.current(), c.live.adFree)
+  assert.equal(c.asked.length, 1 + 4, 'lancement, puis quatre essais')
+  assert.match(logs[0], /illisible 4 fois de suite \(timeout\)/)
+  assert.ok(c.notes.includes('hq_settled:1440p'))
+})
+
+test('bord illisible pendant la pause : nouvel essai ; identifiants périmés, nouvelle liste attendue puis lue', async () => {
+  // Un échec, puis le bord se lit : retour au compte.
+  const a = setup()
+  await a.start()
+  a.live.onAdState(5)
+  a.state.edge = new Error('timeout')
+  await a.clock.advance(8_000)
+  assert.equal(a.live.onHq, false)
+  a.state.edge = CLEAN
+  await a.clock.advance(16_000)
+  assert.equal(a.live.onHq, true, 'retour au compte au deuxième essai')
+  assert.equal(a.state.settled, 0)
+
+  // Identifiants périmés : une nouvelle liste, attendue, puis lue à la place.
+  const b = setup()
+  await b.start()
+  let renews = 0
+  const fresh = buildHq(VARIANTS.map((v, i) => ({ ...v, id: ID(10 + i) })), ALL, { canPlay: yes })
+  let release
+  b.live.o.renew = () => { renews++; return new Promise((resolve) => { release = () => resolve(fresh) }) }
+  b.live.onAdState(5)
+  b.state.edge = Object.assign(new Error('bad_args'), { code: 'bad_args', detail: 'expired' })
+  await b.clock.advance(8_000)
+  assert.equal(renews, 1)
+  b.state.edge = CLEAN
+  const asked = b.asked.length
+  await b.clock.advance(30_000)
+  assert.equal(b.asked.length, asked, 'pas de lecture tant que la nouvelle liste est en route')
+  assert.equal(b.live.onHq, false)
+  release()
+  // Prochaine vérification : 3 s (RENEW_WAIT_MS) après celle qui l'attendait encore.
+  await b.clock.advance(7_000)
+  assert.equal(b.live.hq, fresh)
+  assert.equal(b.live.onHq, true)
+  assert.equal(b.asked.at(-1), ID(10), 'la nouvelle liste est lue')
+  assert.equal(b.state.settled, 0)
 })
 
 test('lecture en pause : pas de bascule ; la reprise s’en charge', async () => {

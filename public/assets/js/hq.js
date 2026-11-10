@@ -224,6 +224,9 @@ export function edgeAdWait(text, windowSec = EDGE_WINDOW) {
 
 // ── Lecture d'un direct par le compte ─────────────────────────────────────
 const MAX_CHECKS = 20               // vérifications avant de rester sur la source sans pub
+const READ_TRIES = 4                // bord du compte illisible : essais avant d'y renoncer
+const READ_RETRY_MS = 15_000        //   à 15 s d'écart
+const RENEW_WAIT_MS = 3000          // nouvelle liste du compte en route : vérification remise
 const QUICK_AD_MS = 30_000          // pub revenue moins de 30 s après un retour
 const STALE_MS = 10 * 60_000        // liens de la source habituelle relus après 10 min
 const REFRESH_RETRY_MS = 60_000     // relecture ratée : pas de nouvel essai avant 1 min
@@ -268,6 +271,8 @@ export class HqLive {
     this.lastReturn = 0
     this.quickAds = 0
     this.checks = 0
+    this.readFails = 0
+    this.lastReadError = ''
     this.timer = null
     this.waitingPlay = false
     this.refreshing = false
@@ -326,7 +331,13 @@ export class HqLive {
     let timer = null
     const late = timeoutMs > 0 ? new Promise((resolve) => { timer = this.setT(() => resolve(null), timeoutMs) }) : null
     try {
-      const ask = this.o.playlist(this.hq.topId).catch(() => null)
+      const ask = this.o.playlist(this.hq.topId).catch((e) => {
+        this.lastReadError = String(e?.code || e?.message || e || 'erreur').slice(0, 60)
+        // Identifiants que l'extension ne connaît plus : une nouvelle liste,
+        // lue au prochain essai (checkReturn attend la fin de la demande).
+        if (e?.code === 'bad_args' && e?.detail === 'expired') this.renew()
+        return null
+      })
       return await (late ? Promise.race([ask, late]) : ask)
     } finally {
       if (timer !== null) this.clearT(timer)
@@ -382,7 +393,7 @@ export class HqLive {
     // Sans source habituelle où aller (flux du compte en dernier recours) :
     // les relances et la carte « Réessayer » du lecteur, comme ailleurs.
     if (!this.onHq || !this.canFallback) return false
-    this.settle()
+    this.settle('erreur du lecteur sur le flux du compte')
     return true
   }
 
@@ -409,9 +420,10 @@ export class HqLive {
     this.onAdFree = true
     this.adFreeBreakEnd = 0
     this.checks = 0
+    this.readFails = 0
     this.play(this.adFree)
     this.o.notify?.(this.o.t('hq_ad_fallback', { q: this.label() }), 'hq_ad_fallback')
-    if (this.quickAds >= 2) this.settle()
+    if (this.quickAds >= 2) this.settle('pub revenue deux fois moins de 30 s après le retour')
     else this.schedule((left + 2) * 1000)
   }
 
@@ -439,7 +451,10 @@ export class HqLive {
       this.waitingPlay = true
       return
     }
-    if (++this.checks > MAX_CHECKS) return this.settle()
+    // Nouvelle liste du compte en route (identifiants périmés) : on l'attend,
+    // sans compter de vérification.
+    if (this.renewing) return this.schedule(RENEW_WAIT_MS)
+    if (++this.checks > MAX_CHECKS) return this.settle(`${MAX_CHECKS} vérifications, pub toujours au bord du flux du compte`)
     if (this.adFreeBreakEnd > this.clock()) return this.schedule(this.adFreeBreakEnd - this.clock() + 2000)
     const text = await this.edgeText()
     if (!this.onAdFree || this.settled || this.destroyed) return
@@ -449,7 +464,14 @@ export class HqLive {
     }
     if (this.adFreeBreakEnd > this.clock()) return this.schedule(this.adFreeBreakEnd - this.clock() + 2000)
     const wait = edgeAdWait(text)
-    if (wait === null) return this.settle()
+    if (wait === null) {
+      // Bord illisible (extension endormie, réseau, identifiants périmés) :
+      // d'autres essais avant de rester sur la source sans pub. Un seul échec
+      // la gardait pour tout le direct (Johan, 08/11 : jamais de retour en 1440p).
+      if (++this.readFails < READ_TRIES) return this.schedule(READ_RETRY_MS)
+      return this.settle(`liste du compte illisible ${READ_TRIES} fois de suite (${this.lastReadError || 'sans réponse'})`)
+    }
+    this.readFails = 0
     if (wait > 0) return this.schedule(Math.min(wait + 1, 30) * 1000)
     this.returnToHq()
   }
@@ -461,20 +483,26 @@ export class HqLive {
     this.onAdFree = false
     this.waitingPlay = false
     this.adFreeBreakEnd = 0
+    this.readFails = 0
     this.lastReturn = this.clock()
     this.play(this.hq)
     this.o.notify?.(this.o.t('hq_ad_back', { q: this.label() }), 'hq_ad_back')
   }
 
   /** Plus de flux du compte pour cette lecture (pubs répétées, flux du
-   *  compte injoignable ou en échec) : la source habituelle reste. */
-  settle() {
+   *  compte injoignable ou en échec) : la source habituelle reste. `why` :
+   *  la raison, notée au journal (jointe aux signalements). Un avis dit
+   *  qu'un direct rechargé réessaie : rien ne l'expliquait. */
+  settle(why = '') {
     if (this.settled || this.destroyed) return
     const wasHq = !this.onAdFree
     this.clearTimer()
     this.settled = true
     this.waitingPlay = false
     if (wasHq && Object.keys(this.adFree.links).length) this.play(this.adFree)
+    const q = `${this.hq.top}p`
+    this.o.log?.(`Qualités supérieures : plus de retour en ${q} pour ce direct${why ? ` (${why})` : ''}`)
+    this.o.notify?.(this.o.t('hq_settled', { q }), 'hq_settled')
     this.o.onSettle?.()
   }
 

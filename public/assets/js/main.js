@@ -4458,6 +4458,8 @@ async function startHq(token, ask) {
     // Flux du compte abandonné (pubs répétées, injoignable, en échec) : la
     // source habituelle pour le reste de cette lecture.
     onSettle: () => { if (token.hq === live) token.hq = null },
+    // Raison d'un abandon du flux du compte : au journal, joint aux signalements.
+    log: (m) => logError('lecteur', m),
   })
   if (!(await live.prepare({ timeoutMs: ask.deadline - Date.now() }))) {
     live.destroy()

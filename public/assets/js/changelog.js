@@ -6,6 +6,23 @@
 
 export const CHANGELOG = [
   {
+    version: '2026.11.10a',
+    items: {
+      fr: [
+        'Qualités supérieures (1440p) : après une pub, le retour en 1440p réessaie si la liste de ton compte ne répond pas tout de suite (un seul raté te laissait en 1080p jusqu’à la fin du direct). S’il ne peut vraiment pas revenir, un avis le dit : recharger le direct réessaie.',
+      ],
+      en: [
+        'Higher qualities (1440p): after an ad, going back to 1440p tries again if your account’s list doesn’t answer right away (a single miss kept you on 1080p until the end of the stream). If it really can’t go back, a notice says so: reloading the stream tries again.',
+      ],
+      es: [
+        'Calidades superiores (1440p): tras un anuncio, la vuelta a 1440p lo reintenta si la lista de tu cuenta no responde enseguida (un solo fallo te dejaba en 1080p hasta el final del directo). Si de verdad no puede volver, un aviso lo dice: recargar el directo lo intenta de nuevo.',
+      ],
+      ru: [
+        'Повышенное качество (1440p): после рекламы возврат к 1440p повторяется, если список вашего аккаунта не отвечает сразу (одна неудача оставляла 1080p до конца трансляции). Если вернуться действительно нельзя, появится уведомление: перезагрузка трансляции пробует снова.',
+      ],
+    },
+  },
+  {
     version: '2026.11.07b',
     items: {
       fr: [
