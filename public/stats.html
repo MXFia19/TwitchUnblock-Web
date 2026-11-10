@@ -61,6 +61,9 @@
     .view-filter .seg button { height: 30px; padding: 0 12px; border: 0; border-radius: 8px; background: transparent; color: var(--muted); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
     .view-filter .seg button.on { background: var(--purple); color: #0e0e10; }
     .view-filter .hint, .not-split { color: var(--muted); font-size: 12px; }
+    .ad-filter { margin: 4px 0 12px; }
+    .ad-filter .hint { flex: 1 1 260px; }
+    .ad-card { margin-bottom: 12px; }
     .dot { width: 9px; height: 9px; border-radius: 3px; flex: none; }
     .dot.ios { background: var(--ios); }
     .dot.web { background: var(--web); }
@@ -272,6 +275,18 @@
     </div>
   </section>
 
+  <div class="view-filter ad-filter" id="ad-filter">
+    <div class="seg" role="group" data-label="adSrcLabel">
+      <button type="button" data-ad="proxy" data-t="adSrcProxy"></button>
+      <button type="button" data-ad="account" data-t="adSrcAccount"></button>
+      <button type="button" data-ad="twitch" data-t="adSrcTwitch"></button>
+    </div>
+    <div class="seg" role="group" data-label="adRollLabel">
+      <button type="button" data-ad="mid" data-t="adRollMid"></button>
+      <button type="button" data-ad="pre" data-t="adRollPre"></button>
+    </div>
+    <span class="hint" data-t="adFilterHint"></span>
+  </div>
   <section class="grid2">
     <div class="card">
       <h2 data-t="adTitle"></h2>
@@ -296,6 +311,11 @@
         <table id="table-ads-hour"></table>
       </details>
     </div>
+  </section>
+  <section class="card ad-card">
+    <h2 data-t="adBySrcTitle"></h2>
+    <p class="sub" id="ad-src-sub"></p>
+    <table id="table-ads-src"></table>
   </section>
 
   <section class="grid2">
@@ -524,7 +544,7 @@
       rtTitle: 'Rétention', rtSub: 'Parmi les personnes arrivées depuis assez longtemps, la part revue au moins 1, 7 ou 14 jours après son premier jour. Par semaine d’arrivée, 5 dernières semaines.',
       rtD1: 'revenues un autre jour', rtD7: 'encore là 7 jours après', rtD14: 'encore là 14 jours après', rtOf: 'sur {n}', rtWeek: 'Arrivées', rtSize: 'Personnes', rtWeekOf: 'semaine du {d}', fbErrors: '{n} erreur(s) récente(s) jointe(s)', srvErrTitle: 'Erreurs du serveur : {n} (14 jours)', srvErrNone: 'Aucune erreur du serveur ces 14 derniers jours.', rtColD1: 'J+1', rtColD7: 'J+7', days3: '3 j', days7: '7 j', days30: '30 j',
       hlTitle: 'Santé du direct (7 jours)', hlSub: 'Source qui a servi chaque live lancé, et échecs. Compteurs anonymes : aucune chaîne, aucun titre.',
-      hlLives: '{n} lives lancés', hlVods: '{n} VODs lancées', hlFail: '{n} échecs au lancement ({p} %)', hlPlayFail: '{n} pendant la lecture', hlAdBreaks: '{n} pauses pub de la chaîne vues', adTitle: 'Pubs détectées par jour', adSub: 'Pauses pub de la chaîne repérées pendant un direct : une par pause et par appareil.', adNone: 'Aucune pub détectée pour l’instant.', adHourTitle: 'Pubs détectées par heure', adHourSub: '7 derniers jours, à l’heure de cet appareil, selon l’heure où chaque pub est arrivée.', adHourNone: 'Pas encore de pub avec son heure : le site l’envoie depuis le 9 novembre, les apps à leur prochaine version.', adPeak: 'Heure la plus chargée : {h} ({n} sur {total}).', hlNone: 'Pas encore de données : elles arrivent avec les nouvelles versions de l’app et du site.',
+      hlLives: '{n} lives lancés', hlVods: '{n} VODs lancées', hlFail: '{n} échecs au lancement ({p} %)', hlPlayFail: '{n} pendant la lecture', hlAdBreaks: '{n} pauses pub de la chaîne vues', adTitle: 'Pubs détectées par jour', adSub: 'Pauses pub repérées pendant un direct, une par pause et par appareil, selon le filtre au-dessus.', adNone: 'Aucune pub détectée avec ce filtre.', adHourTitle: 'Pubs détectées par heure', adHourSub: '7 derniers jours, à l’heure de cet appareil, selon l’heure où chaque pub est arrivée.', adHourNone: 'Aucune pub avec ce filtre ces 7 derniers jours. Le site et les apps envoient la source et le type de chaque pub depuis leur dernière version.', adPeak: 'Heure la plus chargée : {h} ({n} sur {total}).', adSrcLabel: 'Sources', adRollLabel: 'Types de pause', adSrcProxy: 'Proxys sans pub', adSrcAccount: 'Compte (1440p)', adSrcTwitch: 'Twitch officiel', adRollMid: 'Pauses de la chaîne', adRollPre: 'Pré-rolls', adFilterHint: 'Pause de la chaîne : lancée par le streamer, à la main ou par son planning. Pré-roll : pub de Twitch à l’ouverture d’un direct. Compte : le flux du compte pour le 1440p, sans abonnement, où les pubs sont attendues.', adBySrcTitle: 'Pubs par source', adBySrcSub: '30 derniers jours, toutes plateformes, sans le filtre. Des pré-rolls sur un proxy : il en a laissé passer.', adColSrc: 'Source', adColX: 'Type inconnu', adColTotal: 'Total', adSrcNone: 'Pas encore de pub avec sa source.', adS_as: 'Luminous Asie', adS_pp: 'PerfProd Asie', adS_al: 'Proxy albanais', adS_al2: 'Proxy albanais 2', adS_eu: 'Luminous Europe', adS_eu2: 'Luminous Europe 2', adS_custom: 'Source perso', adS_worker: 'Worker', adS_account: 'Compte Twitch', adS_twitch: 'Twitch officiel', adS_other: 'Autre ou inconnue', hlNone: 'Pas encore de données : elles arrivent avec les nouvelles versions de l’app et du site.',
       hs_as: 'Luminous Asie', hs_pp: 'PerfProd Asie', hs_al: 'Proxy Albanie', hs_al2: 'Proxy Albanie 2', hs_eu: 'Luminous Europe', hs_eu2: 'Luminous Europe 2', hs_custom: 'Source perso', hs_twitch: 'Twitch officiel', hs_account: 'Compte abonné', hs_worker: 'Worker (secours)', hs_unknown: 'Inconnue',
       dvTitle: 'Appareils et langues', dvSub: 'Personnes actives sur 30 jours qui envoient ces infos : {ios} sur l’app, {tv} sur l’Apple TV, {web} sur le site (nouvelles versions seulement).', dvLangTv: 'Langue (Apple TV)',
       dvLangIos: 'Langue de l’app', dvLangWeb: 'Langue du site', dvOs: 'Version d’iOS', dvDevIos: 'Appareil (app)', dvDevWeb: 'Appareil (site)', dvMobile: 'Mobile ou tablette', dvDesktop: 'Ordinateur', dvNone: 'Pas encore de données : elles arrivent avec les nouvelles versions de l’app et du site.',
@@ -583,7 +603,7 @@
       rtTitle: 'Retention', rtSub: 'Among people who arrived long enough ago, the share seen again at least 1, 7 or 14 days after their first day. By arrival week, last 5 weeks.',
       rtD1: 'came back another day', rtD7: 'still there 7 days later', rtD14: 'still there 14 days later', rtOf: 'of {n}', rtWeek: 'Arrived', rtSize: 'People', rtWeekOf: 'week of {d}', fbErrors: '{n} recent error(s) attached', srvErrTitle: 'Server errors: {n} (14 days)', srvErrNone: 'No server errors in the last 14 days.', rtColD1: 'Day 1', rtColD7: 'Day 7', days3: '3 days', days7: '7 days', days30: '30 days',
       hlTitle: 'Live health (7 days)', hlSub: 'Source that served each live started, and failures. Anonymous counters: no channel, no title.',
-      hlLives: '{n} lives started', hlVods: '{n} VODs started', hlFail: '{n} failed to start ({p} %)', hlPlayFail: '{n} during playback', hlAdBreaks: '{n} channel ad breaks seen', adTitle: 'Ads detected per day', adSub: 'Channel ad breaks spotted during a live stream: one per break and per device.', adNone: 'No ads detected yet.', adHourTitle: 'Ads detected per hour', adHourSub: 'Last 7 days, in this device’s time, by the hour each ad came.', adHourNone: 'No ad with its time yet: the website sends it since November 9, the apps from their next version.', adPeak: 'Busiest hour: {h} ({n} of {total}).', hlNone: 'No data yet: it comes with the new versions of the app and the website.',
+      hlLives: '{n} lives started', hlVods: '{n} VODs started', hlFail: '{n} failed to start ({p} %)', hlPlayFail: '{n} during playback', hlAdBreaks: '{n} channel ad breaks seen', adTitle: 'Ads detected per day', adSub: 'Ad breaks spotted during a live stream, one per break and per device, as filtered above.', adNone: 'No ads detected with this filter.', adHourTitle: 'Ads detected per hour', adHourSub: 'Last 7 days, in this device’s time, by the hour each ad came.', adHourNone: 'No ads with this filter over the last 7 days. The website and the apps send each ad’s source and type from their latest version.', adPeak: 'Busiest hour: {h} ({n} of {total}).', adSrcLabel: 'Sources', adRollLabel: 'Break types', adSrcProxy: 'Ad-free proxies', adSrcAccount: 'Account (1440p)', adSrcTwitch: 'Official Twitch', adRollMid: 'Channel breaks', adRollPre: 'Pre-rolls', adFilterHint: 'Channel break: started by the streamer, by hand or on their schedule. Pre-roll: Twitch’s ad when a live is opened. Account: the account’s stream for 1440p, without a sub, where ads are expected.', adBySrcTitle: 'Ads by source', adBySrcSub: 'Last 30 days, all platforms, without the filter. Pre-rolls on a proxy: it let some through.', adColSrc: 'Source', adColX: 'Unknown type', adColTotal: 'Total', adSrcNone: 'No ad with its source yet.', adS_as: 'Luminous Asia', adS_pp: 'PerfProd Asia', adS_al: 'Albania proxy', adS_al2: 'Albania proxy 2', adS_eu: 'Luminous Europe', adS_eu2: 'Luminous Europe 2', adS_custom: 'Custom source', adS_worker: 'Worker', adS_account: 'Twitch account', adS_twitch: 'Official Twitch', adS_other: 'Other or unknown', hlNone: 'No data yet: it comes with the new versions of the app and the website.',
       hs_as: 'Luminous Asia', hs_pp: 'PerfProd Asia', hs_al: 'Albania proxy', hs_al2: 'Albania proxy 2', hs_eu: 'Luminous Europe', hs_eu2: 'Luminous Europe 2', hs_custom: 'Own source', hs_twitch: 'Official Twitch', hs_account: 'Subscriber account', hs_worker: 'Worker (fallback)', hs_unknown: 'Unknown',
       dvTitle: 'Devices and languages', dvSub: 'People active over 30 days who send this info: {ios} on the app, {tv} on the Apple TV, {web} on the website (new versions only).', dvLangTv: 'Language (Apple TV)',
       dvLangIos: 'App language', dvLangWeb: 'Website language', dvOs: 'iOS version', dvDevIos: 'Device (app)', dvDevWeb: 'Device (website)', dvMobile: 'Phone or tablet', dvDesktop: 'Computer', dvNone: 'No data yet: it comes with the new versions of the app and the website.',
@@ -642,7 +662,7 @@
       rtTitle: 'Retención', rtSub: 'Entre las personas que llegaron hace suficiente tiempo, la parte que volvió al menos 1, 7 o 14 días después de su primer día. Por semana de llegada, últimas 5 semanas.',
       rtD1: 'volvieron otro día', rtD7: 'siguen 7 días después', rtD14: 'siguen 14 días después', rtOf: 'de {n}', rtWeek: 'Llegadas', rtSize: 'Personas', rtWeekOf: 'semana del {d}', fbErrors: '{n} error(es) reciente(s) adjunto(s)', srvErrTitle: 'Errores del servidor: {n} (14 días)', srvErrNone: 'Ningún error del servidor en los últimos 14 días.', rtColD1: 'Día 1', rtColD7: 'Día 7', days3: '3 días', days7: '7 días', days30: '30 días',
       hlTitle: 'Salud del directo (7 días)', hlSub: 'Fuente que sirvió cada directo iniciado, y fallos. Contadores anónimos: ningún canal, ningún título.',
-      hlLives: '{n} directos iniciados', hlVods: '{n} VODs iniciados', hlFail: '{n} fallos al iniciar ({p} %)', hlPlayFail: '{n} durante la reproducción', hlAdBreaks: '{n} pausas publicitarias del canal vistas', adTitle: 'Anuncios detectados por día', adSub: 'Pausas publicitarias del canal detectadas durante un directo: una por pausa y por dispositivo.', adNone: 'Ningún anuncio detectado por ahora.', adHourTitle: 'Anuncios detectados por hora', adHourSub: 'Últimos 7 días, en la hora de este dispositivo, según la hora de cada anuncio.', adHourNone: 'Aún no hay anuncios con su hora: la web la envía desde el 9 de noviembre, las apps desde su próxima versión.', adPeak: 'Hora con más anuncios: {h} ({n} de {total}).', hlNone: 'Aún no hay datos: llegan con las nuevas versiones de la app y del sitio.',
+      hlLives: '{n} directos iniciados', hlVods: '{n} VODs iniciados', hlFail: '{n} fallos al iniciar ({p} %)', hlPlayFail: '{n} durante la reproducción', hlAdBreaks: '{n} pausas publicitarias del canal vistas', adTitle: 'Anuncios detectados por día', adSub: 'Pausas publicitarias detectadas durante un directo, una por pausa y por dispositivo, según el filtro de arriba.', adNone: 'Ningún anuncio detectado con este filtro.', adHourTitle: 'Anuncios detectados por hora', adHourSub: 'Últimos 7 días, en la hora de este dispositivo, según la hora de cada anuncio.', adHourNone: 'Ningún anuncio con este filtro en los últimos 7 días. La web y las apps envían la fuente y el tipo de cada anuncio desde su última versión.', adPeak: 'Hora con más anuncios: {h} ({n} de {total}).', adSrcLabel: 'Fuentes', adRollLabel: 'Tipos de pausa', adSrcProxy: 'Proxys sin anuncios', adSrcAccount: 'Cuenta (1440p)', adSrcTwitch: 'Twitch oficial', adRollMid: 'Pausas del canal', adRollPre: 'Pre-rolls', adFilterHint: 'Pausa del canal: la lanza el streamer, a mano o con su programación. Pre-roll: anuncio de Twitch al abrir un directo. Cuenta: el flujo de la cuenta para 1440p, sin suscripción, donde se esperan anuncios.', adBySrcTitle: 'Anuncios por fuente', adBySrcSub: 'Últimos 30 días, todas las plataformas, sin el filtro. Pre-rolls en un proxy: dejó pasar algunos.', adColSrc: 'Fuente', adColX: 'Tipo desconocido', adColTotal: 'Total', adSrcNone: 'Aún no hay anuncios con su fuente.', adS_as: 'Luminous Asia', adS_pp: 'PerfProd Asia', adS_al: 'Proxy de Albania', adS_al2: 'Proxy de Albania 2', adS_eu: 'Luminous Europa', adS_eu2: 'Luminous Europa 2', adS_custom: 'Fuente propia', adS_worker: 'Worker', adS_account: 'Cuenta de Twitch', adS_twitch: 'Twitch oficial', adS_other: 'Otra o desconocida', hlNone: 'Aún no hay datos: llegan con las nuevas versiones de la app y del sitio.',
       hs_as: 'Luminous Asia', hs_pp: 'PerfProd Asia', hs_al: 'Proxy de Albania', hs_al2: 'Proxy de Albania 2', hs_eu: 'Luminous Europa', hs_eu2: 'Luminous Europa 2', hs_custom: 'Fuente propia', hs_twitch: 'Twitch oficial', hs_account: 'Cuenta suscrita', hs_worker: 'Worker (respaldo)', hs_unknown: 'Desconocida',
       dvTitle: 'Dispositivos e idiomas', dvSub: 'Personas activas en 30 días que envían estos datos: {ios} en la app, {tv} en el Apple TV, {web} en el sitio (solo versiones nuevas).', dvLangTv: 'Idioma (Apple TV)',
       dvLangIos: 'Idioma de la app', dvLangWeb: 'Idioma del sitio', dvOs: 'Versión de iOS', dvDevIos: 'Dispositivo (app)', dvDevWeb: 'Dispositivo (sitio)', dvMobile: 'Móvil o tableta', dvDesktop: 'Ordenador', dvNone: 'Aún no hay datos: llegan con las nuevas versiones de la app y del sitio.',
@@ -946,31 +966,63 @@
     $('#pu-week').textContent = p?.since ? `${t('puWeek')} ${parts.join(' · ')}` : ''
   }
 
+  // ── Pubs détectées : filtre ─────────────────────────────────────────────
+  // Sources : les proxys sans pub d'office ; le compte (flux des qualités
+  // supérieures, aux pubs attendues sans abonnement) et Twitch officiel à
+  // part. Types : pauses de la chaîne (MIDROLL), pré-rolls de Twitch
+  // (PREROLL) ; un type inconnu (flux du compte, réécrit par l'extension) ne
+  // compte qu'avec les deux. Gardé sur cet appareil.
+  const AD_FILTER_KEY = 'tu_stats_ads'
+  const adFilter = { proxy: true, account: false, twitch: false, mid: true, pre: true }
+  try {
+    const saved = JSON.parse(localStorage.getItem(AD_FILTER_KEY) || '{}')
+    for (const k of Object.keys(adFilter)) if (typeof saved?.[k] === 'boolean') adFilter[k] = saved[k]
+  } catch {}
+  const adGroup = (src) => (src === 'account' || src === 'twitch' ? src : 'proxy')
+  const adKept = (src, roll) => adFilter[adGroup(src)] && (roll === 'x' ? adFilter.mid && adFilter.pre : !!adFilter[roll])
+  /** { « plateforme|source|type » : n } → par plateforme, ce que garde le filtre. */
+  function adSum(c) {
+    const out = { ios: 0, web: 0, tvos: 0, android: 0 }
+    for (const [k, n] of Object.entries(c || {})) {
+      const [plat, src, roll] = k.split('|')
+      if (plat in out && adKept(src, roll)) out[plat] += Number(n) || 0
+    }
+    return out
+  }
+
   /** Pubs détectées : par jour, et heure par heure sur 7 jours (à l'heure de
-   *  cet appareil), avec l'heure de la journée qui en compte le plus. */
+   *  cet appareil), avec l'heure de la journée qui en compte le plus, selon le
+   *  filtre ; puis le tableau par source. */
   function chartAds(s) {
     const a = s.ads
+    // Worker d'avant le 10/11 (pas de source ni de type) : à redéployer.
+    const ok = Array.isArray(a?.days)
+    for (const b of document.querySelectorAll('#ad-filter [data-ad]')) {
+      b.classList.toggle('on', !!adFilter[b.dataset.ad])
+      b.setAttribute('aria-pressed', String(!!adFilter[b.dataset.ad]))
+    }
     const series = PLATFORM_SERIES(['ios', 'tvos', 'web', 'android'])
     const since = (d) => (d ? ' ' + t('actSince', { d: dayLabel(d, { day: 'numeric', month: 'long' }) }) : '')
     $('#ad-sub').textContent = t('adSub') + since(a?.since)
-    chartNew(a?.daily ?? [], { box: '#chart-ads', table: '#table-ads', series, label: t('adTitle'), empty: t(a ? 'adNone' : 'redeploy') })
+    const daily = ok ? a.days.map((d) => ({ date: d.date, ...adSum(d.c) })) : []
+    chartNew(daily, { box: '#chart-ads', table: '#table-ads', series, label: t('adTitle'), empty: t(ok ? 'adNone' : 'redeploy') })
     // Heures UTC du Worker, montrées à l'heure de cet appareil.
     const H = 3600000
     const total = (d) => series.reduce((n, sr) => n + (d[sr.key] || 0), 0)
-    const byStamp = new Map((a?.hourly ?? []).map((h) => [h.t, h]))
+    const byStamp = new Map((ok ? a.hours : []).map((h) => [h.t, h.c]))
     const hours = []
-    if (a?.hourlySince) {
+    if (ok && a.since) {
       const end = Math.floor(Date.now() / H) * H
-      for (let at = Math.max(end - 167 * H, Date.parse(`${a.hourlySince}T00:00:00Z`)); at <= end; at += H) {
-        const h = byStamp.get(new Date(at).toISOString().slice(0, 13)) ?? {}
-        hours.push({ at: new Date(at), ios: h.ios || 0, web: h.web || 0, tvos: h.tvos || 0, android: h.android || 0 })
+      for (let at = Math.max(end - 167 * H, Date.parse(`${a.since}T00:00:00Z`)); at <= end; at += H) {
+        hours.push({ at: new Date(at), ...adSum(byStamp.get(new Date(at).toISOString().slice(0, 13))) })
       }
     }
     const hourOf = (at) => at.toLocaleTimeString(LOCALE, { hour: 'numeric' })
     const span = (at) => `${hourOf(at)} – ${hourOf(new Date(at.getTime() + H))}`
-    $('#ad-hour-sub').textContent = t('adHourSub') + since(a?.hourlySince)
+    $('#ad-hour-sub').textContent = t('adHourSub') + since(a?.since)
+    adSources(ok ? a.days : [], ok)
     chartNew(hours, {
-      box: '#chart-ads-hour', table: '#table-ads-hour', series, label: t('adHourTitle'), empty: t(a ? 'adHourNone' : 'redeploy'),
+      box: '#chart-ads-hour', table: '#table-ads-hour', series, label: t('adHourTitle'), empty: t(ok ? 'adHourNone' : 'redeploy'),
       xLabel: (d) => (d.at.getHours() === 0 ? d.at.toLocaleDateString(LOCALE, { weekday: 'short', day: 'numeric' }) : hourOf(d.at)),
       tick: (d, i) => (i === 0 || d.at.getHours() === 0) && hours.length - 1 - i >= 6,
       tipLabel: (d) => `${d.at.toLocaleDateString(LOCALE, { weekday: 'long', day: 'numeric', month: 'long' })} · ${span(d.at)}`,
@@ -985,6 +1037,28 @@
     const peakAt = new Date()
     peakAt.setHours(peak, 0, 0, 0)
     $('#ad-peak').textContent = sum ? t('adPeak', { h: span(peakAt), n: fmt(perHour[peak]), total: fmt(sum) }) : ''
+  }
+
+  /** Pubs par source sur 30 jours, toutes plateformes, sans le filtre : les
+   *  pré-rolls d'un proxy disent qu'il en a laissé passer. */
+  function adSources(days, ok) {
+    const rows = {}
+    for (const d of days) {
+      for (const [k, n] of Object.entries(d.c || {})) {
+        const [, src, roll] = k.split('|')
+        const r = (rows[src] ??= { src, mid: 0, pre: 0, x: 0 })
+        if (roll in r && roll !== 'src') r[roll] += Number(n) || 0
+      }
+    }
+    const list = Object.values(rows).map((r) => ({ ...r, total: r.mid + r.pre + r.x }))
+      .filter((r) => r.total > 0).sort((a, b) => b.total - a.total)
+    $('#ad-src-sub').textContent = t('adBySrcSub')
+    const head = ['adColSrc', 'adRollMid', 'adRollPre', 'adColX', 'adColTotal']
+      .map((k, i) => `<th${i ? ' class="n"' : ''}>${esc(t(k))}</th>`).join('')
+    $('#table-ads-src').innerHTML = list.length
+      ? `<thead><tr>${head}</tr></thead><tbody>${list.map((r) => `<tr><td>${esc(t(`adS_${r.src}`))}</td>` +
+          [r.mid, r.pre, r.x, r.total].map((n) => `<td class="n">${fmt(n)}</td>`).join('') + '</tr>').join('')}</tbody>`
+      : `<tbody><tr><td>${esc(t(ok ? 'adSrcNone' : 'redeploy'))}</td></tr></tbody>`
   }
 
   function loyalty(s) {
@@ -1752,12 +1826,21 @@
     try { localStorage.setItem(VIEW_KEY, viewKind) } catch {}
     render()
   })
+  // Filtre des pubs : chaque bouton s'allume ou s'éteint.
+  for (const g of document.querySelectorAll('#ad-filter [data-label]')) g.setAttribute('aria-label', t(g.dataset.label))
+  $('#ad-filter').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-ad]')
+    if (!b) return
+    adFilter[b.dataset.ad] = !adFilter[b.dataset.ad]
+    try { localStorage.setItem(AD_FILTER_KEY, JSON.stringify(adFilter)) } catch {}
+    if (lastStats) chartAds(lastStats)
+  })
   render()
 
   let resizeTimer = null
   addEventListener('resize', () => {
     clearTimeout(resizeTimer)
-    resizeTimer = setTimeout(() => { if (lastStats) { const v = viewOf(lastStats); chartNew(v.daily); chartActive(v); chartPush(lastStats) } }, 150)
+    resizeTimer = setTimeout(() => { if (lastStats) { const v = viewOf(lastStats); chartNew(v.daily); chartActive(v); chartPush(lastStats); chartAds(lastStats) } }, 150)
   })
   $('#refresh').addEventListener('click', () => { load(true); if (!$('#dev').hidden) { loadEntries(); loadAnnouncement(); loadPollAdmin(); loadFeedback(); loadAudit() } })
   load()

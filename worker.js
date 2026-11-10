@@ -1303,6 +1303,10 @@ const USAGE_EXT_BROWSERS = ['chrome', 'firefox', 'other'];
 // live_ad_break : pause pub de la chaîne affichée (une fois par pause).
 const USAGE_EVENTS = ['live_as', 'live_pp', 'live_al', 'live_al2', 'live_eu', 'live_eu2', 'live_custom', 'live_twitch', 'live_account', 'live_worker', 'live_unknown',
     'live_fail', 'live_play_fail', 'live_ad_break', 'vod', 'vod_fail', 'vod_play_fail'];
+// Source d'une pause pub vue (adh_…, comme live_*) ; une autre : « other ».
+// « account » : le compte (sans pub, qualités supérieures, dernier recours) ;
+// lui et « twitch » ont des pubs attendues, /stats les met à part.
+const AD_SOURCES = new Set(['as', 'pp', 'al', 'al2', 'eu', 'eu2', 'custom', 'worker', 'twitch', 'account']);
 
 // POST /api/ping — { id, version, platform } enregistre ; { id, forget: true } efface.
 async function handlePing(request, env) {
@@ -1454,13 +1458,20 @@ async function handlePing(request, env) {
     // heure au plus, comme les autres compteurs.
     const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
     const adYesterday = {};
+    // Depuis le 10/11, chaque clé porte aussi la source du direct et le type
+    // de pause (« 2026-11-10T13|as|mid ») : adh_<plateforme>_<HH>_<source>_<type>,
+    // pour garder à part dans /stats les pubs du compte (qualités supérieures)
+    // et de Twitch officiel. L'ancienne forme (heure seule) reste comptée sous
+    // adh_<plateforme>_<HH>, que /stats ne montre plus.
     if (body.adh && typeof body.adh === 'object' && !Array.isArray(body.adh)) {
         const hourNow = new Date().toISOString().slice(0, 13);
-        for (const [stamp, raw] of Object.entries(body.adh).slice(0, 48)) {
-            const m = /^(\d{4}-\d{2}-\d{2})T([01]\d|2[0-3])$/.exec(stamp);
+        for (const [stamp, raw] of Object.entries(body.adh).slice(0, 96)) {
+            const m = /^(\d{4}-\d{2}-\d{2})T([01]\d|2[0-3])(?:\|([a-z0-9]{1,12})\|(pre|mid|x))?$/.exec(stamp);
             const n = Math.min(50, Math.max(0, Math.floor(Number(raw) || 0)));
-            if (!m || !n || stamp > hourNow) continue;
-            const metric = `adh_${platform}_${m[2]}`;
+            if (!m || !n || stamp.slice(0, 13) > hourNow) continue;
+            const metric = m[3]
+                ? `adh_${platform}_${m[2]}_${AD_SOURCES.has(m[3]) ? m[3] : 'other'}_${m[4]}`
+                : `adh_${platform}_${m[2]}`;
             const into = m[1] === day ? counts : m[1] === yesterday ? adYesterday : null;
             if (into) into[metric] = (into[metric] || 0) + n;
         }
@@ -1674,10 +1685,12 @@ async function handleStats(env) {
     const pushByDate = Object.fromEntries(pushDaily.map((d) => [d.date, d]));
     const pushWeek = {};
     let pushSince = null;
-    // Pubs détectées : par jour (ev_<plateforme>_live_ad_break, depuis
-    // health.since) et, sur 7 jours, par heure UTC où elles sont arrivées
-    // (adh_<plateforme>_<HH>, depuis adsSince).
-    const adsByDate = {}, adsHourly = {};
+    // Pubs détectées, avec la source du direct et le type de pause
+    // (adh_<plateforme>_<HH>_<source>_<type>, depuis adsSince) : par jour sur
+    // 30 jours et par heure UTC sur 7, chacun en { « plateforme|source|type » :
+    // nombre } ; /stats filtre et additionne. L'ancienne forme (heure seule,
+    // sans source) n'est plus montrée.
+    const adsDays = {}, adsHours = {};
     let adsSince = null;
     try {
         await ensureSchema(env);
@@ -1691,7 +1704,6 @@ async function handleStats(env) {
                 const key = rest.join('_');
                 if (!health.month[plat]) continue;
                 health.month[plat][key] = (health.month[plat][key] || 0) + n;
-                if (key === 'live_ad_break') (adsByDate[r.day] ??= { date: r.day, ios: 0, web: 0, tvos: 0, android: 0 })[plat] += n;
                 if (r.day >= weekStart) health.week[plat][key] = (health.week[plat][key] || 0) + n;
                 if (!health.since || r.day < health.since) health.since = r.day;
             } else if (m === 'a' || m.startsWith('a_')) {
@@ -1704,11 +1716,15 @@ async function handleStats(env) {
                 if (k && plat in k) k[plat] += n;
                 if (m === 'a' && n > 0 && (!activeSince || r.day < activeSince)) activeSince = r.day;
             } else if (m.startsWith('adh_')) {
-                const [, plat, hh] = m.split('_');
-                if (!health.month[plat] || !/^\d{2}$/.test(hh)) continue;
+                const [, plat, hh, src, roll] = m.split('_');
+                if (!health.month[plat] || !/^\d{2}$/.test(hh) || !src || !roll) continue;
                 if (!adsSince || r.day < adsSince) adsSince = r.day;
+                const k = `${plat}|${src}|${roll}`;
+                const day = (adsDays[r.day] ??= {});
+                day[k] = (day[k] || 0) + n;
                 if (r.day < weekStart) continue;
-                (adsHourly[`${r.day}T${hh}`] ??= { t: `${r.day}T${hh}`, ios: 0, web: 0, tvos: 0, android: 0 })[plat] += n;
+                const hour = (adsHours[`${r.day}T${hh}`] ??= {});
+                hour[k] = (hour[k] || 0) + n;
             } else if (m.startsWith('pu_')) {
                 const key = m.slice(3);
                 const d = pushByDate[r.day];
@@ -1808,10 +1824,12 @@ async function handleStats(env) {
     const payload = {
         ...view(everyone), accounts: accounts.total, anonymous: anonymous.total,
         activeDaily, activeSince, health, push,
-        // Pubs détectées (pas séparées par type de compte, comme la santé).
+        // Pubs détectées (pas séparées par type de compte, comme la santé) :
+        // chaque jour depuis adsSince, et les heures qui en ont eu (7 jours).
         ads: {
-            daily: health.since ? activeDaily.filter((d) => d.date >= health.since).map((d) => adsByDate[d.date] || { date: d.date, ios: 0, web: 0, tvos: 0, android: 0 }) : [],
-            since: health.since, hourly: Object.values(adsHourly), hourlySince: adsSince,
+            since: adsSince,
+            days: adsSince ? activeDaily.filter((d) => d.date >= adsSince).map((d) => ({ date: d.date, c: adsDays[d.date] || {} })) : [],
+            hours: Object.entries(adsHours).map(([t, c]) => ({ t, c })),
         },
         // Filtre de /stats : la même chose, comptes seulement ou sans-compte
         // seulement. Santé de la lecture et notifications ne sont pas séparées.

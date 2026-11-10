@@ -101,18 +101,35 @@ export function count(event, enabled) {
     const all = JSON.parse(localStorage.getItem(EV_KEY) || '{}')
     all[event] = (all[event] || 0) + 1
     localStorage.setItem(EV_KEY, JSON.stringify(all))
-    // Pub détectée : son heure aussi, pour le graphique horaire de /stats.
-    if (event === 'live_ad_break') {
-      const hours = pendingAdHours()
-      const stamp = new Date().toISOString().slice(0, 13)
-      hours[stamp] = (hours[stamp] || 0) + 1
-      localStorage.setItem(ADH_KEY, JSON.stringify(hours))
-    }
   } catch {}
 }
 
-/** Heures des pubs pas encore envoyées, sur 48 h (le Worker ne garde
- *  qu'aujourd'hui et hier). */
+// Sources connues du Worker pour les pubs ; une autre part en « other ».
+const AD_SOURCES = new Set(['as', 'pp', 'al', 'al2', 'eu', 'eu2', 'custom', 'worker', 'account', 'twitch'])
+
+/** Pause pub vue (lecteur, une fois par pause) : le compteur du jour, et son
+ *  heure UTC avec la source du direct et le type de pause (« pre » : pré-roll
+ *  de Twitch ; « mid » : pause de la chaîne ; « x » : inconnu), pour /stats,
+ *  où les pubs des proxys sans pub restent à part de celles du compte
+ *  (qualités supérieures) et de Twitch officiel. */
+export function countAdBreak(enabled, { source, roll } = {}) {
+  if (!enabled) return
+  count('live_ad_break', true)
+  try {
+    const src = String(source || '').toLowerCase()
+    const key = [
+      new Date().toISOString().slice(0, 13),
+      src.startsWith('account') ? 'account' : AD_SOURCES.has(src) ? src : 'other',
+      roll === 'pre' || roll === 'mid' ? roll : 'x',
+    ].join('|')
+    const hours = pendingAdHours()
+    hours[key] = (hours[key] || 0) + 1
+    localStorage.setItem(ADH_KEY, JSON.stringify(hours))
+  } catch {}
+}
+
+/** Heures des pubs pas encore envoyées (« 2026-11-10T13|as|mid »), sur 48 h
+ *  (le Worker ne garde qu'aujourd'hui et hier). */
 function pendingAdHours() {
   let all = {}
   try { all = JSON.parse(localStorage.getItem(ADH_KEY) || '{}') || {} } catch {}

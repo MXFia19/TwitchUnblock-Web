@@ -2341,8 +2341,13 @@ export class Player {
       const start = r.startDate?.getTime()
       const end = r.endDate?.getTime()
       if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) continue
+      // Type de pause pour /stats : PREROLL (pub de Twitch à l'ouverture),
+      // MIDROLL (pause de la chaîne, lancée par le streamer ou son planning).
+      // Absent du flux du compte (l'extension retire les attributs de Twitch).
+      const rt = String(r.attr?.['X-TV-TWITCH-AD-ROLL-TYPE'] ?? '').toUpperCase()
+      const roll = rt === 'PREROLL' ? 'pre' : rt === 'MIDROLL' ? 'mid' : (this.adBreaks.get(r.id)?.roll ?? '')
       this.adBreaks.delete(r.id)
-      this.adBreaks.set(r.id, { start, end })
+      this.adBreaks.set(r.id, { start, end, roll })
     }
     while (this.adBreaks.size > AD_KEEP) this.adBreaks.delete(this.adBreaks.keys().next().value)
     this.checkAdBreak()
@@ -2371,7 +2376,13 @@ export class Player {
         seen = { start: at, end }
         this.adSeen.push(seen)
         if (this.adSeen.length > AD_KEEP) this.adSeen.shift()
-        this.o.onAdBreak?.()
+        // Avec la source du direct (proxys à part du compte et de Twitch
+        // officiel dans /stats) et le type de la première pub du bloc.
+        let first = null
+        for (const b of this.adBreaks.values()) {
+          if (b.start <= at + 1000 && at < b.end && (!first || b.start < first.start)) first = b
+        }
+        this.o.onAdBreak?.({ source: this.liveSource, roll: first?.roll ?? '' })
       }
       this.adBreak = { end, seen }
       console.info(`[TwitchUnblock] Direct : pause pub de la chaîne, ${Math.round((end - at) / 1000)} s.`)
