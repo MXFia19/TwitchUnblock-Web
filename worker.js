@@ -690,6 +690,8 @@ const ttvlolUrl = (host, login) =>
 // « twitch-stitched-ad ») arrivent sur toutes les sources à la même seconde
 // (sondes du 14/10) — le lecteur les signale et coupe le son. Ne pas passer le
 // jeton en playerType « popout » : avec un Device-ID, il reçoit les mêmes.
+// Twitch officiel : jeton « embed » sans Device-ID depuis le 12/11, bien
+// moins de pubs que « site » (voir getAccessToken).
 // fast_bread : chaque playlist annonce en plus les deux prochains segments
 // (« EXT-X-TWITCH-PREFETCH »), dont le lecteur du site se sert pour coller au
 // direct.
@@ -1198,10 +1200,14 @@ function parseAndProxyM3U8(content, master, workerOrigin, isVod, useProxy = true
     ['Source', '1080p60', '1080p30', '720p60', '720p30', '480p30', '360p30', '160p30', 'audio_only'].forEach(key => { Object.keys(unsorted).forEach(k => { if (k.toLowerCase().includes(key.toLowerCase())) { sorted[k] = unsorted[k]; delete unsorted[k]; } }); }); Object.assign(sorted, unsorted); return sorted; 
 }
 
-async function twitchGQL(query, variables = {}) {
+/** `deviceId` : faux pour le jeton du direct (voir getAccessToken). */
+async function twitchGQL(query, variables = {}, { deviceId = true } = {}) {
     const res = await fetch('https://gql.twitch.tv/gql', {
         method: 'POST',
-        headers: { 'Client-ID': CLIENT_ID, 'Content-Type': 'application/json', 'User-Agent': REQUEST_HEADERS['User-Agent'], 'Device-ID': 'MkMq8a9' + Math.random().toString(36).substring(2, 15) },
+        headers: {
+            'Client-ID': CLIENT_ID, 'Content-Type': 'application/json', 'User-Agent': REQUEST_HEADERS['User-Agent'],
+            ...(deviceId ? { 'Device-ID': 'MkMq8a9' + Math.random().toString(36).substring(2, 15) } : {}),
+        },
         body: JSON.stringify({ query, variables }),
         // GQL répond en moins d'une seconde : au-delà de 10 s, il ne répondra
         // plus (le jeton du direct attendait sans fin).
@@ -1211,11 +1217,17 @@ async function twitchGQL(query, variables = {}) {
     return await res.json();
 }
 
+/** Jeton de lecture. Celui du direct est demandé comme Streamlink (lecteur
+ *  « embed », platform « site », sans Device-ID ; comme l'app iPhone, PR #12
+ *  d'ihavenoface) : avec « site » ou un Device-ID, Twitch coud des pré-rolls
+ *  et des blocs de 3 à 6 pubs toutes les quelques minutes (158 pubs sur 24
+ *  chaînes en 25 min contre 0, mesures du 12/11). Mêmes qualités (vérifié le
+ *  12/11 sur 6 chaînes). Le jeton des VODs ne change pas. */
 async function getAccessToken(id, isLive) {
-    const query = isLive 
-        ? `query($id: String!) { streamPlaybackAccessToken(channelName: $id, params: {platform: "web", playerBackend: "mediaplayer", playerType: "site"}) { value signature } }`
+    const query = isLive
+        ? `query($id: String!) { streamPlaybackAccessToken(channelName: $id, params: {platform: "site", playerBackend: "mediaplayer", playerType: "embed"}) { value signature } }`
         : `query($id: ID!) { videoPlaybackAccessToken(id: $id, params: {platform: "web", playerBackend: "mediaplayer", playerType: "site"}) { value signature } }`;
-    const data = await twitchGQL(query, { id });
+    const data = await twitchGQL(query, { id }, { deviceId: !isLive });
     return isLive ? data.data?.streamPlaybackAccessToken : data.data?.videoPlaybackAccessToken;
 }
 
