@@ -135,7 +135,8 @@ export function fmp4SampleSizes(b) {
       } else if (size === 0) {
         size = end - o
       }
-      if (size < hdr) break
+      // Boîte qui déborde (lecture partielle) : la liste s'arrête là.
+      if (size < hdr || o + size > end) break
       out.push({ type: String.fromCharCode(b[o + 4], b[o + 5], b[o + 6], b[o + 7]), body: o + hdr, end: o + size })
       o += size
     }
@@ -157,7 +158,9 @@ export function fmp4SampleSizes(b) {
         if (flags & 0x08) q += 4
         if (flags & 0x10 && q + 4 <= x.end) def = dv.getUint32(q)
       } else if (x.type === 'trun') {
-        const count = dv.getUint32(x.body + 4)
+        // Plafonné : une boîte abîmée annoncerait des milliards
+        // d'échantillons (taille par défaut, sans rien à lire).
+        const count = Math.min(dv.getUint32(x.body + 4), 100000)
         let q = x.body + 8
         if (flags & 0x01) q += 4
         if (flags & 0x04) q += 4

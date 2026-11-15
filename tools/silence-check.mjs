@@ -185,6 +185,22 @@ test('fMP4 : tailles des échantillons de la seule piste, ou taille par défaut'
   assert.equal(fmp4SampleSizes(seg.subarray(0, 200)), null)
 })
 
+test('octets abîmés au hasard : jamais d’exception ni de boucle sans fin', () => {
+  let seed = 42n
+  const next = () => { seed = (seed * 6364136223846793005n + 1442695040888963407n) & 0xffffffffffffffffn; return Number(seed >> 17n) }
+  const sources = [tsSegment(SILENT), tsSegment(SOUND.slice(0, 120), { video: true }), fmp4Fragments(SILENT), fmp4Segment([SOUND])]
+  for (let round = 0; round < 300; round++) {
+    const junk = sources[round % sources.length].slice()
+    for (let k = 0; k < 40; k++) junk[next() % junk.length] = next() & 0xff
+    // Une boîte trun qui annoncerait 4 milliards d'échantillons sans tailles.
+    if (round % 7 === 0) junk.set(concat(u32(28), new TextEncoder().encode('trun'), u32(0x001), u32(0xffffffff), u32(0)), 0)
+    for (const fmp4 of [false, true]) {
+      const v = silentVerdict(junk, fmp4)
+      assert.ok(v === true || v === false || v === null)
+    }
+  }
+})
+
 test('fMP4 de Twitch : fragments de 5 échantillons, additionnés sur le morceau lu', () => {
   const sound = fmp4Fragments(SOUND)
   assert.equal(fmp4SampleSizes(fmp4Fragments([400, 410, 420, 430, 440, 450])).length, 6)
