@@ -9,7 +9,8 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { lang, t } from './i18n.js'
-import { API_URL, RELAY_BASE, WORKER_BASES, fixProxiedUrl, liveSourceOrder, proxyBaseOf } from './api.js'
+import { API_URL, RELAY_BASE, WORKER_BASES, directUrl, fixProxiedUrl, liveSourceOrder, proxyBaseOf } from './api.js'
+import { probeVodSilence, silenceTargets } from './silence.js'
 import { $, esc, formatClock, icon, isIOS, toast } from './util.js'
 import { logError } from './errlog.js'
 import { isHqUrl } from './hq.js'
@@ -45,6 +46,9 @@ const SEG_PROXY_KEY = 'tu_segment_proxy'
 const SEG_PROXY_DAYS = 7
 const SEG_PROXY_FAILS = 3
 const SEG_RECHECK_MS = 10 * 60 * 1000
+/** Sonde « VOD sans son chez Twitch » (silence.js) : lancée un peu après le
+ *  départ, pour ne pas ralentir les premiers segments. */
+const SILENCE_PROBE_MS = 4000
 /** Segments des directs par le relais sur cet appareil (CDN bloqué) ? Les
  *  qualités supérieures ne s'y lancent pas (main.js) : leurs segments ne
  *  passent jamais par nos serveurs. */
@@ -1155,6 +1159,12 @@ export class Player {
     on(this.el.theatre, () => this.o.onTheatre?.())
     on(this.el.unmute, () => { this.video.muted = false; this.el.unmute.hidden = true })
     on(this.el.mutedSkip, () => {
+      // Avis « VOD sans son » : la croix le ferme pour cette VOD.
+      if (this.el.mutedNote.dataset.mode === 'silent') {
+        this.silentNoteClosed = true
+        this.updateMutedNote(this.video.currentTime)
+        return
+      }
       const r = this.mutedAt(this.video.currentTime)
       if (r) this.video.currentTime = Math.min(r.end + 0.5, Number.isFinite(this.video.duration) ? this.video.duration - 1 : r.end + 0.5)
     })
@@ -1252,6 +1262,11 @@ export class Player {
     // (barre orange et avis « son coupé » à tort).
     this.unmutedSpans = []
     this.unmutedToldAt = 0
+    // VOD sans son chez Twitch : sondée pour chaque VOD (pas les clips).
+    this.silentVod = false
+    this.silentNoteClosed = false
+    clearTimeout(this.silenceTimer)
+    if (kind === 'vod' && !clip) this.silenceTimer = setTimeout(() => this.probeSilence(links), SILENCE_PROBE_MS)
     this.setMuted([])
     // Nouvelle vidéo : pauses pub de la précédente oubliées, son rétabli.
     this.endAdBreak()
@@ -2583,15 +2598,39 @@ export class Player {
     }
   }
 
+  /** Avis du haut : VOD sans son chez Twitch (jusqu'à la croix), sinon
+   *  passage coupé en cours (avec « Passer »). */
   updateMutedNote(cur) {
-    const r = this.kind === 'vod' ? this.mutedAt(cur) : null
+    const silent = this.kind === 'vod' && this.silentVod && !this.silentNoteClosed
+    const r = !silent && this.kind === 'vod' ? this.mutedAt(cur) : null
+    const mode = silent ? 'silent' : r ? 'muted' : ''
     const note = this.el.mutedNote
-    if (!r) { note.hidden = true; return }
-    if (note.hidden) {
-      this.el.mutedText.textContent = t('vod_muted_here')
-      $('span', this.el.mutedSkip).textContent = t('vod_muted_skip')
+    if (!mode) { note.hidden = true; note.dataset.mode = ''; return }
+    if (note.hidden || note.dataset.mode !== mode) {
+      note.dataset.mode = mode
+      this.el.mutedText.textContent = t(silent ? 'vod_no_sound' : 'vod_muted_here')
+      note.title = silent ? t('vod_no_sound_hint') : ''
+      this.el.mutedSkip.innerHTML = silent ? icon('x', 13) : `${icon('skipForward', 13)}<span></span>`
+      if (!silent) $('span', this.el.mutedSkip).textContent = t('vod_muted_skip')
+      this.el.mutedSkip.setAttribute('aria-label', t(silent ? 'close' : 'vod_muted_skip'))
       note.hidden = false
     }
+  }
+
+  /** VOD dont la piste audio est vide chez Twitch (silence.js) : dit par
+   *  l'avis du haut plutôt que de laisser croire à une panne. Sondée par le
+   *  relais qui sert la vidéo : le CDN n'autorise que twitch.tv à le lire
+   *  depuis une page. */
+  async probeSilence(links) {
+    const link = Object.values(links ?? {}).find((l) => typeof l === 'string' && silenceTargets(directUrl(l)).length)
+    if (!link) return
+    const base = proxyBaseOf(link)
+    const wrap = (u) => (base ? `${base}/api/proxy?url=${encodeURIComponent(u)}&isVod=true` : u)
+    const verdict = await probeVodSilence({ raw: directUrl(link), wrap }).catch(() => 'unknown')
+    if (this.links !== links || verdict !== 'silent') return
+    this.silentVod = true
+    logError('lecteur', 'VOD sans son chez Twitch : piste audio vide (silence à 10, 50 et 90 %)')
+    this.updateMutedNote(this.video.currentTime)
   }
 
   drawPosition(ratio) {

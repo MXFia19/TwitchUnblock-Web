@@ -6,6 +6,23 @@
 
 export const CHANGELOG = [
   {
+    version: '2026.11.15a',
+    items: {
+      fr: [
+        'VOD sans son : certaines chaînes n’enregistrent qu’une piste audio vide dans leurs VODs, muettes d’un bout à l’autre, sur twitch.tv aussi. Le lecteur s’en rend compte quelques secondes après le départ et le dit en haut de la vidéo (« Cette VOD n’a pas de son chez Twitch »), au lieu de laisser croire à une panne.',
+      ],
+      en: [
+        'VODs with no sound: some channels record only an empty audio track in their VODs, silent from start to end, on twitch.tv too. The player notices it a few seconds after starting and says so at the top of the video (“This VOD has no sound on Twitch”), instead of letting it look like a bug.',
+      ],
+      es: [
+        'VOD sin sonido: algunos canales solo graban una pista de audio vacía en sus VOD, mudos de principio a fin, también en twitch.tv. El reproductor lo detecta unos segundos después de empezar y lo indica arriba del vídeo («Este VOD no tiene sonido en Twitch»), en lugar de dejar creer que es un fallo.',
+      ],
+      ru: [
+        'VOD без звука: некоторые каналы записывают в свои VOD только пустую звуковую дорожку — без звука от начала до конца, и на twitch.tv тоже. Плеер замечает это через несколько секунд после запуска и пишет об этом над видео («У этого VOD нет звука на Twitch»), чтобы это не выглядело как сбой.',
+      ],
+    },
+  },
+  {
     version: '2026.11.10a',
     items: {
       fr: [

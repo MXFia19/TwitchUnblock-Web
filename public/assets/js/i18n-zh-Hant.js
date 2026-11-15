@@ -582,6 +582,8 @@ export const ZH_HANT = {
   vod_muted_here: 'Twitch 已消音（受版權保護的音樂）',
   vod_muted_skip: '略過',
   vod_unmuted: '靜音部分的原始聲音已還原',
+  vod_no_sound: '這部 VOD 在 Twitch 上就沒有聲音',
+  vod_no_sound_hint: '這部 VOD 的音軌在 Twitch 上就是空的（頻道的設定）：沒有聲音可以恢復，在 twitch.tv 上播放也一樣無聲。',
   ad_break_title: '頻道廣告時間',
   ad_break_sub: '廣告時間內 Twitch 會顯示這個畫面取代直播。{n} 秒後回來。',
   ad_break_site_hint: '網站無法使用你的 Twitch 訂閱；iPhone App 可以，需搭配網頁工作階段。',
