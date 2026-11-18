@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TwitchUnblock</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: #0e0e10; color: #efeff1; font-family: system-ui, sans-serif; }
+    body { display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
+    img { width: 130px; height: 130px; margin-bottom: 32px; }
+    p { max-width: 1200px; margin: 0 48px; font-size: 32px; line-height: 1.45; }
+    button { margin-top: 40px; padding: 16px 48px; border: 0; border-radius: 14px; background: #9146ff; color: #fff; font: inherit; font-size: 30px; font-weight: 700; }
+    button:focus { outline: 4px solid #fff; outline-offset: 4px; }
+  </style>
+</head>
+<body>
+  <img src="largeIcon.png" alt="">
+  <p id="msg"></p>
+  <button id="retry" type="button" hidden></button>
+  <script>
+    // App TV LG (webOS) : ouvre le site hébergé en mode TV (télécommande,
+    // assets/js/tv.js). replace() : cette page ne reste pas dans
+    // l'historique, Retour n'y revient pas. Écrit en ES5, pour que l'avis
+    // « TV trop ancienne » s'affiche même sur les vieux webOS.
+    var SITE = 'https://twitchunblock.vercel.app/?tv=webos'
+    // Le site a besoin de Chromium 85 au moins (syntaxe ??=) : webOS 22 et plus.
+    var MIN_CHROME = 85
+    var TEXTS = {
+      en: { open: 'Opening TwitchUnblock…', offline: 'No internet connection.', retry: 'Retry', old: 'This TV’s browser is too old for TwitchUnblock (Chromium {v}). It needs webOS 22 (2022 TVs) or newer.' },
+      fr: { open: 'Ouverture de TwitchUnblock…', offline: 'Pas de connexion à Internet.', retry: 'Réessayer', old: 'Le navigateur de cette TV est trop ancien pour TwitchUnblock (Chromium {v}) : il faut webOS 22 (TV de 2022) ou plus récent.' },
+      es: { open: 'Abriendo TwitchUnblock…', offline: 'Sin conexión a Internet.', retry: 'Reintentar', old: 'El navegador de este televisor es demasiado antiguo para TwitchUnblock (Chromium {v}): hace falta webOS 22 (televisores de 2022) o más reciente.' },
+      ru: { open: 'Открываем TwitchUnblock…', offline: 'Нет подключения к интернету.', retry: 'Повторить', old: 'Браузер этого телевизора слишком старый для TwitchUnblock (Chromium {v}): нужен webOS 22 (телевизоры 2022 года) или новее.' },
+      zh: { open: '正在開啟 TwitchUnblock…', offline: '沒有網路連線。', retry: '重試', old: '這台電視的瀏覽器版本太舊，無法使用 TwitchUnblock（Chromium {v}）：需要 webOS 22（2022 年的電視）或更新版本。' }
+    }
+    var lang = String(navigator.language || 'en').slice(0, 2).toLowerCase()
+    var T = TEXTS[lang] || TEXTS.en
+    var msg = document.getElementById('msg')
+    var retry = document.getElementById('retry')
+    retry.textContent = T.retry
+
+    function show(text, canRetry) {
+      msg.textContent = text
+      retry.hidden = !canRetry
+      if (canRetry) retry.focus()
+    }
+
+    function open() {
+      if (navigator.onLine === false) return show(T.offline, true)
+      show(T.open, false)
+      location.replace(SITE)
+    }
+
+    // Retour : on quitte l'app (question « Quitter ? » sur webOS 6 et plus).
+    document.addEventListener('keydown', function (e) {
+      if (e.keyCode !== 461 && e.keyCode !== 27) return
+      var sys = window.webOSSystem || window.PalmSystem
+      if (sys && typeof sys.platformBack === 'function') sys.platformBack()
+      else window.close()
+    })
+    retry.addEventListener('click', open)
+    window.addEventListener('online', function () { if (!retry.hidden) open() })
+
+    var chrome = /Chrome\/(\d+)/.exec(navigator.userAgent)
+    if (chrome && Number(chrome[1]) < MIN_CHROME) show(T.old.replace('{v}', chrome[1]), false)
+    else open()
+  </script>
+</body>
+</html>
