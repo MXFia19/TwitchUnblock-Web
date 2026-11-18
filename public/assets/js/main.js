@@ -3773,6 +3773,7 @@ function playRecovered(rec, links) {
   setWatchTitle(title || login)
   $('#mini-title').textContent = title || login
   setWatchChannel(login)
+  player.setHeading({ name: login, title: title || '' })
   // À télécharger avant qu'elle ne quitte le CDN.
   $('#watch-info').innerHTML = `
     <div class="wi-text"><h1 title="${esc(title || login)}">${esc(title || login)}</h1></div>
@@ -4352,6 +4353,8 @@ function showWatch(kind, title) {
   $('#watch-avatar').hidden = true
   $('#mini-title').textContent = title || ''
   $('#watch-info').innerHTML = ''
+  // Haut de l'image (plein écran, théâtre) : rien de la vidéo précédente.
+  player?.setHeading()
   requestAnimationFrame(() => watch.classList.add('open'))
 }
 
@@ -4754,6 +4757,9 @@ function renderLiveInfo(info, links) {
   setWatchChannel(state.watch?.login)
   $('#mini-title').textContent = `${name}${title ? ` · ${title}` : ''}`
   setAvatar(avatar)
+  // En plein écran et en mode théâtre, en haut de l'image : suit les
+  // relectures des infos (titre ou jeu changés pendant le direct).
+  player?.setHeading({ name, title, game, avatar })
   $('#watch-sub').innerHTML = `
     <span class="pill live sm">${esc(t('live_now'))}</span>
     ${s ? `<span>${icon('eye', 13)} ${esc(formatViewers(s.viewersCount))}</span><span>${icon('clock', 13)} <span id="watch-uptime">${esc(uptimeSince(s.createdAt))}</span></span>` : ''}`
@@ -5111,6 +5117,7 @@ async function openClip(slug) {
   setWatchChannel(clip.broadcaster?.login || token.login)
   $('#mini-title').textContent = clip.title || t('clip')
   setAvatar(clip.broadcaster?.profileImageURL)
+  player.setHeading({ name, title: clip.title || '', game: clip.game?.displayName || '', avatar: clip.broadcaster?.profileImageURL || '' })
   $('#watch-sub').innerHTML = `<span class="pill vod sm">${esc(t('clip'))}</span><span>${icon('eye', 13)} ${esc(formatViewers(clip.viewCount ?? 0))}</span><span>${icon('clock', 13)} ${esc(formatClock(clip.durationSeconds ?? 0))}</span>`
   $('#watch-info').innerHTML = `
     <div class="wi-text">
@@ -5333,6 +5340,7 @@ async function openVod(id, preset, { keepPlaylist = false, at = null, fromLive =
   setWatchChannel(meta?.owner?.login)
   $('#mini-title').textContent = title
   setAvatar(meta?.owner?.profileImageURL)
+  player.setHeading({ name: streamer, title, game: meta?.game?.displayName || '', avatar: meta?.owner?.profileImageURL || '' })
   const date = meta?.createdAt ? new Date(meta.createdAt).toLocaleDateString(lang(), { day: 'numeric', month: 'long', year: 'numeric' }) : ''
   $('#watch-sub').innerHTML = `<span class="pill vod sm">VOD</span>${date ? `<span>${esc(date)}</span>` : ''}${length ? `<span>${icon('clock', 13)} ${esc(formatDuration(length))}</span>` : ''}`
   $('#watch-info').innerHTML = `

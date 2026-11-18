@@ -1042,6 +1042,10 @@ export class Player {
       <div class="p-adbreak" hidden role="status"><b class="p-adbreak-title"></b><span class="p-adbreak-sub" aria-live="off"></span><span class="p-adbreak-hint"></span></div>
       <div class="p-ui">
         <div class="p-shade"></div>
+        <div class="p-top" hidden>
+          <img class="p-top-avatar" alt="" hidden>
+          <div class="p-top-text"><div class="p-top-line"><b class="p-top-name"></b><span class="p-top-game"></span></div><span class="p-top-title"></span></div>
+        </div>
         <button class="p-big" type="button" aria-label="play">${icon('play', 30)}</button>
         <div class="p-bottom">
           <div class="p-progress" hidden>
@@ -1085,6 +1089,19 @@ export class Player {
       quality: q('.p-quality'), qLabel: q('.p-q-label'), qSpeed: q('.p-q-speed'), chat: q('.p-chat'), pip: q('.p-pip'), fs: q('.p-fs'), theatre: q('.p-theatre'), chapBtn: q('.p-chapters'), chapLabel: q('.p-chap-label'),
       menu: q('.p-menu'), mutedNote: q('.p-mutednote'), mutedText: q('.p-mutednote-text'), mutedSkip: q('.p-mutednote-skip'),
       ad: q('.p-adbreak'), adTitle: q('.p-adbreak-title'), adSub: q('.p-adbreak-sub'), adHint: q('.p-adbreak-hint'),
+      top: q('.p-top'), topAvatar: q('.p-top-avatar'), topName: q('.p-top-name'), topGame: q('.p-top-game'), topTitle: q('.p-top-title'),
+    }
+    // Avatar en échec : masqué, et pas réaffiché à la relecture suivante.
+    this.el.topAvatar.addEventListener('error', () => {
+      this.el.topAvatar.hidden = true
+      this.el.topAvatar.dataset.failed = this.el.topAvatar.getAttribute('src') || ''
+    })
+    // Chaîne et titre en haut de l'image (plein écran, mode théâtre : voir
+    // setHeading) : sa hauteur, lue ici, fait descendre les avis du haut
+    // (« Activer le son », pause pub, son coupé) tant que les commandes sont
+    // visibles. Masqué ailleurs, il mesure 0.
+    if (typeof ResizeObserver === 'function') {
+      new ResizeObserver(() => this.root.style.setProperty('--p-top-h', `${this.el.top.offsetHeight}px`)).observe(this.el.top)
     }
 
     const v = this.video
@@ -1915,6 +1932,24 @@ export class Player {
 
   /** Source qui sert le direct, affichée dans le menu ⚙. */
   setLiveSource(id) { this.liveSource = id || null }
+
+  /** Chaîne, jeu et titre en haut de l'image, avec les commandes, comme sur
+   *  twitch.tv : en plein écran et en mode théâtre, l'en-tête et les infos
+   *  sous le lecteur ne se voient plus (styles.css). Repris à chaque
+   *  relecture des infos du direct (titre changé en cours de route). */
+  setHeading({ name = '', title = '', game = '', avatar = '' } = {}) {
+    const { top, topAvatar, topName, topGame, topTitle } = this.el
+    topName.textContent = name
+    topGame.textContent = game
+    topGame.hidden = !game
+    topTitle.textContent = title
+    topTitle.hidden = !title
+    if (avatar && topAvatar.dataset.failed !== avatar) {
+      if (topAvatar.getAttribute('src') !== avatar) topAvatar.src = avatar
+      topAvatar.hidden = false
+    } else topAvatar.hidden = true
+    top.hidden = !name && !title
+  }
 
   /** Résumé technique joint aux signalements (main.js, feedbackInfo) :
    *  moteur (celui que hls.js utilise vraiment), qualité, source du direct,

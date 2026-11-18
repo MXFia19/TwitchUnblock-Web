@@ -11,18 +11,22 @@ export const CHANGELOG = [
       fr: [
         'Sources du direct : les proxys publics (Luminous, PerfProd, nadeko) sont retirés, ils laissaient passer des centaines de pubs par jour. Nouvelle source en test, « Bulgarie » : un relais TwitchUnblock à Sofia prend le direct depuis la Bulgarie, où Twitch sert peut-être moins de pubs ; si elle ne répond pas, Twitch officiel prend le relais. Un ordre de sources enregistré avec les proxys revient à l’ordre par défaut.',
         'Chat : nouveau réglage « Masquer les subs offerts » (coupé par défaut, Réglages → Chat). Il retire les lignes « X a offert un sub à Y », qui inondent le chat quand quelqu’un en offre en lot ; le message du lot reste. Il suit ton compte sur l’app iPhone.',
+        'Lecteur : en plein écran et en mode théâtre, le nom de la chaîne, son jeu et le titre du direct s’affichent en haut de l’image avec les commandes, comme sur twitch.tv (là où les infos sous le lecteur ne se voient plus). Ils suivent les changements de titre pendant le direct ; les VODs et les clips les ont aussi.',
       ],
       en: [
         'Live sources: the public proxies (Luminous, PerfProd, nadeko) are gone — they let hundreds of ads a day through. New test source, “Bulgaria”: a TwitchUnblock relay in Sofia fetches the stream from Bulgaria, where Twitch may serve fewer ads; when it doesn’t answer, official Twitch takes over. A source order saved with the proxies goes back to the default one.',
         'Chat: new “Hide gifted subs” setting (off by default, Settings → Chat). It removes the “X gifted a sub to Y” lines that flood the chat when someone gifts a batch; the batch message stays. It follows your account in the iPhone app.',
+        'Player: in fullscreen and theatre mode, the channel name, its game and the stream title show at the top of the picture with the controls, like on twitch.tv (where the info under the player is out of sight). They follow title changes during the live; VODs and clips have them too.',
       ],
       es: [
         'Fuentes del directo: se retiran los proxys públicos (Luminous, PerfProd, nadeko), dejaban pasar cientos de anuncios al día. Nueva fuente en prueba, «Bulgaria»: un relé de TwitchUnblock en Sofía toma el directo desde Bulgaria, donde Twitch quizá sirva menos anuncios; si no responde, Twitch oficial toma el relevo. Un orden de fuentes guardado con los proxys vuelve al orden por defecto.',
         'Chat: nuevo ajuste «Ocultar suscripciones regaladas» (desactivado por defecto, Ajustes → Chat). Quita las líneas «X regaló una suscripción a Y», que inundan el chat cuando alguien regala un lote; el mensaje del lote se queda. Sigue a tu cuenta en la app de iPhone.',
+        'Reproductor: en pantalla completa y en modo teatro, el nombre del canal, su juego y el título del directo aparecen arriba de la imagen con los controles, como en twitch.tv (donde la información bajo el reproductor ya no se ve). Siguen los cambios de título durante el directo; los VODs y los clips también los tienen.',
       ],
       ru: [
         'Источники трансляций: публичные прокси (Luminous, PerfProd, nadeko) убраны — они пропускали сотни реклам в день. Новый тестовый источник «Болгария»: ретранслятор TwitchUnblock в Софии получает трансляцию из Болгарии, где Twitch, возможно, показывает меньше рекламы; если он не отвечает, его заменяет официальный Twitch. Сохранённый порядок источников с прокси возвращается к порядку по умолчанию.',
         'Чат: новая настройка «Скрывать подаренные подписки» (выключена по умолчанию, Настройки → Чат). Она убирает строки «X подарил подписку Y», которые заполняют чат, когда кто-то дарит пачку; сообщение о пачке остаётся. Настройка следует за вашим аккаунтом в приложении для iPhone.',
+        'Плеер: в полноэкранном режиме и в режиме кинотеатра название канала, его игра и название трансляции показываются вверху изображения вместе с элементами управления, как на twitch.tv (там, где информация под плеером не видна). Они обновляются, если название меняется во время трансляции; у VOD и клипов они тоже есть.',
       ],
     },
   },

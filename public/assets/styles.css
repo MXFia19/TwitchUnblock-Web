@@ -651,6 +651,29 @@ a.card, a.cat-card { display: block; }
 .p-ui { position: absolute; inset: 0; opacity: 0; pointer-events: none; transition: opacity 0.2s ease; }
 .player.ui .p-ui, .player.paused .p-ui { opacity: 1; pointer-events: auto; }
 .p-shade { position: absolute; inset: 0; pointer-events: none; background: linear-gradient(to top, rgba(0, 0, 0, 0.78), transparent 38%), linear-gradient(to bottom, rgba(0, 0, 0, 0.35), transparent 22%); }
+/* Chaîne, jeu et titre en haut de l'image, avec les commandes (setHeading),
+   comme sur twitch.tv : en plein écran et en mode théâtre seulement, où
+   l'en-tête du lecteur ou les infos dessous ne se voient plus. Le titre
+   tient sur deux lignes ; le chat posé sur l'image en plein écran garde sa
+   place. Les avis du haut (« Activer le son », pause pub, son coupé)
+   descendent de sa hauteur (--p-top-h, lue par le lecteur) tant que les
+   commandes sont là. */
+.p-top { display: none; position: absolute; top: 0; left: 0; right: 0; align-items: center; gap: 10px; padding: 12px 16px 0; color: #fff; pointer-events: none; isolation: isolate; }
+.p-top::before { content: ''; position: absolute; inset: 0 0 -36px; z-index: -1; background: linear-gradient(to bottom, rgba(0, 0, 0, 0.62), transparent); }
+.p-top-avatar { flex: none; width: 36px; height: 36px; border-radius: 50%; object-fit: cover; }
+.p-top-text { min-width: 0; display: flex; flex-direction: column; gap: 1px; text-shadow: 0 1px 3px rgba(0, 0, 0, 0.6); }
+.p-top-line { display: flex; align-items: baseline; gap: 8px; min-width: 0; white-space: nowrap; }
+.p-top-name { flex: none; max-width: 60%; overflow: hidden; text-overflow: ellipsis; font-size: 15px; font-weight: 800; }
+.p-top-game { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: 13px; color: rgba(255, 255, 255, 0.75); }
+.p-top-title { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; font-size: 13.5px; line-height: 1.35; overflow-wrap: anywhere; }
+.p-top-game[hidden], .p-top-title[hidden] { display: none; }
+:is(.watch-body:fullscreen, .watch-body:-webkit-full-screen) .p-top:not([hidden]) { display: flex; }
+@media (min-width: 901px) { .watch.theatre .p-top:not([hidden]) { display: flex; } }
+.watch:not(.chat-hidden) :is(.watch-body:fullscreen, .watch-body:-webkit-full-screen) .p-top { margin-right: var(--fs-chat-w); }
+:root[data-fschat^="left"] .watch:not(.chat-hidden) :is(.watch-body:fullscreen, .watch-body:-webkit-full-screen) .p-top { margin-right: 0; margin-left: var(--fs-chat-w); }
+:root[data-fschat$="-bottom"] .watch:not(.chat-hidden) :is(.watch-body:fullscreen, .watch-body:-webkit-full-screen) .p-top { margin-left: 0; margin-right: 0; }
+.p-unmute, .p-mutednote, .p-adbreak { transition: margin-top 0.2s ease; }
+.player:is(.ui, .paused) :is(.p-unmute, .p-mutednote, .p-adbreak) { margin-top: var(--p-top-h, 0px); }
 .p-big {
   position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
   width: 68px; height: 68px; border-radius: 50%;
