@@ -70,6 +70,9 @@ export default {
                 // Points de chaîne des apps : leurs « minute-watched », relayés
                 // quand un bloqueur coupe l'adresse de statistiques de Twitch.
                 case '/api/spade': return await handleSpade(request);
+                // Session web de l'app iPhone envoyée à l'app TV LG, chiffrée
+                // de bout en bout (QR code de la TV) : dépôt et relève.
+                case '/api/pair': return await handlePair(url, request, env);
 
                 // Outils d'administration (compte du propriétaire uniquement)
                 case '/api/admin/me': return await handleAdminMe(request);
@@ -1132,6 +1135,119 @@ async function handleSpade(request) {
     // Rien à lire dans la réponse : seul son code compte.
     res.body?.cancel().catch(() => {});
     return jsonResponse({ ok: true, status: res.status });
+}
+
+// ── Session web de l'iPhone vers l'app TV LG (/api/pair) ──────────────────
+// Protocole v1, le même dans l'app iPhone et dans l'app TV
+// (webos/src/pairing.js). La TV tire un identifiant (16 octets) et une clé
+// AES-256 (32 octets) et les montre dans un QR code :
+//   tupair://1?id=<id>&k=<clé>&w=<adresse de ce Worker>
+// L'iPhone qui le scanne chiffre sa session web (AES-256-GCM, données
+// associées « tupair/1/<id> ») et la dépose ici ; la TV la relève :
+//   POST /api/pair  {"id":"<22 car. base64url>","blob":"<base64url>"}
+//     → 200 {"ok":true} ; 409 identifiant déjà pris (dans ses 5 minutes,
+//       relève comprise) ; 400 identifiant ou paquet invalide ; 413 paquet
+//       de plus de PAIR_BLOB_MAX caractères ; 429 trop de requêtes (ou trop
+//       de paquets en attente pour tout le Worker).
+//   GET /api/pair?id=<id>  (la TV, toutes les 2 s, 5 minutes au plus)
+//     → 404 tant que rien n'est arrivé ; 200 {"blob":"…"} une seule fois.
+// La clé ne passe jamais par ici : le Worker garde un paquet qu'il ne peut
+// ni lire ni modifier sans que la TV le voie (étiquette GCM). Stockage : la
+// table kv de D1 (clé « tvpair_<id> », PAIR_TTL secondes au plus), la base
+// principale, cohérente : une écriture se lit aussitôt, d'où que vienne la
+// relève (le KV de Cloudflare peut mettre une minute à la montrer ailleurs).
+// À la relève, le paquet est effacé dans la même transaction, et
+// l'identifiant reste marqué « relevé » jusqu'au bout de ses 5 minutes : un
+// second dépôt reçoit 409, une seconde relève 404. Jamais au journal : ni le
+// paquet ni l'identifiant. Limites par adresse (/64 en IPv6) en mémoire de
+// l'instance, comme spadeHits, et PAIR_LIVE_MAX paquets en attente au plus
+// pour tout le Worker (la base ne se remplit pas). Docker : le même code, sa
+// base D1 locale. Le Worker de secours, sans base, répond 503.
+const PAIR_ID_RE = /^[A-Za-z0-9_-]{22}$/;
+const PAIR_BLOB_RE = /^[A-Za-z0-9_-]+$/;
+const PAIR_BLOB_MAX = 4096;
+// Nonce (12 octets) et étiquette (16) : 28 octets, 38 caractères au moins.
+const PAIR_BLOB_MIN = 38;
+const PAIR_BODY_MAX = PAIR_BLOB_MAX + 256;   // {"id":…,"blob":…} en JSON
+const PAIR_TTL = 300;
+const PAIR_LIVE_MAX = 500;
+const PAIR_POSTS_PER_MINUTE = 10;
+// La TV relève toutes les 2 s (30 par minute) : de quoi en appairer deux à
+// la fois derrière la même box.
+const PAIR_GETS_PER_MINUTE = 75;
+const PAIR_PREFIX = 'tvpair_';
+const pairPosts = new Map();   // adresse → { n, until } (mémoire de l'instance)
+const pairGets = new Map();
+
+function pairJson(obj, status = 200) {
+    return new Response(JSON.stringify(obj), { status, headers: { ...RESPONSE_HEADERS, 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } });
+}
+
+async function handlePair(url, request, env) {
+    if (request.method === 'POST') return pairDrop(request, env);
+    if (request.method === 'GET') return pairPickUp(url, request, env);
+    return pairJson({ error: 'Méthode non autorisée' }, 405);
+}
+
+/** Dépôt du paquet chiffré (l'iPhone). */
+async function pairDrop(request, env) {
+    if (overLimit(pairPosts, clientKey(request), PAIR_POSTS_PER_MINUTE, 60 * 1000)) {
+        return pairJson({ error: 'Trop de requêtes, réessaie dans une minute' }, 429);
+    }
+    if (Number(request.headers.get('Content-Length')) > PAIR_BODY_MAX) return pairJson({ error: 'Paquet trop gros' }, 413);
+    let text = '';
+    try { text = await request.text(); } catch (e) { return pairJson({ error: 'Données invalides' }, 400); }
+    if (text.length > PAIR_BODY_MAX) return pairJson({ error: 'Paquet trop gros' }, 413);
+    let body = null;
+    try { body = JSON.parse(text); } catch (e) { body = null; }
+    const fields = body && typeof body === 'object' && !Array.isArray(body) ? body : {};
+    const { id, blob } = fields;
+    if (typeof id !== 'string' || !PAIR_ID_RE.test(id) || typeof blob !== 'string') return pairJson({ error: 'Données invalides' }, 400);
+    if (blob.length > PAIR_BLOB_MAX) return pairJson({ error: 'Paquet trop gros' }, 413);
+    if (blob.length < PAIR_BLOB_MIN || blob.length % 4 === 1 || !PAIR_BLOB_RE.test(blob)) return pairJson({ error: 'Données invalides' }, 400);
+    if (!env.DB) return pairJson({ error: "Base D1 'DB' non liée au Worker." }, 503);
+    await ensureSchema(env);
+    const now = Date.now();
+    const end = prefixEnd(PAIR_PREFIX);
+    // Ménage des paquets expirés (plage de la clé primaire), puis le compte
+    // de ceux qui restent.
+    const [, live] = await env.DB.batch([
+        env.DB.prepare(`DELETE FROM kv WHERE key >= ?1 AND key < ?2 AND expires IS NOT NULL AND expires <= ?3`).bind(PAIR_PREFIX, end, now),
+        env.DB.prepare(`SELECT COUNT(*) AS n FROM kv WHERE key >= ?1 AND key < ?2`).bind(PAIR_PREFIX, end),
+    ]);
+    if (Number(live?.results?.[0]?.n) >= PAIR_LIVE_MAX) {
+        return pairJson({ error: 'Trop d\x27envois en cours, réessaie dans quelques minutes' }, 429);
+    }
+    const put = await env.DB.prepare(`INSERT INTO kv (key, value, meta, expires) VALUES (?1, ?2, NULL, ?3) ON CONFLICT(key) DO NOTHING`)
+        .bind(PAIR_PREFIX + id, blob, now + PAIR_TTL * 1000).run();
+    if (!(put?.meta?.changes > 0)) return pairJson({ error: 'Ce code a déjà servi' }, 409);
+    return pairJson({ ok: true });
+}
+
+/** Relève (la TV) : le paquet une seule fois, effacé aussitôt. */
+async function pairPickUp(url, request, env) {
+    if (overLimit(pairGets, clientKey(request), PAIR_GETS_PER_MINUTE, 60 * 1000)) {
+        return pairJson({ error: 'Trop de requêtes, réessaie dans une minute' }, 429);
+    }
+    const id = url.searchParams.get('id') || '';
+    if (!PAIR_ID_RE.test(id)) return pairJson({ error: 'Identifiant invalide' }, 400);
+    if (!env.DB) return pairJson({ error: "Base D1 'DB' non liée au Worker." }, 503);
+    await ensureSchema(env);
+    const key = PAIR_PREFIX + id;
+    const now = Date.now();
+    // Une simple lecture tant que rien n'est arrivé (presque toutes les relèves).
+    const waiting = await env.DB.prepare(`SELECT 1 AS ok FROM kv WHERE key = ?1 AND meta IS NULL AND value <> '' AND expires > ?2`)
+        .bind(key, now).first();
+    if (!waiting) return pairJson({ error: 'Rien pour le moment' }, 404);
+    // Pris et effacé dans la même transaction : de deux relèves simultanées,
+    // seule la première passe la condition « meta IS NULL ».
+    const [took] = await env.DB.batch([
+        env.DB.prepare(`UPDATE kv SET meta = '{"read":1}' WHERE key = ?1 AND meta IS NULL AND value <> '' AND expires > ?2 RETURNING value`).bind(key, now),
+        env.DB.prepare(`UPDATE kv SET value = '' WHERE key = ?1 AND meta IS NOT NULL`).bind(key),
+    ]);
+    const blob = took?.results?.[0]?.value;
+    if (typeof blob !== 'string' || !blob) return pairJson({ error: 'Rien pour le moment' }, 404);
+    return pairJson({ blob });
 }
 
 // --- FONCTIONS UTILITAIRES ---
