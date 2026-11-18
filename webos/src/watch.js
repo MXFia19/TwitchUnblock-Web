@@ -25,6 +25,7 @@ import { store } from '../../public/assets/js/store.js'
 import { lang, t } from '../../public/assets/js/i18n.js'
 import { esc, formatClock, formatViewers, icon, toast, uptimeSince } from '../../public/assets/js/util.js'
 import { logError } from '../../public/assets/js/errlog.js'
+import { slowRelayLine } from '../../public/assets/js/slowrelay.js'
 import { canChat } from './auth.js'
 import { accountLive, webSession } from './websession.js'
 import { TvChat } from './chat.js'
@@ -83,6 +84,7 @@ function getPlayer() {
       current?.showMessage(t(kind === 'live' ? 'err_live' : 'err_vod'), { retry: true })
     },
     onWorkerDown: (base) => switchWorker(base),
+    onSlowRelay: (m) => slowRelay(m),
     onUnplayable: (bad, next) => toast(t('quality_unplayable', { q: bad, n: next }), 'info'),
   })
   // App mise en arrière-plan (touche Accueil, autre app) : la lecture
@@ -116,6 +118,16 @@ function switchWorker(base) {
     player.swapLinks(w.links, w.variants)
     return true
   }
+  // Relais de Sofia en panne pendant une VOD sortie d'un relais trop lent
+  // (slowRelay) : par le Worker, le filet habituel (main.js). Un direct de
+  // la source « bg » garde ses relances.
+  if (base === api.SOFIA_BASE && w.kind === 'vod' && w.links && api.markWorkerDown(base)) {
+    console.info('[TwitchUnblock] Relais de Sofia injoignable, retour au Worker :', base)
+    logError('lecteur', 'TV : relais de Sofia injoignable pendant une VOD, retour au Worker')
+    w.links = api.withoutSofia(w.links)
+    player.swapLinks(w.links, w.variants)
+    return true
+  }
   if (Date.now() - lastWorkerSwitch < 60_000 || !w.links || !api.hasOtherWorker(base)) return false
   lastWorkerSwitch = Date.now()
   // Direct par le compte : rien à redemander, les mêmes liens par un autre
@@ -142,11 +154,32 @@ function switchWorker(base) {
   return true
 }
 
-// Relais revenu (api.js) : la vidéo y repasse, deux fois au plus (main.js).
+/**
+ * Relais principal trop lent pendant une VOD (player.js, slowrelay.js) : la
+ * suite par le relais de Sofia, au même endroit, sans nouvelle instance du
+ * lecteur ; le relais écarté des VODs 30 min (main.js, slowRelay).
+ */
+function slowRelay(m) {
+  const w = session
+  if (w?.kind !== 'vod' || !w.links) return
+  if (!api.markRelaySlow()) {
+    if (!w.slowKept) logError('lecteur', `TV ${slowRelayLine(m, 'relais de Sofia indisponible, la VOD reste sur le relais')}`)
+    w.slowKept = true
+    return
+  }
+  console.info('[TwitchUnblock] Relais vidéo trop lent pour cette VOD : la suite passe par le relais de Sofia.')
+  logError('lecteur', `TV ${slowRelayLine(m, 'la suite passe par le relais de Sofia (relais écarté des VODs 30 min)')}`)
+  w.links = api.toSofia(w.links)
+  player.moveRelay(w.links, api.RELAY_BASE, api.SOFIA_BASE)
+  toast(t('relay_slow'), 'info', 5000)
+}
+
+// Relais revenu (api.js) : la vidéo y repasse, deux fois au plus (main.js) —
+// sauf une VOD sortie d'un relais trop lent, avant la fin du délai.
 window.addEventListener('tu-relay-back', () => {
   const w = session
   if ((w?.kind !== 'live' && w?.kind !== 'vod') || !w.links) return
-  const moved = api.backToRelay(w.links)
+  const moved = api.backToRelay(w.links, { vod: w.kind === 'vod' })
   if (JSON.stringify(moved) === JSON.stringify(w.links)) return
   w.relayReturns = (w.relayReturns || 0) + 1
   if (w.relayReturns > 2) return
