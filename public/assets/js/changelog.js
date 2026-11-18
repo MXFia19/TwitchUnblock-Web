@@ -6,6 +6,23 @@
 
 export const CHANGELOG = [
   {
+    version: '2026.11.18c',
+    items: {
+      fr: [
+        'VODs : quand les serveurs Cloudflare du site atteignaient leur limite du jour, plus aucune VOD ne démarrait jusqu’à minuit UTC. Le site demande maintenant les liens de la VOD à ses relais vidéo, et elle démarre quand même. Pareil dans l’app pour TV LG.',
+      ],
+      en: [
+        'VODs: when the site’s Cloudflare servers hit their daily limit, no VOD would start until midnight UTC. The site now asks its video relays for the VOD links instead, so it still starts. Same in the LG TV app.',
+      ],
+      es: [
+        'VODs: cuando los servidores de Cloudflare del sitio llegaban a su límite diario, ningún VOD arrancaba hasta la medianoche UTC. Ahora el sitio pide los enlaces del VOD a sus relés de vídeo y arranca igualmente. Lo mismo en la app para televisores LG.',
+      ],
+      ru: [
+        'VOD: когда серверы Cloudflare сайта исчерпывали дневной лимит, ни один VOD не запускался до полуночи по UTC. Теперь сайт запрашивает ссылки на VOD у своих видеоретрансляторов, и он всё равно запускается. То же самое в приложении для телевизоров LG.',
+      ],
+    },
+  },
+  {
     version: '2026.11.18b',
     items: {
       fr: [

@@ -141,6 +141,27 @@ async function handleLiveSource(req, res, url) {
   res.end(body)
 }
 
+// ── Liens d'une VOD quand aucun Worker ne répond ───────────────────────────
+// GET /api/get-m3u8?id=<VOD> : handleGetM3U8 de worker.js exécuté ici, avec
+// l'adresse de ce serveur (liens par son /api/proxy). Le site ne demandait
+// les liens des VODs qu'aux Workers : quand les deux avaient épuisé leur
+// quota du jour (« error code: 1027 », le 18/11 vers 21:50 UTC), plus aucune
+// VOD ne démarrait jusqu'à minuit UTC. Il se tourne maintenant vers les
+// relais (api.js, getVodLinks). Seul `id` est lu, comme `name` plus haut :
+// liens toujours par le proxy, jamais d'autre hôte.
+async function handleVodLinks(req, res, url) {
+  if (req.method === 'OPTIONS') { res.writeHead(204, CORS); return res.end() }
+  if (req.method !== 'GET') { res.writeHead(405, CORS); return res.end() }
+  if (!originOk(req.headers.origin, req.headers['user-agent'])) { res.writeHead(403); return res.end('Origin not allowed') }
+  const ask = new URL('/api/get-m3u8', url.origin)
+  ask.searchParams.set('id', url.searchParams.get('id') || '')
+  ask.searchParams.set('proxy', 'true')
+  const r = await worker.fetch(new Request(ask), { PROXY_FETCH: proxyFetch }, { waitUntil() {}, passThroughOnException() {} })
+  const body = await r.text()
+  res.writeHead(r.status, { ...CORS, 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
+  res.end(body)
+}
+
 // ── Notifications ntfy de l'app iOS ────────────────────────────────────────
 // ntfy.sh compte les messages par adresse IP (250 par jour) ; les Workers
 // Cloudflare sortent tous par les mêmes adresses, déjà à court : ntfy.sh leur
@@ -422,6 +443,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (url.pathname === '/ntfy') return await handleNtfy(req, res)
     if (url.pathname === '/api/get-live' && LIVE_SOURCE) return await handleLiveSource(req, res, url)
+    if (url.pathname === '/api/get-m3u8') return await handleVodLinks(req, res, url)
     if (url.pathname !== '/api/proxy') { res.writeHead(404, CORS); return res.end() }
     if (req.method === 'OPTIONS') { res.writeHead(204, CORS); return res.end() }
     if (req.method !== 'GET' && req.method !== 'HEAD') { res.writeHead(405, CORS); return res.end() }

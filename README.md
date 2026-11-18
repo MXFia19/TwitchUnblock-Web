@@ -633,6 +633,16 @@ the app moves on to its next source. This is the apps' **Bulgaria** test
 source (`bg`): a relay in Sofia, to measure whether Twitch serves fewer ads
 to a Bulgarian address. Off by default.
 
+**VOD links when no Worker answers:** the relay also answers
+`GET /api/get-m3u8?id=<VOD>` like the Worker, from its own address (always
+proxied: its links go through the relay's `/api/proxy`; only `id` is read,
+and the same origin check as `/api/proxy` applies). The website and the TV
+app only ask it when every Worker failed — the free plan's daily quota
+(“error code: 1027”) left no VOD able to start until midnight UTC, as on
+18 November: the main relay first, the one in Sofia when the main one is set
+aside as too slow (or doesn't answer). A real answer from a Worker, like 404
+for a missing VOD, never goes to the relays. Always on.
+
 **ntfy:** the relay also publishes the iOS app's live notifications to
 ntfy.sh for the Worker (`POST /ntfy`), since ntfy.sh refuses Cloudflare's
 shared addresses. It only accepts batches signed by the Worker whose address

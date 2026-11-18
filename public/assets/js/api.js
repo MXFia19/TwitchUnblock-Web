@@ -918,7 +918,52 @@ export function liveSourceOrder(prefs = store.prefs) {
 }
 
 export async function getVodLinks(id, { avoid = null } = {}) {
-  return vodViaRelay(await workerJson(`/api/get-m3u8?id=${encodeURIComponent(id)}&proxy=true`, { avoid }))
+  const path = `/api/get-m3u8?id=${encodeURIComponent(id)}&proxy=true`
+  try {
+    return vodViaRelay(await workerJson(path, { avoid }))
+  } catch (e) {
+    // Une vraie réponse d'un Worker (404 : VOD introuvable) n'est pas une
+    // panne : les relais diraient la même chose.
+    if (e?.status || e?.name === 'AbortError') throw e
+    const data = await vpsVodLinks(path, avoid)
+    if (data) return data
+    throw e
+  }
+}
+
+/** Liens d'une VOD quand aucun Worker ne répond (quota du jour épuisé
+ *  partout, « error code: 1027 », jusqu'à minuit UTC) : demandés aux relais
+ *  des VPS, qui exécutent la même route (docker/relay.mjs, handleVodLinks) —
+ *  liens par leur propre /api/proxy. Le relais de Sofia d'abord quand le
+ *  principal est écarté pour lenteur ; `avoid`, celui qui vient de lâcher,
+ *  n'est pas redemandé. null si aucun ne donne de liens ; un 404 (VOD
+ *  introuvable) est une vraie réponse et remonte tel quel. */
+async function vpsVodLinks(path, avoid = null) {
+  const order = relaySlow() ? [SOFIA_BASE, RELAY_BASE] : [RELAY_BASE, SOFIA_BASE]
+  for (const base of order.filter((b, i, all) => b && b !== avoid && !isDown(b) && all.indexOf(b) === i)) {
+    const ctrl = new AbortController()
+    const timer = setTimeout(() => ctrl.abort(), 15_000)
+    try {
+      const res = await fetch(base + path, { cache: 'no-store', signal: ctrl.signal })
+      // 404 en JSON : la route a répondu (VOD introuvable). Un 404 nu vient
+      // d'un relais d'avant cette route : on passe au suivant.
+      if (res.status === 404 && /json/i.test(res.headers.get('content-type') || '')) {
+        const err = new Error('HTTP 404')
+        err.status = 404
+        throw err
+      }
+      if (!res.ok) continue
+      const data = await res.json()
+      if (!data?.links || !Object.keys(data.links).length) continue
+      console.info(`[TwitchUnblock] Workers injoignables : liens de la VOD par le relais ${base === SOFIA_BASE ? 'de Sofia' : 'principal'}`)
+      return data
+    } catch (e) {
+      if (e?.status) throw e
+    } finally {
+      clearTimeout(timer)
+    }
+  }
+  return null
 }
 
 /** Adresse d'origine derrière un lien du proxy, pour les applis externes
