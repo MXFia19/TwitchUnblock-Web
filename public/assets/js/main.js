@@ -788,13 +788,13 @@ window.addEventListener('pagehide', () => { flushSync({ force: true }); flushPre
 // depuis le dernier échange : fusion pour les masqués et les épinglés (avec
 // la liste du dernier échange, un retrait fait d'un côté tient), la date la
 // plus récente pour les réglages.
-const PREFS_COMMON = ['topLang', 'showRecent', 'timestamps', 'timeFormat', 'keepDeleted', 'loadHistory', 'hideBots', 'hideCommands', 'mutedWords', 'blockedUsers', 'highlightWords', 'vodSpeed', 'hiddenEmotes', 'favoriteEmotes']
+const PREFS_COMMON = ['topLang', 'showRecent', 'timestamps', 'timeFormat', 'keepDeleted', 'loadHistory', 'hideBots', 'hideCommands', 'mutedWords', 'blockedUsers', 'highlightWords', 'vodSpeed', 'hiddenEmotes', 'favoriteEmotes', 'hideGiftSubs']
 // Clés ajoutées à `common` après coup (toujours en fin de liste) : une
 // empreinte gardée d'avant leur arrivée, calculée sans elles, n'est pas un
 // changement fait ici (notePrefsChanges). Sinon, au premier passage de la
 // nouvelle version, la section d'ici, datée du moment, écrasait celle du
 // serveur — jusqu'aux emotes masquées venues de l'app iPhone.
-const PREFS_COMMON_ADDED = ['hiddenEmotes', 'favoriteEmotes']
+const PREFS_COMMON_ADDED = ['hiddenEmotes', 'favoriteEmotes', 'hideGiftSubs']
 const PREFS_SECTIONS = ['common', 'pinned', 'hidden']
 const PREFS_STATE_KEY = 'tu_prefs_sync'
 const PREFS_DELAY = 4000
@@ -6320,6 +6320,7 @@ function openSettings(page = 'menu') {
       ${toggle('set-deleted', t('keep_deleted'), p.keepDeleted)}
       <h4>${esc(t('chat_group_filters'))}</h4>
       ${toggle('set-bots', t('hide_bots'), p.hideBots, t('hide_bots_sub'))}
+      ${toggle('set-gifts', t('hide_gift_subs'), p.hideGiftSubs, t('hide_gift_subs_sub'))}
       ${toggle('set-cmds', t('hide_commands'), p.hideCommands, t('hide_commands_sub'))}
       <label class="setting setting-col">
         <span class="setting-text"><span>${esc(t('muted_words'))}</span><small>${esc(t('muted_words_sub'))}</small></span>
@@ -6461,6 +6462,7 @@ function openSettings(page = 'menu') {
     if (id === 'set-deleted') p.keepDeleted = e.target.checked
     if (id === 'set-history') p.loadHistory = e.target.checked
     if (id === 'set-bots') p.hideBots = e.target.checked
+    if (id === 'set-gifts') p.hideGiftSubs = e.target.checked
     if (id === 'set-cmds') p.hideCommands = e.target.checked
     if (id === 'set-muted') {
       p.mutedWords = e.target.value.split(',').map((w) => w.trim().toLowerCase()).filter(Boolean).slice(0, 50)
@@ -6609,6 +6611,7 @@ const BACKUP_SETTINGS = {
   multiChat: okBool,
   autoRaid: okBool,
   hideBots: okBool,
+  hideGiftSubs: okBool,
   hideCommands: okBool,
   mutedWords: okWords(50),
   highlightWords: okWords(30),

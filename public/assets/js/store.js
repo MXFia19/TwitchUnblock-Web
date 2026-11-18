@@ -53,6 +53,8 @@ export const DEFAULT_PREFS = {
   vodProgress: true,
   highlightWords: [],
   hideBots: false,
+  // « X a offert un sub à Y » masqués (le résumé d'un lot reste). Coupé par défaut.
+  hideGiftSubs: false,
   hideCommands: false,
   mutedWords: [],
   blockedUsers: [],

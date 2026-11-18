@@ -1594,6 +1594,8 @@ button.cx-bal:hover { border-color: var(--purple); background: var(--card); }
 .msg.notice-raid svg { color: var(--purple); flex: none; }
 .btn.xs { height: 26px; padding: 0 10px; font-size: 12px; }
 .msg.notice-sub { color: var(--purple); }
+/* Subs offerts masqués (réglage) : ceux déjà affichés aussi. */
+.chat.hide-gifts .msg.gift { display: none; }
 .msg.msg-announce { margin: 4px 8px; padding: 6px 10px; border-radius: 8px; background: color-mix(in srgb, var(--announce) 16%, transparent); box-shadow: inset 3px 0 var(--announce); }
 .setting.setting-col { flex-direction: column; align-items: stretch; gap: 8px; }
 .feedback-form { display: flex; flex-direction: column; gap: 10px; }

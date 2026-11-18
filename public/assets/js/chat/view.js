@@ -586,6 +586,8 @@ export class ChatView {
     const p = this.o.prefs
     this.root.style.setProperty('--chat-size', `${p.chatSize}px`)
     this.root.classList.toggle('show-time', Boolean(p.timestamps))
+    // Subs offerts masqués : ceux déjà affichés disparaissent aussi.
+    this.root.classList.toggle('hide-gifts', Boolean(p.hideGiftSubs))
     // Synchro coupée ou rallumée dans les réglages : l'indicateur suit.
     if (this.mode === 'live') this.syncDelay()
     // Emotes masquées ailleurs (synchro des réglages, autre chat) : celles
@@ -1716,7 +1718,7 @@ export class ChatView {
       return div
     }
     if (m.systemMsg) {
-      div.className = 'msg sys' + (m.notice === 'sub' ? ' notice-sub' : '')
+      div.className = 'msg sys' + (m.notice === 'sub' ? ' notice-sub' : '') + (m.gift ? ' gift' : '')
       div.textContent = m.systemMsg
       return div
     }
@@ -2156,6 +2158,7 @@ export class ChatView {
   /** Filtres du chat (réglages) : utilisateurs masqués, bots, commandes,
    *  mots masqués. Nos propres messages et ceux du système passent toujours. */
   isFiltered(m) {
+    if (m.gift && this.o.prefs.hideGiftSubs) return true
     if (m.isSelf || (m.userId === 'system' && !m.userName)) return false
     const p = this.o.prefs
     const login = String(m.userName || '').toLowerCase()

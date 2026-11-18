@@ -358,6 +358,8 @@ export const ZH_HANT = {
   period_all: '全部',
   hide_bots: '隱藏機器人',
   hide_bots_sub: 'Nightbot、StreamElements、Fossabot…',
+  hide_gift_subs: '隱藏贈送的訂閱',
+  hide_gift_subs_sub: '「X 贈送訂閱給 Y」：每人一行，有人整批贈送時一次好幾十行。整批贈送的訊息會保留。',
   hide_commands: '隱藏指令',
   hide_commands_sub: '以「!」開頭的訊息。',
   muted_words: '靜音字詞',

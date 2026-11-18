@@ -238,7 +238,12 @@ export function noticeMessages(irc, historical = false) {
     return out
   }
   if (sys && kind !== 'announcement') {
-    out.push(systemMessage(sys, { notice: /sub|gift/.test(kind) ? 'sub' : 'other', timestamp, isHistorical: historical }))
+    // Sub offert à quelqu'un (« X gifted a Tier 1 sub to Y! ») : une ligne par
+    // personne, des dizaines d'un coup quand quelqu'un en offre en lot —
+    // masquables (prefs.hideGiftSubs, coupé par défaut). Le résumé du lot
+    // (« X is gifting 50 subs… », submysterygift) reste.
+    const gift = kind === 'subgift' || kind === 'anonsubgift'
+    out.push(systemMessage(sys, { notice: /sub|gift/.test(kind) ? 'sub' : 'other', gift, timestamp, isHistorical: historical }))
   }
   if (ircText(irc)) {
     const msg = fromIRC(irc, historical)

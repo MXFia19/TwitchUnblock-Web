@@ -355,6 +355,8 @@ export const RU = {
   period_all: 'Всё время',
   hide_bots: 'Скрывать ботов',
   hide_bots_sub: 'Nightbot, StreamElements, Fossabot…',
+  hide_gift_subs: 'Скрывать подаренные подписки',
+  hide_gift_subs_sub: '«X подарил подписку Y»: по строке на каждого, десятки сразу, когда кто-то дарит пачку. Сообщение о пачке остаётся.',
   hide_commands: 'Скрывать команды',
   hide_commands_sub: 'Сообщения, начинающиеся с «!».',
   muted_words: 'Скрытые слова',
