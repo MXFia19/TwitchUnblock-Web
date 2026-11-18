@@ -1,0 +1,138 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   Mode TV (assets/js/tv.js) : chargée seulement en mode TV, et tout passe par
+   html.tv. Écran de 1920 × 1080 lu à 3 m : textes et cibles plus grands,
+   repère de focus bien visible, pas de flou d'arrière-plan (GPU des TV).
+   Sans :is() ni :has() : webOS 22 a Chromium 87.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+html.tv { --tv-ring: #fff; --head-h: 72px; --chat-w: 440px; }
+html.tv[data-bg="light"] { --tv-ring: var(--primary); }
+
+/* ── Repère de focus ───────────────────────────────────────────────────── */
+html.tv :focus-visible {
+  outline: 4px solid var(--tv-ring) !important; outline-offset: 3px;
+  box-shadow: 0 0 0 9px rgba(var(--primary-rgb), 0.55);
+}
+/* Cartes : l'anneau sur la vignette, qui grandit un peu. */
+html.tv .card:focus-visible, html.tv .cat-card:focus-visible { outline: none !important; box-shadow: none; }
+html.tv .card:focus-visible .thumb, html.tv .cat-card:focus-visible .cat-box {
+  transform: scale(1.04);
+  box-shadow: 0 0 0 4px var(--tv-ring), 0 0 0 10px rgba(var(--primary-rgb), 0.6), 0 18px 40px rgba(0, 0, 0, 0.5);
+}
+html.tv .card:focus-visible h3, html.tv .cat-card:focus-visible h3 { color: var(--purple); }
+/* La vidéo elle-même (gauche / droite : ±10 s) : pas d'anneau autour. */
+html.tv .player:focus-visible { outline: none !important; box-shadow: none; }
+/* Champs : l'anneau sur leur cadre. */
+html.tv .search:focus-within, html.tv .chat-input-row:focus-within { box-shadow: 0 0 0 4px var(--tv-ring), 0 0 0 9px rgba(var(--primary-rgb), 0.55); }
+html.tv .search input:focus-visible, html.tv .chat-input:focus-visible { outline: none !important; box-shadow: none; }
+
+/* ── Page ──────────────────────────────────────────────────────────────── */
+html.tv body { font-size: 19px; }
+html.tv .topbar { height: 84px; padding: 0 48px; background: var(--bg); }
+html.tv .brand { font-size: 24px; }
+html.tv .nav button { gap: 10px; padding: 12px 24px; font-size: 20px; }
+html.tv .nav button .ic, html.tv .icon-btn .ic { width: 26px; height: 26px; }
+html.tv .icon-btn { width: 56px; height: 56px; }
+html.tv .icon-btn.sm { width: 48px; height: 48px; }
+html.tv .icon-btn.sm .ic { width: 22px; height: 22px; }
+html.tv .feedback-btn { height: 52px; padding: 0 18px; font-size: 18px; }
+html.tv .account-btn { height: 52px; padding: 0 20px; font-size: 18px; }
+html.tv .account-btn.logged { width: 52px; padding: 0; }
+html.tv .btn { height: 56px; padding: 0 24px; font-size: 19px; }
+html.tv .btn.sm { height: 46px; padding: 0 16px; font-size: 17px; }
+html.tv .link-btn { font-size: 17px; }
+html.tv .segmented button { padding: 10px 20px; font-size: 18px; }
+html.tv .content { max-width: none; padding: 32px 48px 72px; }
+html.tv .block { margin-bottom: 48px; }
+html.tv .block-head h2 { font-size: 28px; }
+html.tv .search input { height: 56px; font-size: 22px; }
+html.tv .chip { height: 48px; padding: 0 10px; font-size: 18px; }
+html.tv .cat-lang { height: 46px; }
+html.tv .cat-lang select { height: 44px; max-width: 260px; font-size: 18px; }
+html.tv .site-footer { font-size: 16px; }
+
+/* Cartes : 4 à 5 par ligne au lieu de 6 ou 7 ; en liste, 3 colonnes. */
+html.tv .grid:not(.as-list) { grid-template-columns: repeat(auto-fill, minmax(380px, 1fr)); gap: 36px 28px; }
+html.tv .grid.as-list { grid-template-columns: repeat(auto-fill, minmax(560px, 1fr)); gap: 24px 28px; }
+html.tv .grid.as-list .stream-card .thumb { width: 240px; }
+html.tv .grid.as-list .stream-card .name { font-size: 20px; }
+/* Rangées qui défilent : de la place pour l'anneau, sinon rogné. */
+html.tv .rail { grid-auto-columns: 380px; gap: 24px; padding: 14px 12px 18px; margin: -14px -12px 0; }
+html.tv .playlist .rail { grid-auto-columns: 320px; }
+html.tv .card h3 { font-size: 21px; }
+html.tv .card .name, html.tv .card .meta { font-size: 18px; }
+html.tv .pill { height: 28px; padding: 0 9px; font-size: 15px; }
+html.tv .cat-grid { grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 30px 22px; }
+html.tv .cat-card h3 { font-size: 19px; }
+html.tv .cat-card .meta { font-size: 16px; }
+html.tv .hero-id h2 { font-size: 32px; }
+html.tv .hero-title { font-size: 22px; }
+html.tv .hero-game, html.tv .hero-badges { font-size: 18px; }
+html.tv .hero-thumb { width: 480px; }
+
+/* ── Lecteur ───────────────────────────────────────────────────────────── */
+html.tv .watch-head { padding: 0 24px; }
+html.tv .watch-id strong { font-size: 22px; }
+html.tv .watch-sub { font-size: 17px; }
+html.tv .watch-info { padding: 20px 28px; font-size: 18px; }
+html.tv .wi-text h1 { font-size: 26px; }
+html.tv .p-bottom { padding: 0 28px 14px; }
+html.tv .p-progress { height: 30px; }
+html.tv .p-track { height: 8px; }
+html.tv .p-bar { height: 72px; gap: 8px; }
+html.tv .p-btn { width: 60px; height: 60px; }
+html.tv .p-btn .ic { width: 30px; height: 30px; }
+html.tv .p-btn b { font-size: 11px; }
+html.tv .p-quality { width: auto; padding: 0 14px; }
+html.tv .p-q-label, html.tv .p-q-speed { font-size: 17px; }
+html.tv .p-time { font-size: 20px; }
+html.tv .p-live { height: 36px; padding: 0 14px; font-size: 17px; }
+html.tv .p-latency { font-size: 17px; }
+html.tv .p-big { width: 96px; height: 96px; }
+/* Image dans l'image et réglette du volume : la télécommande s'en charge. */
+html.tv .p-pip, html.tv .p-vol, html.tv .fs-chat-grip { display: none !important; }
+html.tv .p-menu { right: 28px; bottom: 100px; min-width: 320px; max-height: calc(100% - 130px); padding: 10px; }
+html.tv .p-menu > button { padding: 14px 18px; font-size: 20px; }
+html.tv .p-menu-title { padding: 12px 18px 6px; font-size: 15px; }
+html.tv .p-speeds button { padding: 12px 0; font-size: 18px; }
+html.tv .watch-mini { padding: 12px 10px 12px 16px; }
+html.tv .mini-text strong { font-size: 18px; }
+
+/* Chat : sa taille de texte réglée, en plus grand. */
+html.tv .chat { font-size: calc(var(--chat-size, 14px) * 1.4); }
+html.tv .chat-input { height: 48px; font-size: 19px; }
+
+/* ── Feuilles, avis, visite guidée ─────────────────────────────────────── */
+html.tv .sheet { width: min(760px, calc(100% - 96px)); max-height: calc(100vh - 80px); padding: 28px 32px; font-size: 19px; }
+html.tv .sheet-head h2 { font-size: 26px; }
+html.tv .sheet-sub { font-size: 17px; }
+html.tv .sheet-section h3 { font-size: 15px; }
+html.tv .sheet-section h4 { font-size: 17px; }
+html.tv .setting { padding: 14px 0; }
+html.tv .setting-text small { font-size: 16px; }
+html.tv .set-nav-row { padding: 14px 10px; }
+html.tv .switch { width: 64px; height: 38px; }
+html.tv .switch::after { top: 4px; left: 4px; width: 30px; height: 30px; }
+html.tv .switch:checked::after { transform: translateX(26px); }
+html.tv .text-input { height: 50px; font-size: 19px; }
+html.tv .toast { bottom: 48px; padding: 16px 24px; font-size: 20px; }
+html.tv .tour-pop { width: min(560px, calc(100vw - 48px)); padding: 24px; }
+html.tv .tour-pop > p { font-size: 19px; }
+
+/* ── Performances ──────────────────────────────────────────────────────── */
+/* Pas de flou d'arrière-plan (lent sur les TV) : des fonds opaques. */
+html.tv .topbar, html.tv .tabbar, html.tv .p-big, html.tv .p-menu, html.tv .thumb > .pill { -webkit-backdrop-filter: none; backdrop-filter: none; }
+html.tv .p-menu { background: rgba(24, 24, 27, 0.98); }
+html.tv .watch-body:fullscreen .chat { -webkit-backdrop-filter: none; backdrop-filter: none; background: rgba(14, 14, 16, 0.84); }
+html.tv .watch-body:-webkit-full-screen .chat { -webkit-backdrop-filter: none; backdrop-filter: none; background: rgba(14, 14, 16, 0.84); }
+
+/* ── Moteurs sans aspect-ratio (webOS 22, Chromium 87) ─────────────────── */
+@supports not (aspect-ratio: 1 / 1) {
+  html.tv .card .thumb::before { content: ''; display: block; padding-top: 56.25%; }
+  html.tv .card .thumb > img { position: absolute; top: 0; left: 0; }
+  html.tv .cat-box::before { content: ''; display: block; padding-top: 133.33%; }
+  html.tv .cat-box > img { position: absolute; top: 0; left: 0; }
+  html.tv .watch:not(.minimized):not(.theatre) .watch-video { height: calc((100vw - var(--chat-w)) * 0.5625); max-height: calc(100vh - var(--head-h) - 110px); }
+  html.tv .watch.chat-hidden:not(.minimized):not(.theatre) .watch-video { height: calc(100vw * 0.5625); }
+  html.tv .watch.minimized .watch-video::before { content: ''; display: block; padding-top: 56.25%; }
+}

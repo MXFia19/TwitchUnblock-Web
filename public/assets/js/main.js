@@ -14,6 +14,7 @@ import { Hermes } from './chat/hermes.js'
 import * as usage from './usage.js'
 import * as multi from './multi.js'
 import * as dl from './download.js'
+import { initTv } from './tv.js'
 import { CHANGELOG } from './changelog.js'
 import { ACCOUNT_MIN_VERSION, EVENTS_KEEP_EVERY, canAccount, compareVersions, connect, extBrowser, installUrlFor } from './connect.js'
 import { errorText as connectErrorText, freshDrop } from './chat/connect-live.js'
@@ -174,6 +175,7 @@ async function boot() {
   loadPoll(true)
   renderIcons()
   bindGlobal()
+  initTv()   // mode TV (télécommande), voir tv.js
   // Extension TwitchUnblock Connect : détectée tout de suite (messages à la
   // page elle-même, rien vers le Worker) ; les réglages suivent son état.
   connect.onChange(refreshConnectUi)
