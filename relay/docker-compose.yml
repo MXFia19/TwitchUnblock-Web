@@ -41,6 +41,8 @@ services:
       # Sites qui peuvent s'en servir (les autres sont refusés) : le site
       # officiel (nouvelle et ancienne adresse) et ses aperçus de test sur
       # Vercel. Remplaçable par ALLOWED_ORIGINS=… dans le fichier .env.
+      # L'app des TV LG (installée, elle tourne depuis file://) passe dans
+      # tous les cas : docker/relay.mjs, tvAppOk.
       ALLOWED_ORIGINS: "${ALLOWED_ORIGINS:-https://twitchunblock.vercel.app,https://test2-fawn-eta.vercel.app,https://twitchunblock-*-mxfia19s-projects.vercel.app,https://test2-*-mxfia19s-projects.vercel.app}"
       # Worker dont le relais publie les notifications ntfy de l'app iOS
       # (ntfy.sh refuse les adresses de Cloudflare). Vide = coupé.

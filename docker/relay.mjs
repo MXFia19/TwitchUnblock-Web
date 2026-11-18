@@ -93,10 +93,22 @@ const CORS = {
   'Access-Control-Max-Age': '86400',
 }
 
+/** App TwitchUnblock des TV LG (dossier webos/ du dépôt) : installée, elle
+ *  tourne depuis file://. Le Chromium de webOS donne à une app installée
+ *  l'origine file://<id de l'app>-webos ; selon la version, l'en-tête peut
+ *  aussi valoir « null » ou « file:// ». La première ne vient que de cette
+ *  app (un site est toujours en http(s)) ; les deux autres, qu'un site peut
+ *  obtenir (iframe isolée…), ne passent que depuis une TV LG (agent
+ *  « Web0S »), qu'un site ne peut pas imiter dans le navigateur de ses
+ *  visiteurs. Acceptées quelle que soit ALLOWED_ORIGINS : l'app se sert du
+ *  relais officiel et de celui de Sofia (source « bg »). */
+const TV_APP_ORIGIN = 'file://com.mxfia19.twitchunblock-webos'
+const tvAppOk = (o, ua) => o === TV_APP_ORIGIN || ((o === 'null' || o === 'file://') && /\bWeb0S\b/i.test(ua || ''))
+
 /** Un autre site ne se sert pas du relais (ni de sa bande passante) : son
  *  origine est refusée. Sans en-tête Origin (lecteur natif de Safari, VLC),
- *  la requête passe. */
-const originOk = (o) => !o || !ALLOWED.length || ALLOWED.some((re) => re.test(o))
+ *  la requête passe ; l'app des TV LG aussi (tvAppOk). */
+const originOk = (o, ua) => !o || !ALLOWED.length || ALLOWED.some((re) => re.test(o)) || tvAppOk(o, ua)
 
 // ── Source du direct prise depuis ce serveur (LIVE_SOURCE=twitch) ──────────
 // GET /api/get-live?name=<chaîne> : jeton, liste maîtresse et playlists de la
@@ -112,7 +124,7 @@ const LIVE_SOURCE = (process.env.LIVE_SOURCE || '').trim().toLowerCase() === 'tw
 async function handleLiveSource(req, res, url) {
   if (req.method === 'OPTIONS') { res.writeHead(204, CORS); return res.end() }
   if (req.method !== 'GET') { res.writeHead(405, CORS); return res.end() }
-  if (!originOk(req.headers.origin)) { res.writeHead(403); return res.end('Origin not allowed') }
+  if (!originOk(req.headers.origin, req.headers['user-agent'])) { res.writeHead(403); return res.end('Origin not allowed') }
   const ask = new URL('/api/get-live', url.origin)
   ask.searchParams.set('name', url.searchParams.get('name') || '')
   ask.searchParams.set('source', 'twitch')
@@ -414,7 +426,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'OPTIONS') { res.writeHead(204, CORS); return res.end() }
     if (req.method !== 'GET' && req.method !== 'HEAD') { res.writeHead(405, CORS); return res.end() }
     // Sans en-tête CORS : le site voit un échec réseau et repasse par le Worker.
-    if (!originOk(req.headers.origin)) { res.writeHead(403); return res.end('Origin not allowed') }
+    if (!originOk(req.headers.origin, req.headers['user-agent'])) { res.writeHead(403); return res.end('Origin not allowed') }
 
     const headers = new Headers()
     if (req.headers.range) headers.set('Range', req.headers.range)
