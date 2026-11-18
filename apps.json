@@ -1,0 +1,38 @@
+{
+  "paging": {
+    "page": 1,
+    "count": 1,
+    "maxPage": 1,
+    "itemsTotal": 1,
+    "prevUrl": null,
+    "nextUrl": null
+  },
+  "packages": [
+    {
+      "id": "com.mxfia19.twitchunblock",
+      "title": "TwitchUnblock",
+      "iconUri": "https://raw.githubusercontent.com/MXFia19/TwitchUnblock-Web/main/webos/largeIcon.png",
+      "manifestUrl": "https://github.com/MXFia19/TwitchUnblock-Web/releases/download/webos-v0.4.1/com.mxfia19.twitchunblock.manifest.json",
+      "manifest": {
+        "id": "com.mxfia19.twitchunblock",
+        "version": "0.4.1",
+        "type": "web",
+        "title": "TwitchUnblock",
+        "appDescription": "Twitch lives and VODs, with the chat",
+        "iconUri": "https://raw.githubusercontent.com/MXFia19/TwitchUnblock-Web/main/webos/largeIcon.png",
+        "sourceUrl": "https://github.com/MXFia19/TwitchUnblock-Web",
+        "rootRequired": false,
+        "ipkUrl": "https://github.com/MXFia19/TwitchUnblock-Web/releases/download/webos-v0.4.1/twitchunblock-webos.ipk",
+        "ipkHash": {
+          "sha256": "ef6e72ba562ee1e0452fa44407bd455deacfc9fedfb160e10aae553e4fa55116"
+        },
+        "ipkSize": 311258
+      },
+      "pool": "main",
+      "requirements": {
+        "webosRelease": ">=6.0"
+      },
+      "shortDescription": "Twitch lives and VODs on LG TVs, with the chat, made for the remote. Unofficial, by one person."
+    }
+  ]
+}
