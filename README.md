@@ -184,6 +184,40 @@ Messages, operations, error codes and limits: [`extension/PROTOCOL.md`](extensio
 
 ---
 
+## LG TV (webOS)
+
+A first version for LG TVs. The `webos/` folder is a small webOS app that opens the website in **TV mode** (`https://twitchunblock.vercel.app/?tv=webos`): the site isn't copied into the app, so the app is always as up to date as the site.
+
+**TV mode** turns on by itself on webOS (a user agent with `Web0S`), and with `?tv=1` in any browser (kept for the session; `?tv=0` turns it off). The logic is in `public/assets/js/tv.js`, the styles in `public/assets/tv.css`, loaded only in TV mode (everything under `html.tv`, nothing changes outside it):
+- **Arrows** move to the nearest item in that direction, **OK** activates it. **Back** (or Backspace / Esc on a keyboard) closes what's open — a text field being typed in, a sheet (a settings page goes back to the menu first), a chat card, the player's menu, full screen, the multi-live, the player — or goes back a page; on the home page it scrolls back to the top, then quits the app
+- Text fields are read-only while you move over them, so the TV keyboard doesn't pop up at every step: **OK** opens one for typing
+- In the player, with the controls hidden or the focus on the video: **left / right** go back / forward 10 s, **OK** pauses or resumes, **up / down** move into the control bar (play/pause, ±10 s, quality, chat, theatre, full screen), which stays up while you move in it. The remote's play, pause, rewind, fast-forward and stop keys work too
+- Bigger text and targets, a thick focus ring, 4 to 5 cards per row, and no background blur (slow on TVs). When the site refreshes a list (the top lives, every minute), the focus stays on the same card
+- In the app, links to other sites are refused with a notice (there would be no way back from them), and Twitch sign-in uses a full-page redirect instead of a popup
+
+**Requirements**: webOS 22 (2022 TVs, Chromium 87) or newer; webOS 23 or newer is better. Older TVs (webOS 6 and below, Chromium 79 and below) can't run the site's JavaScript: the app says so instead of showing a blank page.
+
+**Install** — the TV needs Developer Mode or root (the app isn't on the LG Content Store):
+1. Get `twitchunblock-webos.ipk` from the latest `webos-v…` release on the [releases page](https://github.com/MXFia19/TwitchUnblock-Web/releases) (built from `main`), or as an artifact of the *webOS app* workflow run (test branch).
+2. **Developer Mode**: install the *Developer Mode* app from the LG Content Store, sign in with an LG developer account, turn on *Dev Mode Status* (the TV restarts) and *Key Server*. Then, from a computer on the same network, with Node.js:
+   ```bash
+   npm install -g @webos-tools/cli
+   ares-setup-device                   # add the TV ("tv"): its IP address, port 9922, user prisoner
+   ares-novacom --device tv --getkey   # asks for the passphrase shown in the Developer Mode app
+   ares-install --device tv twitchunblock-webos.ipk
+   ```
+   The Developer Mode session runs out unless you extend it in the app, and the apps installed with it are removed when it does.
+   **Rooted TV (Homebrew Channel)**: copy the file to the TV (for example `scp twitchunblock-webos.ipk root@<TV address>:/tmp/`), then over SSH:
+   ```bash
+   luna-send-pub -i 'luna://com.webos.appInstallService/dev/install' '{"id":"com.ares.defaultName","ipkUrl":"/tmp/twitchunblock-webos.ipk","subscribe":true}'
+   ```
+   [webOS Dev Manager](https://github.com/webosbrew/dev-manager-desktop) installs it from a window too, on rooted and Developer Mode TVs.
+3. *TwitchUnblock* shows up with the other apps.
+
+**Build it yourself**: `ares-package webos` (from `@webos-tools/cli`) creates `com.mxfia19.twitchunblock_<version>_all.ipk`. The *webOS app* workflow (`.github/workflows/webos.yml`) checks `webos/appinfo.json` and the icons, then builds the package on every push to `main` or the test branch that touches `webos/`; on `main`, it also publishes it in the `webos-v<version>` release, never marked as the latest (the extension's install links point to the latest release).
+
+---
+
 ## Community
 
 Questions, bugs, ideas: **[join the Discord](https://discord.gg/cEsMRdxsVq)** — the Discord
@@ -212,9 +246,11 @@ public/              The website, served as-is by Vercel (no build step)
       hq.js          Higher qualities (1440p+) through the extension, ad-break fallback
       silence.js     VODs with no sound on Twitch (empty audio track): the probe
       connect-update.js  Its “new version available” line
+      tv.js          TV mode: remote control, focus, player keys (styles in assets/tv.css)
       chat/          Chat: IRC, emotes, badges, pinned message, hype train, VOD replay,
                      the extension's points, rewards, bets, polls, raids and drops (connect-live.js)
 extension/           TwitchUnblock Connect, the browser extension (README.md, PROTOCOL.md)
+webos/               LG TV app (webOS): opens the website in TV mode
 worker.js            Backend: Cloudflare Worker
 wrangler.toml        Worker configuration
 docker/relay.mjs     Video relay for your own server (same proxy as the Worker)
@@ -223,7 +259,7 @@ docker/healthcheck.mjs  Container health check (site or relay)
 relay/               Its docker-compose.yml and Caddyfile (HTTPS)
 tools/reports.mjs    Reads bug reports (and their screenshots), suggestions and the bot's to-do list from the owner's computer, and marks them done (reports key)
 tools/connect-check.mjs  Checks of the extension bridge (Node, no browser or network)
-.github/workflows/   Docker image (docker.yml), extension packages and release (extension.yml), daily database backup (d1-backup.yml)
+.github/workflows/   Docker image (docker.yml), extension packages and release (extension.yml), LG TV app (webos.yml), daily database backup (d1-backup.yml)
 vercel.json          Website configuration on Vercel
 ```
 
