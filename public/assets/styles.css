@@ -608,9 +608,9 @@ a.card, a.cat-card { display: block; }
    s'écartent de son côté ; chat en haut, la barre du bas reste entière (il
    s'arrête 80 px au-dessus du bas), mais le menu du lecteur reste à côté
    du chat : il monte assez haut pour passer dessous. Le chat est aussi un
-   .chat (height: 100 %) : sa hauteur est
-   donc posée ici, sinon elle passait avant bottom / top et il restait sur
-   toute la hauteur, par-dessus les boutons. */
+   .chat (height: 100 %) : sa hauteur est donc posée ici, sinon elle
+   passait avant bottom / top et il restait sur toute la hauteur, par-dessus
+   les boutons. */
 :root[data-fschat^="left"] :is(.watch-body:fullscreen, .watch-body:-webkit-full-screen) .watch-chat { right: auto; left: 0; }
 :root[data-fschat$="-top"] :is(.watch-body:fullscreen, .watch-body:-webkit-full-screen) .watch-chat { bottom: auto; height: var(--fs-chat-h-fit); }
 :root[data-fschat$="-bottom"] :is(.watch-body:fullscreen, .watch-body:-webkit-full-screen) .watch-chat { top: auto; height: var(--fs-chat-h-fit); }
