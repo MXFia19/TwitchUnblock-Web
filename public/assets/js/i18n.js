@@ -1,13 +1,15 @@
 // ═══════════════════════════════════════════════════════════════════════════
 //  Traductions. Une clé absente d'une langue retombe sur l'anglais, puis sur
 //  la clé elle-même : un oubli se voit sans rien casser.
-//  Le russe, traduit avec l'IA, est dans son propre fichier.
+//  Les traductions russe, chinoise et italienne ont chacune leur fichier.
 // ═══════════════════════════════════════════════════════════════════════════
 import { RU } from './i18n-ru.js'
 import { ZH_HANT } from './i18n-zh-Hant.js'
+import { IT } from './i18n-it.js'
 
 const STRINGS = {
   fr: {
+    navigation: 'Navigation',
     tv_link_blocked: 'Les liens vers d’autres sites ne s’ouvrent pas dans l’app TV.',
     nav_discover: 'Découvrir', nav_channel: 'Streamer', nav_link: 'Lien / ID',
     tagline: 'Les lives et VODs Twitch, sans abonnement.',
@@ -213,6 +215,7 @@ const STRINGS = {
     no_account_logged: 'Sans effet tant que tu es connecté : déconnecte-toi d’abord.',
   },
   en: {
+    navigation: 'Navigation',
     tv_link_blocked: 'Links to other sites don’t open in the TV app.',
     nav_discover: 'Discover', nav_channel: 'Streamer', nav_link: 'Link / ID',
     tagline: 'Twitch lives and VODs, no subscription needed.',
@@ -416,6 +419,7 @@ const STRINGS = {
     no_account_logged: 'No effect while you’re logged in: log out first.',
   },
   es: {
+    navigation: 'Navegación',
     tv_link_blocked: 'Los enlaces a otros sitios no se abren en la app de TV.',
     nav_discover: 'Descubrir', nav_channel: 'Streamer', nav_link: 'Enlace / ID',
     tagline: 'Directos y VODs de Twitch, sin suscripción.',
@@ -622,12 +626,14 @@ const STRINGS = {
 
 STRINGS.ru = RU
 STRINGS['zh-Hant'] = ZH_HANT
+STRINGS.it = IT
 
 /** `ai` : traduite avec l'IA, sans relecture — dit dans les réglages. */
 export const LANGS = [
   { id: 'fr', label: 'Français' },
   { id: 'en', label: 'English' },
   { id: 'es', label: 'Español' },
+  { id: 'it', label: 'Italiano', ai: true },
   { id: 'ru', label: 'Русский', ai: true },
   { id: 'zh-Hant', label: '繁體中文', ai: true },
 ]
@@ -678,6 +684,7 @@ export function t(key, params) {
 export function applyStatic(root = document) {
   for (const el of root.querySelectorAll('[data-i18n]')) el.textContent = t(el.dataset.i18n)
   for (const el of root.querySelectorAll('[data-i18n-ph]')) el.placeholder = t(el.dataset.i18nPh)
+  for (const el of root.querySelectorAll('[data-i18n-label]')) el.setAttribute('aria-label', t(el.dataset.i18nLabel))
   for (const el of root.querySelectorAll('[data-i18n-title]')) {
     el.title = t(el.dataset.i18nTitle)
     el.setAttribute('aria-label', t(el.dataset.i18nTitle))

@@ -3,6 +3,7 @@
 // sinophones sont les bienvenus. Une clé absente retombe sur l'anglais
 // (voir t() dans i18n.js).
 export const ZH_HANT = {
+  navigation: '導覽',
   tv_link_blocked: '其他網站的連結無法在電視 App 中開啟。',
   nav_discover: '探索',
   nav_channel: '實況主',

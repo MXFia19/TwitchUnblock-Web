@@ -5320,6 +5320,7 @@ const PUSH_TEXT = {
     fr: { live: (n) => `${n} est en live`, test: 'Les notifications de live fonctionnent.' },
     en: { live: (n) => `${n} is live`, test: 'Live notifications are working.' },
     es: { live: (n) => `${n} está en directo`, test: 'Las notificaciones de directos funcionan.' },
+    it: { live: (n) => `${n} è in diretta`, test: 'Le notifiche delle dirette funzionano.' },
     ru: { live: (n) => `${n} в эфире`, test: 'Уведомления о трансляциях работают.' },
     'zh-Hant': { live: (n) => `${n} 開台了`, test: '直播通知運作正常。' },
 };
@@ -6619,7 +6620,7 @@ async function handleAdminForget(request, env, ctx) {
 
 // ── Notifications ntfy de live enrichies ───────────────────────────────────
 /** Bouton des messages ntfy de live, dans la langue de l'abonnement. */
-const NTFY_WATCH = { fr: 'Regarder', en: 'Watch', es: 'Ver', ru: 'Смотреть', 'zh-Hant': '觀看' };
+const NTFY_WATCH = { fr: 'Regarder', en: 'Watch', es: 'Ver', it: 'Guarda', ru: 'Смотреть', 'zh-Hant': '觀看' };
 const TWITCH_IMAGE = /^https:\/\/static-cdn\.jtvnw\.net\/\S{1,300}$/;
 
 /**
