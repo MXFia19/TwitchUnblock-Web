@@ -628,14 +628,16 @@ async function attachVod(tile, links, variants, at, token) {
       // Relais vidéo du VPS en panne : les mêmes liens par le Worker, au
       // même endroit, sans les redemander (comme switchWorker dans main.js).
       // Pas pour un segment introuvable (404) : même règle que le lecteur
-      // (failedProxy), il l'écartait 30 min pour toutes les vidéos.
-      if (data.type === Hls.ErrorTypes.NETWORK_ERROR && api.RELAY_BASE && navigator.onLine !== false
-          && failedProxy(data) === api.RELAY_BASE && api.markWorkerDown(api.RELAY_BASE)) {
+      // (failedProxy), il l'écartait 30 min pour toutes les vidéos. De même
+      // pour le relais de Sofia (VOD lancée pendant que le relais principal
+      // est écarté pour lenteur, api.js).
+      const down = data.type === Hls.ErrorTypes.NETWORK_ERROR && api.RELAY_BASE && navigator.onLine !== false ? failedProxy(data) : null
+      if (down && (down === api.RELAY_BASE || down === api.SOFIA_BASE) && api.markWorkerDown(down)) {
         console.info('[TwitchUnblock] Relais vidéo injoignable (multi-live), retour au Worker.')
         const next = ++tile.token
         stopMedia(tile)
         setState(tile, 'loading')
-        return attachVod(tile, api.withoutRelay(links), variants, from, next)
+        return attachVod(tile, down === api.RELAY_BASE ? api.withoutRelay(links) : api.withoutSofia(links), variants, from, next)
       }
       if (++tile.restarts > MAX_RESTARTS) return setState(tile, t('err_vod'), true)
       setState(tile, 'loading')

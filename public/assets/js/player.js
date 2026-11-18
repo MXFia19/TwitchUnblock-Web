@@ -9,8 +9,9 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { lang, t } from './i18n.js'
-import { API_URL, RELAY_BASE, WORKER_BASES, directUrl, fixProxiedUrl, liveSourceOrder, proxyBaseOf } from './api.js'
+import { API_URL, RELAY_BASE, WORKER_BASES, directUrl, fixProxiedUrl, linkMoved, liveSourceOrder, proxyBaseOf, vpsRelayOf } from './api.js'
 import { probeVodSilence, silenceTargets } from './silence.js'
+import { SlowRelayWatch, fragTiming } from './slowrelay.js'
 import { $, esc, formatClock, icon, isIOS, toast } from './util.js'
 import { logError } from './errlog.js'
 import { isHqUrl } from './hq.js'
@@ -119,14 +120,16 @@ export function blockHintKey() {
  *  Twitch peut limiter son adresse IP) ou une panne (5xx) — mais plus un
  *  segment ou une playlist introuvable (404, 410 : direct fini, segment
  *  purgé), qui l'écartait 30 min pour toutes les vidéos alors qu'un autre
- *  relais ne le trouverait pas davantage. Sert aussi aux tuiles du
- *  multi-live. */
+ *  relais ne le trouverait pas davantage. Le relais de Sofia (VODs sorties
+ *  d'un relais principal trop lent) suit les mêmes règles que le relais du
+ *  VPS. Sert aussi aux tuiles du multi-live. */
 export function failedProxy(data) {
-  const base = proxyBaseOf(data?.frag?.url || data?.context?.url || data?.url || '')
+  const url = data?.frag?.url || data?.context?.url || data?.url || ''
+  const base = proxyBaseOf(url) ?? vpsRelayOf(url)
   if (!base) return null
   const code = data.response?.code || 0
   if (!code) return base
-  return base === RELAY_BASE && (code === 403 || code === 429 || code >= 500) ? base : null
+  return vpsRelayOf(base) && (code === 403 || code === 429 || code >= 500) ? base : null
 }
 
 /** Adresse à demander pour une requête de lecture : adresses relatives du
@@ -990,6 +993,7 @@ export class Player {
    * @param {(left: number) => void} [o.onAdState]  bandeau de pause pub ouvert (secondes restantes) ou fermé (0)
    * @param {() => boolean} [o.onFatal]  erreur fatale du flux du compte : true si la source habituelle reprend
    * @param {(bad: string, next: string) => void} [o.onUnplayable]  qualité écartée pour son codec, et celle qui la remplace
+   * @param {(m: object) => void} [o.onSlowRelay]  VOD : relais principal trop lent (mesure de slowrelay.js) ; moveRelay fait passer la suite ailleurs
    */
   constructor(root, o) {
     this.root = root
@@ -1354,6 +1358,9 @@ export class Player {
     this.playedSinceAttach = false
     this.destroyHls()
     this.el.spinner.hidden = false
+    // Bascule d'un relais à l'autre sans nouvelle instance (moveRelay) :
+    // propre à l'instance détruite. La nouvelle part des nouveaux liens.
+    this.relayMove = null
     if (!url) return
     // Erreurs réseau de suite (relances), segments introuvables sautés et
     // trous qu'ils laissent (skipMissingFrag).
@@ -1419,9 +1426,13 @@ export class Player {
         // d'accroche que hls.js offre pour réécrire une URL avant envoi.
         // Pas pour le flux du compte : ses adresses de segments sont
         // absolues, et ne partent pas au relais même si le CDN y est passé.
+        // Après une bascule vers un autre relais (moveRelay), ses requêtes
+        // y partent : segments et playlists encore notés avec l'ancien.
         ...(hqSource ? {} : {
           xhrSetup: (xhr, reqUrl) => {
-            const fixed = liveRequestUrl(reqUrl, url)
+            let fixed = liveRequestUrl(reqUrl, url)
+            const mv = this.relayMove
+            if (mv?.token === token) fixed = linkMoved(fixed, mv.from, mv.to)
             if (fixed !== reqUrl) xhr.open('GET', fixed, true)
           },
         }),
@@ -1479,10 +1490,14 @@ export class Player {
         }
         this.tryPlay()
       })
-      hls.on(Hls.Events.FRAG_LOADED, () => {
+      // Débit du relais principal pendant une VOD (noteRelaySpeed), guetté
+      // par instance.
+      const slowWatch = new SlowRelayWatch()
+      hls.on(Hls.Events.FRAG_LOADED, (_e, d) => {
         this.directFails = 0
         this.netFails = 0
         this.skippedFrags = 0
+        if (token === this.attachToken && !hqSource) this.noteRelaySpeed(slowWatch, d?.frag, token)
       })
       // Chaque playlist lue (niveau joué, « Auto » compris) : pauses pub
       // annoncées et avancée d'un direct, passages « -unmuted.mp4 » d'une VOD.
@@ -1546,8 +1561,12 @@ export class Player {
         if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
           // Worker hors service en pleine lecture (quota du jour atteint), ou
           // relais du VPS en panne (failedProxy) : plutôt que de relancer
-          // sans fin le même, main.js passe à un autre.
-          const down = navigator.onLine !== false ? failedProxy(data) : null
+          // sans fin le même, main.js passe à un autre. Après moveRelay, une
+          // adresse notée avec l'ancien relais a été demandée au nouveau :
+          // c'est lui qui ne répond pas.
+          let down = navigator.onLine !== false ? failedProxy(data) : null
+          const mv = this.relayMove
+          if (down && mv?.token === token && down === mv.from) down = mv.to
           if (down && this.o.onWorkerDown?.(down)) return
           if (this.skipMissingFrag(hls, data)) return
           return this.retryLoad(hls, token)
@@ -1779,7 +1798,8 @@ export class Player {
     if (this.hls || !v.currentSrc || v.currentSrc.startsWith('blob:')) return
     logError('lecteur', `vidéo : erreur ${v.error?.code ?? '?'} ${v.error?.message || ''}`)
     this.el.spinner.hidden = true
-    const down = v.error?.code === 2 /* MEDIA_ERR_NETWORK */ && navigator.onLine !== false ? proxyBaseOf(v.currentSrc) : null
+    const down = v.error?.code === 2 /* MEDIA_ERR_NETWORK */ && navigator.onLine !== false
+      ? proxyBaseOf(v.currentSrc) ?? vpsRelayOf(v.currentSrc) : null
     if (down && this.o.onWorkerDown?.(down)) return
     this.o.onError?.()
   }
@@ -1842,6 +1862,44 @@ export class Player {
     this.health?.add('swap')
     this.updateQualityLabel()
     this.attach(links[this.quality], this.kind === 'vod' ? this.resumeAt() : 0)
+  }
+
+  /** Segment chargé (FRAG_LOADED) : pendant une VOD servie par le relais
+   *  principal, son temps de chargement face à sa durée (slowrelay.js). Deux
+   *  de suite plus lents que leur durée : onSlowRelay (main.js), qui fait
+   *  passer la suite par le relais de Sofia (moveRelay). Plus rien après une
+   *  bascule : les segments partent alors ailleurs, et une lenteur de Sofia
+   *  ou d'un Worker ne déclenche rien. */
+  noteRelaySpeed(watch, frag, token) {
+    if (!this.o.onSlowRelay) return
+    const timing = fragTiming(frag)
+    if (!timing) return
+    const moved = this.relayMove?.token === token
+    const m = watch.note({ ...timing, vod: this.kind === 'vod', relay: !moved && proxyBaseOf(frag.url) === RELAY_BASE })
+    if (m) this.o.onSlowRelay(m)
+  }
+
+  /** Même vidéo par un autre relais (`from` → `to` : relais principal trop
+   *  lent → Sofia, main.js), sans nouvelle instance de hls.js : ce qui est
+   *  chargé reste dans le tampon et la lecture continue, les requêtes
+   *  suivantes de cette instance partent vers `to` (xhrSetup) — segments, et
+   *  playlists des autres qualités d'« Auto ». Les relances, changements de
+   *  qualité et téléchargements prennent les nouveaux liens. Au moment où
+   *  le guet se prononce (FRAG_LOADED), le segment suivant n'est pas encore
+   *  demandé : rien à interrompre. Sans hls.js (HLS natif), ou si la qualité
+   *  jouée manque aux nouveaux liens : swapLinks, hors de l'événement de
+   *  hls.js qui a pu mener ici (il ne se détruit pas pendant qu'il le
+   *  diffuse, voir rebuild). */
+  moveRelay(links, from, to) {
+    const kept = Object.fromEntries(Object.entries(links ?? {}).filter(([k]) => !this.unplayable?.has(k)))
+    if (!this.hls || !from || !to || !kept[this.quality]) {
+      const token = this.attachToken
+      setTimeout(() => { if (token === this.attachToken) this.swapLinks(links) }, 0)
+      return
+    }
+    this.links = kept
+    this.relayMove = { token: this.attachToken, from, to }
+    this.health?.add('swap')
   }
 
   /** Qualité que ce navigateur ne décode pas (voir CODEC_FATAL_ERROR) :
@@ -1972,11 +2030,18 @@ export class Player {
     return /\.mp4(\?|$)/i.test(this.video.currentSrc || '') ? 'mp4' : 'native'
   }
 
-  /** Qui relaie la vidéo : le relais du VPS ou un Worker (rien de plus). */
+  /** Qui relaie la vidéo : le relais du VPS ou un Worker (rien de plus). Le
+   *  relais de Sofia n'en est pas : la marge du direct (extraBehind) ne
+   *  change pas pour la source « bg ». Pour le journal, voir relayName. */
   proxyName() {
     const base = proxyBaseOf(this.links?.[this.quality] || '')
     if (!base) return null
     return base === RELAY_BASE ? 'relais' : base === API_URL ? 'Worker' : 'autre Worker'
+  }
+
+  /** proxyName, relais de Sofia compris (lignes du journal). */
+  relayName() {
+    return this.proxyName() ?? (vpsRelayOf(this.links?.[this.quality] || '') ? 'relais de Sofia' : null)
   }
 
   /** Tampon autour de la lecture : avance et retard (s) dans la plage où
@@ -2037,7 +2102,7 @@ export class Player {
     const list = (labels) => Object.entries(labels).filter(([k]) => c[k] > 0).map(([k, label]) => counted(c[k], label)).join(', ')
     const fixes = list(HEALTH_FIXES)
     const issues = list(HLS_ISSUES)
-    const where = [this.kind, this.engineName(), this.quality ? qualityLabel(this.quality) : null, this.proxyName()].filter(Boolean).join(' ')
+    const where = [this.kind, this.engineName(), this.quality ? qualityLabel(this.quality) : null, this.relayName()].filter(Boolean).join(' ')
     const head = `santé${forced ? ' (signalement)' : ''} ${where} à ${formatClock(this.video.currentTime || 0)}, ${Math.max(1, Math.round(d.ms / 60_000))} min`
     const parts = [
       `${c.stalls || 0} décrochage${c.stalls > 1 ? 's' : ''}${c.stalls ? ` (${((c.stallMs || 0) / 1000).toFixed(1)} s)` : ''}`,
@@ -2659,7 +2724,7 @@ export class Player {
   async probeSilence(links) {
     const link = Object.values(links ?? {}).find((l) => typeof l === 'string' && silenceTargets(directUrl(l)).length)
     if (!link) return
-    const base = proxyBaseOf(link)
+    const base = proxyBaseOf(link) ?? vpsRelayOf(link)
     const wrap = (u) => (base ? `${base}/api/proxy?url=${encodeURIComponent(u)}&isVod=true` : u)
     const verdict = await probeVodSilence({ raw: directUrl(link), wrap }).catch(() => 'unknown')
     if (this.links !== links || verdict !== 'silent') return

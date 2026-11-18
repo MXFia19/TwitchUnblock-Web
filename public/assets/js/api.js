@@ -5,6 +5,7 @@
 
 import { store } from './store.js'
 import { logError } from './errlog.js'
+import { RELAY_SLOW_MS } from './slowrelay.js'
 
 // Auto-hébergement : public/config.js peut remplacer l'adresse du Worker
 // (« same-origin » = le site et le Worker servis ensemble, comme sous Docker)
@@ -83,13 +84,23 @@ const LOOKUP_BASES = CUSTOM
 // quota : les liens de lecture du Worker y sont redirigés, le Worker garde
 // tout le reste. Relais injoignable → retour au Worker, le relais écarté
 // 2 min, et la lecture y revient dès que son /health répond (watchRelayBack).
-// Une instance avec sa propre adresse
+// Relais trop lent pendant une VOD → le relais de Sofia, 30 min (« Relais
+// trop lent », plus bas). Une instance avec sa propre adresse
 // (config.js) n'hérite pas du relais officiel : elle donne le sien dans
 // `relayUrl`, ou aucun.
 const DEFAULT_RELAY_URL = 'https://relais.mxfia19.duckdns.org'
 // Avec un Worker personnel, pas de relais officiel : la vidéo ne repasse
 // pas par l'infrastructure du projet.
 export const RELAY_BASE = CUSTOM ? null : originOf(CFG.relayUrl ?? (CFG.apiUrl ? '' : DEFAULT_RELAY_URL))
+/** Relais de Sofia (un second VPS, même relay.mjs) : source « bg » du
+ *  direct (bulgariaLive), et secours des VODs quand le relais principal est
+ *  trop lent (SOFIA_BASE). */
+const BG_RELAY = 'https://2-58-32-226.sslip.io'
+/** Secours des VODs quand le relais principal est trop lent (« Relais trop
+ *  lent », plus bas). Seulement derrière le relais officiel : une instance
+ *  avec le sien (config.js), ou un Worker personnel, n'envoie pas sa vidéo
+ *  vers Sofia. */
+export const SOFIA_BASE = RELAY_BASE && RELAY_BASE === originOf(DEFAULT_RELAY_URL) ? BG_RELAY : null
 
 // Worker mis de côté sur cet appareil, pour ne pas le retenter à chaque
 // requête. La page d'erreur de Cloudflare n'a pas d'en-tête CORS : le
@@ -116,9 +127,11 @@ export const hasOtherWorker = (base) => WORKER_BASES.length > 1 && WORKER_BASES.
 /** Écarte un Worker en panne. `false` s'il n'y a aucun autre Worker vers
  *  qui se tourner : l'appelant garde alors son comportement habituel. */
 export function markWorkerDown(base) {
-  // Le relais a toujours un recours : le Worker.
-  if (base !== RELAY_BASE && !hasOtherWorker(base)) return false
-  const until = Date.now() + (base === RELAY_BASE ? RELAY_DOWN_MS : DOWN_MS)
+  // Les relais des VPS (le principal, et celui de Sofia pour les VODs) ont
+  // toujours un recours : le Worker. Une coupure y dure une minute ou deux.
+  const relay = Boolean(base) && (base === RELAY_BASE || base === SOFIA_BASE)
+  if (!relay && !hasOtherWorker(base)) return false
+  const until = Date.now() + (relay ? RELAY_DOWN_MS : DOWN_MS)
   downMem[base] = until
   const m = downStored()
   m[base] = until
@@ -196,10 +209,15 @@ export const playbackBase = () => (RELAY_BASE && !isDown(RELAY_BASE)
   ? RELAY_BASE
   : (LOOKUP_BASES.find((b) => !isDown(b)) ?? LOOKUP_BASES[0]))
 
-/** Relais revenu : les liens d'une lecture repassent par lui. */
-export const backToRelay = (links) => (RELAY_BASE
-  ? moveLinks(links, (o) => WORKER_BASES.includes(o), RELAY_BASE)
-  : links)
+/** Relais revenu : les liens d'une lecture repassent par lui. Pas ceux d'une
+ *  VOD (`vod`) tant qu'il est écarté pour lenteur (relaySlow) : par le relais
+ *  de Sofia s'il n'est pas écarté lui-même, sinon inchangés — aucun retour
+ *  vers le relais lent avant la fin du délai. */
+export const backToRelay = (links, { vod = false } = {}) => {
+  if (!RELAY_BASE) return links
+  if (vod && relaySlow()) return isDown(SOFIA_BASE) ? links : moveLinks(links, (o) => WORKER_BASES.includes(o), SOFIA_BASE)
+  return moveLinks(links, (o) => WORKER_BASES.includes(o), RELAY_BASE)
+}
 
 /** Worker en panne en pleine lecture d'une VOD reconstruite (rien à
  *  redemander) : les mêmes liens, par un autre Worker ; null s'il n'y en a
@@ -207,6 +225,72 @@ export const backToRelay = (links) => (RELAY_BASE
 export function linksAvoiding(links, base) {
   const to = LOOKUP_BASES.find((b) => b !== base && !isDown(b)) ?? LOOKUP_BASES.find((b) => b !== base)
   return to ? moveLinks(links, (o) => o === base, to) : null
+}
+
+// ── Relais trop lent : les VODs par celui de Sofia ─────────────────────────
+// Le VPS du relais n'a qu'un cœur : saturé, il répond toujours (/health
+// passe, rien ne bascule) mais ne débite plus — 0,7 Mb/s mesuré le 18/11 sur
+// un segment 1080p60 de 9,4 Mo, contre ~8 Mb/s par le relais de Sofia et ~13
+// en direct. Or chaque segment d'une VOD passe par lui : la vidéo saccadait.
+// Le lecteur mesure donc chaque segment (slowrelay.js) ; deux de suite plus
+// lents que leur durée, et la VOD passe par le relais de Sofia — même route
+// /api/proxy, même code —, au même endroit, sans nouvelle instance du
+// lecteur (player.js, moveRelay). Le relais principal est alors écarté des
+// VODs RELAY_SLOW_MS (30 min, gardé sur l'appareil comme les autres états du
+// relais) : les VODs lancées d'ici là partent directement par Sofia, et ni
+// backToRelay ni la surveillance de /health ne les y ramènent avant la fin
+// du délai. Les directs n'en dépendent pas : leurs segments ne passent pas
+// par le relais. Sofia en panne : le Worker, comme pour le relais
+// (withoutSofia) — jamais pour une simple lenteur.
+const SLOW_KEY = 'tu_relay_slow'
+// Copie en mémoire, comme downMem : stockage refusé (navigation privée).
+let slowMem = 0
+function slowUntil() {
+  let saved = 0
+  try { saved = Number(localStorage.getItem(SLOW_KEY)) || 0 } catch {}
+  return Math.max(saved, slowMem)
+}
+/** Relais principal écarté des VODs pour lenteur ? */
+export const relaySlow = () => Boolean(SOFIA_BASE) && slowUntil() > Date.now()
+
+/** Relais principal trop lent pour une VOD (player.js) : écarté des VODs
+ *  RELAY_SLOW_MS. `false` sans relais de Sofia, ou s'il est écarté lui-même
+ *  (en panne) : la VOD reste alors où elle est. */
+export function markRelaySlow() {
+  if (!SOFIA_BASE || isDown(SOFIA_BASE)) return false
+  slowMem = Date.now() + RELAY_SLOW_MS
+  try { localStorage.setItem(SLOW_KEY, String(slowMem)) } catch {}
+  return true
+}
+
+/** Liens d'une VOD : du relais principal au relais de Sofia. */
+export const toSofia = (links) => (SOFIA_BASE ? moveLinks(links, (o) => o === RELAY_BASE, SOFIA_BASE) : links)
+
+/** Relais de Sofia en panne pendant une VOD : les mêmes liens par un Worker
+ *  — un secours d'abord —, comme withoutRelay pour le relais principal. */
+export const withoutSofia = (links) => (SOFIA_BASE
+  ? moveLinks(links, (o) => o === SOFIA_BASE, LOOKUP_BASES.find((b) => !isDown(b)) ?? LOOKUP_BASES[0])
+  : links)
+
+/** Une adresse servie par `from`, la même par `to` (requêtes d'une lecture
+ *  déjà lancée, player.js). */
+export const linkMoved = (url, from, to) => moveLinks({ u: url }, (o) => o === from, to).u
+
+/** Relais d'un VPS qui sert cette adresse : le principal ou celui de Sofia ;
+ *  null sinon. (proxyBaseOf ne connaît pas Sofia : les liens du direct
+ *  « bg » y passent, et leurs règles — Workers, marges du direct — restent
+ *  celles d'avant.) */
+export function vpsRelayOf(url) {
+  const o = originOf(url)
+  return o && (o === RELAY_BASE || o === SOFIA_BASE) ? o : null
+}
+
+/** Liens d'une VOD : par le relais principal (viaRelay), sauf s'il est
+ *  écarté pour lenteur : par le relais de Sofia, ou laissés au Worker si
+ *  celui-ci est en panne à son tour. */
+const vodViaRelay = (data) => {
+  if (!data?.links || !relaySlow()) return viaRelay(data)
+  return isDown(SOFIA_BASE) ? data : { ...data, links: moveLinks(data.links, (o) => WORKER_BASES.includes(o), SOFIA_BASE) }
 }
 
 /** L'adresse répond-elle (2xx) en moins de 8 s ? */
@@ -764,7 +848,6 @@ export async function getLive(login, { avoid = null } = {}) {
  *  passant par lui. Même réponse que /api/get-live du Worker ; null sans
  *  réponse en 8 s (délai écrit à la main : AbortSignal.timeout manque au
  *  moteur des TV LG de 2023) ou si Twitch n'y sert pas ce direct. */
-const BG_RELAY = 'https://2-58-32-226.sslip.io'
 async function bulgariaLive(login) {
   const ctrl = new AbortController()
   const timer = setTimeout(() => ctrl.abort(), 8000)
@@ -835,14 +918,15 @@ export function liveSourceOrder(prefs = store.prefs) {
 }
 
 export async function getVodLinks(id, { avoid = null } = {}) {
-  return viaRelay(await workerJson(`/api/get-m3u8?id=${encodeURIComponent(id)}&proxy=true`, { avoid }))
+  return vodViaRelay(await workerJson(`/api/get-m3u8?id=${encodeURIComponent(id)}&proxy=true`, { avoid }))
 }
 
-/** Adresse d'origine derrière un lien du proxy, pour les applis externes. */
+/** Adresse d'origine derrière un lien du proxy, pour les applis externes
+ *  (et la sonde du son d'une VOD, relais de Sofia compris). */
 export function directUrl(link) {
   try {
     const u = new URL(link)
-    if (proxyBaseOf(link) && u.pathname === '/api/proxy') return u.searchParams.get('url') || link
+    if ((proxyBaseOf(link) || vpsRelayOf(link)) && u.pathname === '/api/proxy') return u.searchParams.get('url') || link
   } catch {}
   return link
 }
@@ -1051,7 +1135,7 @@ export function getRecoverableStreams(channel) {
 }
 /** Liens d'une diffusion supprimée, ou lève (404) si le CDN ne la sert plus. */
 export async function resolveRecovery(login, streamID, epoch) {
-  return viaRelay(await workerJson(`/api/recover-resolve?login=${encodeURIComponent(login)}&streamID=${encodeURIComponent(streamID)}&epoch=${encodeURIComponent(epoch)}`))
+  return vodViaRelay(await workerJson(`/api/recover-resolve?login=${encodeURIComponent(login)}&streamID=${encodeURIComponent(streamID)}&epoch=${encodeURIComponent(epoch)}`))
 }
 
 // La sauvegarde exige le jeton Twitch de son propriétaire : le Worker le fait

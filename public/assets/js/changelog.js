@@ -6,6 +6,23 @@
 
 export const CHANGELOG = [
   {
+    version: '2026.11.18b',
+    items: {
+      fr: [
+        'VODs : quand le relais vidéo du site est saturé, la vidéo passe d’elle-même par un autre serveur. Le lecteur mesure chaque segment : deux de suite plus longs à charger qu’à regarder, et la suite passe par le relais de Sofia, au même endroit et sans recharger (avis « Relais lent : vidéo par un autre serveur »). Les VODs lancées dans la demi-heure qui suit partent directement par lui. Les directs ne sont pas concernés. Pareil dans l’app pour TV LG.',
+      ],
+      en: [
+        'VODs: when the site’s video relay is overloaded, the video moves to another server on its own. The player times every segment: two in a row that take longer to load than to watch, and the rest goes through the relay in Sofia, from the same spot and without reloading (notice “Slow relay: video through another server”). VODs started in the next half hour go straight through it. Lives aren’t affected. Same in the LG TV app.',
+      ],
+      es: [
+        'VODs: cuando el relé de vídeo del sitio está saturado, el vídeo pasa solo por otro servidor. El reproductor mide cada segmento: si dos seguidos tardan más en cargar que en verse, el resto pasa por el relé de Sofía, desde el mismo punto y sin recargar (aviso «Relé lento: vídeo por otro servidor»). Los VODs que abras en la media hora siguiente van directamente por él. Los directos no cambian. Lo mismo en la app para televisores LG.',
+      ],
+      ru: [
+        'VOD: когда видеоретранслятор сайта перегружен, видео само переходит на другой сервер. Плеер замеряет каждый сегмент: если два подряд загружаются дольше, чем смотрятся, остальное идёт через ретранслятор в Софии — с того же места и без перезагрузки (уведомление «Медленный ретранслятор: видео идёт через другой сервер»). VOD, открытые в следующие полчаса, сразу идут через него. Трансляций это не касается. То же самое в приложении для телевизоров LG.',
+      ],
+    },
+  },
+  {
     version: '2026.11.18a',
     items: {
       fr: [

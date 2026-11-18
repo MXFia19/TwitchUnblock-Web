@@ -12,7 +12,7 @@
 //  taille limite.
 // ═══════════════════════════════════════════════════════════════════════════
 
-import { RELAY_BASE, fixProxiedUrl, proxyBaseOf, withoutRelay } from './api.js'
+import { RELAY_BASE, fixProxiedUrl, vpsRelayOf, withoutRelay, withoutSofia } from './api.js'
 import { lang, t } from './i18n.js'
 import { qualityLabel, qualityText, sortQualities } from './player.js'
 import { $, esc, formatClock, icon, isMobile, toast } from './util.js'
@@ -407,10 +407,12 @@ async function fetchTries(url, signal, { retries = 2 } = {}) {
   }
 }
 
-/** Adresse passée par le relais vidéo → la même par un Worker ; null sinon. */
+/** Adresse passée par le relais vidéo — ou par celui de Sofia, pour une VOD
+ *  sortie d'un relais trop lent — → la même par un Worker ; null sinon. */
 function offRelay(url) {
-  if (!RELAY_BASE || !url || proxyBaseOf(url) !== RELAY_BASE) return null
-  const moved = withoutRelay({ u: url }).u
+  const base = RELAY_BASE && url ? vpsRelayOf(url) : null
+  if (!base) return null
+  const moved = (base === RELAY_BASE ? withoutRelay : withoutSofia)({ u: url }).u
   return moved !== url ? moved : null
 }
 
