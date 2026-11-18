@@ -14,6 +14,7 @@ import { initLang } from '../../public/assets/js/i18n.js'
 import { store } from '../../public/assets/js/store.js'
 import { esc } from '../../public/assets/js/util.js'
 import { onAuthChange, restore, user } from './auth.js'
+import { checkWebSession, onWebSessionChange } from './websession.js'
 import { initNav } from './nav.js'
 import { back, current, initRouter, open, tabScreen } from './router.js'
 import { actions } from './ui.js'
@@ -25,6 +26,7 @@ import { settingsScreen } from './screens/settings.js'
 import { categoryScreen } from './screens/category.js'
 import { channelScreen } from './screens/channel.js'
 import { loginScreen } from './screens/login.js'
+import { pairScreen } from './screens/pair.js'
 
 initLang(store.prefs.lang)
 document.documentElement.classList.add('tv-app')
@@ -50,6 +52,8 @@ actions.playLive = (login) => open(watchScreen({ kind: 'live', login }))
 actions.playVod = (id, preset) => open(watchScreen({ kind: 'vod', id: String(id), preset }))
 actions.openCategory = (cat) => open(categoryScreen(cat))
 actions.openLogin = () => open(loginScreen())
+/** Session web envoyée par l'iPhone (QR code, screens/pair.js). */
+actions.openPair = () => open(pairScreen())
 /** Chaîne ouverte depuis le lecteur : le lecteur se ferme d'abord (Retour
  *  depuis la chaîne revient là d'où l'on venait). */
 actions.openChannel = (login, { fromPlayer = false } = {}) => {
@@ -64,6 +68,10 @@ initRouter({ home: homeScreen, search: searchScreen, settings: settingsScreen })
 paintAccount()
 onAuthChange(() => { paintAccount(); tabScreen('home')?.refreshFollowed?.() })
 restore().catch(() => {})
+// Session web de l'iPhone reçue, oubliée ou refusée : les chaînes suivies
+// changent. Revérifiée chez Twitch au démarrage (au plus toutes les 12 h).
+onWebSessionChange(() => tabScreen('home')?.refreshFollowed?.())
+checkWebSession().catch(() => {})
 
 document.getElementById('boot')?.remove()
 window.__tuBooted = true

@@ -195,6 +195,14 @@ export function move(dir) {
     if (back && visible(back)) return focusEl(back)
   }
   const list = candidates(layer.root)
+  // Barre des onglets : gauche / droite y restent. À gauche du premier
+  // onglet, le focus sautait dans la page, sur son bouton le plus à gauche
+  // (« Oublier la session » dans les réglages : un OK de trop l'effaçait).
+  const bar = a.closest('[data-down-initial]')
+  if (bar && (dir === 'left' || dir === 'right')) {
+    const beside = nearest(a, list.filter((el) => bar.contains(el)), dir)
+    return beside ? focusEl(beside) : false
+  }
   const row = a.closest('[data-row]')
   let next
   if (row && (dir === 'left' || dir === 'right')) {

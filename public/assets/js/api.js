@@ -188,6 +188,14 @@ const viaRelay = (data) => (RELAY_BASE && !isDown(RELAY_BASE) && data?.links
 export const withoutRelay = (links) => moveLinks(links, (o) => o === RELAY_BASE,
   LOOKUP_BASES.find((b) => !isDown(b)) ?? LOOKUP_BASES[0])
 
+/** Par où passeraient maintenant les playlists d'une lecture : le relais
+ *  vidéo s'il n'est pas écarté, sinon le premier Worker de lecture qui ne
+ *  l'est pas (un secours d'abord). Sert à l'app TV pour le direct par le
+ *  compte (webos/src/websession.js), qu'elle demande elle-même. */
+export const playbackBase = () => (RELAY_BASE && !isDown(RELAY_BASE)
+  ? RELAY_BASE
+  : (LOOKUP_BASES.find((b) => !isDown(b)) ?? LOOKUP_BASES[0]))
+
 /** Relais revenu : les liens d'une lecture repassent par lui. */
 export const backToRelay = (links) => (RELAY_BASE
   ? moveLinks(links, (o) => WORKER_BASES.includes(o), RELAY_BASE)
