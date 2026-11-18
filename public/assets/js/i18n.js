@@ -8,6 +8,7 @@ import { ZH_HANT } from './i18n-zh-Hant.js'
 
 const STRINGS = {
   fr: {
+    tv_link_blocked: 'Les liens vers d’autres sites ne s’ouvrent pas dans l’app TV.',
     nav_discover: 'Découvrir', nav_channel: 'Streamer', nav_link: 'Lien / ID',
     tagline: 'Les lives et VODs Twitch, sans abonnement.',
     login: 'Se connecter avec Twitch', logout: 'Déconnexion',
@@ -210,6 +211,7 @@ const STRINGS = {
     no_account_logged: 'Sans effet tant que tu es connecté : déconnecte-toi d’abord.',
   },
   en: {
+    tv_link_blocked: 'Links to other sites don’t open in the TV app.',
     nav_discover: 'Discover', nav_channel: 'Streamer', nav_link: 'Link / ID',
     tagline: 'Twitch lives and VODs, no subscription needed.',
     login: 'Log in with Twitch', logout: 'Log out',
@@ -410,6 +412,7 @@ const STRINGS = {
     no_account_logged: 'No effect while you’re logged in: log out first.',
   },
   es: {
+    tv_link_blocked: 'Los enlaces a otros sitios no se abren en la app de TV.',
     nav_discover: 'Descubrir', nav_channel: 'Streamer', nav_link: 'Enlace / ID',
     tagline: 'Directos y VODs de Twitch, sin suscripción.',
     login: 'Iniciar sesión con Twitch', logout: 'Cerrar sesión',
