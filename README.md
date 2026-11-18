@@ -268,6 +268,7 @@ public/              The website, served as-is by Vercel (no build step)
       connect.js     TwitchUnblock Connect: bridge to the browser extension
       hq.js          Higher qualities (1440p+) through the extension, ad-break fallback
       silence.js     VODs with no sound on Twitch (empty audio track): the probe
+      slowrelay.js   Video relay too slow for a VOD: the detection (two segments in a row slower than their length)
       connect-update.js  Its “new version available” line
       tv.js          TV mode: remote control, focus, player keys (styles in assets/tv.css)
       chat/          Chat: IRC, emotes, badges, pinned message, hype train, VOD replay,
@@ -285,6 +286,7 @@ tools/connect-check.mjs  Checks of the extension bridge (Node, no browser or net
 tools/build-webos.mjs    Builds the LG TV app: one script with the website's modules, hls.js, the .ipk and its Homebrew Channel manifest
 tools/pair-check.mjs     Checks of the iPhone → TV web session: the Worker's /api/pair (in-memory D1), encryption, QR codes
 tools/points-check.mjs   Checks of the TV's channel points: minute-watched (and the Worker's /api/spade), balance, streak, bonus chest
+tools/slow-relay-check.mjs  Checks of the slow-relay fallback: detection, switch to the Sofia relay, no going back, the Worker as the safety net
 .github/workflows/   Docker image (docker.yml), extension packages and release (extension.yml), LG TV app (webos.yml), daily database backup (d1-backup.yml)
 vercel.json          Website configuration on Vercel
 ```
@@ -536,6 +538,36 @@ doesn't make it jump back and forth). Restarting the relay — updating the
 bot restarts it — used to leave viewers on the fallback Worker until their
 next video, using up its daily quota. The iOS app reads Twitch's CDN directly
 and doesn't need it.
+
+**A slow relay.** None of the above kicks in when the relay is merely slow:
+its `/health` still answers. My relay runs on a single-core VPS; when it's
+saturated it keeps answering but stops delivering — on 18 November a 9.4 MB
+1080p60 VOD segment came through it at 0.7 Mb/s, against ~8 Mb/s through my
+second relay, in Sofia, and ~13 Mb/s straight from Twitch. Every VOD segment
+goes through the relay (Twitch's VOD CDN sends no CORS headers), so VODs
+stuttered. The player now times each VOD segment that comes through the main
+relay (`public/assets/js/slowrelay.js`). When two in a row take longer to load
+than they last (load time above 1.0 × the segment's duration: past that point
+the relay delivers less than a second of video per second and the buffer
+drains; a single slow segment can be a hiccup), the rest of the VOD goes
+through the Sofia relay — same `/api/proxy`, same code — from the same spot,
+without restarting the player: what's buffered stays, and its next requests go
+to Sofia. A notice says so (*Slow relay: video through another server*) and
+the error log gets the measurement (size, load time, throughput; no address).
+For the next 30 minutes the main relay is kept away from VODs on that device:
+they start straight on Sofia, and neither the relay coming back after a
+failure nor its `/health` check brings a VOD back to it before then. Lives
+aren't affected: their segments come straight from Twitch's CDN, only their
+playlists go through the relay. If Sofia fails in turn, the video falls back
+to the Worker as usual; a slow Sofia doesn't trigger anything — I'd rather use
+Sofia's traffic than the Worker's daily quota. In *Auto*, hls.js usually
+lowers the quality before segments get that slow, so the switch mostly
+happens at a fixed quality, or when even the low qualities can't keep up. A
+slow connection on the viewer's side looks the same from the page: that
+viewer moves to Sofia for 30 minutes, which doesn't help but doesn't hurt.
+This only applies behind my official relay (an instance with its own
+`relayUrl` doesn't send its video to Sofia). The LG TV app (0.4.1) does the
+same.
 
 You need a server with Docker and a domain name pointing to it (a free
 subdomain from [duckdns.org](https://www.duckdns.org) works — DuckDNS also
