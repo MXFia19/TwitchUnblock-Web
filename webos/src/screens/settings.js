@@ -4,7 +4,8 @@
 //  qualité préférée, faible latence, langue du top, chat. Un choix = une
 //  rangée de boutons, coche sur la valeur retenue (comme l'Apple TV). Les
 //  réglages sont ceux du site (store.prefs), plus quelques-uns propres à
-//  la TV (tvChatSide, tvChatSize, tvTopAll).
+//  la TV (tvChatSide, tvChatSize, tvTopAll, et avec une session web
+//  tvPoints, tvStreak : allumés tant qu'ils ne sont pas coupés).
 // ═══════════════════════════════════════════════════════════════════════════
 
 import * as api from '../../../public/assets/js/api.js'
@@ -69,6 +70,8 @@ export function settingsScreen() {
           : `<button class="choice" type="button" data-act="login">${icon('twitch', 26)}<span>${esc(tt('tv_login'))}</span></button>`}</div>
       </section>
       ${webSessionBlock()}
+      ${webSession ? choice('tvPoints', tt('tv_points'), yesNo, bool(p.tvPoints !== false), tt('tv_points_sub')) : ''}
+      ${webSession ? choice('tvStreak', tt('tv_streak'), yesNo, bool(p.tvStreak !== false), tt('tv_streak_sub')) : ''}
       ${choice('lang', tt('tv_language'), [['auto', t('lang_auto')], ...LANGS.map((l) => [l.id, l.label])], p.lang || 'auto')}
       <section class="block setting" data-block>
         <h2 class="block-title">${esc(tt('tv_sources'))}</h2><p class="setting-sub">${esc(tt('tv_sources_sub'))}</p>
@@ -106,6 +109,7 @@ export function settingsScreen() {
       case 'qualityPref': p.qualityPref = v; break
       case 'tvChatSide': case 'tvChatSize': p[key] = v; break
       case 'lowLatency': case 'chatOpen': case 'chatSync': case 'timestamps': case 'hideBots': case 'tvTopAll':
+      case 'tvPoints': case 'tvStreak':
         p[key] = v === '1'
         break
       default: return

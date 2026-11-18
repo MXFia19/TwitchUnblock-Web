@@ -16,7 +16,9 @@
 //    une ligne au journal.
 //  - Chaînes suivies du compte (GQL currentUser) : followedLiveByWebSession,
 //    mêlées sur l'accueil à celles de la TV.
-//  - Points de chaîne : pas encore (README, « LG TV »).
+//  - Points de chaîne et série de visionnage pendant un direct
+//    (livepoints.js, points.js) : leurs requêtes au nom du compte passent
+//    par accountGql, l'identifiant du compte par webSessionUserId.
 // ═══════════════════════════════════════════════════════════════════════════
 
 import * as api from '../../public/assets/js/api.js'
@@ -62,7 +64,7 @@ const changed = () => { for (const fn of listeners) { try { fn(webSession) } cat
  *  Twitch en arrière-plan (currentUser), qui donne aussi l'identifiant et
  *  le nom quand l'iPhone n'a pas pu les lire (userId vide, nom = login). Une
  *  panne n'y change rien : la session reste, revérifiée au démarrage
- *  suivant. Rien sur la TV ne se sert de userId. */
+ *  suivant. userId sert aux minutes regardées (webSessionUserId). */
 export function saveWebSession(s) {
   webSession = {
     token: s.token, login: s.login, userId: s.userId || '', displayName: s.displayName || s.login,
@@ -127,7 +129,12 @@ function errorsText(json, token) {
 
 /** Requête GQL au nom du compte : { status, json } (status 0 : réseau ou
  *  délai). 401 / 403 : la session est marquée refusée. */
-async function sessionGql(query, variables, ms = 8000) {
+const sessionGql = (query, variables, ms = 8000) => postGql(variables ? { query, variables } : { query }, ms, true)
+
+/** Corps GQL quelconque (requête écrite, ou enregistrée en liste) envoyé au
+ *  nom du compte, sans jeton d'intégrité. `expire` faux : un 401 / 403 ne
+ *  marque pas la session refusée. */
+async function postGql(payload, ms, expire) {
   const s = webSession
   if (!s?.token || s.expired) return { status: 0, json: null }
   let res
@@ -141,7 +148,7 @@ async function sessionGql(query, variables, ms = 8000) {
         'X-Device-Id': deviceId(),
         'Content-Type': 'text/plain;charset=UTF-8',
       },
-      body: JSON.stringify(variables ? { query, variables } : { query }),
+      body: JSON.stringify(payload),
     }, ms)
   } catch {
     return { status: 0, json: null }
@@ -149,12 +156,42 @@ async function sessionGql(query, variables, ms = 8000) {
   // Session oubliée ou remplacée pendant la requête : sa réponse ne compte plus.
   if (webSession !== s) return { status: 0, json: null }
   if (res.status === 401 || res.status === 403) {
-    markExpired(s, `HTTP ${res.status}`)
+    if (expire) markExpired(s, `HTTP ${res.status}`)
     return { status: res.status, json: null }
   }
   let json = null
   try { json = await res.json() } catch {}
   return { status: res.status, json: Array.isArray(json) ? json[0] ?? null : json }
+}
+
+/**
+ * Requête GQL au nom du compte, pour les points (points.js) : `body` est
+ * { query, variables } ou une requête enregistrée en liste ([{
+ * operationName, variables, extensions }], comme l'app iPhone). Rend {
+ * status, json, errors } : json, le premier élément d'une réponse en liste ;
+ * errors, les messages d'erreur de Twitch en une ligne, sans jamais le
+ * jeton. `expire` faux (coffre, que Twitch peut refuser sans jeton
+ * d'intégrité) : un 401 / 403 ne marque pas la session refusée — la lecture
+ * suivante du solde le dira, si c'est elle.
+ */
+export async function accountGql(body, { ms = 8000, expire = true } = {}) {
+  const s = webSession
+  const r = await postGql(body, ms, expire)
+  return { status: r.status, json: r.json, errors: errorsText(r.json, s?.token) }
+}
+
+let idAskedAt = 0
+/** Identifiant Twitch du compte (user_id des minutes regardées) : relu chez
+ *  Twitch s'il manque (l'iPhone n'a pas toujours pu le lire), au plus une
+ *  fois toutes les 10 min. '' s'il reste inconnu. */
+export async function webSessionUserId() {
+  const s = webSession
+  if (!s || s.expired) return ''
+  if (!s.userId && Date.now() - idAskedAt > 600_000) {
+    idAskedAt = Date.now()
+    await checkWebSession({ force: true }).catch(() => {})
+  }
+  return webSession === s && !s.expired ? s.userId || '' : ''
 }
 
 /** Session revérifiée chez Twitch (au plus toutes les 12 h, sauf `force`) :
