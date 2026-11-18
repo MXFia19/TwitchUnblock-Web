@@ -1,5 +1,6 @@
 // ═══════════════════════════════════════════════════════════════════════════
-//  Réglages : compte Twitch (par code), langue, ordre des sources du direct,
+//  Réglages : compte Twitch (par code), session web envoyée par l'iPhone
+//  (screens/pair.js, websession.js), langue, ordre des sources du direct,
 //  qualité préférée, faible latence, langue du top, chat. Un choix = une
 //  rangée de boutons, coche sur la valeur retenue (comme l'Apple TV). Les
 //  réglages sont ceux du site (store.prefs), plus quelques-uns propres à
@@ -12,6 +13,7 @@ import { LANGS, t } from '../../../public/assets/js/i18n.js'
 import { QUALITY_PREFS, validQualityPref } from '../../../public/assets/js/player.js'
 import { esc, icon, toast } from '../../../public/assets/js/util.js'
 import { logout, onAuthChange, user } from '../auth.js'
+import { forgetWebSession, onWebSessionChange, webSession } from '../websession.js'
 import { focusEl } from '../nav.js'
 import { actions, screenEl } from '../ui.js'
 import { tt } from '../strings.js'
@@ -38,6 +40,21 @@ export function settingsScreen() {
   const yesNo = [['1', tt('tv_on')], ['0', tt('tv_off')]]
   const bool = (v) => (v ? '1' : '0')
 
+  /** Session web de l'iPhone : connecter, ou qui est connecté et l'oublier.
+   *  Refusée par Twitch : la reconnecter, ou l'oublier. */
+  function webSessionBlock() {
+    const ws = webSession
+    const name = ws ? ws.displayName || ws.login : ''
+    const connect = `<button class="choice" type="button" data-act="pair">${icon('link', 26)}<span>${esc(tt('tv_ws_connect'))}</span></button>`
+    const forget = `<button class="choice" type="button" data-act="ws-forget">${icon('trash', 26)}<span>${esc(tt('tv_ws_forget'))}</span></button>`
+    return `<section class="block setting" data-block>
+        <h2 class="block-title">${esc(tt('tv_ws_title'))}</h2>
+        ${ws ? `<p class="setting-sub setting-status">${esc(ws.expired ? tt('tv_ws_expired', { u: name }) : tt('tv_ws_connected', { u: name }))}</p>` : ''}
+        <p class="setting-sub">${esc(tt('tv_ws_sub'))}</p>
+        <div class="choices" data-row>${ws ? `${ws.expired ? connect : ''}${forget}` : connect}</div>
+      </section>`
+  }
+
   function paint() {
     const p = store.prefs
     const order = api.liveSourceOrder()
@@ -51,6 +68,7 @@ export function settingsScreen() {
           ? `<button class="choice" type="button" data-act="logout">${icon('logout', 26)}<span>${esc(t('logout'))}</span></button>`
           : `<button class="choice" type="button" data-act="login">${icon('twitch', 26)}<span>${esc(tt('tv_login'))}</span></button>`}</div>
       </section>
+      ${webSessionBlock()}
       ${choice('lang', tt('tv_language'), [['auto', t('lang_auto')], ...LANGS.map((l) => [l.id, l.label])], p.lang || 'auto')}
       <section class="block setting" data-block>
         <h2 class="block-title">${esc(tt('tv_sources'))}</h2><p class="setting-sub">${esc(tt('tv_sources_sub'))}</p>
@@ -96,11 +114,17 @@ export function settingsScreen() {
     if (key === 'tvTopAll') actions.topChanged?.()
   }
 
+  /** Bouton à reprendre quand l'écran revient (repeint pendant qu'un écran
+   *  était posé dessus : connexion, session de l'iPhone). */
+  let pendingFocus = null
+
   /** Repeint, le focus sur le même bouton (ou son voisin). */
   function repaint(sel) {
     paint()
     const again = sel && page.querySelector(sel)
-    if (again) focusEl(again, { reveal: false })
+    if (!again) return
+    if (root.hidden) pendingFocus = sel
+    else focusEl(again, { reveal: false })
   }
 
   function moveSource(id, delta) {
@@ -131,13 +155,30 @@ export function settingsScreen() {
       logout()
       toast(tt('tv_logged_out'), 'info')
       repaint('[data-act="login"]')
+    } else if (b.dataset.act === 'pair') actions.openPair?.()
+    else if (b.dataset.act === 'ws-forget') {
+      forgetWebSession()
+      toast(tt('tv_ws_forgotten'), 'info')
     }
   })
   onAuthChange(() => { if (root.isConnected) repaint(document.activeElement?.dataset?.act ? `[data-act="${user ? 'logout' : 'login'}"]` : null) })
+  // Session reçue, oubliée ou refusée : le bloc change, le focus va sur
+  // son bouton (« Oublier la session » ou « Connecter avec l'iPhone »).
+  onWebSessionChange(() => {
+    if (!root.isConnected) return
+    const act = document.activeElement?.dataset?.act
+    const fromBlock = act === 'pair' || act === 'ws-forget' || root.hidden
+    repaint(fromBlock ? `[data-act="${webSession && !webSession.expired ? 'ws-forget' : 'pair'}"]` : null)
+  })
   paint()
 
   return {
     el: root,
     initial: () => page.querySelector('.choice') ?? null,
+    onShow() {
+      const again = pendingFocus && page.querySelector(pendingFocus)
+      pendingFocus = null
+      if (again) focusEl(again, { reveal: false })
+    },
   }
 }

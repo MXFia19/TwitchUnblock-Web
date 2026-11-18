@@ -1,14 +1,16 @@
 // ═══════════════════════════════════════════════════════════════════════════
-//  Accueil, en rangées : chaînes suivies en direct (compte Twitch et suivis
-//  sur cette TV), VODs à reprendre, plus gros directs, catégories. Au bout
-//  d'une rangée, la suite se charge. Relu au retour sur l'accueil après
-//  deux minutes, le focus restant sur la même carte.
+//  Accueil, en rangées : chaînes suivies en direct (compte Twitch, session
+//  web de l'iPhone et suivis sur cette TV), VODs à reprendre, plus gros
+//  directs, catégories. Au bout d'une rangée, la suite se charge. Relu au
+//  retour sur l'accueil après deux minutes, le focus restant sur la même
+//  carte.
 // ═══════════════════════════════════════════════════════════════════════════
 
 import * as api from '../../../public/assets/js/api.js'
 import { store } from '../../../public/assets/js/store.js'
 import { t } from '../../../public/assets/js/i18n.js'
 import { user, withAuth } from '../auth.js'
+import { followedLiveByWebSession, webSession } from '../websession.js'
 import { focusEl } from '../nav.js'
 import { bindCards, categoryCard, emptyHtml, errorHtml, loadingHtml, rowHtml, screenEl, streamCard, vodCard } from '../ui.js'
 import { tt } from '../strings.js'
@@ -63,19 +65,23 @@ export function homeScreen() {
     }
   }
 
+  /** Suivis du compte connecté par code (Helix), du compte de la session web
+   *  de l'iPhone (GQL) et de cette TV, sans doublon. Une source qui échoue
+   *  (null) n'empêche pas les autres ; l'erreur ne s'affiche que si rien
+   *  d'autre ne vient. */
   async function loadFollowed() {
     const local = store.prefs.localFollows ?? []
-    let streams = []
-    let failed = false
-    if (user) {
-      try { streams = await withAuth(() => api.getFollowedStreams(user.id)) } catch { failed = true }
+    const lists = await Promise.all([
+      user ? withAuth(() => api.getFollowedStreams(user.id)).catch(() => null) : [],
+      webSession && !webSession.expired ? followedLiveByWebSession().catch(() => null) : [],
+      local.length ? api.getLiveByLogins(local).catch(() => null) : [],
+    ])
+    const streams = []
+    const seen = new Set()
+    for (const s of lists.flatMap((l) => l ?? [])) {
+      if (s?.login && !seen.has(s.login)) { seen.add(s.login); streams.push(s) }
     }
-    if (local.length) {
-      try {
-        const seen = new Set(streams.map((s) => s.login))
-        for (const s of await api.getLiveByLogins(local)) if (!seen.has(s.login)) streams.push(s)
-      } catch { failed = failed || !user }
-    }
+    const failed = lists.some((l) => l === null)
     streams.sort((a, b) => b.viewers - a.viewers)
     keepFocus(() => {
       track('row-followed').innerHTML = streams.length ? streams.map(streamCard).join('')

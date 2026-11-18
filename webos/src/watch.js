@@ -11,7 +11,10 @@
 //  - touches lecture, pause, retour et avance rapides, stop.
 //  Le chat se pose sur le côté (réglages : côté, taille, affiché ou non).
 //  Le démarrage d'un direct ou d'une VOD reprend celui du site (main.js,
-//  openLive / openVod), sans l'extension TwitchUnblock Connect.
+//  openLive / openVod), sans l'extension TwitchUnblock Connect. Avec la
+//  session web de l'iPhone, un direct passe d'abord par le compte s'il y
+//  est sans pub (abonné, Turbo : websession.js, accountLive), source
+//  « Compte Twitch (sans pub) » ; sinon les sources habituelles.
 // ═══════════════════════════════════════════════════════════════════════════
 
 import * as api from '../../public/assets/js/api.js'
@@ -21,6 +24,7 @@ import { lang, t } from '../../public/assets/js/i18n.js'
 import { esc, formatClock, formatViewers, icon, toast, uptimeSince } from '../../public/assets/js/util.js'
 import { logError } from '../../public/assets/js/errlog.js'
 import { canChat } from './auth.js'
+import { accountLive, webSession } from './websession.js'
 import { TvChat } from './chat.js'
 import { createKeyboard } from './keyboard.js'
 import { focusEl, popLayer, pushLayer, restoreFocus, sinceKey } from './nav.js'
@@ -29,6 +33,19 @@ import { tt } from './strings.js'
 
 const HIDE_MS = 5000
 const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2]
+
+/** Nom d'une source du direct (« account » : le compte de la session web). */
+const sourceLabel = (id) => (id === 'account' ? tt('tv_src_account') : t(`src_${id}`))
+
+/** Direct par le compte de la session web s'il y est sans pub : { links,
+ *  variants, source: 'account' } ; sinon null. `w.accountAdFree` retient si
+ *  le compte y est sans pub (le menu des sources le propose alors). */
+async function accountFirst(w, login) {
+  if (!webSession || webSession.expired) return null
+  const acct = await accountLive(login, { lowLatency: store.prefs.lowLatency !== false }).catch(() => null)
+  w.accountAdFree = Boolean(acct?.adFree)
+  return acct?.links ? acct : null
+}
 
 let player = null
 let playerRoot = null
@@ -95,6 +112,16 @@ function switchWorker(base) {
   }
   if (Date.now() - lastWorkerSwitch < 60_000 || !w.links || !api.hasOtherWorker(base)) return false
   lastWorkerSwitch = Date.now()
+  // Direct par le compte : rien à redemander, les mêmes liens par un autre
+  // Worker (redemandés à un Worker, ce seraient les sources habituelles).
+  if (w.kind === 'live' && w.source === 'account') {
+    const moved = api.linksAvoiding(w.links, base)
+    if (!moved) return false
+    api.markWorkerDown(base)
+    w.links = moved
+    player.swapLinks(w.links, w.variants)
+    return true
+  }
   const request = w.kind === 'live' ? api.getLive(w.login, { avoid: base }) : api.getVodLinks(w.id, { avoid: base })
   request.then((links) => {
     if (session !== w) return
@@ -137,15 +164,18 @@ function onTime(cur, duration) {
 }
 
 /** Ordre des sources : `id` en tête ; le direct repart par lui (main.js,
- *  switchLiveSource). */
+ *  switchLiveSource). « account » (le compte de la session web, proposé
+ *  quand il est sans pub sur la chaîne) ne change pas l'ordre retenu. */
 async function switchSource(id) {
-  const order = [id, ...api.liveSourceOrder().filter((x) => x !== id)]
-  store.prefs.liveSourceOrder = order
-  store.prefs.liveSource = null
-  store.savePrefs()
+  if (id !== 'account') {
+    const order = [id, ...api.liveSourceOrder().filter((x) => x !== id)]
+    store.prefs.liveSourceOrder = order
+    store.prefs.liveSource = null
+    store.savePrefs()
+  }
   const w = session
   if (w?.kind !== 'live') return
-  const links = await api.getLive(w.login).catch(() => null)
+  const links = id === 'account' ? await accountFirst(w, w.login) : await api.getLive(w.login).catch(() => null)
   if (session !== w) return
   if (!links?.links || !Object.keys(links.links).length) { toast(t('err_live'), 'error'); return }
   w.links = links.links
@@ -153,7 +183,7 @@ async function switchSource(id) {
   w.source = links.source
   player.swapLinks(links.links, w.variants)
   player.setLiveSource(links.source)
-  if (links.source) toast(tt('tv_source_now', { s: t(`src_${links.source}`) }), 'info')
+  if (links.source) toast(tt('tv_source_now', { s: sourceLabel(links.source) }), 'info')
   current?.paint()
 }
 
@@ -230,7 +260,7 @@ export function watchScreen(what) {
       btn('fwd', 'fwd10', '+10 s'),
       live ? btn('golive', 'radio', t('go_live')) : '',
       btn('quality', 'settings', `${t('quality')} · ${q}`),
-      live ? btn('source', 'globe', t(`src_${p.liveSource || api.liveSourceOrder()[0]}`)) : '',
+      live ? btn('source', 'globe', sourceLabel(p.liveSource || api.liveSourceOrder()[0])) : '',
       !live ? btn('speed', 'gauge', `${t('speed')} · ${p.video.playbackRate.toLocaleString(lang())}×`) : '',
       btn('chat', 'chat', tt(store.prefs.chatOpen !== false ? 'tv_hide_chat' : 'tv_show_chat')),
       live && canChat() ? btn('write', 'send', tt('tv_write')) : '',
@@ -396,7 +426,9 @@ export function watchScreen(what) {
       }
       case 'source': {
         const cur = p.liveSource ?? api.liveSourceOrder()[0]
-        openPanel(t('live_source'), api.liveSourceOrder().map((id) => ({ value: id, label: t(`src_${id}`), on: id === cur })), (id) => switchSource(id))
+        // Le compte de la session web en tête, s'il est sans pub ici.
+        const ids = [...(w?.accountAdFree && webSession && !webSession.expired ? ['account'] : []), ...api.liveSourceOrder()]
+        openPanel(t('live_source'), ids.map((id) => ({ value: id, label: sourceLabel(id), on: id === cur })), (id) => switchSource(id))
         return
       }
       case 'speed':
@@ -472,8 +504,11 @@ export function watchScreen(what) {
   async function startLive(login) {
     const token = session
     ui.loadingText.textContent = t('loading_live')
+    // Le compte de la session web d'abord (sans pub ici), puis les sources
+    // habituelles (Worker) s'il n'y est pas ou ne répond pas.
+    const live = async () => (await accountFirst(token, login)) ?? (session === token ? api.getLive(login) : null)
     const [links, info] = await Promise.all([
-      api.getLive(login).catch((e) => ({ error: e?.code === 'geo_blocked' ? 'geo'
+      live().catch((e) => ({ error: e?.code === 'geo_blocked' ? 'geo'
         : e?.status === 404 || e?.status === 400 ? 'missing'
         : e?.status || e?.name === 'AbortError' ? 'failed' : 'network' })),
       api.getChannelInfo(login).catch(() => null),
