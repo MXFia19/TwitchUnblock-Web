@@ -5,3 +5,7 @@ extension-firefox/
 report-photos/
 # Paquets pour addons.mozilla.org (extension/dev/AMO.md), refaits à la demande
 amo-upload/
+
+# App TV LG fabriquée par tools/build-webos.mjs (dossier de l'app, paquet
+# .ipk, manifeste de la Homebrew Channel, hls.js gardé en cache)
+/build/

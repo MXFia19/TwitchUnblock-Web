@@ -1,10 +1,17 @@
-# App TV LG (dossier webos/) : une coquille webOS qui ouvre le site hébergé
-# en mode TV (?tv=webos, voir public/assets/js/tv.js). Vérifie appinfo.json
-# et les icônes, fabrique le paquet .ipk avec ares-package (@webos-tools/cli)
-# et le garde en artefact. Sur main, il est aussi publié dans la release
-# « webos-v<version> », comme l'extension Connect (extension.yml), mais jamais
+# App TV LG (dossier webos/) : une app web empaquetée, avec son interface pour
+# la télécommande (webos/src) et les modules du site (public/assets/js : api,
+# lecteur, chat, traductions), réunis par tools/build-webos.mjs (esbuild,
+# hls.js du site à l'empreinte vérifiée, contrôle d'appinfo.json et des
+# icônes), puis mis en paquet .ipk par ares-package (@webos-tools/cli). Le
+# paquet est gardé en artefact, avec le manifeste de la Homebrew Channel.
+# Sur main, il est aussi publié dans la release « webos-v<version> » (paquet
+# et manifeste), comme l'extension Connect (extension.yml), mais jamais
 # marquée « dernière » : le site envoie vers …/releases/latest pour
-# l'extension. La même version republiée remplace son paquet.
+# l'extension. La même version republiée remplace ses fichiers.
+# Puis le dépôt de la Homebrew Channel (apps.json : version, adresse du
+# paquet, empreinte sha256) est publié sur la branche webos-repo, lue par
+# raw.githubusercontent.com (qui répond avec CORS, contrairement aux fichiers
+# des releases) : l'adresse à ajouter dans la Homebrew Channel ne change pas.
 name: webOS app
 
 on:
@@ -14,6 +21,9 @@ on:
       - test-17d298
     paths:
       - 'webos/**'
+      - 'tools/build-webos.mjs'
+      # L'app embarque les modules du site : un changement du site la refait.
+      - 'public/assets/js/**'
       - '.github/workflows/webos.yml'
   workflow_dispatch:
 
@@ -29,7 +39,7 @@ env:
 
 jobs:
   build:
-    name: Check and package
+    name: Build and package
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -40,53 +50,32 @@ jobs:
         with:
           node-version: 22
 
-      # Champs obligatoires, version x.y.z (sans zéro devant), page de départ
-      # présente, icônes PNG de 80 × 80 et 130 × 130.
-      - name: Check appinfo.json
-        run: |
-          node - <<'EOF'
-          const fs = require('fs')
-          const fail = (msg) => { console.log(`::error file=webos/appinfo.json::${msg}`); process.exit(1) }
-          const info = JSON.parse(fs.readFileSync('webos/appinfo.json', 'utf8'))
-          for (const k of ['id', 'version', 'type', 'main', 'title', 'icon', 'largeIcon']) if (!info[k]) fail(`champ ${k} manquant`)
-          if (info.type !== 'web') fail('type doit valoir web')
-          if (!/^(0|[1-9]\d{0,8})(\.(0|[1-9]\d{0,8})){2}$/.test(info.version)) fail(`version ${info.version} : trois nombres sans zéro devant`)
-          if (!fs.existsSync(`webos/${info.main}`)) fail(`${info.main} absent`)
-          for (const [k, size] of [['icon', 80], ['largeIcon', 130]]) {
-            const png = fs.readFileSync(`webos/${info[k]}`)
-            const w = png.readUInt32BE(16)
-            const h = png.readUInt32BE(20)
-            if (png.toString('latin1', 1, 4) !== 'PNG' || w !== size || h !== size) fail(`${info[k]} : PNG de ${size} × ${size} attendu (${w} × ${h})`)
-          }
-          console.log(`${info.id} ${info.version} : OK`)
-          EOF
+      # Versions exactes, à monter à la main (comme wrangler dans le Dockerfile).
+      - name: Install build tools
+        run: npm install --global --no-audit --no-fund esbuild@0.28.2 @webos-tools/cli@3.2.6
 
-      # Version exacte, à monter à la main (comme wrangler dans le Dockerfile).
-      - name: Install webOS CLI
-        run: npm install --global --no-audit --no-fund @webos-tools/cli@3.2.6
-
-      - name: Package
+      - name: Build and package
         id: package
         run: |
+          node tools/build-webos.mjs --package
           version=$(node -p 'require("./webos/appinfo.json").version')
           name="twitchunblock-webos-$version"
-          ares-package --check webos
-          mkdir -p dist
-          ares-package webos --outdir dist
-          ipk=$(ls dist/*.ipk)
-          ares-package --info "$ipk"
-          mv "$ipk" "dist/$name.ipk"
+          ares-package --info "build/webos/$name.ipk"
           echo "name=$name" >> "$GITHUB_OUTPUT"
 
       - name: Upload package
         uses: actions/upload-artifact@v4
         with:
           name: ${{ steps.package.outputs.name }}
-          path: dist/${{ steps.package.outputs.name }}.ipk
+          path: |
+            build/webos/${{ steps.package.outputs.name }}.ipk
+            build/webos/com.mxfia19.twitchunblock.manifest.json
+            build/webos/apps.json
           if-no-files-found: error
 
   # Sur main seulement : release « webos-v<version> » avec un paquet à nom
-  # fixe (twitchunblock-webos.ipk) et un mot vers le README pour installer.
+  # fixe (twitchunblock-webos.ipk), le manifeste de la Homebrew Channel et un
+  # mot vers le README pour installer ; puis le dépôt de la Homebrew Channel.
   release:
     name: Publish release
     needs: build
@@ -109,13 +98,36 @@ jobs:
         run: |
           version=$(node -p 'require("./webos/appinfo.json").version')
           tag="webos-v$version"
-          src="dist/twitchunblock-webos-$version/twitchunblock-webos-$version.ipk"
-          test -f "$src"
-          cp "$src" twitchunblock-webos.ipk
-          notes="TwitchUnblock for LG TVs (webOS 22 or newer): a small app that opens the website in TV mode. Install it with Developer Mode (ares-install) or on a rooted TV: https://github.com/${GITHUB_REPOSITORY}#lg-tv-webos"
+          dir="dist/twitchunblock-webos-$version"
+          test -f "$dir/twitchunblock-webos-$version.ipk"
+          cp "$dir/twitchunblock-webos-$version.ipk" twitchunblock-webos.ipk
+          cp "$dir/com.mxfia19.twitchunblock.manifest.json" com.mxfia19.twitchunblock.manifest.json
+          notes="TwitchUnblock for LG TVs (webOS 6 or newer): lives, VODs and the chat, made for the remote. Install it with Developer Mode (ares-install) or the Homebrew Channel: https://github.com/${GITHUB_REPOSITORY}#lg-tv-webos"
           if gh release view "$tag" > /dev/null 2>&1; then
-            gh release upload "$tag" twitchunblock-webos.ipk --clobber
+            gh release upload "$tag" twitchunblock-webos.ipk com.mxfia19.twitchunblock.manifest.json --clobber
           else
-            gh release create "$tag" twitchunblock-webos.ipk --title "TwitchUnblock for LG TV $version" \
-              --notes "$notes" --target "$GITHUB_SHA" --latest=false
+            gh release create "$tag" twitchunblock-webos.ipk com.mxfia19.twitchunblock.manifest.json \
+              --title "TwitchUnblock for LG TV $version" --notes "$notes" --target "$GITHUB_SHA" --latest=false
           fi
+
+      # Branche webos-repo : un seul commit, refait à chaque publication (rien
+      # à garder d'une version à l'autre). vercel.json : Vercel ne la déploie
+      # pas comme un aperçu du site.
+      - name: Update the Homebrew Channel repository
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=$(node -p 'require("./webos/appinfo.json").version')
+          work=$(mktemp -d)
+          cp "dist/twitchunblock-webos-$version/apps.json" "$work/apps.json"
+          printf '{\n  "git": { "deploymentEnabled": false }\n}\n' > "$work/vercel.json"
+          printf '%s\n' "# TwitchUnblock for LG TV: Homebrew Channel repository" "" \
+            "Add this address in the Homebrew Channel (Settings, Add repository):" "" \
+            "https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/webos-repo/apps.json" "" \
+            "Written by the webOS app workflow on every release; see the main branch README (LG TV)." > "$work/README.md"
+          cd "$work"
+          git init -q -b webos-repo
+          git add apps.json vercel.json README.md
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+            commit -q -m "Dépôt Homebrew Channel : TwitchUnblock $version"
+          git push -q -f "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" webos-repo
