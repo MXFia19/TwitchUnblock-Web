@@ -188,35 +188,48 @@ Messages, operations, error codes and limits: [`extension/PROTOCOL.md`](extensio
 
 ## LG TV (webOS)
 
-A first version for LG TVs. The `webos/` folder is a small webOS app that opens the website in **TV mode** (`https://twitchunblock.vercel.app/?tv=webos`): the site isn't copied into the app, so the app is always as up to date as the site.
+An app for LG TVs, made for the remote. It's packaged: the app itself is in the `.ipk`, with its own interface (`webos/src`) and the website's modules (`public/assets/js`: Worker and GQL calls, live sources, video player, chat, translations), put together when it's built. It replaces the first version, which only opened the website in TV mode.
 
-**TV mode** turns on by itself on webOS (a user agent with `Web0S`), and with `?tv=1` in any browser (kept for the session; `?tv=0` turns it off). The logic is in `public/assets/js/tv.js`, the styles in `public/assets/tv.css`, loaded only in TV mode (everything under `html.tv`, nothing changes outside it):
+- **Home** in rows: followed channels that are live (your Twitch follows when you're signed in, plus the channels followed on the TV), VODs to resume, the top lives (in the TV's language, or all languages in the settings) and the top categories. The next page loads as you get to the end of a row
+- **Search**: channels and categories as you type, with the on-screen keyboard or the TV's own (**OK** on the field)
+- **Category**: its lives, most watched first. **Channel**: its live, *Follow on this TV*, its VODs
+- **Full-screen player** for lives and VODs. It's the website's player: same live sources in the same order, same relays and fallbacks, channel ad breaks announced (with the sound cut, as on the website), VODs resumed where you left them. With the controls hidden, **left / right** go back / forward 10 s (faster when held, on a VOD), **OK** pauses or resumes, **up / down** bring up the control bar: play/pause, ±10 s, back to live, quality, live source, speed, chat, write in the chat, channel page. **Back** hides the bar, then closes the player. The remote's play, pause, rewind, fast-forward and stop keys work too
+- **Chat** on the side (left or right, three text sizes, shown or hidden by default), with badges and 7TV, BTTV and FFZ emotes, synced with the picture on a live and replayed on a VOD; writing in it needs a Twitch account
+- **Settings**: language, live source order (Bulgaria, official Twitch), preferred quality, low latency, top lives language, chat, Twitch account
+- **Twitch account with a code**: the TV shows a code to type at `twitch.tv/activate` on a phone or a computer (an installed app has no page to come back to after a sign-in). With an account: your Twitch follows, and writing in the chat. Without one, the channels you follow stay on the TV. The token stays on the TV and only goes to Twitch
+- **Remote**: the arrows move to the nearest item, **OK** activates it, **Back** (or Esc / Backspace on a keyboard) goes back; on the home screen it goes up to the tabs, then quits the app. Coming back to a screen puts the focus back where it was, and a row remembers its last card. The Magic Remote's pointer works too (hovering selects, clicking activates, the wheel scrolls)
+
+**Requirements**: webOS 6 (2021 TVs, Chromium 79) or newer; webOS 22 or newer is better. The JavaScript is rewritten for Chromium 79 when the app is built; on an older TV, the app says it's too old instead of showing a blank page. So far I've only tried this version in a desktop browser at 1920 × 1080, not on a TV yet.
+
+**Install** — the TV needs Developer Mode or root (the app isn't on the LG Content Store):
+- **Homebrew Channel** ([webosbrew](https://www.webosbrew.org/), rooted TVs or Developer Mode): in the Homebrew Channel, *Settings* → *Add repository*, and type
+  ```
+  https://raw.githubusercontent.com/MXFia19/TwitchUnblock-Web/webos-repo/apps.json
+  ```
+  *TwitchUnblock* then shows up in the Homebrew Channel's list; install it from its page. Each new version shows up there too (the page offers to install it). The Homebrew Channel checks the package's SHA-256 before installing it.
+- **Developer Mode**: get `twitchunblock-webos.ipk` from the latest `webos-v…` release on the [releases page](https://github.com/MXFia19/TwitchUnblock-Web/releases) (built from `main`), or as an artifact of the *webOS app* workflow run (test branch). Install the *Developer Mode* app from the LG Content Store, sign in with an LG developer account, turn on *Dev Mode Status* (the TV restarts) and *Key Server*. Then, from a computer on the same network, with Node.js:
+  ```bash
+  npm install -g @webos-tools/cli
+  ares-setup-device                   # add the TV ("tv"): its IP address, port 9922, user prisoner
+  ares-novacom --device tv --getkey   # asks for the passphrase shown in the Developer Mode app
+  ares-install --device tv twitchunblock-webos.ipk
+  ```
+  The Developer Mode session runs out unless you extend it in the app, and the apps installed with it are removed when it does. A new version installs the same way, over the old one.
+- **Rooted TV, by hand**: copy the file to the TV (for example `scp twitchunblock-webos.ipk root@<TV address>:/tmp/`), then over SSH:
+  ```bash
+  luna-send-pub -i 'luna://com.webos.appInstallService/dev/install' '{"id":"com.ares.defaultName","ipkUrl":"/tmp/twitchunblock-webos.ipk","subscribe":true}'
+  ```
+  [webOS Dev Manager](https://github.com/webosbrew/dev-manager-desktop) installs it from a window too, on rooted and Developer Mode TVs.
+
+**Video relays**: an installed app runs from `file://`, so its requests carry the origin webOS gives installed apps (`file://com.mxfia19.twitchunblock-webos`, or `null` / `file://` depending on the version). The [video relay](#video-relay-on-your-own-server-vps) (`docker/relay.mjs`) accepts it whatever `ALLOWED_ORIGINS` says (`null` and `file://` only from an LG TV's user agent, which a website can't fake in its visitors' browsers), so the TV's video doesn't use the Worker's daily quota. The Worker answers every origin (`Access-Control-Allow-Origin: *`).
+
+**Build it yourself**: `npm install -g esbuild@0.28.2 @webos-tools/cli@3.2.6`, then `node tools/build-webos.mjs --package`: it checks `webos/appinfo.json` and the icons, bundles `webos/src/main.js` and the website's modules into one script (esbuild, for Chromium 79: an installed app runs from `file://`, where webOS refuses ES modules), adds hls.js (the website's version, its SRI hash checked), and writes `build/webos/twitchunblock-webos-<version>.ipk` with the Homebrew Channel manifest. Without `--package`, the app is left in `build/webos/app`, ready to open in a browser through a local web server (`--no-minify` keeps the script readable, for `ares-inspect`). The *webOS app* workflow (`.github/workflows/webos.yml`) does the same on every push to `main` or the test branch that touches `webos/`, `tools/build-webos.mjs` or the website's modules; on `main`, it also publishes the `webos-v<version>` release (never marked as the latest: the extension's install links point to the latest release) and the Homebrew Channel repository (`webos-repo` branch). A new version needs a new `version` in `webos/appinfo.json`: the Homebrew Channel only offers a different version number.
+
+**The website's TV mode** stays for TV browsers (the LG browser, or any TV with a browser): it turns on by itself on webOS (a user agent with `Web0S`), and with `?tv=1` in any browser (kept for the session; `?tv=0` turns it off). The logic is in `public/assets/js/tv.js`, the styles in `public/assets/tv.css`, loaded only in TV mode (everything under `html.tv`, nothing changes outside it):
 - **Arrows** move to the nearest item in that direction, **OK** activates it. **Back** (or Backspace / Esc on a keyboard) closes what's open — a text field being typed in, a sheet (a settings page goes back to the menu first), a chat card, the player's menu, full screen, the multi-live, the player — or goes back a page; on the home page it scrolls back to the top, then quits the app
 - Text fields are read-only while you move over them, so the TV keyboard doesn't pop up at every step: **OK** opens one for typing
 - In the player, with the controls hidden or the focus on the video: **left / right** go back / forward 10 s, **OK** pauses or resumes, **up / down** move into the control bar (play/pause, ±10 s, quality, chat, theatre, full screen), which stays up while you move in it. The remote's play, pause, rewind, fast-forward and stop keys work too
 - Bigger text and targets, a thick focus ring, 4 to 5 cards per row, and no background blur (slow on TVs). When the site refreshes a list (the top lives, every minute), the focus stays on the same card
-- In the app, links to other sites are refused with a notice (there would be no way back from them), and Twitch sign-in uses a full-page redirect instead of a popup
-
-**Requirements**: webOS 22 (2022 TVs, Chromium 87) or newer; webOS 23 or newer is better. Older TVs (webOS 6 and below, Chromium 79 and below) can't run the site's JavaScript: the app says so instead of showing a blank page.
-
-**Install** — the TV needs Developer Mode or root (the app isn't on the LG Content Store):
-1. Get `twitchunblock-webos.ipk` from the latest `webos-v…` release on the [releases page](https://github.com/MXFia19/TwitchUnblock-Web/releases) (built from `main`), or as an artifact of the *webOS app* workflow run (test branch).
-2. **Developer Mode**: install the *Developer Mode* app from the LG Content Store, sign in with an LG developer account, turn on *Dev Mode Status* (the TV restarts) and *Key Server*. Then, from a computer on the same network, with Node.js:
-   ```bash
-   npm install -g @webos-tools/cli
-   ares-setup-device                   # add the TV ("tv"): its IP address, port 9922, user prisoner
-   ares-novacom --device tv --getkey   # asks for the passphrase shown in the Developer Mode app
-   ares-install --device tv twitchunblock-webos.ipk
-   ```
-   The Developer Mode session runs out unless you extend it in the app, and the apps installed with it are removed when it does.
-   **Rooted TV (Homebrew Channel)**: copy the file to the TV (for example `scp twitchunblock-webos.ipk root@<TV address>:/tmp/`), then over SSH:
-   ```bash
-   luna-send-pub -i 'luna://com.webos.appInstallService/dev/install' '{"id":"com.ares.defaultName","ipkUrl":"/tmp/twitchunblock-webos.ipk","subscribe":true}'
-   ```
-   [webOS Dev Manager](https://github.com/webosbrew/dev-manager-desktop) installs it from a window too, on rooted and Developer Mode TVs.
-3. *TwitchUnblock* shows up with the other apps.
-
-**Build it yourself**: `ares-package webos` (from `@webos-tools/cli`) creates `com.mxfia19.twitchunblock_<version>_all.ipk`. The *webOS app* workflow (`.github/workflows/webos.yml`) checks `webos/appinfo.json` and the icons, then builds the package on every push to `main` or the test branch that touches `webos/`; on `main`, it also publishes it in the `webos-v<version>` release, never marked as the latest (the extension's install links point to the latest release).
 
 ---
 
@@ -252,7 +265,7 @@ public/              The website, served as-is by Vercel (no build step)
       chat/          Chat: IRC, emotes, badges, pinned message, hype train, VOD replay,
                      the extension's points, rewards, bets, polls, raids and drops (connect-live.js)
 extension/           TwitchUnblock Connect, the browser extension (README.md, PROTOCOL.md)
-webos/               LG TV app (webOS): opens the website in TV mode
+webos/               LG TV app (webOS): appinfo.json, icons, its interface for the remote (src/)
 worker.js            Backend: Cloudflare Worker
 wrangler.toml        Worker configuration
 docker/relay.mjs     Video relay for your own server (same proxy as the Worker)
@@ -261,6 +274,7 @@ docker/healthcheck.mjs  Container health check (site or relay)
 relay/               Its docker-compose.yml and Caddyfile (HTTPS)
 tools/reports.mjs    Reads bug reports (and their screenshots), suggestions and the bot's to-do list from the owner's computer, and marks them done (reports key)
 tools/connect-check.mjs  Checks of the extension bridge (Node, no browser or network)
+tools/build-webos.mjs    Builds the LG TV app: one script with the website's modules, hls.js, the .ipk and its Homebrew Channel manifest
 .github/workflows/   Docker image (docker.yml), extension packages and release (extension.yml), LG TV app (webos.yml), daily database backup (d1-backup.yml)
 vercel.json          Website configuration on Vercel
 ```
