@@ -520,6 +520,8 @@
 
 <script src="config.js"></script>
 <script type="module">
+  import { STATS_IT } from './assets/js/i18n-stats-it.js'
+
   const CFG = window.TU_CONFIG ?? {}
   const BASE = CFG.apiUrl === 'same-origin' ? location.origin : (CFG.apiUrl || 'https://test2.kurzmathis4.workers.dev')
   const API = `${BASE}/api/stats`
@@ -706,12 +708,13 @@
       auditTitle: 'Registro de acciones (90 días)', auditSub: 'Cada acción de administración hecha desde /stats, las apps o Discord: cuándo, quién, desde dónde, qué.', auditNone: 'Ninguna acción registrada todavía.', auditErr: 'Registro no disponible ({e})', thWhen: 'Cuándo', thFrom: 'Desde', thWhat: 'Acción', thDetail: 'Detalle', from_stats: '/stats', from_app: 'app', from_discord: 'Discord', from_key: 'clave de comentarios',
     },
   }
+  T.it = STATS_IT
   const LANG = (() => {
     try { const l = JSON.parse(localStorage.getItem('tu_prefs') || '{}').lang; if (T[l]) return l } catch {}
     for (const l of navigator.languages ?? [navigator.language]) { const c = String(l || '').slice(0, 2).toLowerCase(); if (T[c]) return c }
     return 'en'
   })()
-  const LOCALE = { fr: 'fr-FR', en: 'en-US', es: 'es-ES' }[LANG]
+  const LOCALE = { fr: 'fr-FR', en: 'en-US', es: 'es-ES', it: 'it-IT' }[LANG]
   const t = (k, v = {}) => (T[LANG][k] ?? T.en[k] ?? k).replace(/\{(\w+)\}/g, (_, n) => v[n] ?? '')
   document.documentElement.lang = LANG
   document.title = t('title')

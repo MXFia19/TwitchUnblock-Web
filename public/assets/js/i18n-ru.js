@@ -2,6 +2,7 @@
 // d'utilisateurs russophones sont les bienvenus). Une clé absente retombe
 // sur l'anglais (voir t() dans i18n.js).
 export const RU = {
+  navigation: 'Навигация',
   tv_link_blocked: 'Ссылки на другие сайты не открываются в приложении для ТВ.',
   nav_discover: 'Обзор',
   nav_channel: 'Стример',

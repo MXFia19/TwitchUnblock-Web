@@ -8,6 +8,9 @@ export const CHANGELOG = [
   {
     version: '2026.11.18c',
     items: {
+      it: [
+        'Quando i server Cloudflare del sito raggiungevano il limite giornaliero, i VOD non partivano fino a mezzanotte UTC. Ora il sito recupera i link dai relay video e la riproduzione parte comunque. La modifica vale anche per l’app per TV LG.',
+      ],
       fr: [
         'VODs : quand les serveurs Cloudflare du site atteignaient leur limite du jour, plus aucune VOD ne démarrait jusqu’à minuit UTC. Le site demande maintenant les liens de la VOD à ses relais vidéo, et elle démarre quand même. Pareil dans l’app pour TV LG.',
       ],
@@ -25,6 +28,9 @@ export const CHANGELOG = [
   {
     version: '2026.11.18b',
     items: {
+      it: [
+        'VOD: quando il relay video del sito è saturato, il video passa solo su un altro server. Il riproduttore misura ogni segmento: se due successive prendono più tempo a caricare che a vedere, il resto passa attraverso il relay di Sofia, dallo stesso punto e senza ricaricare (avviso «Rele lento: video da un altro server» ). Le VOD che aprirai nel giro di mezz\'ora andranno direttamente da lui. Le trasmissioni non cambiano. Lo stesso vale per l\'app per le TV LG.',
+      ],
       fr: [
         'VODs : quand le relais vidéo du site est saturé, la vidéo passe d’elle-même par un autre serveur. Le lecteur mesure chaque segment : deux de suite plus longs à charger qu’à regarder, et la suite passe par le relais de Sofia, au même endroit et sans recharger (avis « Relais lent : vidéo par un autre serveur »). Les VODs lancées dans la demi-heure qui suit partent directement par lui. Les directs ne sont pas concernés. Pareil dans l’app pour TV LG.',
       ],
@@ -42,6 +48,14 @@ export const CHANGELOG = [
   {
     version: '2026.11.18a',
     items: {
+      it: [
+        'Modo TV: il sito è gestito con il comando nei televisori LG (webOS): le frecce passano da un elemento all\'altro, OK scegliere, Backturn o chiudere. Testi e pulsanti sono più grandi, e il lettore segue anche le frecce (sinistra / destra: 10 s indietro o avanti, OK: pausa, sopra / giù: la barra con la qualità e il chat). Una prima app per televisori LG (modo sviluppatore o TV con root) apre il sito in questa modalità; altrove, aggiunge ?tv=1 all\'indirizzo.',
+        'Fonti di diretta: i proxy pubblici (Luminous, PerfProd, nadeko) vengono ritirati, lasciavano passare centinaia di annunci al giorno. Nuova fonte di prova, «Bulgaria» : un relay di TwitchUnblock a Sofia prende il live dalla Bulgaria, dove Twitch potrebbe servire meno annunci; se non risponde, Twitch ufficiale prende il relay. Un ordine di fonti memorizzato con i proxy ritorna all\'ordine di default.',
+        'Chat: nuova impostazione «Oscurare gli abbonamenti regalati» (disattivato per impostazione predefinita, Impostazioni → Chat). Toglie le linee «X regalò un abbonamento a Y», che inondano il chat quando qualcuno dona un lotto; il messaggio del lotto rimane. Segui il tuo account nell\'app iPhone.',
+        'Riproduttore: in schermo completo e in modalità teatrale, il nome del canale, il suo gioco e il titolo del live vengono visualizzati sopra l\'immagine con i controlli, come su twitch.tv (dove l\'informazione sotto il riproduttore non viene più visualizzata). I cambiamenti di titolo sono seguiti durante la trasmissione diretta; anche i VOD e i clip li hanno.',
+        'Chat in schermo intero: in un angolo (Aggiusta → Chat → «Chat in schermo intero» : sopra o giù), la sua altezza si regola ora come la sua larghezza, trascinando il suo bordo verso il basso o verso l\'alto; doppio clic: metà dello schermo. Si ferma sempre sopra i controlli del riproduttore.',
+        'VOD di un canale: nuovo filtro per gioco accanto alla ricerca ( «Tutti i giochi» di default). Mostra i giochi giocati sui VOD, capitoli inclusi: un VOD che ha iniziato su «Just Chatting» e passato a un gioco che conta per entrambi. Si applica ai VOD caricati; «Cargar más» porta i più antichi.',
+      ],
       fr: [
         'Mode TV : le site se pilote à la télécommande sur les TV LG (webOS) : les flèches passent d’un élément à l’autre, OK choisit, Retour revient ou ferme. Textes et boutons sont plus grands, et le lecteur suit aussi les flèches (gauche / droite : 10 s en arrière ou en avant, OK : pause, haut / bas : la barre avec la qualité et le chat). Une première app pour TV LG (mode développeur ou TV rootée) ouvre le site dans ce mode ; ailleurs, ajoute ?tv=1 à l’adresse.',
         'Sources du direct : les proxys publics (Luminous, PerfProd, nadeko) sont retirés, ils laissaient passer des centaines de pubs par jour. Nouvelle source en test, « Bulgarie » : un relais TwitchUnblock à Sofia prend le direct depuis la Bulgarie, où Twitch sert peut-être moins de pubs ; si elle ne répond pas, Twitch officiel prend le relais. Un ordre de sources enregistré avec les proxys revient à l’ordre par défaut.',
@@ -79,6 +93,9 @@ export const CHANGELOG = [
   {
     version: '2026.11.15a',
     items: {
+      it: [
+        'VOD senza suono: alcuni canali registrano solo un tracciato audio vuoto nei loro VOD, muti dall\'inizio alla fine, anche su twitch.tv. Il riproduttore lo rileva pochi secondi dopo aver iniziato e lo indica sopra il video ( «Questo VOD non ha suono su Twitch» ), invece di far credere che sia un fallimento.',
+      ],
       fr: [
         'VOD sans son : certaines chaînes n’enregistrent qu’une piste audio vide dans leurs VODs, muettes d’un bout à l’autre, sur twitch.tv aussi. Le lecteur s’en rend compte quelques secondes après le départ et le dit en haut de la vidéo (« Cette VOD n’a pas de son chez Twitch »), au lieu de laisser croire à une panne.',
       ],
@@ -96,6 +113,9 @@ export const CHANGELOG = [
   {
     version: '2026.11.10a',
     items: {
+      it: [
+        'Qualità superiori (1440p): dopo un annuncio, il ritorno a 1440p lo riprova se la lista del tuo account non risponde immediatamente (un solo fallimento ti lasciava in 1080p fino alla fine della diretta). Se non riesce davvero a tornare, un avviso lo dice: ricaricare il canale diretto, riprova.',
+      ],
       fr: [
         'Qualités supérieures (1440p) : après une pub, le retour en 1440p réessaie si la liste de ton compte ne répond pas tout de suite (un seul raté te laissait en 1080p jusqu’à la fin du direct). S’il ne peut vraiment pas revenir, un avis le dit : recharger le direct réessaie.',
       ],
@@ -113,6 +133,9 @@ export const CHANGELOG = [
   {
     version: '2026.11.07b',
     items: {
+      it: [
+        'Dopo un taglio del relay video, la riproduzione torna da sola non appena risponde, multi-diretto incluso (si rimaneva sul server di backup fino al video successivo).',
+      ],
       fr: [
         'Après une coupure du relais vidéo, la lecture y revient d’elle-même dès qu’il répond, multi-live compris (elle restait sur le serveur de secours jusqu’à la vidéo suivante).',
       ],
@@ -130,6 +153,9 @@ export const CHANGELOG = [
   {
     version: '2026.11.07a',
     items: {
+      it: [
+        'Chat in schermo intero: trascinare il suo bordo per renderlo più largo o più stretto (doppio clic: larghezza di default). La larghezza si conserva.',
+      ],
       fr: [
         'Chat en plein écran : glisse son bord pour le rendre plus large ou plus étroit (double-clic : largeur par défaut). La largeur est gardée.',
       ],
@@ -147,6 +173,9 @@ export const CHANGELOG = [
   {
     version: '2026.11.06a',
     items: {
+      it: [
+        'Canale disconnesso: il chat si apre accanto al lettore, per leggere e scrivere come durante un live (Twitch lo mantiene aperto tra i stream).',
+      ],
       fr: [
         'Chaîne hors ligne : son chat s’ouvre à côté du lecteur, pour lire et écrire comme pendant un live (Twitch le garde ouvert entre deux streams).',
       ],
@@ -164,6 +193,15 @@ export const CHANGELOG = [
   {
     version: '2026.11.04a',
     items: {
+      it: [
+        'Emoti preferiti: «Aggregare emoti preferiti» nella scheda di un emote (cliccare, fare clic a destra o premere lungo) e una scheda Favoriti all\'inizio del selettore, sincronizzata con l\'app iPhone.',
+        'Il lettore ha un compressore audio nel menu ⚙, simile a quello di FrankerFaceZ. Attenua i picchi di volume e amplifica le parti più basse. La funzione è disponibile sui dispositivi diversi da iPhone e iPad.',
+        'Scaricare un VOD: scegli i capitoli per rimanere solo con un gioco o una parte del live.',
+        'La scheda del browser mostra il canale che stai guardando ( «xQc - TwitchUnblock» ).',
+        'Categorie: il nome della categoria non si ripete più sotto ogni diretta.',
+        '→ Impostazioni generali: «Senza Twitch» nasconde tutto ciò che invita ad accedere (senza effetto con l\'avvio della sesión).',
+        'Categorie successive: viene ripreso il suo pubblico (Twitch ha rifiutato la richiesta che la richiedeva).',
+      ],
       fr: [
         'Emotes favorites : « Ajouter aux favoris » dans la fiche d’une emote (clic, clic droit ou appui long), et un onglet Favoris en tête du sélecteur — synchronisés avec l’app iPhone.',
         'Lecteur : un compresseur audio dans le menu ⚙ (comme celui de FrankerFaceZ) lisse les pics de son et remonte les passages calmes. Pas sur iPhone ni iPad.',
@@ -205,6 +243,10 @@ export const CHANGELOG = [
   {
     version: '2026.11.02a',
     items: {
+      it: [
+        'Inizio: una barra di ricerca in alto, come nella scheda Streamer, per aprire un canale senza cambiare scheda prima.',
+        'iPhone: il video passa solo a immagine-in-immagine quando esci dalla pagina, dove il browser lo consente; se Safari lo ha fermato, un consiglio (una volta) spiega come continuare a guardare fuori di Safari.',
+      ],
       fr: [
         'Accueil : une barre de recherche en haut, comme dans l’onglet Streamer (suggestions pendant la frappe), pour ouvrir une chaîne sans changer d’onglet d’abord.',
         'iPhone : la vidéo passe d’elle-même en image dans l’image en quittant la page quand le navigateur le permet ; si Safari l’a arrêtée, un conseil (une fois) dit comment continuer à regarder hors de Safari.',
@@ -226,6 +268,9 @@ export const CHANGELOG = [
   {
     version: '2026.11.01h',
     items: {
+      it: [
+        'Riproduttore: quando i server video di Twitch non rispondono in questo browser e il video passa attraverso il relay, un avviso spiega cosa li blocca e come lasciarli passare: in Firefox, lo scudo della protezione migliorata; in Brave, i Shields; se no, l\'eccezione nel bloccatore di annunci. Il menu di qualità dà lo stesso consiglio.',
+      ],
       fr: [
         'Lecteur : quand les serveurs vidéo de Twitch ne répondent pas dans ce navigateur et que la vidéo passe par le relais, un avis dit ce qui bloque d’habitude et comment les laisser passer — sur Firefox, le bouclier de la protection renforcée ; sur Brave, les Shields ; sinon, l’exception dans le bloqueur de pubs. Le menu de qualité donne le même conseil.',
       ],
@@ -243,6 +288,9 @@ export const CHANGELOG = [
   {
     version: '2026.11.01g',
     items: {
+      it: [
+        'Riproduttore: quando manca il 1440p perché il video passa attraverso il relay su questo dispositivo, il pulsante «Riprova senza il relay» riavvia il live dai server di Twitch; il relay ritorna solo se continuano a non rispondere.',
+      ],
       fr: [
         'Lecteur : quand le 1440p manque parce que la vidéo passe par le relais sur cet appareil, le bouton « Réessayer sans le relais » relance le direct depuis les serveurs de Twitch — le relais revient de lui-même s’ils ne répondent toujours pas.',
       ],
@@ -260,6 +308,10 @@ export const CHANGELOG = [
   {
     version: '2026.11.01f',
     items: {
+      it: [
+        'TwitchUnblock Connect 0.4.1: con l\'apertura di twitch.tv su TwitchUnblock attivato, le casse, le scommesse, i voti, i premi e i drop sono riattivati; la scheda Twitch che l\'estensione ha bisogno per il suo token è stata inviata anche sul sito.',
+        'Riproduttore: quando il canale emette al di sopra di 1080p ma il sito non lo offre, il menu di qualità mostra quel 1440p in grigio, come twitch.tv, con il motivo «Qualità superiori» disattivato, estensione assente o disaggiornata, un codice HEVC o AV1 che il browser non decodifica (accelerazione hardware), il relay, l\'estensione rispondendo tardi · e un pulsante per il corretto aggiustamento.',
+      ],
       fr: [
         'TwitchUnblock Connect 0.4.1 : avec « Ouvrir twitch.tv sur TwitchUnblock » allumé, les coffres, paris, votes, récompenses et drops remarchent — l’onglet Twitch dont l’extension a besoin pour son jeton partait lui aussi sur le site.',
         'Lecteur : quand la chaîne diffuse au-dessus de 1080p mais que le site ne le propose pas, le menu de qualité montre ce 1440p grisé, comme twitch.tv, avec la raison — réglage « Qualités supérieures » coupé, extension absente ou à mettre à jour, codec HEVC ou AV1 que le navigateur ne décode pas (accélération matérielle), relais, extension trop lente — et un bouton vers le bon réglage.',
@@ -281,6 +333,9 @@ export const CHANGELOG = [
   {
     version: '2026.11.01e',
     items: {
+      it: [
+        'Buttone Discord nella barra superiore, accanto a «Erro o idea?» : non è più necessario cercare alla fine della pagina.',
+      ],
       fr: [
         'Bouton Discord dans la barre du haut, à côté de « Bug ou idée ? » : plus besoin de le chercher en bas de page.',
       ],
@@ -298,6 +353,11 @@ export const CHANGELOG = [
   {
     version: '2026.11.01d',
     items: {
+      it: [
+        'Impostazioni ordinate in pagine: un menu (General, Appearance, Player, Chat, Notifiche, Connect, Copy, Advanced Settings, About), e le impostazioni del chat raggruppate in Visualizzazione, Messaggi filtrati e Comportamento.',
+        'Aggiustare mentre si vede un live: pulsante «sopra il lettore, e» Aggiustamenti di chat «o» Tutti gli aggiustamenti «nel menu» della barra del lettore, anche in schermo completo, senza uscire dal live.',
+        'Chat in schermo intero: «upper» e «down» occupano ora la metà dell\'altezza; il chat si fermava a tutta l\'altezza e tappeva i pulsanti da sotto a destra.',
+      ],
       fr: [
         'Réglages rangés par pages : un menu (Général, Apparence, Lecteur, Chat, Notifications, Connect, Sauvegarde, Réglages experts, À propos), et les réglages du chat regroupés en Affichage, Messages filtrés et Comportement.',
         'Réglages pendant un live : bouton ⚙ en haut du lecteur, et « Réglages du chat » ou « Tous les réglages » dans le menu ⚙ de la barre du lecteur — plein écran compris, sans quitter le direct.',
@@ -328,6 +388,9 @@ export const CHANGELOG = [
   {
     version: '2026.11.01c',
     items: {
+      it: [
+        'Ritornare in diretta, come con Twitch Turbo: quando Twitch registra il VOD, la barra del lettore copre l\'intera emissione. Scivola a sinistra (o -10 s oltre quello che guarda il diretto) per rivedere un momento, e poi «Ritorna al diretto».',
+      ],
       fr: [
         'Revenir en arrière dans un direct, comme avec Twitch Turbo : quand Twitch enregistre la VOD, la barre du lecteur couvre toute la diffusion. Glisse vers la gauche (ou −10 s au-delà de ce que garde le direct) pour revoir un moment, puis « Revenir au direct ».',
       ],
@@ -348,6 +411,12 @@ export const CHANGELOG = [
   {
     version: '2026.11.01b',
     items: {
+      it: [
+        'Full screen: il chat può andare a sinistra o a destra, a tutta altezza o in un angolo (Aggiusta → Chat → Chat in full screen), come nelle app di iPhone e Apple TV. I controlli del riproduttore si allontanano dalla sua parte.',
+        '«Direct in list» (miniatura a sinistra, come su Twitch) ora si applica anche alle categorie.',
+        'Con «Canali recenti» disattivati, i canali aperti non vengono più salvati in questo browser. Con «Continuare a vedere» disattivato anche, non rimane nulla del file storico qui. La copia del tuo conto li conserva per i tuoi altri dispositivi.',
+        'Estensione TwitchUnblock Connect 0.4.0: nuova opzione «Aperire twitch.tv su TwitchUnblock», disattivata per impostazione predefinita. Le pagine di canale, VOD, clip e categoria di twitch.tv si aprono qui.',
+      ],
       fr: [
         'Plein écran : le chat se place à gauche ou à droite, sur toute la hauteur ou dans un coin (Réglages → Chat → Chat en plein écran), comme dans les apps iPhone et Apple TV. Les commandes du lecteur s’écartent de son côté.',
         '« Lives en liste » (miniature à gauche, comme sur Twitch) vaut aussi dans les catégories.',
@@ -383,6 +452,9 @@ export const CHANGELOG = [
   {
     version: '2026.11.01a',
     items: {
+      it: [
+        'Rapporti e idee: con l\'avvio della sessione, vengono firmati con il tuo account Twitch (marcato per impostazione predefinita, puoi toglierlo); se non, un soprannome opzionale. Così lo sviluppatore sa che sei tu da un messaggio all\'altro, e la tua scelta viene ricordata su questo dispositivo.',
+      ],
       fr: [
         'Signalements et idées : connecté, ils sont signés avec ton compte Twitch (case cochée d’office, décochable) ; sinon, un pseudo facultatif. Le développeur sait ainsi que c’est toi d’un message à l’autre, et le choix est retenu sur cet appareil.',
       ],
@@ -403,6 +475,10 @@ export const CHANGELOG = [
   {
     version: '2026.10.30c',
     items: {
+      it: [
+        'Notifiche dal vivo: l\'app dell\'iPhone lascia ntfy e ti porta al sito installato come app web. Il suo link apre i passaggi per aggiungerlo allo schermo iniziale e attivare le notifiche (o direttamente il interruttore se il tuo browser può già notificare).',
+        'App web su iPhone e iPad: Impostazioni → Notifiche → «Apertura nell\'app iPhone» apre le notifiche dal vivo nell\'app TwitchUnblock (o TU Test) invece del sito.',
+      ],
       fr: [
         'Notifications de live : l’app iPhone laisse ntfy et renvoie vers le site installé en web app. Son lien ouvre les étapes pour l’ajouter à l’écran d’accueil et activer les notifications (ou directement l’interrupteur si ton navigateur sait déjà notifier).',
         'Web app sur iPhone et iPad : Réglages → Notifications → « Ouvrir dans l’app iPhone » ouvre les notifications de live dans l’app TwitchUnblock (ou TU Test) plutôt que sur le site.',
@@ -428,6 +504,13 @@ export const CHANGELOG = [
   {
     version: '2026.10.30b',
     items: {
+      it: [
+        'Le liste rimangono solo quando si scorre (Top, categorie, VOD e clip di un canale): non è più necessario premere «Carregar más».',
+        'Top di live: un menù di lingua proprio accanto, come nelle categorie.',
+        'La mia fonte: l\'indirizzo del tuo proprio server luminous-ttv, in Impostazioni → Riproduttore, entra nell\'ordine delle fonti.',
+        'Continuare a vedere disattivato: non rimane più nulla dei VOD in questo browser (posizioni e storico cancellato). Con un conto, tutto torna indietro se lo riattacchi.',
+        'VOD: una qualità che il tuo browser non può riprodurre (HEVC o AV1, in Brave o Firefox per esempio) passa alla successiva, nello stesso momento, invece di interrompere la riproduzione.',
+      ],
       fr: [
         'Les listes se poursuivent toutes seules en défilant (Top, catégories, VODs et clips d’une chaîne) : plus besoin de cliquer sur « Charger plus ».',
         'Top des lives : un menu de langue juste à côté, comme dans les catégories.',
@@ -468,6 +551,9 @@ export const CHANGELOG = [
   {
     version: '2026.10.30a',
     items: {
+      it: [
+        'L\'estensione TwitchUnblock Connect è in Firefox Add-ons: in Firefox, installala da lì (Ajustes → TwitchUnblock Connect) e poi si aggiorna da sola.',
+      ],
       fr: [
         'L’extension TwitchUnblock Connect est sur Firefox Add-ons : sur Firefox, installe-la depuis là (Réglages → TwitchUnblock Connect), elle se met ensuite à jour toute seule.',
       ],
@@ -488,6 +574,13 @@ export const CHANGELOG = [
   {
     version: '2026.10.27a',
     items: {
+      it: [
+        'Estensione Connect 0.3.0: pulsante «Clip» durante una diretta (il clip viene creato con il tuo account, al momento in cui il lettore mostra), e il suo link da copiare.',
+        'La pagina «I miei Drop» mostra tutte le campagne del tuo account, in corso o in arrivo, con il pulsante «Riscatta». La trovi in Impostazioni → TwitchUnblock Connect oppure dal pulsante «Tutti i miei Drop» nella scheda dei Drop.',
+        'Con l\'estensione, i punti, le casse, i risultati delle scommesse e i drop arrivano in diretta invece di essere rivelati ogni minuto.',
+        'L\'estensione non richiede più l\'accesso ai tuoi occhiatelli.',
+        'Diretto: altre tre fonti da scegliere in Ajustamenti → Riproduttore (PerfProd Asia, Proxy d\'Albania 2, Luminous Europa 2); se non cambi nulla, ognuna viene testata subito dopo la sua vicina.',
+      ],
       fr: [
         'Extension Connect 0.3.0 : bouton « Clip » pendant un direct (le clip est créé avec ton compte, au moment que montre le lecteur), et son lien à copier.',
         'Page « Mes drops » (Réglages → TwitchUnblock Connect, ou « Tous mes drops » dans la carte drops) : toutes les campagnes de ton compte, commencées ou à venir, avec « Réclamer ».',
@@ -528,6 +621,15 @@ export const CHANGELOG = [
   {
     version: '2026.10.26c',
     items: {
+      it: [
+        'Riproduttore: regolare «bassa latenza» (disattivato, il diretto va ~10 secondi indietro, senza tirare), e più margine solo quando il diretto passa attraverso il relay.',
+        'Timer di spegnimento nel menu del lettore, e il titolo, il canale e i controlli sullo schermo di blocco e i tasti multimediali.',
+        'VOD dal vivo: l\'ora reale di ogni momento accanto al contatore, e «Vai ad un\'ora» nel menu del lettore.',
+        'Clips: «VOD completo» si apre al momento del clip, e «Download» salva il clip.',
+        'Scarichi: un frammento che Twitch ha già cancellato viene saltato invece di far fallire l\'intero file.',
+        'Estensione Connect 0.3.0: seguire un canale, tutta la diretta senza annunci con il tuo abbonamento, il tuo account come ultima risorsa se nessuna fonte risponde, e un clic per spesa.',
+        'Due schede aperte non mettono più sotto pressione le impostazioni, e cambiare account non mescola più le liste di entrambi gli account.',
+      ],
       fr: [
         'Lecteur : réglage « Faible latence » (coupé, le direct reste ~10 s derrière, sans saccades), et plus de marge toute seule quand le direct passe par le relais.',
         'Minuteur de veille dans le menu du lecteur, et le titre, la chaîne et les commandes sur l’écran verrouillé et les touches multimédia.',
@@ -578,6 +680,11 @@ export const CHANGELOG = [
   {
     version: '2026.10.26b',
     items: {
+      it: [
+        'Impostazioni → «Continuare a guardare» : disattivato, il sito non ricorda più dove sei rimasto in un VOD (cominciano dall\'inizio), e scompaiono la fila «Continuare a vedere» e la barra morbida delle miniature. Se lo riaccompagni, ritorna quello che hai conservato.',
+        'Appena bloccato dietro lo schermo pubblicitario di Twitch: quando l\'immagine si congela proprio dove il suono cambia formato, il lettore ricomincia a 3 secondi invece di 30.',
+        'Auto-hosting (Docker): la variabile SITE_DEFAULTS fissa le impostazioni predefinite dei tuoi visitatori (lingua, cover, qualità…), come un oggetto JSON con i nomi della copia di sicurezza.',
+      ],
       fr: [
         'Réglages → « Reprendre les VODs » : coupé, le site ne retient plus où tu t’es arrêté dans une VOD (elles partent du début), et la rangée « Reprendre » comme la barre violette des vignettes disparaissent. Ce qui était gardé revient si tu le réactives.',
         'Direct bloqué après l’écran de pub de Twitch : quand l’image reste figée juste au moment où le son change de format, le lecteur repart au bout de 3 s au lieu de 30.',
@@ -608,6 +715,10 @@ export const CHANGELOG = [
   {
     version: '2026.10.26a',
     items: {
+      it: [
+        'Diritti limitati a alcuni paesi: quando Twitch limita una diretta a pochi paesi (diritti di trasmissione, come una partita della NFL) e nessuna delle nostre fonti ha accesso, il sito lo dice chiaramente invece di «nessuna fonte risponde».',
+        'Suono distorto dopo una pausa pubblicitaria: in alcuni canali, la voce dello streamer tornava come se passasse attraverso un modulatore di voce dietro lo schermo «Commercial break in progress». Quando il suono cambia di formato tra lo schermo di Twitch e il live, il lettore ricomincia a riprendere il formato corretto.',
+      ],
       fr: [
         'Direct réservé à certains pays : quand Twitch limite un live à quelques pays (droits de diffusion, comme un match de NFL) et qu’aucune de nos sources n’y a accès, le site le dit clairement au lieu de « aucune source ne répond ».',
         'Son déformé après une pause pub : sur certaines chaînes, la voix du streamer revenait comme passée dans un « voice changer » après l’écran « Commercial break in progress ». Quand le son change de format entre l’écran de Twitch et le direct, le lecteur repart à neuf, au bon format.',
@@ -633,6 +744,10 @@ export const CHANGELOG = [
   {
     version: '2026.10.25c',
     items: {
+      it: [
+        'TwitchUnblock Connect: l\'estensione non si aggiorna da sola (si installa manualmente da GitHub). Quando uscirà una versione più recente della tua, una linea discreta in alto sul sito lo indicherà «» TwitchUnblock Connect 0.2.0 è disponibile (hai la 0.1.0) «», con il link di download e, in «Come aggiornare?», i passaggi per il tuo browser: sostituire il contenuto della cartella e ricaricare l\'estensione in Chrome, Edge o Brave, riinstallare con il nuovo zip in Firefox. Una volta chiuso, non torna per quella versione.',
+        'Conto di utilizzo: il segnale del sito indica anche se c\'è l\'estensione TwitchUnblock Connect, con la sua versione e il suo browser (Chrome, Firefox o altro) «nessuna delle sue impostazioni o della tua sessione Twitch. La pagina /stats mostra quante persone la usano (oggi, tra 7 e 30 giorni), per versione e per browser. Come il resto del conto, Aggiusti → Uso →» Condividere il mio uso · lo disattiva.',
+      ],
       fr: [
         'TwitchUnblock Connect : l’extension ne se met pas à jour toute seule (elle s’installe à la main depuis GitHub). Quand une version plus récente que la tienne est sortie, une ligne discrète en haut du site le dit — « TwitchUnblock Connect 0.2.0 est disponible (tu as 0.1.0) » —, avec le lien de téléchargement et, sous « Comment mettre à jour ? », la marche à suivre pour ton navigateur : remplacer le contenu du dossier puis recharger l’extension sous Chrome, Edge ou Brave, la réinstaller avec le nouveau zip sous Firefox. Fermée, elle ne revient plus pour cette version.',
         'Comptage d’usage : le signal du site dit aussi si l’extension TwitchUnblock Connect est là, avec sa version et son navigateur (Chrome, Firefox ou autre) — rien de ses réglages ni de ta session Twitch. La page /stats montre combien de personnes l’utilisent (aujourd’hui, sur 7 et 30 jours), par version et par navigateur. Comme le reste du comptage, Réglages → Utilisation → « Partager mon utilisation » le coupe.',
@@ -658,6 +773,10 @@ export const CHANGELOG = [
   {
     version: '2026.10.25b',
     items: {
+      it: [
+        'Qualità superiori (1440p o superiore) con l\'estensione TwitchUnblock Connect 0.2.0: Impostazioni → Riproduttore → «Qualità superiori». Nei canali che emettono al di sopra del 1080p (Enhanced Broadcasting), il live passa attraverso il tuo account Twitch e il menu qualità offre «1440p60 (Source)»…; HEVC e AV1 solo se il tuo browser li decodifica per hardware. Senza abbonamento o Turbo, durante le pause pubblicitarie di Twitch, la riproduzione passa alla fonte abituale (1080p al massimo) senza annunci e poi torna. La tua sessione di Twitch rimane nell\'estensione: il sito riceve solo le playlist del live, riscritte. Non in multi-live.',
+        'Aggiornamento dell\'estensione (Aggiusta → TwitchUnblock Connect → Pagina dell\'estensione): la versione 0.2.0 fa anche avanzare i drop, poiché Twitch ha cambiato l\'indirizzo delle sue playlist.',
+      ],
       fr: [
         'Qualités supérieures (1440p et plus) avec l’extension TwitchUnblock Connect 0.2.0 : Réglages → Lecteur → « Qualités supérieures ». Sur les chaînes qui diffusent au-dessus de 1080p (Enhanced Broadcasting), le direct passe par ton compte Twitch et le menu des qualités propose « 1440p60 (Source) »… ; HEVC et AV1 seulement si ton navigateur les décode en matériel. Sans abonnement ni Turbo, pendant les pauses pub de Twitch, la lecture passe sur la source habituelle (1080p au plus) sans pub, puis revient. Ta session Twitch reste dans l’extension : le site ne reçoit que les playlists du direct, réécrites. Pas dans le multi-live.',
         'Mets l’extension à jour (Réglages → TwitchUnblock Connect → Page de l’extension) : la 0.2.0 fait aussi de nouveau avancer les drops, Twitch ayant changé l’adresse de ses playlists.',
@@ -683,6 +802,9 @@ export const CHANGELOG = [
   {
     version: '2026.10.25a',
     items: {
+      it: [
+        'Selezionatore di emozioni: nuova scheda «Miei emozioni», la prima, quando sei entrato in chat. Riunisce tutti gli emo Twitch che il tuo account può utilizzare su qualsiasi canale «quelli dei canali a cui sei abbonato, Prime, Turbo e Global», raggruppati per canale con il tuo avatar: quello che stai guardando prima, gli altri in ordine alfabetico e poi Twitch. Un clic aggiunge uno al tuo messaggio, e la ricerca del selettore li trova anche. Le schede «Questo canale» e «Globales» sostituiscono le due parti della lista; quella del canale continua ad aprirsi prima.',
+      ],
       fr: [
         'Sélecteur d’emotes : nouvel onglet « Mes emotes », en tête, quand tu es connecté au chat. Il réunit toutes les emotes Twitch que ton compte peut utiliser sur n’importe quelle chaîne — celles des chaînes où tu es abonné, Prime, Turbo et les globales —, rangées par chaîne avec son avatar : celle que tu regardes d’abord, les autres par ordre alphabétique, puis Twitch. Un clic en ajoute une à ton message, et la recherche du sélecteur les trouve aussi. Les onglets « Cette chaîne » et « Globales » remplacent les deux parties de la liste ; celui de la chaîne s’ouvre toujours en premier.',
       ],
@@ -703,6 +825,9 @@ export const CHANGELOG = [
   {
     version: '2026.10.23a',
     items: {
+      it: [
+        'Comandi bot di un canale disconnesso: la sua pagina ha ora un pulsante «Comandi bot», sotto «Discontato», che apre lo stesso elenco che nel chat «Nightbot, StreamElements, Fossabot e Moobot, con la ricerca», e un clic copia il comando. Il chat del lettore aperto su un canale disconnesso dà anche accesso. Fino ad ora, la lista era disponibile solo per una diretta.',
+      ],
       fr: [
         'Commandes des bots d’une chaîne hors ligne : sa page a maintenant un bouton « Commandes des bots », sous « Hors ligne », qui ouvre la même liste que dans le chat — Nightbot, StreamElements, Fossabot et Moobot, avec la recherche —, et un clic copie la commande. Le chat du lecteur ouvert sur une chaîne hors ligne y donne accès aussi. Jusqu’ici, la liste n’était là que pendant un direct.',
       ],
@@ -723,6 +848,14 @@ export const CHANGELOG = [
   {
     version: '2026.10.22a',
     items: {
+      it: [
+        'Direct su iPad (e Safari su Mac): il lettore gestisce ora da solo la memoria video anche in direct, come nei VOD, con una versione più recente del suo motore (hls.js 1.5.20). Su iPad, una lunga diretta continuava a far chiudere Safari dopo pochi minuti, fino al punto di doverlo uscire per far funzionare di nuovo.',
+        'Lungi indirizzi, quindi: su iPad e iPhone il chat conserva 150 messaggi invece di 300, come Twitch «ogni emo animato che segue la pagina pesa nella memoria di Safari», solo gli ultimi GIF rimangono immagini (le più vecchie tornano al suo testo) e il selezionatore di emo viene vuoto quando si chiude.',
+        'VOD su Safari su Mac (e iPad): la riproduzione non inizia più a tirare dopo un po\'. Il riproduttore gestisce da solo la memoria video invece di lasciare che Safari la interrompa ogni 20 secondi circa, e un VOD non rimane più congelato dopo un salto in Safari 27.',
+        'Il registro degli errori (Rettifica → Acerca, allegato ai tuoi rapporti) annota ora lo stato della riproduzione quando inizia a dare tira «tagli, fotogrammi persi, buffer, riparazioni» e quando segnala un problema: ciò che è necessario per comprendere dei tiri che non lasciano errori. Non include niente di personale.',
+        'Nascondere un emote: clicca su di esso nel chat (o mantengilo premuto) e poi su «Nascondere questo emote» nella tua scheda «da lì viene visualizzato come la tua parola, qualunque sia la sua origine, in diretta e nel chat dei VOD. → Configurazioni Chat →» Emozioni nascoste · li riunisce per rivelare. L\'elenco segue il tuo account (aggiustamenti sincronizzati), app iPhone inclusa.',
+        'Il sito è già in cinese tradizionale (繁體中文), grazie a trend0522: un browser configurato in cinese lo apre direttamente in quella lingua, e Ajustamenti → Lingua consente di cambiarlo.',
+      ],
       fr: [
         'Directs sur iPad (et Safari sur Mac) : le lecteur tient maintenant lui-même la mémoire vidéo des directs aussi, comme pour les VODs, avec une version plus récente de son moteur (hls.js 1.5.20). Sur iPad, un long direct faisait encore planter Safari au bout de quelques minutes, au point de devoir le quitter pour qu’il reparte.',
         'Longs directs, suite : sur iPad et iPhone, le chat garde 150 messages au lieu de 300, comme Twitch — chaque emote animée encore dans la page pèse sur la mémoire de Safari —, seuls les derniers GIF restent des images (les plus anciens redeviennent leur texte), et le sélecteur d’emotes se vide une fois fermé.',
@@ -768,6 +901,12 @@ export const CHANGELOG = [
   {
     version: '2026.10.20d',
     items: {
+      it: [
+        'TwitchUnblock Connect, un\'estensione per il browser del tuo computer (Ajustes → TwitchUnblock Connect, con il link di installazione): durante una diretta, il sito finalmente guadagna i tuoi punti del canale mentre guardi (saldo e traccia di visualizzazione sopra la chat), rivendica le casse «o ti lascia fare con un clic», si unisce ai raid per ottenere il suo bonus e ti lascia scommettere sulle previsioni (quantità e poi conferma) e votare sui sondaggi di Twitch, dalla chat del lettore. La tua sessione di Twitch rimane nell\'estensione: nulla passa sui server di TwitchUnblock. Senza l\'estensione, non cambia nulla.',
+        'TwitchUnblock Connect, poi: tocca il tuo saldo per vedere i premi del canale (in grigio se ti mancano punti, o se sono in pausa, esauriti o in ricarica, con il tempo rimanente), che vengono rimborsati dopo una conferma «con il tuo messaggio quando il premio lo richiede. E le gocce: la scheda della campagna mostra il tuo progresso in ogni goccia (barra e minuti), ciò che è già richiesto e un pulsante» Clamar · ; mentre guardi, l\'estensione fa avanzare le gocce (e le richiede da sola se lo scegli), con un piccolo avviso per ogni goccia richiesto.',
+        'Direzioni lunghe: il lettore conserva molto meno video in memoria «dietro l\'immagine, 10 secondi invece di 90 su iPad e iPhone (30 secondi sul computer), e ciò che carica in anticipo ha anche un limite», e il chat non accumula più migliaia di messaggi finché la pagina è nascosta. Su iPad, una diretta a 1080p faceva chiudere Safari circa ogni 20 minuti.',
+        'Riproduzione bloccata: dopo un errore che il riproduttore non sa risolvere, o una diretta congelata di 30 secondi senza alcun errore, ricomincia solo (tre volte in 5 minuti al massimo) invece di rimanere congelata fino a quando non ricarichi la pagina. Se è il canale che smette di inviare l\'immagine (corta o ricongiungimento dello stramer), basta aspettare che il live riprenda, e il chat sincronizzato continua a procedere invece di accumulare i suoi messaggi fino ad allora.',
+      ],
       fr: [
         'TwitchUnblock Connect, une extension pour ton navigateur d’ordinateur (Réglages → TwitchUnblock Connect, avec le lien d’installation) : pendant un direct, le site gagne enfin tes points de chaîne en regardant (solde et série de visionnage en haut du chat), réclame les coffres — ou te laisse le faire d’un clic —, rejoint les raids pour leur bonus, et te laisse miser sur les prédictions (montant, puis confirmation) et voter aux sondages Twitch, depuis le chat du lecteur. Ta session Twitch reste dans l’extension : rien ne passe par les serveurs de TwitchUnblock. Sans l’extension, rien ne change.',
         'TwitchUnblock Connect, suite : en touchant ton solde, les récompenses de la chaîne (grisées si tes points manquent, ou si elles sont en pause, épuisées ou en recharge, avec le temps restant), à échanger après une confirmation — avec ton message quand la récompense en demande un. Et les drops : la carte de la campagne montre ta progression par drop (barre et minutes), ce qui est réclamé et un bouton « Réclamer » ; pendant que tu regardes, l’extension fait avancer les drops (et les réclame d’elle-même si tu l’as choisi), avec un petit avis à chaque drop réclamé.',
@@ -797,6 +936,11 @@ export const CHANGELOG = [
   {
     version: '2026.10.20c',
     items: {
+      it: [
+        'Chat sincronizzato con il video, come nell\'app iPhone: durante un live, ogni messaggio aspetta il ritardo dell\'immagine rispetto al live (meno di 2 secondi, 60 secondi al massimo). Il ritardo segue immediatamente un\'arrestazione, e quando torni verso il live, i messaggi in attesa vengono in ordine in pochi secondi. I tuoi messaggi, gli annunci di chat e i banner (il messaggio fisso incluso) vengono visualizzati immediatamente. Sopra il chat, «−6 s» mostra il ritardo: un clic disabilita o riabilita la sincronizzazione (anche in Settings → Chat, attivato per impostazione predefinita).',
+        'Canali fissi: le loro trasmissioni sono seguite in seguito e ora sono ordinate tra loro per spettatori. Per mantenere l\'ordine in cui le hai fissate, disabilitare «Figures ordinate da spettatori» nelle impostazioni (proprio di questo dispositivo).',
+        'Un clic sulla scheda che è già aperta (o sul logo, da Scopri) torna lentamente all\'inizio della pagina.',
+      ],
       fr: [
         'Chat synchronisé avec la vidéo, comme dans l’app iPhone : pendant un direct, chaque message attend le retard de l’image sur le direct (moins 2 s, 60 s au plus). Ce retard suit aussitôt un calage, et quand tu reviens vers le direct, les messages en attente sortent dans l’ordre en quelques secondes. Tes messages, les avis du chat et les bandeaux (message épinglé compris) s’affichent tout de suite. En haut du chat, « ⏱ −6 s » montre le retard : un clic coupe ou rallume la synchro (aussi dans Réglages → Chat, activée par défaut).',
         'Chaînes épinglées : leurs directs restent en tête des suivies, et sont maintenant triés entre eux par spectateurs. Pour garder l’ordre d’épinglage, coupe « Épinglées triées par spectateurs » dans les réglages (propre à cet appareil).',
@@ -822,6 +966,10 @@ export const CHANGELOG = [
   {
     version: '2026.10.20b',
     items: {
+      it: [
+        'Condividi: sotto il lettore, «Share» copia il link di Twitch di ciò che vedi (un VOD al momento in cui vai, un live, un clip), o quello del sito, che riavvia il VOD nello stesso momento. Un messaggio conferma la copia; sul cellulare si apre il menu di condivisione del sistema.',
+        'Orario dei canali: una scheda «Orario» nella pagina di un canale che ne ha uno (prossimamente diretta al giorno e all\'ora del tuo dispositivo, durata, titolo, categoria, fasce settimanali o cancellate, vacanze) e, in un canale disconnesso, la linea «Prossima diretta: Martedì · 20:00». Un canale senza orario non mostra altro.',
+      ],
       fr: [
         'Partager : sous le lecteur, « Partager » copie le lien Twitch de ce que tu regardes (une VOD à l’instant où tu en es, un direct, un clip), ou celui du site, qui rouvre la VOD au même instant. Un message confirme la copie ; sur téléphone, c’est la feuille de partage du système qui s’ouvre.',
         'Planning des chaînes : un onglet « Planning » sur la page d’une chaîne qui en a un (prochains lives au jour et à l’heure de ton appareil, durée, titre, catégorie, créneaux répétés chaque semaine ou annulés, vacances), et sur une chaîne hors ligne, la ligne « Prochain live : mardi · 20:00 ». Une chaîne sans planning n’affiche rien de plus.',
@@ -843,6 +991,10 @@ export const CHANGELOG = [
   {
     version: '2026.10.20a',
     items: {
+      it: [
+        'Impostazioni sincronizzate: con il tuo account Twitch, le impostazioni della chat (ora, messaggi cancellati, bot, comandi, parole e persone nascoste, parole sottolineate), la lingua del top, la velocità dei VOD, i tuoi canali fissi e i tuoi canali e le categorie nascoste sono le stesse sui tuoi dispositivi, sito e app iPhone. La lingua del sito, la qualità, le notifiche e l\'aspetto restano caratteristiche di ogni dispositivo.',
+        'L\'ultimo cambio guadagna, parte per parte (aggiustamenti, fissi, nascosti), e le liste di fissi e nascosti cambiati su entrambi i lati si fondono. Un dispositivo che non ha ancora cambiato nulla prende prima quello che c\'è nel tuo account, più le proprie liste. Aggiustamenti → Conto → «Sincronizzare i miei aggiustamenti» lo disattiva su un dispositivo.',
+      ],
       fr: [
         'Réglages synchronisés : connecté à ton compte Twitch, les réglages du chat (heure, messages supprimés, bots, commandes, mots et personnes masqués, mots surlignés), la langue du top, la vitesse des VODs, tes chaînes épinglées et tes chaînes et catégories masquées sont les mêmes sur tes appareils, site et app iPhone. La langue du site, la qualité, les notifications et l’apparence restent propres à chaque appareil.',
         'Le dernier changement l’emporte, partie par partie (réglages, épinglées, masquées), et les listes d’épinglées et de masquées changées des deux côtés sont fusionnées. Un appareil qui n’a encore rien changé reprend d’abord ce qui est sur ton compte, ses listes en plus. Réglages → Compte → « Synchroniser mes réglages » pour le couper sur un appareil.',
@@ -864,6 +1016,12 @@ export const CHANGELOG = [
   {
     version: '2026.10.19a',
     items: {
+      it: [
+        'Conto: quando si chiude la sesión viene inviata l\'ultima copia di sicurezza (storica, progresso) prima di revocare il token, e su un dispositivo condiviso la cronologia di un account non passa più all\'altro quando la copia di sicurezza non risponde.',
+        'Twitch inaccessibile: i tuoi canali seguiti non vengono più caricati e poi l\'errore ogni volta che torni alla scheda, e «Canali notificati» non invia più un elenco senza i follower dell\'account quando non sono riusciti a leggere.',
+        'Link a un canale live: chiudere l\'annuncio o aprire le impostazioni durante il caricamento non impedisce più l\'apertura del canale live. Un sondaggio che termina con la pagina aperta mostra i risultati invece di terminare in 1 min.',
+        'Multi-live: un pannello del server non mostra più «Disconnesso o non trovato» nella casella di un canale live. Chat: su iPhone e iPad, un lungo pulsare su un emote del selettore apre il suo chip, e la scheda del Treno dell\'Hype si piega anche con la tastiera.',
+      ],
       fr: [
         'Compte : la déconnexion envoie bien la dernière sauvegarde (historique, progression) avant de révoquer le jeton, et sur un appareil partagé, l’historique d’un compte ne passe plus dans celui d’un autre quand la sauvegarde ne répond pas.',
         'Twitch injoignable : tes chaînes suivies ne repassent plus par le chargement puis l’erreur à chaque retour sur l’onglet, et « Chaînes notifiées » n’envoie plus une liste sans les suivis du compte quand ils n’ont pas pu être lus.',
@@ -893,6 +1051,10 @@ export const CHANGELOG = [
   {
     version: '2026.10.18d',
     items: {
+      it: [
+        'I miei rapporti: una conversazione chiusa dallo sviluppatore, o che ha raggiunto 100 messaggi, lo indica invece di mostrare il campo di risposta e poi fallire. Due risposte inviate contemporaneamente non si cancella più tra loro.',
+        'Notifiche di diretta: quando il browser rinnova l\'iscrizione, viene sostituito al momento, i canali inclusi (in precedenza nulla arrivava fino alla visita successiva).',
+      ],
       fr: [
         'Mes signalements : une discussion fermée par le développeur, ou arrivée à 100 messages, le dit au lieu d’afficher le champ de réponse puis un échec. Deux réponses envoyées au même moment ne s’effacent plus l’une l’autre.',
         'Notifications de live : quand le navigateur renouvelle l’abonnement, il est remplacé tout de suite, chaînes comprises (avant, plus rien n’arrivait jusqu’à la visite suivante).',
@@ -914,6 +1076,9 @@ export const CHANGELOG = [
   {
     version: '2026.10.18c',
     items: {
+      it: [
+        'Registro degli errori: gli errori del sito (codice, riproduttore, Worker, Twitch) vengono salvati nel tuo browser, possono essere letti e copiati in Settings → About, e vengono allegati ai tuoi report per trovare i problemi più velocemente.',
+      ],
       fr: [
         'Journal des erreurs : les erreurs du site (code, lecteur, Worker, Twitch) sont gardées dans ton navigateur, lisibles et copiables dans Réglages → À propos, et jointes à tes signalements pour que le problème soit trouvé plus vite.',
       ],
@@ -931,6 +1096,12 @@ export const CHANGELOG = [
   {
     version: '2026.10.18b',
     items: {
+      it: [
+        'Colori di accento: testo scuro sui pulsanti verdi, arancioni e turchesi (il bianco si legge male), una versione più scura dell\'accento per i testi del tema chiaro, e i tocchi viola rimasti (selezione, effetti in passaggio, messaggi, sondaggi…) seguono il tuo colore.',
+        'Chat: il pulsante «reboot» e la scheda di un emote non coprono più la casella del messaggio quando cresce.',
+        'Telefono: i messaggi della parte inferiore passano sopra il lettore ridotto e la barra multi-live, e l\'iPhone non zooma più quando tocca un campo.',
+        'Questi messaggi e l\'avviso audio silenzioso non sono più limitati alla metà di larghezza, lo schermo intero si vede bene su iPad più antichi, la copia di sicurezza riprova una spedizione fallita, e due reazioni veloci ad un annuncio non si contraddicono più.',
+      ],
       fr: [
         'Couleurs d’accent : texte foncé sur les boutons verts, orange et sarcelle (le blanc s’y lisait mal), version foncée de l’accent pour les textes du thème clair, et les touches violettes qui restaient (sélection, survols, messages, sondages…) suivent la couleur choisie.',
         'Chat : le bouton « reprendre » et la fiche d’une emote ne recouvrent plus la zone de saisie quand elle s’agrandit.',
@@ -961,6 +1132,12 @@ export const CHANGELOG = [
   {
     version: '2026.10.18a',
     items: {
+      it: [
+        'Copia di sicurezza: ogni account Twitch conserva il proprio storico (dispositivo condiviso), ciò che hai visto su un altro dispositivo non viene più perso durante la sincronizzazione, e una sincronizzazione fallita non sovrascrive più la copia.',
+        'Tema chiaro: lo schermo di errore del lettore, il titolo sul video in orizzontale e i nomi del chat si riescono a leggere bene.',
+        'Telefono: la barra del lettore non taglia più lo schermo completo né l\'immagine in immagine, la tabella di chat non rimane più sotto la barra di partenza e il menu dei capitoli si inserisce in un piccolo lettore.',
+        'La lista dei VOD viene visualizzata anche se i cookie sono bloccati, e «Non condividere» viene rispettata anche se un account è già in attesa.',
+      ],
       fr: [
         'Sauvegarde : l’historique de chaque compte Twitch reste le sien (appareil partagé), ce qui a été regardé sur un autre appareil n’est plus perdu à la synchro, et une synchro ratée n’écrase plus la sauvegarde.',
         'Thème clair : l’écran d’erreur du lecteur, l’en-tête posé sur la vidéo en paysage et les pseudos du chat redeviennent lisibles.',
@@ -990,6 +1167,9 @@ export const CHANGELOG = [
   {
     version: '2026.10.17b',
     items: {
+      it: [
+        'Notifiche dirette: scegli quali canali seguono l\'avviso (Aggiusti → Notifiche → Canali notificati).',
+      ],
       fr: [
         'Notifications de live : choisis quelles chaînes suivies te préviennent (Réglages → Notifications → Chaînes notifiées).',
       ],
@@ -1007,6 +1187,10 @@ export const CHANGELOG = [
   {
     version: '2026.10.17a',
     items: {
+      it: [
+        'Multi-live: anticipare un video un posto con la freccia del suo quadro (con tre, il primo si vede in grande).',
+        'Diretto: un clic sulla latenza ti riporta al diretto, senza ricaricare la trasmissione.',
+      ],
       fr: [
         'Multi-live : avance une vidéo d’une place avec la flèche de sa tuile (à trois, la première passe en grand).',
         'Direct : un clic sur la latence ramène au direct, sans recharger le flux.',
@@ -1028,6 +1212,9 @@ export const CHANGELOG = [
   {
     version: '2026.10.16a',
     items: {
+      it: [
+        'Chat: l\'ora dei messaggi viene visualizzata in formato di 12 ore (a.m./p.m.) o 24 ore a seconda del tuo dispositivo, o come preferisci (Aggiusti → Chat → Formatto orario).',
+      ],
       fr: [
         'Chat : l’heure des messages s’affiche en 12 h (AM/PM) ou en 24 h selon ton appareil, ou comme tu préfères (Réglages → Chat → Format de l’heure).',
       ],
@@ -1045,6 +1232,9 @@ export const CHANGELOG = [
   {
     version: '2026.10.15b',
     items: {
+      it: [
+        'Chat: i GIF inviati con la tastiera GIF di Twitch vengono ora visualizzati nel chat, come su Twitch.',
+      ],
       fr: [
         'Chat : les GIF envoyés avec le clavier GIF de Twitch s’affichent dans le chat, comme sur Twitch.',
       ],
@@ -1062,6 +1252,23 @@ export const CHANGELOG = [
   {
     version: '2026.10.15a',
     items: {
+      it: [
+        'Multi-live: fino a quattro video fianco a fianco, live e VOD mescolati. Aggiungi un VOD con il «+» della tua scheda o incolla il link sul mosaico; riprende dove l\'hai lasciato, e quello che suona ha i suoi controlli (riproduci, ±10 s, barra posizione) e il suo chat ripetuto.',
+        'Qualità preferita (Aggiusti → Riproduttore): Auto, Source, 1080p… o solo audio, per ogni diretta e ogni VOD (la più vicina sotto se il canale non ne ha). «Auto» inizia più in alto, non rimane più bloccato in 360p e mostra la qualità che si riproduce ( «Auto · 720p» ).',
+        'Diretti: il video non cambia più di velocità per raggiungere il diretto, fa un piccolo salto se necessario: il suono rimane sincronizzato con l\'immagine, anche in multi-live. Se fai 10 secondi indietro, il riproduttore non ti riporta più solo al live.',
+        'Pause pubblicitarie del canale: quando Twitch sostituisce il live con il suo schermo «Commercial break in progress», un avviso lo spiega con un conto alla rovescia, e il suono si spegne fino a quando il live ritorna (potete riavviarlo).',
+        'Installa il sito come app (Aggiusta → Installa l\'app): un\'icona sullo schermo iniziale e la propria finestra. Le notifiche dal vivo arrivano con il sito chiuso, anche su iPhone e iPad una volta installato il sito (iOS 16.4 o successivo), e le impostazioni indicano se sono attive.',
+        'Chat: il Treno dell\'Hype è già visualizzato, anche senza conto: la scheda «Entrant» con il suo conto indietro, poi la partenza, il livello in corso con la sua barra e il tempo rimanente, e la fine.',
+        'Nasconde un canale o una categoria con l\'occhio tagliato dalla scheda (si rivela dal Settings); ciò che segue o fissa non viene mai nascosto. Senza contare, «Cargar más» ora va oltre i primi 100 (categorie, video, clip e VOD di un canale), e il Top dei video lo ha anche.',
+        'VOD: velocità da 0,25× a 2× (tasti < e >), conservata da un VOD all\'altro; i live seguono a 1×. Le parti dei VOD recenti che conservano il suono non sono più contrassegnate come "suono muto".',
+        'Chat: se sei bandito da un canale, il loro chat continua a leggere solo (avviso e pulsante «Riprovare con il mio account» ). E il chat si connette in pochi secondi anche se una fonte di emozioni è lenta (VPN, rete filtrata).',
+        'Scheda delle emotes più complete: tipo (abbonato livello 1 a 3, punti del canale…) e il suo canale a un clic, autore e collegamento per BTTV, FFZ e 7TV; si apre anche con un clic destro nel selettore. Le emozioni animate di FFZ finalmente si muovono.',
+        'Riproduzione più solida: se qualcosa fallisce, il riproduttore e il multi-live riprovano e poi cambiano il relay o il Worker invece di rimanere in ciclo; un VOD salta una parte scomparsa, e un VOD la cui ultima mancanza termina normalmente. I vecchi video upload e i momenti salienti molto antichi vengono riprodotti.',
+        'Chat: Intro invia sempre il tuo messaggio, Tab (o un clic) sceglie l\'emote o il nome suggerito; i tuoi messaggi sembrano come quelli degli altri, e gli emoti appena dopo un emoji si mostrano bene. Chat dei VOD: dopo un salto vengono visualizzati i messaggi di poco prima, e un errore di Twitch non lo ferma più.',
+        'Se Twitch non risponde all\'apertura del sito, si inizia la sesión; il logo non ricarica più la pagina; sul cellulare, un download troppo grande si ferma con un messaggio invece di bloccare la scheda.',
+        'Copia di sicurezza: un file importato recupera anche il tema, l\'accento e l\'ordine delle fonti, ma non può più cambiare il Worker usato, e l\'esportazione non include più l\'indirizzo del Worker personale.',
+        'Sondaggi: lo sviluppatore può fare una domanda sotto l\'annuncio di inizio; voti senza conto (una o più opzioni a seconda del sondaggio), puoi cambiare idea fino alla fine e vedere i risultati appena voti.',
+      ],
       fr: [
         'Multi-live : jusqu’à quatre vidéos côte à côte, directs et VODs mêlés. Ajoute une VOD avec le « + » de sa carte ou en collant son lien dans la mosaïque ; elle reprend où tu en étais, et celle qui a le son a ses commandes (lecture, ±10 s, barre de position) et son chat rejoué.',
         'Qualité préférée (Réglages → Lecteur) : Auto, Source, 1080p… ou audio seul, pour chaque direct et chaque VOD (la plus proche en dessous si la chaîne ne l’a pas). « Auto » démarre plus haut, ne reste plus coincée en 360p et montre la qualité jouée (« Auto · 720p »).',
@@ -1135,6 +1342,17 @@ export const CHANGELOG = [
   {
     version: '2026.10.12a',
     items: {
+      it: [
+        'Tematiche: fondo chiaro, scuro, nero OLED o scheda (o quella del tuo dispositivo), e sette colori di accento, come nell\'app (Aggiusti → Appearance).',
+        'Controlla i tuoi streamers preferiti: il chinchetta della tua carta (o alla fine della tua riga disconnessa) li mette in cima al Segui.',
+        'Chat: una carta annuncia i drop del canale (ricompensa, tempo di visualizzazione, fine, dettagli); una volta chiusa, non torna.',
+        'Chat: clicca su un emote o su un badge per vedere il suo nome esatto e da dove viene (Twitch, BetterTTV, FrankerFaceZ, 7TV), copialo o aggiungilo al tuo messaggio.',
+        'Emotes di BetterTTV: le emotes personali degli abbonati BTTV Pro vengono visualizzate appena BTTV le annuncia, e quelle aggiunte al canale durante il live vengono visualizzate al momento.',
+        'Diretto: mai meno di 4 secondi dal diretto (più vicino, la riproduzione poteva essere congelata), anche all\'avanguardia o con «Direct».',
+        'Diretto: una breve interruzione della rete non trasmette più il video sul nostro server per una settimana; restituisce solo ai server di Twitch non appena rispondono.',
+        'I miei rapporti: un avviso ti informa quando lo sviluppatore risponde.',
+        'Impostazioni: la scelta della lingua non è più un problema mobile.',
+      ],
       fr: [
         'Thèmes : fond clair, sombre, noir OLED ou ardoise (ou celui de ton appareil), et sept couleurs d’accent, comme dans l’app (Réglages → Apparence).',
         'Épingle tes streamers préférés : la punaise sur leur carte (ou au bout de leur ligne hors ligne) les met en tête des suivies.',
@@ -1184,6 +1402,18 @@ export const CHANGELOG = [
   {
     version: '2026.10.11b',
     items: {
+      it: [
+        'Chat: le modalità della sala (solo seguaci e da quando, abbonati, modalità lenta…) appaiono sul campo, le regole del canale vengono accettate prima del primo messaggio, e un messaggio rifiutato da Twitch viene ritirato con il motivo.',
+        'Impostazioni avanzate: se il Worker di TwitchUnblock cade, il sito può utilizzare il tuo (disponibile dal repositorio del sito), prima per la riproduzione, o per tutto.',
+        'Categorie: filtra i direct per lingua (tutti o solo uno), una scelta che viene salvata per tutte le categorie.',
+        'Da Impostazioni → Lettore puoi scegliere l’ordine delle sorgenti delle dirette. Se una sorgente non risponde, viene provata la successiva. Selezionando una sorgente nel menu ⋯ del lettore, la sposti in cima all’elenco.',
+        'Luminous Europa: «Source» ha dato uno schermo nero ai canali che emettono con diverse codificazioni (gotaga…); ora ogni qualità conserva il suo nome (1080p60…).',
+        'I miei rapporti: nuovo stato «Visto», quando il tuo messaggio è stato letto.',
+        'Notifiche di diretta: una notifica quando un canale che segui inizia una diretta, anche con il sito chiuso (Aggiusti → Notifiche). Su iPhone e iPad, prima aggiungi il sito allo schermo iniziale.',
+        'I VOD con il nuovo formato di Twitch recuperano anche il suono originale delle parti silenziose.',
+        'Scarica un VOD, o solo un pezzo (da un momento all\'altro, da dove sei, per i successivi 10 minuti), nella qualità che scegli: pulsante «Scaricare» sotto il video. Le parti silenziate da musica protetta conservano il loro suono originale finché Twitch lo ha. Chrome ed Edge lo scrivono direttamente sul disco.',
+        'Multi-live: guarda fino a quattro live uno accanto all\'altro. Il pulsante «+» di una scheda live (o «Multi-live» nella pagina di un canale e sotto il lettore) li aggiunge; clicca su un live per sentirlo, doppio clic per lo schermo completo. Su schermi più grandi, il suo chat viene visualizzato sulla destra. Il link del mosaico può essere condiviso.',
+      ],
       fr: ['Chat : les modes du salon (followers uniquement et depuis combien de temps, abonnés, mode lent…) s’affichent au-dessus du champ, les règles de la chaîne s’acceptent avant le premier message, et un message refusé par Twitch est retiré avec la raison.', 'Réglages experts : si le Worker de TwitchUnblock tombe, le site peut passer par le tien (déployé depuis le dépôt du site), en premier pour la lecture, ou pour tout.', 'Catégories : filtre les lives par langue (toutes, ou une seule), un choix gardé pour toutes les catégories.', 'Direct : choisis l’ordre des sources (Réglages → Lecteur). Si une source ne répond pas, la suivante prend le relais ; en choisir une dans le menu ⚙ du lecteur la met en tête.', 'Luminous Europe : « Source » donnait un écran noir sur les chaînes qui diffusent en multi-encodage (gotaga…) ; chaque qualité y garde maintenant son nom (1080p60…).', 'Mes signalements : nouvel état « Vu », quand ton message a été lu.', 'Notifications de live : une notification quand une chaîne que tu suis passe en live, même site fermé (Réglages → Notifications). Sur iPhone et iPad, ajoute d’abord le site à l’écran d’accueil.', 'Les VODs au nouveau format de Twitch retrouvent elles aussi le son d’origine des passages coupés.', 'Télécharge une VOD, ou juste un passage (de tel instant à tel autre, depuis là où tu en es, les 10 minutes suivantes), dans la qualité de ton choix : bouton « Télécharger » sous la vidéo. Les passages coupés pour musique protégée gardent leur son d’origine tant que Twitch l’a encore. Chrome et Edge l’écrivent directement sur le disque.', 'Multi-live : regarde jusqu’à quatre directs côte à côte. Le bouton « + » d’une carte de live (ou « Multi-live » sur la page d’une chaîne et sous le lecteur) les ajoute ; un clic sur un direct lui donne le son, double-clic pour le plein écran. Sur grand écran, son chat s’affiche à droite. Le lien de la mosaïque se partage.'],
       en: ['Chat: the room’s modes (followers only and for how long, subscribers only, slow mode…) show above the message box, the channel’s rules are accepted before your first message, and a message Twitch refuses is removed with the reason.', 'Expert settings: if TwitchUnblock’s Worker goes down, the site can use yours (deployed from the site’s repository), first for playback, or for everything.', 'Categories: filter the lives by language (all, or a single one), kept for every category.', 'Live: pick the order of the sources (Settings → Player). If a source doesn’t answer, the next one takes over; picking one from the player’s ⚙ menu moves it to the top.', 'Luminous Europe: “Source” gave a black screen on channels that stream with multiple encodes (gotaga…); each quality now keeps its own name (1080p60…).', 'My reports: a new “Seen” status, once your message has been read.', 'Live notifications: a notification when a channel you follow goes live, even with the site closed (Settings → Notifications). On iPhone and iPad, add the site to your Home Screen first.', 'VODs in Twitch’s new format get their muted parts’ original sound back too.', 'Download a VOD, or just a part of it (from one time to another, from where you are, the next 10 minutes), in the quality you pick: “Download” button under the video. Parts muted for copyrighted music keep their original sound while Twitch still has it. Chrome and Edge write it straight to disk.', 'Multi-live: watch up to four streams side by side. The “+” button on a live card (or “Multi-live” on a channel page and under the player) adds them; click a stream to hear it, double-click for fullscreen. On large screens, its chat shows on the right. The mosaic’s link can be shared.'],
       es: ['Chat: los modos de la sala (solo seguidores y desde cuándo, suscriptores, modo lento…) aparecen sobre el campo, las reglas del canal se aceptan antes del primer mensaje, y un mensaje rechazado por Twitch se retira con el motivo.', 'Ajustes avanzados: si el Worker de TwitchUnblock cae, el sitio puede usar el tuyo (desplegado desde el repositorio del sitio), primero para la reproducción, o para todo.', 'Categorías: filtra los directos por idioma (todos, o uno solo), una elección que se guarda para todas las categorías.', 'Directo: elige el orden de las fuentes (Ajustes → Reproductor). Si una fuente no responde, la siguiente toma el relevo; elegir una en el menú ⚙ del reproductor la pone primera.', 'Luminous Europa: «Source» daba pantalla negra en los canales que emiten con varias codificaciones (gotaga…); ahora cada calidad conserva su nombre (1080p60…).', 'Mis reportes: nuevo estado «Visto», cuando tu mensaje ha sido leído.', 'Notificaciones de directos: una notificación cuando un canal que sigues empieza un directo, incluso con el sitio cerrado (Ajustes → Notificaciones). En iPhone y iPad, añade primero el sitio a la pantalla de inicio.', 'Los VODs con el nuevo formato de Twitch también recuperan el sonido original de las partes silenciadas.', 'Descarga un VOD, o solo un fragmento (de un momento a otro, desde donde estás, los 10 minutos siguientes), en la calidad que elijas: botón «Descargar» bajo el vídeo. Las partes silenciadas por música protegida conservan su sonido original mientras Twitch lo tenga. Chrome y Edge lo escriben directamente en el disco.', 'Multi-live: mira hasta cuatro directos uno al lado del otro. El botón «+» de una tarjeta de directo (o «Multi-live» en la página de un canal y bajo el reproductor) los añade; haz clic en un directo para oírlo, doble clic para pantalla completa. En pantallas grandes, su chat aparece a la derecha. El enlace del mosaico se puede compartir.'],
@@ -1193,6 +1423,11 @@ export const CHANGELOG = [
   {
     version: '2026.10.11a',
     items: {
+      it: [
+        'Scegli la sorgente della diretta dalle impostazioni o dal menu ⋯ del lettore, che mostra anche la sorgente in uso. Le opzioni sono Luminous Asia, Luminous Europa, il proxy in Albania e Twitch ufficiale. Se la sorgente scelta non risponde, vengono provate le altre.',
+        'Le etichette dei live (lingua, DropsEnabled…) vengono visualizzate sotto le schede e sotto il titolo del live, come su Twitch.',
+        'Categorie: cartelli più nitidi.',
+      ],
       fr: [
         'Direct : choisis la source (Luminous Asie, Luminous Europe, proxy albanais ou Twitch officiel) dans les réglages ou directement dans le menu ⚙ du lecteur, qui montre aussi celle en cours. Si elle ne répond pas, les autres prennent le relais.',
         'Les tags des lives (langue, DropsEnabled…) s’affichent sous les cartes et sous le titre du direct, comme sur Twitch.',
@@ -1218,6 +1453,9 @@ export const CHANGELOG = [
   {
     version: '2026.10.10c',
     items: {
+      it: [
+        'Diretto: circa 4 secondi di ritardo invece di circa 10. Il riproduttore utilizza ora i segmenti che Twitch annuncia in anticipo, come il proprio riproduttore, recuperando solo il ritardo dopo un taglio.',
+      ],
       fr: ['Direct : environ 4 s de retard au lieu d’une dizaine. Le lecteur se sert maintenant des segments que Twitch annonce d’avance, comme son propre lecteur, et rattrape tout seul le retard pris après une coupure.'],
       en: ['Live: about 4 s of delay instead of ten or so. The player now uses the segments Twitch announces ahead of time, like its own player, and catches up by itself after a hiccup.'],
       es: ['Directo: unos 4 s de retraso en lugar de unos diez. El reproductor usa ahora los segmentos que Twitch anuncia por adelantado, como su propio reproductor, y recupera solo el retraso tras un corte.'],
@@ -1227,6 +1465,9 @@ export const CHANGELOG = [
   {
     version: '2026.10.10b',
     items: {
+      it: [
+        '«I miei rapporti» si aggiornano solo: la risposta e il nuovo stato vengono visualizzati senza caricare la pagina.',
+      ],
       fr: ['« Mes signalements » se met à jour tout seul : la réponse et le nouvel état apparaissent sans recharger la page.'],
       en: ['“My reports” updates on its own: the reply and the new status show up without reloading the page.'],
       es: ['«Mis reportes» se actualiza solo: la respuesta y el nuevo estado aparecen sin recargar la página.'],
@@ -1236,6 +1477,14 @@ export const CHANGELOG = [
   {
     version: '2026.10.10a',
     items: {
+      it: [
+        'Commenti: aggiunto fino a 3 catture (o pegli con Ctrl+V). In «I miei rapporti», guarda a che punto è il tuo rapporto (ricevuta, accettata, in corso, fatta, respinta), leggi la risposta e rispondi; un indicatore che indica le nuove risposte.',
+        'VOD: le parti che Twitch ha silenziato (musica protetta) vengono visualizzate in arancione nella barra, con un pulsante «Salt». Un giorno o due dopo la trasmissione, Twitch conserva ancora il suono originale: il sito lo ripristina da solo.',
+        'Clicca con la ruota (o Ctrl/Cmd + click) su un live, VOD, clip, categoria o canale: si apre in una nuova scheda.',
+        'Conto: «Cambiamento di conto» nelle impostazioni. Dopo la chiusura della sessione, Twitch chiede quale account utilizzare invece di riconnettere il precedente.',
+        'Nuova lingua: russo, tradotto con l\'IA; le correzioni sono benvenute ( «Riferire un errore di traduzione» nelle impostazioni).',
+        'Il sito ha un nuovo indirizzo: twitchunblock.vercel.app.',
+      ],
       fr: [
         'Retours : joins jusqu’à 3 captures (ou colle-les avec Ctrl+V). Dans « Mes signalements », suis où en est ton retour (reçu, accepté, en cours, fait, refusé), lis la réponse et réponds à ton tour ; une pastille signale les nouvelles réponses.',
         'VODs : les passages dont Twitch a coupé le son (musique protégée) apparaissent en orange sur la barre, avec un bouton « Passer ». Un jour ou deux après le live, Twitch garde encore le son d’origine : le site le remet alors tout seul.',
@@ -1273,6 +1522,13 @@ export const CHANGELOG = [
   {
     version: '2026.10.07c',
     items: {
+      it: [
+        'Diretto: circa 6 secondi di ritardo invece di 20. Il riproduttore era troppo lontano dal live (Twitch annuncia segmenti di 6 secondi che durano 2).',
+        'Diretto: ←/→ e i pulsanti ±10 s funzionano anche durante un diretto, per avvicinarsi al diretto o tornare un po\' indietro, come nella modalità immagine in immagine.',
+        'Nuovo: «Informare di un errore o proporre un\'idea» : pulsante nella barra superiore, all\'inizio delle impostazioni, nel menu del riproduttore e nel suo schermo di errore.',
+        'Chat: gli annunci (messaggi framed di moderatori e bot) si mostrano bene, il nome non viene più tagliato a pezzi.',
+        'Senza contare, il web spiega perché una lista si ferma a 100: è il limite di Twitch per i visitatori senza sesión.',
+      ],
       fr: [
         'Direct : environ 6 s de retard au lieu de 20. Le lecteur se plaçait trop loin du direct (Twitch annonce des segments de 6 s qui en durent 2).',
         'Direct : ←/→ et les boutons ±10 s marchent aussi pendant un live, pour se rapprocher du direct ou revenir un peu en arrière — comme dans le lecteur incrusté.',
@@ -1299,6 +1555,15 @@ export const CHANGELOG = [
   {
     version: '2026.10.07b',
     items: {
+      it: [
+        'Link come su Twitch: cambia «twitch.tv» per l\'indirizzo del sito (/xqc, /videos/…?t=1h2m3s, /xqc/clips, /directory/category/just-chatting…). I pulsanti avanti e indietro del browser passano da una pagina all\'altra; dal riproduttore, «tras» lo riduce al minirriproduttore senza interrompere la riproduzione.',
+        'Pagina di un canale: nuova scheda «Acerca di» (descrizione, follower, network e pannelli dello streamer).',
+        'Clips: «Caricare di più» (100 clips senza account, senza limite di accesso). Passati 100 senza contare, il sito lo indica invece di fermarsi senza altro.',
+        'Carte live: il nome apre il canale e la categoria i suoi live, come nel riproduttore.',
+        'Comandi bot: i link possono essere pulsati.',
+        'Ajustamenti: opzione per nascondere i canali recenti.',
+        'Un link Twitch incollato nella ricerca apre ciò che indica (canale, VOD, clip, categoria); la scheda Link/ID accetta anche link da clip.',
+      ],
       fr: [
         'Adresses comme sur Twitch : remplace « twitch.tv » par l’adresse du site (/xqc, /videos/…?t=1h2m3s, /xqc/clips, /directory/category/just-chatting…). Les boutons précédent et suivant du navigateur passent d’une page à l’autre ; depuis le lecteur, « précédent » le réduit en mini-lecteur sans couper la lecture.',
         'Page d’une chaîne : nouvel onglet « À propos » (description, followers, réseaux et panneaux du streamer).',
@@ -1331,6 +1596,11 @@ export const CHANGELOG = [
   {
     version: '2026.10.07',
     items: {
+      it: [
+        'Pagina di un canale: non c\'è più tab «Eliminate» : i VOD cancellati o nascosti vengono visualizzati direttamente tra i VOD, nella loro data, contrassegnati «VOD non elencati».',
+        'Categorie: «Caricare di più» è riavviato (fino a 100 categorie e 100 live per categoria senza account, senza limite di accesso).',
+        'Chat sincronizzato: i messaggi vengono ritardati solo in base al tuo ritardo rispetto al live. Nei canali che trasmettono in ritardo, arrivano 10 secondi tardi o più.',
+      ],
       fr: [
         'Page d’une chaîne : plus d’onglet « Supprimées » — les VODs supprimées ou masquées apparaissent directement parmi les VODs, à leur date, marquées « VOD non listée ».',
         'Catégories : « Charger plus » fonctionne à nouveau (jusqu’à 100 catégories et 100 lives par catégorie sans compte, sans limite une fois connecté).',
@@ -1351,6 +1621,12 @@ export const CHANGELOG = [
   {
     version: '2026.10.06b',
     items: {
+      it: [
+        'Inizio: nuova scheda «Disconected» per i tuoi canali seguiti senza diretta; «Followed» mostra solo i canali diretti.',
+        'Pagina di un canale: la scheda «Eliminati» va subito dopo i VOD.',
+        'Nuova visita guidata interattiva, che indica i pulsanti reali del sito (Aggiusta > Visualizza il tutorial di nuovo).',
+        'Ajustamenti: il «Registro dei cambiamenti» mostra tutte le novità dall\'inizio.',
+      ],
       fr: [
         'Accueil : nouvel onglet « Hors ligne » pour tes chaînes suivies hors ligne ; « Suivies » ne montre plus que les lives.',
         'Page d’une chaîne : l’onglet « Supprimées » passe juste après les VODs.',
@@ -1374,6 +1650,9 @@ export const CHANGELOG = [
   {
     version: '2026.10.06',
     items: {
+      it: [
+        'Nuova scheda «Deleted» nella pagina di un canale: recupera i VOD cancellati di recente, mentre Twitch continua a servire i suoi segmenti.',
+      ],
       fr: [
         'Nouvel onglet « Supprimées » sur la page d’une chaîne : récupère les VODs récemment supprimées, tant que Twitch sert encore leurs segments.',
       ],
@@ -1388,6 +1667,10 @@ export const CHANGELOG = [
   {
     version: '2026.10.05c',
     items: {
+      it: [
+        'Barra di riproduzione dei VOD: quando si scivola, il contatore mostra l\'istante scelto e, sugli schermi tattili, l\'etichetta rimane sopra il pollice.',
+        'Ajustamenti: file spaziati regolarmente in «Circa».',
+      ],
       fr: [
         'Barre de lecture des VODs : en la faisant glisser, le compteur affiche l’instant visé, et au doigt l’infobulle passe au-dessus du pouce.',
         'Réglages : lignes régulièrement espacées dans « À propos ».',
@@ -1405,6 +1688,12 @@ export const CHANGELOG = [
   {
     version: '2026.10.05',
     items: {
+      it: [
+        'Pagina del streamer in schede: VOD, Highlights, Listings e Clips.',
+        'Copia di sicurezza: esporta e importa i tuoi canali seguiti, categorie e impostazioni (Aggiusti > Copia di sicurezza), compatibile con l\'app iOS.',
+        'Nuova opzione: disattivare la pausa cliccando sul video (Aggiusta > Riproducibile).',
+        'L’indicazione «Offline da» appare nella tua lingua, con la data dell’ultima diretta. Vale anche per ciascun canale offline nella Home.',
+      ],
       fr: [
         'Page streamer en onglets : VODs, Highlights, Playlists et Clips.',
         'Sauvegarde : exporte et importe tes chaînes suivies, catégories et réglages (Réglages > Sauvegarde), compatible avec l’app iOS.',
@@ -1428,6 +1717,11 @@ export const CHANGELOG = [
   {
     version: '2026.10.04c',
     items: {
+      it: [
+        'Lista dei canali: nuova sezione nella pagina dello streamer, con «Riproduci tutto» per stringere i video.',
+        'I highlights (video delle liste) vengono riprodotti anche se Twitch rifiuta il token di riproduzione.',
+        'Un VOD non disponibile lo indica invece di mostrare un falso errore di rete.',
+      ],
       fr: [
         'Playlists des chaînes : nouvelle section sur la page streamer, avec « Tout lire » qui enchaîne les vidéos.',
         'Les highlights (vidéos des playlists) se lancent même quand Twitch refuse le jeton de lecture.',
@@ -1448,6 +1742,12 @@ export const CHANGELOG = [
   {
     version: '2026.10.04b',
     items: {
+      it: [
+        'Nuova scheda Categorie: tutte le categorie, la ricerca e le tue categorie seguite (botone «Seguire» ).',
+        'Inizio in due schede: «Canali seguiti» e «Top di live».',
+        'I seguenti canali disconnessi vengono visualizzati in un elenco: un clic apre la pagina (VOD, clip).',
+        'Nel riproduttore, cliccando sul nome dello streamer si apre il canale.',
+      ],
       fr: [
         'Nouvel onglet Catégories : toutes les catégories, recherche, et tes catégories suivies (bouton « Suivre »).',
         'Accueil en deux onglets : « Chaînes suivies » et « Top des lives ».',
@@ -1471,6 +1771,13 @@ export const CHANGELOG = [
   {
     version: '2026.10.04',
     items: {
+      it: [
+        'Segui i canali senza account Twitch: il pulsante «Follow» nella tua pagina, vengono visualizzati in «Canali seguiti».',
+        'Inizia in lista in stile Twitch o in rete (botone accanto a «Canali seguiti» ).',
+        'Comandi di bot (Nightbot, StreamElements, Fossabot, Moobot) dal capo chat.',
+        'Il messaggio fisso distribuito si apre sul chat invece di spingerlo.',
+        'Risposte agli annunci, e questa finestra di notizie.',
+      ],
       fr: [
         'Suis des chaînes sans compte Twitch : bouton « Suivre » sur leur page, elles arrivent dans « Chaînes suivies ».',
         'Accueil en liste façon Twitch ou en grille (bouton à côté de « Chaînes suivies »).',
@@ -1497,6 +1804,12 @@ export const CHANGELOG = [
   {
     version: '2026.10.03',
     items: {
+      it: [
+        'Gli annunci dello sviluppatore sopra l\'inizio.',
+        'Top di live nella lingua del tuo dispositivo, regolabile nelle impostazioni.',
+        'Pagina pubblica /stats (in spagnolo, inglese, francese).',
+        'Un collegamento alla Discord nel calcolo e le impostazioni.',
+      ],
       fr: [
         'Annonces du développeur en haut de l’accueil.',
         'Top des lives dans la langue de ton appareil, réglable dans les réglages.',
