@@ -45,6 +45,10 @@ services:
       # Worker dont le relais publie les notifications ntfy de l'app iOS
       # (ntfy.sh refuse les adresses de Cloudflare). Vide = coupé.
       NTFY_WORKER: "${NTFY_WORKER-https://test2.kurzmathis4.workers.dev}"
+      # « twitch » : sert aussi /api/get-live, le direct pris depuis l'adresse
+      # de ce serveur (source « bg » des apps, relais de test en Bulgarie).
+      # Vide = coupé.
+      LIVE_SOURCE: "${LIVE_SOURCE-}"
       # Bot Discord (README, « Discord bot ») : jeton du bot,
       # secret partagé avec le Worker (FEEDBACK_BOT_SECRET, même valeur),
       # Worker des retours, autres comptes Discord autorisés à répondre.

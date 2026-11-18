@@ -10,7 +10,8 @@
 //  Seules /api/proxy et /health sont servies. Le site s'en sert quand
 //  `relayUrl` est configuré (api.js) et repasse par le Worker si ce serveur
 //  ne répond pas. Et /ntfy : les notifications de l'app iOS, que le Worker
-//  confie à ce serveur (plus bas).
+//  confie à ce serveur (plus bas). Avec LIVE_SOURCE=twitch, aussi
+//  /api/get-live : le direct pris depuis l'adresse de ce serveur (plus bas).
 //
 //  Il tourne dans l'image Docker du site (même worker.js) :
 //    node /app/relay.mjs        voir relay/docker-compose.yml et le README
@@ -36,6 +37,8 @@
 //                     facultatifs : le bot surveille les quotas gratuits du
 //                     compte Cloudflare du Worker (jeton en lecture seule,
 //                     « Account Analytics: Read »). Sans eux, coupé.
+//    LIVE_SOURCE      « twitch » : sert aussi /api/get-live (source « bg » des
+//                     apps, relais de test en Bulgarie). Vide = coupé.
 //    GIT_SHA, GIT_BRANCH  posés par l'image (Dockerfile) : commit et branche
 //                     de sa construction, donnés par /health ; le bot prévient
 //                     quand GitHub a plus récent.
@@ -94,6 +97,36 @@ const CORS = {
  *  origine est refusée. Sans en-tête Origin (lecteur natif de Safari, VLC),
  *  la requête passe. */
 const originOk = (o) => !o || !ALLOWED.length || ALLOWED.some((re) => re.test(o))
+
+// ── Source du direct prise depuis ce serveur (LIVE_SOURCE=twitch) ──────────
+// GET /api/get-live?name=<chaîne> : jeton, liste maîtresse et playlists de la
+// vidéo demandés à Twitch depuis l'adresse de ce serveur (source « bg » des
+// apps : un relais de test en Bulgarie), les segments restant en direct
+// (handleGetLive de worker.js, mêmes liens par /api/proxy). Seul `name` est
+// lu : la requête faite au Worker est recomposée ici, source Twitch seule —
+// une source perso (`custom`) ferait sortir ce serveur vers n'importe quel
+// hôte. Si Twitch ne répond pas d'ici, le Worker passait aux proxys : 404, et
+// l'app essaie sa source suivante.
+const LIVE_SOURCE = (process.env.LIVE_SOURCE || '').trim().toLowerCase() === 'twitch'
+
+async function handleLiveSource(req, res, url) {
+  if (req.method === 'OPTIONS') { res.writeHead(204, CORS); return res.end() }
+  if (req.method !== 'GET') { res.writeHead(405, CORS); return res.end() }
+  if (!originOk(req.headers.origin)) { res.writeHead(403); return res.end('Origin not allowed') }
+  const ask = new URL('/api/get-live', url.origin)
+  ask.searchParams.set('name', url.searchParams.get('name') || '')
+  ask.searchParams.set('source', 'twitch')
+  const r = await worker.fetch(new Request(ask), { PROXY_FETCH: proxyFetch }, { waitUntil() {}, passThroughOnException() {} })
+  let body = await r.text()
+  let status = r.status
+  if (r.ok) {
+    let source = null
+    try { source = JSON.parse(body).source } catch {}
+    if (source !== 'twitch') { status = 404; body = JSON.stringify({ error: 'Twitch unavailable from this server' }) }
+  }
+  res.writeHead(status, { ...CORS, 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
+  res.end(body)
+}
 
 // ── Notifications ntfy de l'app iOS ────────────────────────────────────────
 // ntfy.sh compte les messages par adresse IP (250 par jour) ; les Workers
@@ -375,6 +408,7 @@ const server = http.createServer(async (req, res) => {
       }))
     }
     if (url.pathname === '/ntfy') return await handleNtfy(req, res)
+    if (url.pathname === '/api/get-live' && LIVE_SOURCE) return await handleLiveSource(req, res, url)
     if (url.pathname !== '/api/proxy') { res.writeHead(404, CORS); return res.end() }
     if (req.method === 'OPTIONS') { res.writeHead(204, CORS); return res.end() }
     if (req.method !== 'GET' && req.method !== 'HEAD') { res.writeHead(405, CORS); return res.end() }

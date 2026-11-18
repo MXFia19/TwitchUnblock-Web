@@ -518,6 +518,17 @@ if you use the bundled Caddy). The relay runs from
 the website's image (`ghcr.io/mxfia19/twitchunblock-web`), started with
 `node /app/relay.mjs`.
 
+**Live source from the relay (`LIVE_SOURCE=twitch`, test):** with this line in
+`.env`, the relay also answers `GET /api/get-live?name=<channel>` like the
+Worker, but everything comes from the relay's own address: the playback
+token, the master playlist, and the stream's playlists (its links go through
+the relay's `/api/proxy`); the video segments are still read straight from
+Twitch's CDN. Only `name` is read — Twitch's own source, never a proxy or a
+custom server — and it answers 404 when Twitch doesn't answer from there, so
+the app moves on to its next source. This is the apps' **Bulgaria** test
+source (`bg`): a relay in Sofia, to measure whether Twitch serves fewer ads
+to a Bulgarian address. Off by default.
+
 **ntfy:** the relay also publishes the iOS app's live notifications to
 ntfy.sh for the Worker (`POST /ntfy`), since ntfy.sh refuses Cloudflare's
 shared addresses. It only accepts batches signed by the Worker whose address

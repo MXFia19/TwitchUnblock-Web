@@ -1318,7 +1318,7 @@ const USAGE_EVENTS = ['live_as', 'live_pp', 'live_al', 'live_al2', 'live_eu', 'l
 // Source d'une pause pub vue (adh_…, comme live_*) ; une autre : « other ».
 // « account » : le compte (sans pub, qualités supérieures, dernier recours) ;
 // lui et « twitch » ont des pubs attendues, /stats les met à part.
-const AD_SOURCES = new Set(['as', 'pp', 'al', 'al2', 'eu', 'eu2', 'custom', 'worker', 'twitch', 'account']);
+const AD_SOURCES = new Set(['as', 'pp', 'al', 'al2', 'eu', 'eu2', 'bg', 'custom', 'worker', 'twitch', 'account']);
 
 // POST /api/ping — { id, version, platform } enregistre ; { id, forget: true } efface.
 async function handlePing(request, env) {
