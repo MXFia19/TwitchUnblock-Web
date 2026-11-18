@@ -572,8 +572,11 @@ a.card, a.cat-card { display: block; }
 
 /* Plein écran : vidéo seule, chat posé par-dessus à droite. Sa largeur
    (--fs-chat-w) suit la poignée glissée (prefs.fsChatWidth, en % de
-   l'écran) ; par défaut min(340px, 34vw). */
-:root { --fs-chat-w: min(340px, 34vw); }
+   l'écran) ; par défaut min(340px, 34vw). Dans un coin, sa hauteur
+   (--fs-chat-h, prefs.fsChatHeight) aussi : par défaut la moitié, et
+   jamais plus que l'écran moins 80 px, la place des commandes du bas
+   (--fs-chat-h-fit ; FS_CHAT_ROOM dans main.js). */
+:root { --fs-chat-w: min(340px, 34vw); --fs-chat-h: 50%; --fs-chat-h-fit: min(var(--fs-chat-h), calc(100% - 80px)); }
 .watch-body:fullscreen { display: block; position: relative; background: #000; }
 .watch-body:fullscreen .watch-video { position: absolute; inset: 0; aspect-ratio: auto; max-height: none; height: 100%; }
 .watch-body:fullscreen .watch-info { display: none; }
@@ -593,17 +596,20 @@ a.card, a.cat-card { display: block; }
 .watch:not(.chat-hidden) .watch-body:-webkit-full-screen .p-bottom,
 .watch:not(.chat-hidden) .watch-body:-webkit-full-screen .p-menu { margin-right: var(--fs-chat-w); }
 .watch:not(.chat-hidden) .watch-body:-webkit-full-screen .p-big { margin-left: calc(var(--fs-chat-w) / -2); }
-/* Chat en plein écran à gauche, ou dans un coin (moitié haute ou basse) :
-   réglage « Chat en plein écran ». Les commandes s'écartent de son côté ;
-   dans la moitié haute, la barre du bas reste entière. Le chat est aussi
-   un .chat (height: 100 %) : sans height: auto, sa hauteur passait avant
-   bottom / top et il restait sur toute la hauteur, par-dessus les boutons. */
+/* Chat en plein écran à gauche, ou dans un coin (en haut ou en bas, de la
+   hauteur réglée) : réglage « Chat en plein écran ». Les commandes
+   s'écartent de son côté ; chat en haut, la barre du bas reste entière (il
+   s'arrête 80 px au-dessus du bas), mais le menu du lecteur reste à côté
+   du chat : il monte assez haut pour passer dessous. Le chat est aussi un
+   .chat (height: 100 %) : sa hauteur est
+   donc posée ici, sinon elle passait avant bottom / top et il restait sur
+   toute la hauteur, par-dessus les boutons. */
 :root[data-fschat^="left"] :is(.watch-body:fullscreen, .watch-body:-webkit-full-screen) .watch-chat { right: auto; left: 0; }
-:root[data-fschat$="-top"] :is(.watch-body:fullscreen, .watch-body:-webkit-full-screen) .watch-chat { bottom: 50%; height: auto; }
-:root[data-fschat$="-bottom"] :is(.watch-body:fullscreen, .watch-body:-webkit-full-screen) .watch-chat { top: 50%; height: auto; }
+:root[data-fschat$="-top"] :is(.watch-body:fullscreen, .watch-body:-webkit-full-screen) .watch-chat { bottom: auto; height: var(--fs-chat-h-fit); }
+:root[data-fschat$="-bottom"] :is(.watch-body:fullscreen, .watch-body:-webkit-full-screen) .watch-chat { top: auto; height: var(--fs-chat-h-fit); }
 :root[data-fschat^="left"] .watch:not(.chat-hidden) :is(.watch-body:fullscreen, .watch-body:-webkit-full-screen) :is(.p-bottom, .p-menu) { margin-right: 0; margin-left: var(--fs-chat-w); }
 :root[data-fschat^="left"] .watch:not(.chat-hidden) :is(.watch-body:fullscreen, .watch-body:-webkit-full-screen) .p-big { margin-left: calc(var(--fs-chat-w) / 2); }
-:root[data-fschat$="-top"] .watch:not(.chat-hidden) :is(.watch-body:fullscreen, .watch-body:-webkit-full-screen) :is(.p-bottom, .p-menu) { margin-left: 0; margin-right: 0; }
+:root[data-fschat$="-top"] .watch:not(.chat-hidden) :is(.watch-body:fullscreen, .watch-body:-webkit-full-screen) .p-bottom { margin-left: 0; margin-right: 0; }
 /* Poignée sur le bord intérieur du chat : glissée, elle change sa largeur ;
    double-clic, largeur par défaut. Visible au survol seulement. */
 .fs-chat-grip { display: none; }
@@ -617,9 +623,26 @@ a.card, a.cat-card { display: block; }
 }
 .fs-chat-grip:hover::after, .fs-chat-grip.dragging::after { opacity: 1; }
 :root[data-fschat^="left"] :is(.watch-body:fullscreen, .watch-body:-webkit-full-screen) .fs-chat-grip { right: auto; left: var(--fs-chat-w); transform: translateX(-50%); }
-:root[data-fschat$="-top"] :is(.watch-body:fullscreen, .watch-body:-webkit-full-screen) .fs-chat-grip { bottom: 50%; }
-:root[data-fschat$="-bottom"] :is(.watch-body:fullscreen, .watch-body:-webkit-full-screen) .fs-chat-grip { top: 50%; }
+:root[data-fschat$="-top"] :is(.watch-body:fullscreen, .watch-body:-webkit-full-screen) .fs-chat-grip { bottom: auto; height: var(--fs-chat-h-fit); }
+:root[data-fschat$="-bottom"] :is(.watch-body:fullscreen, .watch-body:-webkit-full-screen) .fs-chat-grip { top: auto; height: var(--fs-chat-h-fit); }
 .watch.chat-hidden .fs-chat-grip { display: none !important; }
+/* Chat dans un coin : une seconde poignée, sur son bord intérieur du bas
+   (chat en haut) ou du haut (chat en bas), change sa hauteur ; double-clic,
+   la moitié de l'écran. Sur toute la hauteur, pas de poignée. */
+.fs-chat-vgrip { display: none; }
+:root:is([data-fschat$="-top"], [data-fschat$="-bottom"]) :is(.watch-body:fullscreen, .watch-body:-webkit-full-screen) .fs-chat-vgrip {
+  display: block; position: absolute; right: 0; width: var(--fs-chat-w); height: 14px;
+  z-index: 7; cursor: ns-resize; touch-action: none;
+}
+:root[data-fschat$="-top"] :is(.watch-body:fullscreen, .watch-body:-webkit-full-screen) .fs-chat-vgrip { top: var(--fs-chat-h-fit); transform: translateY(-50%); }
+:root[data-fschat$="-bottom"] :is(.watch-body:fullscreen, .watch-body:-webkit-full-screen) .fs-chat-vgrip { bottom: var(--fs-chat-h-fit); transform: translateY(50%); }
+:root[data-fschat^="left"] :is(.watch-body:fullscreen, .watch-body:-webkit-full-screen) .fs-chat-vgrip { right: auto; left: 0; }
+:is(.watch-body:fullscreen, .watch-body:-webkit-full-screen) .fs-chat-vgrip::after {
+  content: ''; position: absolute; top: 50%; left: 50%; width: 48px; height: 4px; margin: -2px 0 0 -24px;
+  border-radius: 2px; background: rgba(255, 255, 255, 0.4); opacity: 0; transition: opacity 0.15s;
+}
+.fs-chat-vgrip:hover::after, .fs-chat-vgrip.dragging::after { opacity: 1; }
+.watch.chat-hidden .fs-chat-vgrip { display: none !important; }
 
 /* Réduit : petite fenêtre flottante, la lecture continue. */
 .watch-mini { display: none; align-items: center; gap: 2px; padding: 8px 6px 8px 12px; min-width: 0; }

@@ -71,6 +71,7 @@ const FS_CHAT = ['right-full', 'right-top', 'right-bottom', 'left-full', 'left-t
 function applyFsChat() {
   document.documentElement.dataset.fschat = FS_CHAT.includes(store.prefs.fsChat) ? store.prefs.fsChat : 'right-full'
   applyFsChatWidth()
+  applyFsChatHeight()
 }
 
 /** Largeur de ce chat (demande de wishimiri) : la poignée posée sur son bord
@@ -81,13 +82,30 @@ function applyFsChatWidth() {
   if (w > 0) document.documentElement.style.setProperty('--fs-chat-w', `${w}vw`)
   else document.documentElement.style.removeProperty('--fs-chat-w')
 }
-function setupFsChatGrip() {
-  const grip = document.getElementById('fs-chat-grip')
+
+/** Hauteur de ce chat quand il est dans un coin (en haut ou en bas ; sur
+ *  toute la hauteur, il n'en a pas) : la poignée posée sur son bord
+ *  intérieur (bas ou haut) se glisse en plein écran, de 120 px à l'écran
+ *  moins la place des commandes (FS_CHAT_ROOM, la même que dans la feuille
+ *  de style : --fs-chat-h-fit) ; double-clic : la moitié de l'écran. Gardée
+ *  en % de l'écran, comme la largeur. */
+const FS_CHAT_MIN_H = 120
+const FS_CHAT_ROOM = 80
+function applyFsChatHeight() {
+  const h = Number(store.prefs.fsChatHeight) || 0
+  if (h > 0) document.documentElement.style.setProperty('--fs-chat-h', `${h}%`)
+  else document.documentElement.style.removeProperty('--fs-chat-h')
+}
+
+/** Poignée du chat en plein écran : `move` reçoit le pointeur, le cadre du
+ *  plein écran et la position du chat (prefs.fsChat) ; `reset` au
+ *  double-clic. Le réglage est enregistré au lâcher. */
+function setupFsChatGrip(id, move, reset) {
+  const grip = document.getElementById(id)
   if (!grip) return
   let drag = null
   grip.addEventListener('pointerdown', (e) => {
-    drag = { id: e.pointerId, rect: grip.parentElement.getBoundingClientRect(),
-             left: (document.documentElement.dataset.fschat || '').startsWith('left') }
+    drag = { id: e.pointerId, rect: grip.parentElement.getBoundingClientRect(), pos: document.documentElement.dataset.fschat || '' }
     grip.setPointerCapture(e.pointerId)
     grip.classList.add('dragging')
     e.preventDefault()
@@ -95,11 +113,7 @@ function setupFsChatGrip() {
   })
   grip.addEventListener('pointermove', (e) => {
     if (!drag || e.pointerId !== drag.id) return
-    const { rect, left } = drag
-    const px = left ? e.clientX - rect.left : rect.right - e.clientX
-    const w = Math.min(rect.width * 0.6, Math.max(180, px))
-    store.prefs.fsChatWidth = Math.round((w / rect.width) * 1000) / 10
-    applyFsChatWidth()
+    move(e, drag)
   })
   const end = (e) => {
     if (!drag || e.pointerId !== drag.id) return
@@ -111,12 +125,22 @@ function setupFsChatGrip() {
   grip.addEventListener('pointercancel', end)
   for (const ev of ['click', 'dblclick']) grip.addEventListener(ev, (e) => e.stopPropagation())
   grip.addEventListener('dblclick', () => {
-    store.prefs.fsChatWidth = 0
-    applyFsChatWidth()
+    reset()
     store.savePrefs()
   })
 }
-setupFsChatGrip()
+setupFsChatGrip('fs-chat-grip', (e, { rect, pos }) => {
+  const px = pos.startsWith('left') ? e.clientX - rect.left : rect.right - e.clientX
+  const w = Math.min(rect.width * 0.6, Math.max(180, px))
+  store.prefs.fsChatWidth = Math.round((w / rect.width) * 1000) / 10
+  applyFsChatWidth()
+}, () => { store.prefs.fsChatWidth = 0; applyFsChatWidth() })
+setupFsChatGrip('fs-chat-vgrip', (e, { rect, pos }) => {
+  const px = pos.endsWith('-bottom') ? rect.bottom - e.clientY : e.clientY - rect.top
+  const h = Math.max(FS_CHAT_MIN_H, Math.min(rect.height - FS_CHAT_ROOM, px))
+  store.prefs.fsChatHeight = Math.round((h / rect.height) * 1000) / 10
+  applyFsChatHeight()
+}, () => { store.prefs.fsChatHeight = 0; applyFsChatHeight() })
 
 function applyTheme() {
   const root = document.documentElement
@@ -6612,6 +6636,8 @@ const BACKUP_SETTINGS = {
   timeFormat: (v) => (['auto', '12', '24'].includes(v) ? v : undefined),
   fsChat: (v) => (FS_CHAT.includes(v) ? v : undefined),
   fsChatWidth: (v) => (Number.isFinite(v) ? (v <= 0 ? 0 : Math.min(60, Math.max(5, Math.round(v * 10) / 10))) : undefined),
+  // Au-delà de 95 %, la feuille de style le borne de toute façon (place des commandes).
+  fsChatHeight: (v) => (Number.isFinite(v) ? (v <= 0 ? 0 : Math.min(95, Math.max(5, Math.round(v * 10) / 10))) : undefined),
   keepDeleted: okBool,
   loadHistory: okBool,
   chatSize: (v) => (Number.isFinite(v) ? Math.min(20, Math.max(12, Math.round(v))) : undefined),
