@@ -264,6 +264,37 @@ img { border: 0; }
 .msg.hl { padding-left: 10px; border-left: 4px solid var(--purple); background: rgba(145, 70, 255, 0.18); }
 .msg .mention { font-weight: 700; }
 
+/* Points de chaîne, série et coffre (livepoints.js) : barre du haut du
+   lecteur et en-tête du chat ; prédiction en cours au-dessus des messages. */
+.pv-points, .chat-points { display: flex; flex: none; align-items: center; }
+.pv-points { margin-left: 24px; padding: 8px 18px; border-radius: 8px; background: rgba(0, 0, 0, 0.55); font-size: 26px; }
+.chat-points { margin-left: auto; font-size: 22px; }
+.chat-status { margin-left: 14px; }
+.tvp-bal, .tvp-streak, .tvp-chest { display: inline-flex; align-items: center; }
+.tvp-bal .ic { margin-right: 8px; color: var(--purple2); }
+.tvp-ic { flex: none; width: 26px; height: 26px; margin-right: 8px; }
+.tvp-bal b, .tvp-streak b { font-weight: 800; font-variant-numeric: tabular-nums; }
+.tvp-bal.gain b { color: #00e676; }
+.tvp-name { margin-left: 8px; color: var(--muted); font-weight: 600; }
+.tvp-chest { margin-left: 14px; color: #ffd166; }
+.tvp-streak { margin-left: 16px; color: #ff9f1c; }
+.tvp-streak .ic { margin-right: 4px; }
+.chat-events { padding: 12px 20px 0; }
+.tvp-pred { padding: 14px 16px; border-radius: 12px; background: rgba(255, 255, 255, 0.07); font-size: 21px; }
+.tvp-pred-head { display: flex; align-items: center; margin-bottom: 4px; }
+.tvp-pred-head .ic { margin-right: 8px; color: var(--purple2); }
+.tvp-pred-head b { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.tvp-pred-state { flex: none; margin-left: 10px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.tvp-pred-row { margin-top: 8px; }
+.tvp-pred-label { display: flex; align-items: center; justify-content: space-between; }
+.tvp-pred-label span { display: flex; flex: none; align-items: center; }
+.tvp-pred-label span:first-child { flex: 1; min-width: 0; margin-right: 10px; }
+.tvp-pred-label em { min-width: 0; overflow: hidden; font-style: normal; white-space: nowrap; text-overflow: ellipsis; }
+.tvp-pred-label .ic { margin: 0 4px; }
+.tvp-pred-row.win { font-weight: 700; }
+.tvp-pred-bar { height: 8px; margin-top: 4px; overflow: hidden; border-radius: 4px; background: rgba(255, 255, 255, 0.15); }
+.tvp-pred-bar i { display: block; height: 100%; }
+
 /* ── Avis (util.js du site, toast) ─────────────────────────────────────── */
 .toast { position: fixed; left: 50%; bottom: 60px; z-index: 50; max-width: 1400px; padding: 18px 34px; border-radius: 14px; background: rgba(32, 32, 36, 0.96); color: #fff; font-size: 26px; text-align: center; opacity: 0; pointer-events: none; transform: translate(-50%, 40px); transition: opacity 0.2s, transform 0.2s; }
 .toast.show { opacity: 1; transform: translate(-50%, 0); }

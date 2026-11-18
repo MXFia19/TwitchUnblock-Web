@@ -14,7 +14,9 @@
 //  openLive / openVod), sans l'extension TwitchUnblock Connect. Avec la
 //  session web de l'iPhone, un direct passe d'abord par le compte s'il y
 //  est sans pub (abonné, Turbo : websession.js, accountLive), source
-//  « Compte Twitch (sans pub) » ; sinon les sources habituelles.
+//  « Compte Twitch (sans pub) » ; sinon les sources habituelles. Avec elle
+//  aussi, pendant un direct : points de chaîne, série de visionnage et
+//  prédiction en cours (livepoints.js), dans la barre du haut et le chat.
 // ═══════════════════════════════════════════════════════════════════════════
 
 import * as api from '../../public/assets/js/api.js'
@@ -26,6 +28,7 @@ import { logError } from '../../public/assets/js/errlog.js'
 import { canChat } from './auth.js'
 import { accountLive, webSession } from './websession.js'
 import { TvChat } from './chat.js'
+import { LivePoints } from './livepoints.js'
 import { createKeyboard } from './keyboard.js'
 import { focusEl, popLayer, pushLayer, restoreFocus, sinceKey } from './nav.js'
 import { actions, el } from './ui.js'
@@ -51,6 +54,8 @@ let player = null
 let playerRoot = null
 let chat = null
 let chatRoot = null
+/** Points de chaîne du direct (session web de l'iPhone). */
+let points = null
 /** Lecture en cours : { kind, login, id, links, variants, source, info }. */
 let session = null
 let lastWorkerSwitch = 0
@@ -62,6 +67,7 @@ function getPlayer() {
   chatRoot = document.createElement('div')
   chatRoot.className = 'pv-chat'
   chat = new TvChat(chatRoot, { getDelay: () => player?.chatDelay() ?? 0 })
+  points = new LivePoints({ side: chat.el.points, events: chat.el.events })
   player = new Player(playerRoot, {
     fullscreenTarget: playerRoot,
     prefs: store.prefs,
@@ -199,6 +205,7 @@ export function watchScreen(what) {
         <div class="pv-top">
           <img class="pv-avatar" alt="" hidden>
           <div class="pv-top-text"><b class="pv-name"></b><span class="pv-title"></span><span class="pv-sub"></span></div>
+          <span class="pv-points" hidden></span>
           <span class="pv-badge" hidden></span>
         </div>
         <div class="pv-bottom">
@@ -222,7 +229,7 @@ export function watchScreen(what) {
   root.append(chatRoot)
   const ui = {
     top: $('.pv-ui'), avatar: $('.pv-avatar'), name: $('.pv-name'), title: $('.pv-title'), sub: $('.pv-sub'),
-    badge: $('.pv-badge'), progress: $('.pv-progress'), cur: $('.pv-time-cur'), end: $('.pv-time-end'),
+    points: $('.pv-points'), badge: $('.pv-badge'), progress: $('.pv-progress'), cur: $('.pv-time-cur'), end: $('.pv-time-end'),
     played: $('.pv-played'), bar: $('.pv-bar'), loading: $('.pv-loading'), loadingText: $('.pv-loading-text'),
     msg: $('.pv-msg'), msgText: $('.pv-msg-text'), msgActions: $('.pv-msg-actions'), panel: $('.pv-panel'), compose: $('.pv-compose'),
   }
@@ -534,6 +541,15 @@ export function watchScreen(what) {
     p.load({ links: links.links, variants: token.variants, kind: 'live' })
     p.setLiveSource(links.source)
     chat.openLive({ channel: login, channelId: info?.id ?? null })
+    // Points, série et prédiction : seulement avec la session web (et
+    // selon les réglages) ; une minute regardée seulement pendant la lecture.
+    points.start({
+      login,
+      channelId: info?.id ?? null,
+      broadcastId: () => token.info?.stream?.id ?? null,
+      top: ui.points,
+      isPlaying: () => session === token && !p.video.paused && !p.video.ended && ui.msg.hidden && !document.hidden,
+    })
     paintInfo(info)
     paint()
     store.addHistory(login, 'channel', info?.displayName || login, { avatar: info?.profileImageURL || '' })
@@ -547,6 +563,7 @@ export function watchScreen(what) {
         clearInterval(infoTimer)
         p.stop()
         chat.close()
+        points.stop()
         return showMessage(tt('tv_live_ended'), { channel: true })
       }
       token.info = fresh
@@ -613,6 +630,7 @@ export function watchScreen(what) {
     clearInterval(uptimeTimer)
     p.destroy()
     chat.close()
+    points.stop()
     lastSave = 0
   }
 

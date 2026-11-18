@@ -8,6 +8,8 @@
 //    par un. 150 lignes au plus.
 //  - Mêmes filtres que le site : bots connus, pseudos bloqués, mots masqués,
 //    commandes, subs offerts, emotes masquées.
+//  - Solde des points et prédiction en cours : posés par livepoints.js
+//    dans l'en-tête (.chat-points) et au-dessus des messages (.chat-events).
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { LiveChat } from '../../public/assets/js/chat/live.js'
@@ -40,10 +42,13 @@ export class TvChat {
     this.pending = []      // à peindre au prochain lot
     this.timer = null
     this.renewed = false
-    root.innerHTML = `<div class="chat-head"><b class="chat-title"></b><span class="chat-status"></span></div>
-      <div class="chat-list"></div><div class="chat-empty" hidden></div>`
+    // .chat-points et .chat-events : solde et prédiction (livepoints.js).
+    root.innerHTML = `<div class="chat-head"><b class="chat-title"></b><span class="chat-points" hidden></span><span class="chat-status"></span></div>
+      <div class="chat-events" hidden></div><div class="chat-list"></div><div class="chat-empty" hidden></div>`
     this.el = {
       title: root.querySelector('.chat-title'),
+      points: root.querySelector('.chat-points'),
+      events: root.querySelector('.chat-events'),
       status: root.querySelector('.chat-status'),
       list: root.querySelector('.chat-list'),
       empty: root.querySelector('.chat-empty'),
