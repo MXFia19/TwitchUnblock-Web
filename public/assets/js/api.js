@@ -762,21 +762,27 @@ export function customSourceBase(v) {
   } catch { return null }
 }
 
-/** Sources du direct, dans l'ordre automatique : Luminous Asie, PerfProd
- *  Asie, proxy albanais (TTV.LOL) et son second serveur, Luminous Europe
- *  et Europe 2, Twitch officiel (avec ses pubs). */
-export const LIVE_SOURCES = ['as', 'pp', 'al', 'al2', 'eu', 'eu2', 'twitch']
+/** Sources du direct, dans l'ordre automatique : Bulgarie (test : le relais
+ *  TwitchUnblock d'un VPS à Sofia prend jeton et playlists depuis la
+ *  Bulgarie, voir le Worker), puis Twitch officiel. */
+export const LIVE_SOURCES = ['bg', 'twitch']
+/** Proxys retirés le 18/11 (Luminous, PerfProd, nadeko/TTV.LOL) : ils
+ *  laissaient passer des centaines de pubs par jour. Un ordre enregistré qui
+ *  en contient encore date d'avant : il reprend l'ordre automatique (Ma
+ *  source gardée). */
+const RETIRED_SOURCES = new Set(['as', 'pp', 'al', 'al2', 'eu', 'eu2'])
 /** Source ajoutée → celle qu'elle secourt : un ordre enregistré avant elle
- *  la reçoit juste après (comme le Worker). */
-const LIVE_SOURCE_BACKUP_OF = { pp: 'as', al2: 'al', eu2: 'eu' }
+ *  la reçoit juste après (comme le Worker). Aucune aujourd'hui. */
+const LIVE_SOURCE_BACKUP_OF = {}
 
 /** Ordre choisi dans les réglages ; avant lui, une seule source préférée
  *  (`liveSource`), mise en tête. Une source inconnue est ignorée, une
  *  oubliée ajoutée juste après celle qu'elle secourt, sinon à la fin :
  *  toutes restent essayées. */
 export function liveSourceOrder(prefs = store.prefs) {
-  const saved = Array.isArray(prefs.liveSourceOrder) ? prefs.liveSourceOrder
+  let saved = Array.isArray(prefs.liveSourceOrder) ? prefs.liveSourceOrder
     : LIVE_SOURCES.includes(prefs.liveSource) ? [prefs.liveSource] : []
+  if (saved.some((id) => RETIRED_SOURCES.has(id))) saved = saved.filter((id) => id === 'custom')
   // Source perso, quand une adresse valable est réglée : en tête tant
   // qu'on ne l'a pas rangée ailleurs.
   const custom = Boolean(customSourceBase(prefs.customSource))

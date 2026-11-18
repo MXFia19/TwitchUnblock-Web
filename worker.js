@@ -435,8 +435,12 @@ async function handleGetLive(url, workerOrigin) {
     
     // Ordre des sources choisi dans les réglages : essayées l'une après
     // l'autre jusqu'à ce qu'une réponde, pour que le direct se lance quand
-    // même ; `source`, dans la réponse, dit laquelle a servi.
-    const steps = liveSourceSteps(url.searchParams.get('order'), url.searchParams.get('source'));
+    // même ; `source`, dans la réponse, dit laquelle a servi. `only=1` : la
+    // source demandée seule (le relais de Sofia, qui ne sert que Twitch).
+    const wanted = url.searchParams.get('source');
+    const steps = url.searchParams.get('only') === '1'
+        ? (LIVE_SOURCE_IDS.includes(wanted) ? [wanted] : [])
+        : liveSourceSteps(url.searchParams.get('order'), wanted);
     // Source perso du site (adresse d'un serveur luminous-ttv) : à son rang
     // dans l'ordre demandé, en tête s'il n'en dit rien.
     const custom = customSourceBase(url.searchParams.get('custom'));
@@ -453,9 +457,16 @@ async function handleGetLive(url, workerOrigin) {
     const seen = {};
     for (const id of steps) {
         try {
+            // Bulgarie : la réponse du relais de Sofia telle quelle (liens,
+            // qualités, titre…), ses liens passant par lui.
+            if (id === 'bg') {
+                const bg = await bulgariaLive(login, workerOrigin);
+                if (bg) return jsonResponse({ ...bg, source: 'bg' });
+                continue;
+            }
             const got = id === 'twitch' ? await usherLiveMaster(login, seen)
                 : id === 'custom' ? await customLiveMaster(custom, login)
-                : await proxyLiveMaster(LIVE_PROXIES[id](login));
+                : null;
             if (!got) continue;
             m3u8Content = got.text;
             masterUrl = got.url;
@@ -676,49 +687,30 @@ const CLOUDFRONT_GQL_PER_PERSON = 6;
 // Redirections de l'amont suivies au plus (la suivante est refusée).
 const PROXY_MAX_REDIRECTS = 4;
 
-// Proxys au format TTV.LOL v1 : la requête usher, encodée, après
-// /playlist/<chaîne>.m3u8 (« %3F » compris). Celui-ci est en Albanie ; ses
-// variantes se lisent de n'importe quelle adresse et annoncent leurs segments
-// d'avance, comme celles de Luminous.
-const TTVLOL_HOSTS = ['twitch-al.nadeko.net'];
-const ttvlolUrl = (host, login) =>
-    `https://${host}/playlist/${login}.m3u8%3F${encodeURIComponent('allow_source=true&allow_audio_only=true&fast_bread=true')}`;
-
-// Sources du direct, dans l'ordre automatique. Les proxys évitent la plupart
-// des pubs, pas toutes : les pré-rolls à l'ouverture et les pauses pub lancées
-// par la chaîne (« Commercial break in progress », DATERANGE
-// « twitch-stitched-ad ») arrivent sur toutes les sources à la même seconde
-// (sondes du 14/10) — le lecteur les signale et coupe le son. Ne pas passer le
-// jeton en playerType « popout » : avec un Device-ID, il reçoit les mêmes.
-// Twitch officiel : jeton « embed » sans Device-ID depuis le 12/11, bien
-// moins de pubs que « site » (voir getAccessToken).
+// Sources du direct, dans l'ordre automatique : Bulgarie (bg), puis Twitch
+// officiel. Les pré-rolls et les pauses pub lancées par la chaîne
+// (« Commercial break in progress », DATERANGE « twitch-stitched-ad »)
+// peuvent arriver sur toutes les sources — le lecteur les signale et coupe le
+// son. Ne pas passer le jeton en playerType « popout » : avec un Device-ID,
+// il reçoit les mêmes. Twitch officiel : jeton « embed » sans Device-ID
+// depuis le 12/11, bien moins de pubs que « site » (voir getAccessToken).
 // fast_bread : chaque playlist annonce en plus les deux prochains segments
 // (« EXT-X-TWITCH-PREFETCH »), dont le lecteur du site se sert pour coller au
 // direct.
-// Luminous Asie d'abord, comme l'app ; l'européen renvoie des listes au
-// format des serveurs IVS, où « Source » donnait un écran noir chez des
-// utilisateurs. Twitch officiel, avec ses pubs, vient en dernier — ou en
-// premier si on le choisit.
-// Une source = un serveur (sondés le 27/10 sur trois directs, sans
-// pré-roll) : as = Luminous Asie (Ouzbékistan), pp = PerfProd Asie
-// (Maurice), al = nadeko Albanie (format TTV.LOL), al2 = twitch.nadeko.net
-// (l'autre serveur de nadeko, format Luminous ; twitch.zzls.xyz n'est
-// qu'une redirection 301 vers lui), eu / eu2 = Luminous Europe et Europe 2.
+// bg = « Bulgarie » (test depuis le 18/11) : le relais TwitchUnblock d'un VPS
+// à Sofia (docker/relay.mjs, LIVE_SOURCE=twitch) prend le jeton, la liste
+// maîtresse et les playlists de la vidéo depuis la Bulgarie (par son IPv6 :
+// Twitch situe son IPv4 en Allemagne) ; ses liens passent par lui, les
+// segments restent en direct. Les proxys publics (Luminous Asie/Europe,
+// PerfProd, nadeko/TTV.LOL : as, pp, al, al2, eu, eu2) ont été retirés le
+// 18/11 : ils laissaient passer des centaines de pubs par jour (/stats). Un
+// client qui les demande encore les voit ignorés (liveSourceSteps).
 const LIVE_QUERY = 'allow_source=true&allow_audio_only=true&fast_bread=true';
-const luminousSource = (host) => (login) => ({ url: `https://${host}/live/${login}?${LIVE_QUERY}`, headers: getRequestHeaders(login) });
-const LIVE_PROXIES = {
-    as: luminousSource('as.luminous.dev'),
-    pp: luminousSource('lb-as.cdn-perfprod.com'),
-    al: (login) => ({ url: ttvlolUrl(TTVLOL_HOSTS[0], login), headers: { 'X-Donate-To': 'https://ttv.lol/donate' } }),
-    al2: luminousSource('twitch.nadeko.net'),
-    eu: luminousSource('eu.luminous.dev'),
-    eu2: luminousSource('eu2.luminous.dev'),
-};
-const LIVE_PROXY_ORDER = ['as', 'pp', 'al', 'al2', 'eu', 'eu2'];
-const LIVE_SOURCE_IDS = [...LIVE_PROXY_ORDER, 'twitch'];
+const BG_RELAY = 'https://2-58-32-226.sslip.io';
+const LIVE_SOURCE_IDS = ['bg', 'twitch'];
 // Source ajoutée → celle qu'elle secourt : un ordre d'avant elle (réglages
-// enregistrés, app pas à jour) la reçoit juste après.
-const LIVE_SOURCE_BACKUP_OF = { pp: 'as', al2: 'al', eu2: 'eu' };
+// enregistrés, app pas à jour) la reçoit juste après. Aucune aujourd'hui.
+const LIVE_SOURCE_BACKUP_OF = {};
 
 /** Sources à essayer, dans l'ordre demandé (`order=eu,as,…`) ; une source
  *  inconnue est ignorée, une oubliée ajoutée juste après celle qu'elle
@@ -739,8 +731,8 @@ function liveSourceSteps(order, wanted) {
 }
 
 /** Délai d'une source du direct. Une source qui acceptait la connexion sans
- *  répondre retenait toutes les suivantes, jusqu'à ~100 s. 5 s : les six
- *  proxys et Twitch tiennent dans les 45 s du site. */
+ *  répondre retenait toutes les suivantes, jusqu'à ~100 s. 5 s (8 s pour le
+ *  relais de Sofia, bulgariaLive) : tout tient dans les 45 s du site. */
 const LIVE_SOURCE_TIMEOUT = 5000;
 
 /** Source perso du site (prefs.customSource) : l'adresse d'un serveur
@@ -771,8 +763,21 @@ async function customLiveMaster(base, login) {
     return urls.length && urls.every((u) => /^https:\/\/[a-z0-9.-]+\.ttvnw\.net\//i.test(u)) ? got : null;
 }
 
-/** Liste maîtresse d'un proxy ; null s'il ne répond pas ou si la
- *  chaîne y est hors ligne (pas de « #EXT-X-STREAM-INF »). */
+/** Source « Bulgarie » : la réponse de /api/get-live du relais de Sofia
+ *  (ses liens passent par lui), ou null s'il ne répond pas ou si Twitch n'y
+ *  sert pas ce direct. Jamais depuis ce relais lui-même : il s'appellerait
+ *  en boucle (il ne demande d'ailleurs que la source Twitch, `only=1`). */
+async function bulgariaLive(login, workerOrigin) {
+    if (workerOrigin === BG_RELAY) return null;
+    const r = await fetch(`${BG_RELAY}/api/get-live?name=${encodeURIComponent(login)}`, { signal: AbortSignal.timeout(8000) });
+    if (!r.ok) return null;
+    const data = await r.json().catch(() => null);
+    return data?.links && typeof data.links === 'object' && Object.keys(data.links).length ? data : null;
+}
+
+/** Liste maîtresse d'un serveur au format luminous-ttv (la source perso) ;
+ *  null s'il ne répond pas ou si la chaîne y est hors ligne (pas de
+ *  « #EXT-X-STREAM-INF »). */
 async function proxyLiveMaster(c) {
     const r = await fetch(c.url, { headers: c.headers, signal: AbortSignal.timeout(LIVE_SOURCE_TIMEOUT) });
     if (!r.ok) return null;

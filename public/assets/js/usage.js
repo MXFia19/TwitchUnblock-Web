@@ -21,7 +21,7 @@ import { API_URL } from './api.js'
 import { uid } from './util.js'
 import { connect, usageFields } from './connect.js'
 
-export const SITE_VERSION = '2026.11.15a'
+export const SITE_VERSION = '2026.11.18a'
 const ID_KEY = 'tu_install_id'
 const LAST_KEY = 'tu_last_ping'
 const EV_KEY = 'tu_usage_ev'
@@ -105,7 +105,7 @@ export function count(event, enabled) {
 }
 
 // Sources connues du Worker pour les pubs ; une autre part en « other ».
-const AD_SOURCES = new Set(['as', 'pp', 'al', 'al2', 'eu', 'eu2', 'custom', 'worker', 'account', 'twitch'])
+const AD_SOURCES = new Set(['as', 'pp', 'al', 'al2', 'eu', 'eu2', 'bg', 'custom', 'worker', 'account', 'twitch'])
 
 /** Pause pub vue (lecteur, une fois par pause) : le compteur du jour, et son
  *  heure UTC avec la source du direct et le type de pause (« pre » : pré-roll

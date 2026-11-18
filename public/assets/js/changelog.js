@@ -6,6 +6,23 @@
 
 export const CHANGELOG = [
   {
+    version: '2026.11.18a',
+    items: {
+      fr: [
+        'Sources du direct : les proxys publics (Luminous, PerfProd, nadeko) sont retirés, ils laissaient passer des centaines de pubs par jour. Nouvelle source en test, « Bulgarie » : un relais TwitchUnblock à Sofia prend le direct depuis la Bulgarie, où Twitch sert peut-être moins de pubs ; si elle ne répond pas, Twitch officiel prend le relais. Un ordre de sources enregistré avec les proxys revient à l’ordre par défaut.',
+      ],
+      en: [
+        'Live sources: the public proxies (Luminous, PerfProd, nadeko) are gone — they let hundreds of ads a day through. New test source, “Bulgaria”: a TwitchUnblock relay in Sofia fetches the stream from Bulgaria, where Twitch may serve fewer ads; when it doesn’t answer, official Twitch takes over. A source order saved with the proxies goes back to the default one.',
+      ],
+      es: [
+        'Fuentes del directo: se retiran los proxys públicos (Luminous, PerfProd, nadeko), dejaban pasar cientos de anuncios al día. Nueva fuente en prueba, «Bulgaria»: un relé de TwitchUnblock en Sofía toma el directo desde Bulgaria, donde Twitch quizá sirva menos anuncios; si no responde, Twitch oficial toma el relevo. Un orden de fuentes guardado con los proxys vuelve al orden por defecto.',
+      ],
+      ru: [
+        'Источники трансляций: публичные прокси (Luminous, PerfProd, nadeko) убраны — они пропускали сотни реклам в день. Новый тестовый источник «Болгария»: ретранслятор TwitchUnblock в Софии получает трансляцию из Болгарии, где Twitch, возможно, показывает меньше рекламы; если он не отвечает, его заменяет официальный Twitch. Сохранённый порядок источников с прокси возвращается к порядку по умолчанию.',
+      ],
+    },
+  },
+  {
     version: '2026.11.15a',
     items: {
       fr: [

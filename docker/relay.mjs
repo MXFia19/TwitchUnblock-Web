@@ -116,6 +116,7 @@ async function handleLiveSource(req, res, url) {
   const ask = new URL('/api/get-live', url.origin)
   ask.searchParams.set('name', url.searchParams.get('name') || '')
   ask.searchParams.set('source', 'twitch')
+  ask.searchParams.set('only', '1')
   const r = await worker.fetch(new Request(ask), { PROXY_FETCH: proxyFetch }, { waitUntil() {}, passThroughOnException() {} })
   let body = await r.text()
   let status = r.status
