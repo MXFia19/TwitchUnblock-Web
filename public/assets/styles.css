@@ -500,6 +500,13 @@ a.card, a.cat-card { display: block; }
 .filter:focus-within { border-color: var(--primary); }
 .filter input { width: 180px; background: none; border: 0; outline: none; color: var(--text); font-size: 14px; }
 .filter-count { margin: -6px 0 12px; font-size: 13px; }
+/* VODs d'une chaîne : menu des jeux (le sélecteur des langues des
+   catégories, .cat-lang, à la taille du champ de recherche) puis le champ. */
+.vod-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.cat-lang.vod-game { height: 36px; background: var(--card); border: 1px solid var(--line-strong); }
+.cat-lang.vod-game:focus-within { border-color: var(--primary); }
+.cat-lang.vod-game[hidden] { display: none; }
+.cat-lang.vod-game select { max-width: 200px; }
 
 /* ── Lien / ID ─────────────────────────────────────────────────────────── */
 .link-card { max-width: 640px; margin: 6vh auto; padding: 34px 26px; border-radius: 20px; text-align: center; background: var(--card); border: 1px solid var(--line); }

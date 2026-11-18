@@ -3341,6 +3341,9 @@ async function searchChannel(raw, { tab } = {}) {
   let failed = false
   let unknown = false
   const miss = () => { failed = true; return null }
+  // Jeux des 100 premières VODs, chapitres compris (filtre par jeu) : à
+  // côté, sans retarder la page.
+  const vodGames = api.getChannelVideoGames(login).catch(() => null)
   const [info, videos] = await Promise.all([
     api.getChannelInfo(login).catch(miss),
     api.getChannelVideos(login).catch((e) => {
@@ -3362,7 +3365,10 @@ async function searchChannel(raw, { tab } = {}) {
   }
   if (tab) state.channelTab = tab
   else if (state.channel?.login !== login) state.channelTab = 'vods'
-  state.channel = { login, info, videos: videos?.videos ?? [], vodsAfter: videos?.after ?? null, vodsMore: Boolean(videos?.more), vodsRefused: false }
+  state.channel = { login, info, videos: videos?.videos ?? [], vodsAfter: videos?.after ?? null, vodsMore: Boolean(videos?.more), vodsRefused: false,
+    vodGame: '', vodGames: 'loading' }
+  const ch = state.channel
+  vodGames.then((map) => applyVodGames(ch, map))
   store.addHistory(login, 'channel', info?.displayName || login, { avatar: info?.profileImageURL || videos?.avatar || '' })
   pushSync()
   renderRecentChannels()
@@ -3681,8 +3687,54 @@ function unlistedCard(s) {
     </article>`
 }
 
+/** Jeux des VODs chargées, chapitres compris (getChannelVideoGames), du
+ *  plus présent au moins présent : [{ id, name, n }]. */
+function vodGameList(ch) {
+  const all = new Map()
+  for (const v of ch.videos) {
+    for (const g of Array.isArray(v.games) ? v.games : []) {
+      const x = all.get(g.id)
+      if (x) x.n++
+      else all.set(g.id, { ...g, n: 1 })
+    }
+  }
+  return [...all.values()].sort((a, b) => b.n - a.n || a.name.localeCompare(b.name, lang()))
+}
+
+/** Menu « Tous les jeux » des VODs (demande n° 7) : affiché une fois les
+ *  jeux des chapitres connus, s'il y en a au moins deux. Refait seulement
+ *  quand sa liste change : la grille est refaite à chaque frappe du
+ *  mot-clé. */
+function paintVodGames(ch, games = vodGameList(ch)) {
+  const box = $('#vod-game-box')
+  const sel = $('#vod-game')
+  if (!box || !sel) return
+  box.hidden = ch.vodGames !== 'ok' || (games.length < 2 && !ch.vodGame)
+  const sig = `${ch.vodGame}|${games.map((g) => `${g.id}:${g.n}`).join(',')}`
+  if (sel.dataset.sig === sig) return
+  sel.dataset.sig = sig
+  sel.innerHTML = `<option value="">${esc(t('vod_games_all'))}</option>${games.map((g) => `<option value="${esc(g.id)}"${g.id === ch.vodGame ? ' selected' : ''}>${esc(g.name)} (${g.n})</option>`).join('')}`
+}
+
+/** Jeux des 100 premières VODs arrivés, à côté de la liste (searchChannel).
+ *  Sans eux (Twitch injoignable depuis le navigateur, refus), le menu ne
+ *  s'affiche pas : le champ `game` seul ne donne que la première catégorie
+ *  de chaque VOD, un filtre faux. */
+function applyVodGames(ch, map) {
+  if (state.channel !== ch) return
+  ch.vodGames = map ? 'ok' : 'off'
+  if (map) {
+    for (const v of ch.videos) {
+      const g = map.get(String(v.id))
+      if (g) v.games = g
+    }
+  }
+  paintVodGames(ch)
+}
+
 /** Grille des VODs, non listées comprises, filtrée par le mot-clé (titre ou
- *  date). Refaite à la frappe et à l'arrivée des non listées. */
+ *  date) et par le jeu choisi. Refaite à la frappe, au choix d'un jeu et à
+ *  l'arrivée des non listées. */
 function renderVodGrid() {
   const ch = state.channel
   const grid = $('#channel-vods')
@@ -3690,6 +3742,16 @@ function renderVodGrid() {
   const keyword = ($('#vod-filter')?.value ?? '').trim().toLowerCase()
   const name = ch.info?.displayName || ch.login
   const unlisted = unlistedStreams()
+  // Jeu choisi : les VODs où il passe, chapitres compris (comme le filtre de
+  // Twitch) ; les non listées par le nom de leur jeu, seul connu de leur
+  // source.
+  const games = vodGameList(ch)
+  const game = (ch.vodGames === 'ok' && games.find((g) => g.id === ch.vodGame)) || null
+  if (!game) ch.vodGame = ''
+  paintVodGames(ch, games)
+  const gameName = game ? game.name.toLowerCase() : ''
+  const inGame = (v) => !game || (Array.isArray(v.games) && v.games.some((g) => g.id === game.id))
+  const unlistedInGame = (s) => !game || String(s.game ?? '').trim().toLowerCase() === gameName
   // Date : au format court des cartes (« 5 oct. 2026 ») comme au format
   // numérique (« 05/10/2026 »), sans le point des mois abrégés — taper
   // « oct » ou « 5 oct 2026 » ne trouvait rien.
@@ -3702,14 +3764,19 @@ function renderVodGrid() {
   const match = (title, ms) => !keyword || String(title ?? '').toLowerCase().includes(keyword)
     || dateText(ms).includes(wanted)
   const items = [
-    ...ch.videos.map((v) => ({ t: Date.parse(v.publishedAt) || 0, title: v.title, html: () => vodCard(v, name) })),
-    ...unlisted.map((s) => ({ t: s.epoch * 1000, title: s.title, html: () => unlistedCard(s) })),
+    ...ch.videos.filter(inGame).map((v) => ({ t: Date.parse(v.publishedAt) || 0, title: v.title, html: () => vodCard(v, name) })),
+    ...unlisted.filter(unlistedInGame).map((s) => ({ t: s.epoch * 1000, title: s.title, html: () => unlistedCard(s) })),
   ].filter((x) => match(x.title, x.t)).sort((a, b) => b.t - a.t)
-  grid.innerHTML = items.length ? items.map((x) => x.html()).join('') : (keyword ? '' : emptyState(t('no_vod'), 'film'))
+  grid.innerHTML = items.length ? items.map((x) => x.html()).join('') : (keyword || game ? '' : emptyState(t('no_vod'), 'film'))
   const count = $('#vod-filter-count')
   if (count) {
-    count.hidden = !keyword
-    count.textContent = keyword ? (items.length ? t('filter_count', { n: items.length, k: keyword }) : t('filter_none', { k: keyword })) : ''
+    let text = ''
+    if (game) text = t(keyword ? 'vod_game_count_k' : 'vod_game_count', { n: items.length, g: game.name, k: keyword })
+    else if (keyword) text = items.length ? t('filter_count', { n: items.length, k: keyword }) : t('filter_none', { k: keyword })
+    // Jeu choisi : parmi les VODs chargées seulement, la suite peut en avoir.
+    if (game && ch.vodsAfter && !ch.vodsRefused) text += ` · ${t('vod_game_partial')}`
+    count.hidden = !text
+    count.textContent = text
   }
   const hint = $('#unlisted-hint')
   if (hint) {
@@ -3731,14 +3798,19 @@ function vodsMoreHtml(ch) {
 }
 
 /** 100 VODs de plus (Client-ID Android, sans compte), fusionnées et triées
- *  avec les non listées par renderVodGrid. */
+ *  avec les non listées par renderVodGrid. Leurs jeux (chapitres compris)
+ *  sont demandés en même temps, au même curseur, sauf si ceux de la
+ *  première page n'ont pas pu l'être (pas de filtre par jeu). */
 async function loadMoreVods() {
   const ch = state.channel
   if (!ch?.vodsAfter || ch.vodsRefused || ch.vodsLoading) return
   ch.vodsLoading = true
   const btn = $('#channel-vods-more button')
   if (btn) btn.disabled = true
-  const page = await api.getChannelVideosAfter(ch.login, ch.vodsAfter).catch(() => null)
+  const [page, games] = await Promise.all([
+    api.getChannelVideosAfter(ch.login, ch.vodsAfter).catch(() => null),
+    ch.vodGames !== 'off' ? api.getChannelVideoGames(ch.login, ch.vodsAfter).catch(() => null) : null,
+  ])
   ch.vodsLoading = false
   // Une autre chaîne ouverte entre-temps : cette page n'est pas la sienne.
   if (state.channel !== ch) return
@@ -3748,7 +3820,12 @@ async function loadMoreVods() {
     ch.vodsRefused = true
   } else {
     const known = new Set(ch.videos.map((v) => v.id))
-    ch.videos.push(...page.videos.filter((v) => !known.has(v.id)))
+    const fresh = page.videos.filter((v) => !known.has(v.id))
+    for (const v of fresh) {
+      const g = games?.get(String(v.id))
+      if (g) v.games = g
+    }
+    ch.videos.push(...fresh)
     ch.vodsAfter = page.after
     ch.vodsMore = page.more
   }
@@ -3879,7 +3956,10 @@ function renderChannel(keyword = '') {
     <section class="block" data-cpanel="vods" ${tab === 'vods' ? '' : 'hidden'}>
       <div class="block-head">
         <h2>${icon('film', 18)}<span>${esc(t('vods'))}</span></h2>
-        <label class="filter">${icon('search', 16)}<input id="vod-filter" type="search" value="${esc(keyword)}" placeholder="${esc(t('search'))}…"></label>
+        <div class="vod-tools">
+          <label class="cat-lang vod-game" id="vod-game-box" title="${esc(t('vod_game_filter'))}" hidden>${icon('gamepad', 15)}<select id="vod-game" aria-label="${esc(t('vod_game_filter'))}"></select></label>
+          <label class="filter">${icon('search', 16)}<input id="vod-filter" type="search" value="${esc(keyword)}" placeholder="${esc(t('search'))}…"></label>
+        </div>
       </div>
       <p class="muted filter-count" id="vod-filter-count" hidden></p>
       <p class="muted small unlisted-hint" id="unlisted-hint" hidden>${icon('eyeOff', 14)}<span>${esc(t('unlisted_hint'))}</span></p>
@@ -3915,6 +3995,11 @@ function renderChannel(keyword = '') {
 
   // Seule la grille est refaite à la frappe : le champ garde son focus.
   $('#vod-filter').addEventListener('input', debounce(renderVodGrid, 200))
+  $('#vod-game').addEventListener('change', (e) => {
+    if (!state.channel) return
+    state.channel.vodGame = e.target.value
+    renderVodGrid()
+  })
 }
 
 /** Commandes des bots d'une chaîne hors ligne : la liste du chat

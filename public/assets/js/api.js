@@ -959,6 +959,53 @@ export async function getChannelVideosAfter(login, after) {
   return { ...page, more: page.more || r.refused, refused: r.refused }
 }
 
+// Jeux de chaque VOD, chapitres compris (filtre par jeu de la page d'une
+// chaîne). Le champ `game` d'une VOD n'est que sa première catégorie : une
+// VOD lancée sur « Just Chatting » puis passée sur un jeu n'y montre que
+// « Just Chatting » (sur 100 VODs d'une chaîne, 16 jeux par `game`, 91 par
+// les chapitres, 18/11). Ses chapitres (moments VIDEO_CHAPTER_MARKERS) les
+// donnent tous, comme le filtre de Twitch (`options: { gameIDs }`, qui
+// garde aussi une VOD où le jeu ne passe qu'en cours de route). À part de
+// CHANNEL_VODS_Q, qui reste aussi léger qu'avant (+50 % de poids avec les
+// chapitres) : même liste, même curseur, demandée à côté.
+const CHANNEL_VOD_GAMES_Q = `query($l: String!, $after: Cursor) { user(login: $l) {
+  videos(first: 100, type: ARCHIVE, sort: TIME, after: $after) {
+    edges { node { id game { id displayName }
+      moments(first: 25, momentRequestType: VIDEO_CHAPTER_MARKERS) { edges { node { details { ... on GameChangeMomentDetails { game { id displayName } } } } } } } }
+  } } }`
+
+/** Jeux de chaque VOD d'une page de la liste (même `after` que
+ *  getChannelVideos / getChannelVideosAfter) : Map id de VOD → [{ id, name }],
+ *  dans l'ordre où ils passent. Page 1 avec le Client-ID web, la suite sans
+ *  compte (gqlNext). null si Twitch ne les donne pas (refus, requête en
+ *  erreur : pas de jeux à moitié). Lève sur une panne réseau. */
+export async function getChannelVideoGames(login, after = null) {
+  let data
+  if (after) {
+    const r = await gqlNext(CHANNEL_VOD_GAMES_Q, { l: login, after })
+    if (r.refused) return null
+    data = r.data
+  } else {
+    const r = await gqlRaw(CHANNEL_VOD_GAMES_Q, { l: login, after: null })
+    if (r?.errors?.length) return null
+    data = r?.data
+  }
+  const edges = data?.user?.videos?.edges
+  if (!Array.isArray(edges)) return null
+  const out = new Map()
+  for (const e of edges) {
+    const v = e?.node
+    if (!v?.id) continue
+    const games = new Map()
+    for (const g of [v.game, ...(v.moments?.edges ?? []).map((m) => m?.node?.details?.game)]) {
+      const id = g?.id ? String(g.id) : ''
+      if (id && !games.has(id)) games.set(id, { id, name: String(g.displayName || id) })
+    }
+    out.set(String(v.id), [...games.values()])
+  }
+  return out
+}
+
 // ── Récupération de VODs supprimées ──────────────────────────────────────────
 // Tout passe par le Worker : le navigateur ne peut joindre ni la source de
 // métadonnées ni le CDN de Twitch (CORS).
