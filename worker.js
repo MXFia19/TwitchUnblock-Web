@@ -1318,12 +1318,12 @@ const USAGE_EXT_VERSION = /^\d{1,4}\.\d{1,4}\.\d{1,4}$/;
 const USAGE_EXT_BROWSERS = ['chrome', 'firefox', 'other'];
 // live_account : direct de l'app servi par le compte d'un abonné sans pub ;
 // live_ad_break : pause pub de la chaîne affichée (une fois par pause).
-const USAGE_EVENTS = ['live_as', 'live_pp', 'live_al', 'live_al2', 'live_eu', 'live_eu2', 'live_custom', 'live_twitch', 'live_account', 'live_worker', 'live_unknown',
+const USAGE_EVENTS = ['live_as', 'live_pp', 'live_al', 'live_al2', 'live_eu', 'live_eu2', 'live_bg', 'live_custom', 'live_proxy', 'live_twitch', 'live_account', 'live_worker', 'live_unknown',
     'live_fail', 'live_play_fail', 'live_ad_break', 'vod', 'vod_fail', 'vod_play_fail'];
 // Source d'une pause pub vue (adh_…, comme live_*) ; une autre : « other ».
 // « account » : le compte (sans pub, qualités supérieures, dernier recours) ;
 // lui et « twitch » ont des pubs attendues, /stats les met à part.
-const AD_SOURCES = new Set(['as', 'pp', 'al', 'al2', 'eu', 'eu2', 'bg', 'custom', 'worker', 'twitch', 'account']);
+const AD_SOURCES = new Set(['as', 'pp', 'al', 'al2', 'eu', 'eu2', 'bg', 'custom', 'proxy', 'worker', 'twitch', 'account']);
 
 // POST /api/ping — { id, version, platform } enregistre ; { id, forget: true } efface.
 async function handlePing(request, env) {
