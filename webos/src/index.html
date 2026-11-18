@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TwitchUnblock</title>
+  <link rel="stylesheet" href="app.css">
+</head>
+<body>
+  <div id="app"></div>
+  <div id="boot" class="boot"><img src="largeIcon.png" alt=""><p id="boot-msg"></p></div>
+  <script>
+    // Démarrage, écrit en ES5 : sur une TV trop ancienne, un avis plutôt
+    // qu'un écran vide. Puis, dans l'ordre : config.js (adresses), hls.js,
+    // et l'app (app.js, un seul script fabriqué par tools/build-webos.mjs).
+    // Si l'app ne démarre pas, l'erreur s'affiche (à recopier pour un
+    // signalement) ; Retour quitte.
+    (function () {
+      // Syntaxe réécrite pour Chromium 79 (webOS 6, TV de 2021) à la fabrication.
+      var MIN_CHROME = 79
+      var TEXTS = {
+        en: { old: 'This TV’s browser is too old for TwitchUnblock (Chromium {v}). It needs webOS 6 (2021 TVs) or newer.', fail: 'TwitchUnblock couldn’t start.' },
+        fr: { old: 'Le navigateur de cette TV est trop ancien pour TwitchUnblock (Chromium {v}) : il faut webOS 6 (TV de 2021) ou plus récent.', fail: 'TwitchUnblock n’a pas pu démarrer.' },
+        es: { old: 'El navegador de este televisor es demasiado antiguo para TwitchUnblock (Chromium {v}): hace falta webOS 6 (televisores de 2021) o más reciente.', fail: 'TwitchUnblock no se pudo iniciar.' },
+        ru: { old: 'Браузер этого телевизора слишком старый для TwitchUnblock (Chromium {v}): нужен webOS 6 (телевизоры 2021 года) или новее.', fail: 'Не удалось запустить TwitchUnblock.' },
+        zh: { old: '這台電視的瀏覽器版本太舊，無法使用 TwitchUnblock（Chromium {v}）：需要 webOS 6（2021 年的電視）或更新版本。', fail: 'TwitchUnblock 無法啟動。' }
+      }
+      var T = TEXTS[String(navigator.language || 'en').slice(0, 2).toLowerCase()] || TEXTS.en
+      var msg = document.getElementById('boot-msg')
+      var lastError = ''
+      window.onerror = function (message, source, line) {
+        if (!lastError) lastError = String(message) + (line ? ' (' + String(source || '').split('/').pop() + ':' + line + ')' : '')
+      }
+      document.addEventListener('keydown', function (e) {
+        if (window.__tuBooted || (e.keyCode !== 461 && e.keyCode !== 27)) return
+        var sys = window.webOSSystem || window.PalmSystem
+        if (sys && typeof sys.platformBack === 'function') sys.platformBack()
+        else window.close()
+      })
+      var chrome = /Chrome\/(\d+)/.exec(navigator.userAgent)
+      if (chrome && Number(chrome[1]) < MIN_CHROME) {
+        msg.textContent = T.old.replace('{v}', chrome[1])
+        return
+      }
+      var files = ['config.js', 'vendor/hls.min.js', 'app.js']
+      for (var i = 0; i < files.length; i++) {
+        var s = document.createElement('script')
+        s.src = files[i]
+        s.async = false
+        document.body.appendChild(s)
+      }
+      setTimeout(function () {
+        if (window.__tuBooted) return
+        msg.textContent = T.fail + (lastError ? ' ' + lastError : '')
+      }, 20000)
+    })()
+  </script>
+</body>
+</html>
