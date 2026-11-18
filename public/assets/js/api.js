@@ -738,9 +738,38 @@ const LIVE_TIMEOUT = 45_000
 export async function getLive(login, { avoid = null } = {}) {
   // Ordre des sources (réglages) : le Worker les essaie l'une après l'autre.
   // `source` (la première) pour un Worker d'avant l'ordre.
-  const order = liveSourceOrder()
+  let order = liveSourceOrder()
+  // Bulgarie en tête : le relais de Sofia directement, comme l'app iPhone
+  // (un Worker pas encore à jour ne la connaît pas, et ça lui épargne une
+  // requête). Sans réponse, le Worker fait la suite de l'ordre, sans elle.
+  if (order[0] === 'bg') {
+    const bg = await bulgariaLive(login)
+    if (bg) return bg
+    order = order.length > 1 ? order.slice(1) : ['twitch']
+  }
   const custom = order.includes('custom') ? `&custom=${encodeURIComponent(customSourceBase(store.prefs.customSource))}` : ''
   return viaRelay(await workerJson(`/api/get-live?name=${encodeURIComponent(login)}&proxy=true&source=${order[0]}&order=${order.join(',')}${custom}`, { avoid, timeout: LIVE_TIMEOUT }))
+}
+
+/** Relais de Sofia (source « bg », relay.mjs avec LIVE_SOURCE=twitch) : jeton,
+ *  liste maîtresse et playlists de la vidéo pris depuis la Bulgarie, ses liens
+ *  passant par lui. Même réponse que /api/get-live du Worker ; null sans
+ *  réponse en 8 s (délai écrit à la main : AbortSignal.timeout manque au
+ *  moteur des TV LG de 2023) ou si Twitch n'y sert pas ce direct. */
+const BG_RELAY = 'https://2-58-32-226.sslip.io'
+async function bulgariaLive(login) {
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), 8000)
+  try {
+    const r = await fetch(`${BG_RELAY}/api/get-live?name=${encodeURIComponent(login)}`, { cache: 'no-store', signal: ctrl.signal })
+    if (!r.ok) return null
+    const data = await r.json()
+    return data?.links && typeof data.links === 'object' && Object.keys(data.links).length ? { ...data, source: 'bg' } : null
+  } catch {
+    return null
+  } finally {
+    clearTimeout(timer)
+  }
 }
 
 /** Source perso (Réglages → Lecteur, prefs.customSource ; demande de
