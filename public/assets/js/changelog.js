@@ -6,6 +6,27 @@
 
 export const CHANGELOG = [
   {
+    version: '2026.11.19a',
+    items: {
+      fr: [
+        'VODs : elles restent sur le relais vidéo principal, même quand il est lent. Depuis le 18 novembre, elles passaient alors par le relais de Sofia, mais il ne peut pas toutes les porter : il ne sert plus qu’en cas de panne.',
+        'Directs : quand le relais vidéo principal tombe, le direct passe par le relais de Sofia avant les serveurs Cloudflare, qui ont une limite par jour, et revient sur le relais principal dès son retour. Pareil dans l’app TV LG.',
+      ],
+      en: [
+        'VODs: they now stay on the main video relay, even when it’s slow. Since 18 November they moved to the Sofia relay in that case, but it can’t carry them all: it’s now only used when the main relay is down.',
+        'Lives: when the main video relay goes down, the live switches to the Sofia relay before the Cloudflare servers, which have a daily limit, and goes back to the main relay as soon as it returns. Same in the LG TV app.',
+      ],
+      es: [
+        'VODs: ahora se quedan en el relé de vídeo principal, aunque vaya lento. Desde el 18 de noviembre pasaban entonces por el relé de Sofía, pero no puede con todos: ya solo se usa cuando el relé principal se cae.',
+        'Directos: cuando el relé de vídeo principal se cae, el directo pasa por el relé de Sofía antes que por los servidores de Cloudflare, que tienen un límite diario, y vuelve al relé principal en cuanto regresa. Igual en la app de TV LG.',
+      ],
+      ru: [
+        'VOD: теперь они остаются на основном видеоретрансляторе, даже когда он медленный. С 18 ноября в таком случае они переходили на ретранслятор в Софии, но он не может обслуживать их все: теперь он нужен только при сбое основного.',
+        'Трансляции: когда основной видеоретранслятор падает, трансляция идёт через ретранслятор в Софии, а не сразу через серверы Cloudflare с их дневным лимитом, и возвращается на основной, как только он заработает. То же в приложении для телевизоров LG.',
+      ],
+    },
+  },
+  {
     version: '2026.11.18c',
     items: {
       fr: [

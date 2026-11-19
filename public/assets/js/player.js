@@ -1866,10 +1866,10 @@ export class Player {
 
   /** Segment chargé (FRAG_LOADED) : pendant une VOD servie par le relais
    *  principal, son temps de chargement face à sa durée (slowrelay.js). Deux
-   *  de suite plus lents que leur durée : onSlowRelay (main.js), qui fait
-   *  passer la suite par le relais de Sofia (moveRelay). Plus rien après une
-   *  bascule : les segments partent alors ailleurs, et une lenteur de Sofia
-   *  ou d'un Worker ne déclenche rien. */
+   *  de suite plus lents que leur durée : onSlowRelay (main.js), qui le note
+   *  au journal — la VOD reste sur le relais depuis le 19/11. Plus rien
+   *  après une bascule (moveRelay) : les segments partent alors ailleurs, et
+   *  une lenteur de Sofia ou d'un Worker ne déclenche rien. */
   noteRelaySpeed(watch, frag, token) {
     if (!this.o.onSlowRelay) return
     const timing = fragTiming(frag)
@@ -1879,8 +1879,10 @@ export class Player {
     if (m) this.o.onSlowRelay(m)
   }
 
-  /** Même vidéo par un autre relais (`from` → `to` : relais principal trop
-   *  lent → Sofia, main.js), sans nouvelle instance de hls.js : ce qui est
+  /** Même vidéo par un autre relais (`from` → `to`), sans nouvelle instance
+   *  de hls.js. Plus appelée depuis le 19/11 (la bascule « relais lent →
+   *  Sofia » est retirée, api.js), gardée pour un futur relais dédié aux
+   *  VODs : ce qui est
    *  chargé reste dans le tampon et la lecture continue, les requêtes
    *  suivantes de cette instance partent vers `to` (xhrSetup) — segments, et
    *  playlists des autres qualités d'« Auto ». Les relances, changements de

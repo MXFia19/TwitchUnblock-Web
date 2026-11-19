@@ -3,14 +3,15 @@
 //  navigateur (tools/slow-relay-check.mjs la vérifie).
 //
 //  Chaque segment d'une VOD passe par le relais principal (le CDN des VODs
-//  n'envoie pas d'en-tête CORS, voir api.js). Son VPS n'a qu'un cœur :
-//  saturé, il répond toujours — /health passe, le secours « relais en
-//  panne » ne part pas — mais ne débite plus (0,7 Mb/s le 18/11 sur un
+//  n'envoie pas d'en-tête CORS, voir api.js). Son VPS plafonne vers
+//  50 Mb/s : saturé, il répond toujours — /health passe, le secours « relais
+//  en panne » ne part pas — mais ne débite plus (0,7 Mb/s le 18/11 sur un
 //  segment 1080p60 de 9,4 Mo). Le lecteur (player.js) donne ici chaque
-//  segment chargé ; deux de suite plus lents que leur durée, et la VOD passe
-//  par le relais de Sofia (main.js, api.js). Seulement une VOD, seulement le
-//  relais principal : les segments d'un direct ne passent pas par lui, et
-//  une lenteur du relais de Sofia ou d'un Worker ne déclenche rien.
+//  segment chargé ; deux de suite plus lents que leur durée, et c'est noté
+//  une fois au journal (main.js, slowRelay). Du 18 au 19/11, la VOD passait
+//  alors par le relais de Sofia ; son forfait ne le permet pas (api.js,
+//  « Relais de Sofia »). Seulement une VOD, seulement le relais principal :
+//  les segments d'un direct ne passent pas par lui.
 // ═══════════════════════════════════════════════════════════════════════════
 
 /** Un segment est lent quand son chargement dure plus de SLOW_RATIO fois sa
@@ -18,11 +19,10 @@
  *  seconde et le tampon se vide — la lecture calera tant que ça dure. Pas
  *  plus bas : un segment chargé en 0,9 fois sa durée ne fait pas caler, et
  *  hls.js choisit en « Auto » des qualités qui se chargent près de cette
- *  limite (on basculerait sans raison) ; le relais de Sofia, à ~8 Mb/s, ne
- *  ferait d'ailleurs guère mieux qu'un relais principal sain pour un
- *  1080p60 (~7,5 Mb/s). Pas plus haut : à 1,2, la vidéo cale déjà. */
+ *  limite (on noterait sans raison). Pas plus haut : à 1,2, la vidéo cale
+ *  déjà. */
 export const SLOW_RATIO = 1
-/** Segments lents de suite avant de basculer. Un seul peut venir d'un accroc
+/** Segments lents de suite avant de le noter. Un seul peut venir d'un accroc
  *  (Wi-Fi, segment froid servi d'abord au relais par le CDN) ; deux de
  *  suite, c'est de 4 à 20 s de vidéo (segments de 2 à 10 s) arrivées plus
  *  lentement qu'elles ne se lisent. */
@@ -31,9 +31,6 @@ export const SLOW_STREAK = 2
  *  d'initialisation du fMP4, de durée nulle) : l'attente de la réponse y
  *  pèse plus que le débit. Ni compté ni remis à zéro. */
 export const MIN_SEGMENT_S = 1
-/** Relais principal écarté des VODs après une bascule (api.js, relaySlow) :
- *  les VODs lancées d'ici là partent directement par Sofia. */
-export const RELAY_SLOW_MS = 30 * 60_000
 
 /** Lent : chargé en plus de `ratio` fois sa durée. */
 export const isSlowSegment = (loadMs, durationS, ratio = SLOW_RATIO) => loadMs > durationS * 1000 * ratio

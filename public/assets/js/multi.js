@@ -448,9 +448,12 @@ async function startLive(tile, { avoid = null } = {}) {
     return setState(tile, res?.error === 'network' ? t('err_network') : res?.error === 'failed' ? t('err_live') : t('multi_offline'), true)
   }
   const url = pickLink(links, res.variants)
-  // Par un Worker (relais écarté) : la tuile repart par le relais à son
-  // retour (événement « tu-relay-back », plus bas).
-  tile.viaWorker = Boolean(api.RELAY_BASE) && ![null, api.RELAY_BASE].includes(api.proxyBaseOf(url))
+  tile.source = res.source
+  // Hors du relais principal (écarté) : par un Worker, ou par le relais de
+  // Sofia — sauf pour la source « bg », dont il est la source. La tuile
+  // repart par le relais à son retour (événement « tu-relay-back », plus bas).
+  const via = api.proxyBaseOf(url) ?? api.vpsRelayOf(url)
+  tile.viaWorker = Boolean(api.RELAY_BASE) && via !== null && via !== api.RELAY_BASE && !(via === api.SOFIA_BASE && res.source === 'bg')
   const v = tile.video
   v.onplaying = () => {
     if (tile.token !== token) return
@@ -518,16 +521,30 @@ async function startLive(tile, { avoid = null } = {}) {
  * par le même relais, et la tuile finissait « Hors ligne » alors que le
  * direct était en ligne (un direct fini, lui, l'est par startLive).
  */
-// Relais revenu : les tuiles de direct parties par un Worker pendant sa
-// coupure repartent par lui (sinon jusqu'à leur prochain redémarrage).
+// Relais revenu : les tuiles de direct parties par un Worker ou par le relais
+// de Sofia pendant sa coupure repartent par lui (sinon jusqu'à leur prochain
+// redémarrage). Les tuiles de VOD qui jouent aussi, au même endroit : le
+// relais de Sofia ne peut pas porter les VODs (api.js, « Relais de Sofia »).
 window.addEventListener('tu-relay-back', () => {
-  for (const tile of tiles.values()) if (tile.viaWorker) startLive(tile)
+  for (const tile of tiles.values()) {
+    if (tile.viaWorker) { startLive(tile); continue }
+    if (!tile.entry?.vod || !tile.vodLinks || tile.userPaused) continue
+    const links = api.backToRelay(tile.vodLinks)
+    if (JSON.stringify(links) === JSON.stringify(tile.vodLinks)) continue
+    const next = ++tile.token
+    stopMedia(tile)
+    setState(tile, 'loading')
+    attachVod(tile, links, tile.vodVariants ?? {}, tile.pos > 0 ? tile.pos : 0, next)
+  }
 })
 
 function retryLive(tile, token, down, network) {
   if (tile.token !== token) return
-  if (down && down === api.RELAY_BASE && api.markWorkerDown(down)) {
-    console.info('[TwitchUnblock] Relais vidéo injoignable (multi-live), retour au Worker.')
+  // Relais du VPS en panne : la tuile repart, par le relais de Sofia ou par
+  // le Worker (api.js, viaRelay). De même pour Sofia en panne, sauf pour la
+  // source « bg », qui garde ses relances (main.js, switchWorker).
+  if (down && (down === api.RELAY_BASE || (down === api.SOFIA_BASE && tile.source !== 'bg')) && api.markWorkerDown(down)) {
+    console.info(`[TwitchUnblock] ${down === api.RELAY_BASE ? 'Relais vidéo' : 'Relais de Sofia'} injoignable (multi-live) : la tuile repart.`)
     return startLive(tile)
   }
   if (++tile.restarts > MAX_RESTARTS) return setState(tile, t(network ? 'err_network' : 'err_live'), true)
@@ -570,6 +587,9 @@ async function startVod(tile) {
 
 /** Lecture d'une VOD dans sa tuile, à partir de `at`. */
 async function attachVod(tile, links, variants, at, token) {
+  // Pour le retour au relais principal (« tu-relay-back »).
+  tile.vodLinks = links
+  tile.vodVariants = variants
   const url = pickByCount(links, variants)
   const v = tile.video
   tile.ready = false
@@ -625,15 +645,15 @@ async function attachVod(tile, links, variants, at, token) {
       // Au même endroit (recoverMedia) : la tuile repartait de `at`.
       if (data.type === Hls.ErrorTypes.MEDIA_ERROR && mediaFixAllowed(tile)) return recoverMedia(hls, v, tile.pos > 0 ? tile.pos : at)
       const from = tile.pos > 0 ? tile.pos : at
-      // Relais vidéo du VPS en panne : les mêmes liens par le Worker, au
-      // même endroit, sans les redemander (comme switchWorker dans main.js).
-      // Pas pour un segment introuvable (404) : même règle que le lecteur
-      // (failedProxy), il l'écartait 30 min pour toutes les vidéos. De même
-      // pour le relais de Sofia (VOD lancée pendant que le relais principal
-      // est écarté pour lenteur, api.js).
+      // Relais vidéo du VPS en panne : les mêmes liens par le relais de
+      // Sofia (ou le Worker s'il est en panne aussi), au même endroit, sans
+      // les redemander (comme switchWorker dans main.js). Pas pour un segment
+      // introuvable (404) : même règle que le lecteur (failedProxy), il
+      // l'écartait 30 min pour toutes les vidéos. Sofia en panne à son tour
+      // (VOD partie par lui pendant la panne du relais) : le Worker.
       const down = data.type === Hls.ErrorTypes.NETWORK_ERROR && api.RELAY_BASE && navigator.onLine !== false ? failedProxy(data) : null
       if (down && (down === api.RELAY_BASE || down === api.SOFIA_BASE) && api.markWorkerDown(down)) {
-        console.info('[TwitchUnblock] Relais vidéo injoignable (multi-live), retour au Worker.')
+        console.info(`[TwitchUnblock] ${down === api.RELAY_BASE ? 'Relais vidéo' : 'Relais de Sofia'} injoignable (multi-live) : la tuile passe par son secours.`)
         const next = ++tile.token
         stopMedia(tile)
         setState(tile, 'loading')

@@ -1,16 +1,18 @@
-// Vérifications du secours « relais trop lent » des VODs, sans réseau ni
-// navigateur :
-//  - la détection (public/assets/js/slowrelay.js) : seuil, deux segments de
-//    suite, VOD seulement, relais principal seulement, segments trop courts,
-//    mesure et ligne du journal (sans adresse) ;
+// Vérifications des secours du relais vidéo, sans réseau ni navigateur :
+//  - la détection d'un relais trop lent (public/assets/js/slowrelay.js) :
+//    seuil, deux segments de suite, VOD seulement, relais principal
+//    seulement, segments trop courts, mesure et ligne du journal (sans
+//    adresse) ;
 //  - le guet du lecteur et la bascule sans nouvelle instance de hls.js
 //    (Player.noteRelaySpeed et moveRelay, failedProxy de player.js) ;
-//  - le routage (api.js) : VODs par le relais de Sofia pendant 30 min, aucun
-//    retour au relais lent avant la fin du délai (backToRelay), Sofia en
-//    panne → le Worker, directs inchangés ;
-//  - le site et l'app TV LG branchés de la même façon (main.js,
-//    webos/src/watch.js), l'avis dans les cinq langues, SITE_VERSION, les
-//    nouveautés et la version de l'app TV.
+//  - le routage (api.js) depuis le 19/11 : une lenteur ne fait plus rien
+//    changer (le forfait du relais de Sofia ne peut pas porter les VODs) ;
+//    relais principal en panne → Sofia pour les directs et les VODs, puis
+//    le Worker si Sofia l'est aussi ; retour au relais principal, sauf pour
+//    la source « bg » ;
+//  - le site, l'app TV LG et le multi-live branchés de la même façon
+//    (main.js, webos/src/watch.js, multi.js), l'avis « relais lent » retiré,
+//    SITE_VERSION, les nouveautés et la version de l'app TV.
 // api.js et player.js sont importés avec un faux navigateur (window,
 // localStorage) et un faux fetch : aucune requête ne part.
 // Lancer : node tools/slow-relay-check.mjs (Node 22 ou plus).
@@ -18,7 +20,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import {
-  MIN_SEGMENT_S, RELAY_SLOW_MS, SLOW_RATIO, SLOW_STREAK, SlowRelayWatch, fragTiming, isSlowSegment, slowMeasure, slowRelayLine,
+  MIN_SEGMENT_S, SLOW_RATIO, SLOW_STREAK, SlowRelayWatch, fragTiming, isSlowSegment, slowMeasure, slowRelayLine,
 } from '../public/assets/js/slowrelay.js'
 
 const ROOT = new URL('../', import.meta.url)
@@ -60,6 +62,9 @@ globalThis.fetch = async (input) => {
   }
   return json({ error: 'inattendu' }, 500)
 }
+// Délai « relais lent » laissé sur l'appareil par la version d'avant le
+// 19/11 : api.js l'efface en se chargeant.
+storage.set('tu_relay_slow', String(Date.now() + 30 * 60_000))
 const api = await import('../public/assets/js/api.js')
 const { Player, failedProxy } = await import('../public/assets/js/player.js')
 
@@ -70,7 +75,6 @@ test('seuil : plus lent que sa durée (1,0×), strictement', () => {
   assert.equal(SLOW_RATIO, 1)
   assert.equal(SLOW_STREAK, 2)
   assert.equal(MIN_SEGMENT_S, 1)
-  assert.equal(RELAY_SLOW_MS, 30 * 60_000)
   assert.equal(isSlowSegment(10_000, 10), false, 'chargé en exactement sa durée : pas lent')
   assert.equal(isSlowSegment(10_001, 10), true)
   assert.equal(isSlowSegment(9_000, 10), false)
@@ -148,8 +152,8 @@ test('fragTiming : statistiques de hls.js (FRAG_LOADED)', () => {
 
 test('ligne du journal : la mesure, ce qui en est fait, aucune adresse, moins de 300 caractères', () => {
   const m = slowMeasure([{ loadMs: 107_000, durationS: 10, bytes: 9.4e6 }, { loadMs: 107_400, durationS: 10, bytes: 9.4e6 }])
-  const line = slowRelayLine(m, 'la suite passe par le relais de Sofia (relais écarté des VODs 30 min)')
-  assert.match(line, /^relais lent \(VOD\) : 2 segments de suite plus lents que leur durée, 18\.8 Mo en 214\.4 s pour 20\.0 s de vidéo \(0\.7 Mb\/s, ×10\.7 ×10\.7\) ; la suite passe/)
+  const line = slowRelayLine(m, 'la VOD reste sur le relais (Sofia seulement en cas de panne)')
+  assert.match(line, /^relais lent \(VOD\) : 2 segments de suite plus lents que leur durée, 18\.8 Mo en 214\.4 s pour 20\.0 s de vidéo \(0\.7 Mb\/s, ×10\.7 ×10\.7\) ; la VOD reste sur le relais/)
   assert.doesNotMatch(line, /https?:|\/api\/|sslip|duckdns|token|sig=/i)
   assert.ok(`TV ${line}`.length <= 300, `${line.length} caractères (le journal coupe à 300)`)
   const unknown = slowRelayLine(slowMeasure([{ loadMs: 3000, durationS: 2 }, { loadMs: 2500, durationS: 2 }]))
@@ -254,88 +258,107 @@ test('relais de Sofia : seulement derrière le relais officiel', () => {
   assert.equal(api.directUrl(proxied(SOFIA)), VOD_PLAYLIST, 'adresse d’origine, pour la sonde du son')
 })
 
-test('linkMoved et toSofia : la route /api/proxy du relais, rien d’autre', () => {
+test('linkMoved : la route /api/proxy du relais, rien d’autre', () => {
   const seg9 = proxied(RELAY, VOD_PLAYLIST.replace('index-dvr.m3u8', '9.ts'))
   assert.equal(api.linkMoved(seg9, RELAY, SOFIA), seg9.replace(RELAY, SOFIA), 'même chemin, même requête')
   assert.equal(api.linkMoved(proxied(WORKER), RELAY, SOFIA), proxied(WORKER), 'un Worker reste un Worker')
   assert.equal(api.linkMoved(`${RELAY}/health`, RELAY, SOFIA), `${RELAY}/health`)
   assert.equal(api.linkMoved('https://d1m7jfoe9zdc1j.cloudfront.net/a/9.ts', RELAY, SOFIA), 'https://d1m7jfoe9zdc1j.cloudfront.net/a/9.ts')
-  assert.deepEqual(api.toSofia(vodLinks(RELAY)), vodLinks(SOFIA))
-  assert.deepEqual(api.toSofia(vodLinks(FALLBACK)), vodLinks(FALLBACK))
 })
 
-test('avant toute lenteur : les VODs par le relais principal', async () => {
-  assert.equal(api.relaySlow(), false)
+test('relais lent : plus de bascule, tout reste sur le relais principal (19/11)', async () => {
+  assert.equal(localStorage.getItem('tu_relay_slow'), null, 'ancien délai effacé au chargement')
+  for (const gone of ['relaySlow', 'markRelaySlow', 'toSofia']) assert.equal(api[gone], undefined, gone)
   assert.deepEqual(originsOf((await api.getVodLinks('123')).links), [RELAY])
-  assert.deepEqual(originsOf(api.backToRelay(vodLinks(FALLBACK), { vod: true })), [RELAY], 'relais revenu, pas lent : la VOD y retourne')
-})
-
-test('relais lent : écarté des VODs 30 min, les suivantes partent par Sofia', async () => {
-  const before = Date.now()
-  assert.equal(api.markRelaySlow(), true)
-  assert.equal(api.relaySlow(), true)
-  const until = Number(localStorage.getItem('tu_relay_slow'))
-  assert.ok(until >= before + RELAY_SLOW_MS && until <= Date.now() + RELAY_SLOW_MS, 'gardé sur l’appareil, pour 30 min')
-  assert.deepEqual(originsOf((await api.getVodLinks('456')).links), [SOFIA])
-  assert.deepEqual(originsOf((await api.resolveRecovery('chaine', '789', 1_700_000_000)).links), [SOFIA], 'VOD reconstruite aussi')
-  // Les directs ne bougent pas : leurs segments ne passent pas par le relais.
+  assert.deepEqual(originsOf((await api.resolveRecovery('chaine', '789', 1_700_000_000)).links), [RELAY], 'VOD reconstruite aussi')
   assert.deepEqual(originsOf((await api.getLive('chaine')).links), [RELAY])
+  assert.equal(api.playbackBase(), RELAY)
 })
 
-test('pas d’aller-retour : backToRelay ne ramène pas une VOD sur le relais lent', () => {
-  assert.deepEqual(api.backToRelay(vodLinks(SOFIA), { vod: true }), vodLinks(SOFIA), 'restée sur Sofia')
-  assert.deepEqual(originsOf(api.backToRelay(vodLinks(FALLBACK), { vod: true })), [SOFIA], 'du Worker : vers Sofia, pas le relais')
-  assert.deepEqual(originsOf(api.backToRelay(vodLinks(FALLBACK))), [RELAY], 'un direct, lui, revient au relais')
+test('retour au relais principal : depuis un Worker ou Sofia, sauf la source « bg »', () => {
+  assert.deepEqual(originsOf(api.backToRelay(vodLinks(FALLBACK))), [RELAY])
+  assert.deepEqual(originsOf(api.backToRelay(vodLinks(SOFIA))), [RELAY], 'secours de Sofia : retour')
+  assert.deepEqual(api.backToRelay(vodLinks(SOFIA), { keepSofia: true }), vodLinks(SOFIA), 'direct « bg » : Sofia est sa source')
+  assert.deepEqual(originsOf(api.backToRelay(vodLinks(FALLBACK), { keepSofia: true })), [RELAY], 'un Worker revient quand même')
+  assert.deepEqual(api.backToRelay(vodLinks(RELAY)), vodLinks(RELAY))
 })
 
-test('Sofia en panne : le Worker reste le filet, jamais le relais lent', async () => {
+test('relais principal en panne : directs et VODs par Sofia, pas par un Worker', async (t) => {
+  // Le guet de /health (watchRelayBack) part à 30 s : minuterie simulée, pour
+  // qu'il ne tourne pas après les tests.
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  try {
+    assert.equal(api.markWorkerDown(RELAY), true)
+  } finally {
+    t.mock.timers.reset()
+  }
+  assert.equal(api.relayFallback(), SOFIA)
+  assert.equal(api.playbackBase(), SOFIA, 'direct par le compte (app TV)')
+  assert.deepEqual(originsOf((await api.getLive('chaine')).links), [SOFIA], 'direct lancé pendant la panne')
+  assert.deepEqual(originsOf((await api.getVodLinks('456')).links), [SOFIA], 'VOD lancée pendant la panne')
+  assert.deepEqual(originsOf(api.withoutRelay(vodLinks(RELAY))), [SOFIA], 'en pleine lecture')
+  assert.deepEqual(api.withoutRelay(vodLinks(FALLBACK)), vodLinks(FALLBACK), 'rien à déplacer')
+})
+
+test('Sofia en panne aussi : le Worker, le secours d’abord', async () => {
   assert.equal(api.markWorkerDown(SOFIA), true, 'un relais du VPS a toujours le Worker pour recours')
   const down = JSON.parse(localStorage.getItem('tu_worker_down'))
   assert.ok(down[SOFIA] > Date.now() && down[SOFIA] <= Date.now() + 2 * 60_000, 'écarté 2 min, comme le relais')
-  assert.deepEqual(originsOf(api.withoutSofia(vodLinks(SOFIA))), [FALLBACK], 'le Worker de secours d’abord')
+  assert.equal(api.relayFallback(), FALLBACK)
+  assert.equal(api.playbackBase(), FALLBACK)
+  assert.deepEqual(originsOf(api.withoutSofia(vodLinks(SOFIA))), [FALLBACK])
   assert.deepEqual(api.withoutSofia(vodLinks(RELAY)), vodLinks(RELAY), 'rien à déplacer')
-  assert.deepEqual(originsOf((await api.getVodLinks('321')).links), [FALLBACK], 'VOD lancée pendant la panne : au Worker')
-  assert.deepEqual(api.backToRelay(vodLinks(FALLBACK), { vod: true }), vodLinks(FALLBACK), 'ni Sofia en panne ni le relais lent')
-  assert.equal(api.markRelaySlow(), false, 'pas de bascule vers un Sofia en panne')
+  assert.deepEqual(originsOf(api.withoutRelay(vodLinks(RELAY))), [FALLBACK])
+  assert.deepEqual(originsOf((await api.getLive('chaine')).links), [FALLBACK], 'direct : laissé au Worker')
+  assert.deepEqual(originsOf((await api.getVodLinks('321')).links), [FALLBACK], 'VOD : laissée au Worker')
 })
 
-test('fin du délai : les VODs reviennent au relais principal', async (t) => {
-  t.mock.timers.enable({ apis: ['Date'], now: Date.now() + RELAY_SLOW_MS + 60_000 })
+test('fin des pannes (2 min) : tout revient au relais principal', async (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() + 3 * 60_000 })
   try {
-    assert.equal(api.relaySlow(), false)
+    assert.equal(api.relayFallback(), SOFIA)
+    assert.equal(api.playbackBase(), RELAY)
+    assert.deepEqual(originsOf((await api.getLive('chaine')).links), [RELAY])
     assert.deepEqual(originsOf((await api.getVodLinks('654')).links), [RELAY])
-    assert.deepEqual(originsOf(api.backToRelay(vodLinks(FALLBACK), { vod: true })), [RELAY])
   } finally {
     t.mock.timers.reset()
   }
 })
 
 // ── Site et app TV branchés pareil ────────────────────────────────────────
-test('main.js et l’app TV : même bascule, même filet, même retour', () => {
+test('main.js et l’app TV : lenteur notée sans bascule, Sofia pour les pannes, retour au relais', () => {
   for (const file of ['public/assets/js/main.js', 'webos/src/watch.js']) {
     const src = read(file)
     assert.match(src, /onSlowRelay: \(m\) => slowRelay\(m\)/, `${file} : gestionnaire du lecteur`)
-    assert.match(src, /api\.markRelaySlow\(\)/, `${file} : relais écarté 30 min`)
-    assert.match(src, /w\.links = api\.toSofia\(w\.links\)\s+player\.moveRelay\(w\.links, api\.RELAY_BASE, api\.SOFIA_BASE\)/, `${file} : bascule sans nouvelle instance`)
-    assert.match(src, /toast\(t\('relay_slow'\)/, `${file} : avis`)
-    assert.match(src, /slowRelayLine\(m, /, `${file} : journal`)
-    assert.match(src, /base === api\.SOFIA_BASE && w\.kind === 'vod' && w\.links && api\.markWorkerDown\(base\)[\s\S]{0,300}api\.withoutSofia\(w\.links\)/, `${file} : Sofia en panne → Worker`)
-    assert.match(src, /api\.backToRelay\(w\.links, \{ vod: w\.kind === 'vod' \}\)/, `${file} : pas de retour au relais lent`)
+    assert.match(src, /slowRelayLine\(m, 'la VOD reste sur le relais \(Sofia seulement en cas de panne\)'\)/, `${file} : lenteur notée au journal`)
+    assert.match(src, /w\.slowNoted = true/, `${file} : une fois par VOD`)
+    assert.doesNotMatch(src, /markRelaySlow|toSofia|moveRelay\(|relay_slow/, `${file} : plus de bascule ni d’avis`)
+    assert.match(src, /base === api\.RELAY_BASE && w\.links && api\.markWorkerDown\(base\)[\s\S]{0,500}api\.withoutRelay\(w\.links\)/, `${file} : relais en panne → son secours`)
+    assert.match(src, /api\.relayFallback\(\) === api\.SOFIA_BASE \? 'le relais de Sofia' : 'le Worker'/, `${file} : le journal dit par où`)
+    assert.match(src, /base === api\.SOFIA_BASE && \(w\.kind === 'vod' \|\| w\.source !== 'bg'\) && w\.links && api\.markWorkerDown\(base\)[\s\S]{0,400}api\.withoutSofia\(w\.links\)/, `${file} : Sofia en panne → Worker, sauf la source bg`)
+    assert.match(src, /api\.backToRelay\(w\.links, \{ keepSofia: w\.kind === 'live' && w\.source === 'bg' \}\)/, `${file} : retour au relais, sauf la source bg`)
+    assert.match(src, /if \(w\.relayReturns > 2 && !vodOnSofia\) return/, `${file} : une VOD sur Sofia revient toujours`)
   }
+  const multi = read('public/assets/js/multi.js')
+  assert.match(multi, /tile\.viaWorker = Boolean\(api\.RELAY_BASE\) && via !== null && via !== api\.RELAY_BASE && !\(via === api\.SOFIA_BASE && res\.source === 'bg'\)/, 'multi-live : un direct sur Sofia repart au retour du relais')
+  assert.match(multi, /api\.backToRelay\(tile\.vodLinks\)/, 'multi-live : VODs ramenées au relais')
+  assert.match(multi, /down === api\.SOFIA_BASE && tile\.source !== 'bg'/, 'multi-live : Sofia en panne → Worker, sauf bg')
 })
 
-test('avis dans les cinq langues, nouveautés 2026.11.18b, app TV 0.4.1', async () => {
-  assert.equal((read('public/assets/js/i18n.js').match(/^\s+relay_slow: '/gm) || []).length, 3, 'fr, en, es')
-  assert.match(read('public/assets/js/i18n.js'), /relay_slow: 'Relais lent : vidéo par un autre serveur'/)
+test('avis « relais lent » retiré des cinq langues, nouveautés 2026.11.19a, app TV 0.4.2', async () => {
+  assert.doesNotMatch(read('public/assets/js/i18n.js'), /relay_slow/)
   const { RU } = await import('../public/assets/js/i18n-ru.js')
   const { ZH_HANT } = await import('../public/assets/js/i18n-zh-Hant.js')
-  assert.ok(RU.relay_slow && ZH_HANT.relay_slow)
+  assert.ok(!('relay_slow' in RU) && !('relay_slow' in ZH_HANT))
   const version = /export const SITE_VERSION = '([^']+)'/.exec(read('public/assets/js/usage.js'))?.[1]
-  assert.ok(version >= '2026.11.18b', `SITE_VERSION ${version}`)
+  assert.ok(version >= '2026.11.19a', `SITE_VERSION ${version}`)
   const { CHANGELOG } = await import('../public/assets/js/changelog.js')
   assert.equal(CHANGELOG[0].version, version, 'entrée en tête')
-  const entry = CHANGELOG.filter((e) => e.version === '2026.11.18b')
+  const entry = CHANGELOG.filter((e) => e.version === '2026.11.19a')
   assert.equal(entry.length, 1)
-  for (const l of ['fr', 'en', 'es', 'ru']) assert.ok(entry[0].items[l]?.[0]?.length > 50, l)
-  assert.equal(JSON.parse(read('webos/appinfo.json')).version, '0.4.1')
+  for (const l of ['fr', 'en', 'es', 'ru']) {
+    assert.equal(entry[0].items[l]?.length, 2, l)
+    for (const item of entry[0].items[l]) assert.ok(item.length > 50, l)
+  }
+  assert.equal(JSON.parse(read('webos/appinfo.json')).version, '0.4.2')
 })

@@ -312,7 +312,8 @@ export async function accountLive(login, { lowLatency = true } = {}) {
   if (!usher) return null
   let base = api.playbackBase()
   let got = await getMaster(base, usher)
-  // Relais injoignable : écarté comme ailleurs, et un Worker à la place.
+  // Relais injoignable : écarté comme ailleurs, et le relais de Sofia à la
+  // place (un Worker s'il est en panne aussi, api.js, playbackBase).
   if (!got.ok && got.network && base === api.RELAY_BASE && api.markWorkerDown(base)) {
     base = api.playbackBase()
     got = await getMaster(base, usher)

@@ -112,18 +112,22 @@ window.tuDebug = () => (player ? { ...session, links: undefined, info: undefined
 function switchWorker(base) {
   const w = session
   if ((w?.kind !== 'live' && w?.kind !== 'vod') || navigator.onLine === false) return false
+  // Relais vidéo en panne : par le relais de Sofia, ou par le Worker s'il est
+  // en panne lui aussi (main.js).
   if (base === api.RELAY_BASE && w.links && api.markWorkerDown(base)) {
-    console.info('[TwitchUnblock] Relais vidéo injoignable, retour au Worker :', base)
+    const via = api.relayFallback() === api.SOFIA_BASE ? 'le relais de Sofia' : 'le Worker'
+    console.info(`[TwitchUnblock] Relais vidéo injoignable, passage par ${via} :`, base)
+    logError('lecteur', `TV : relais injoignable, ${w.kind === 'vod' ? 'la VOD' : 'le direct'} passe par ${via}`)
     w.links = api.withoutRelay(w.links)
     player.swapLinks(w.links, w.variants)
     return true
   }
-  // Relais de Sofia en panne pendant une VOD sortie d'un relais trop lent
-  // (slowRelay) : par le Worker, le filet habituel (main.js). Un direct de
-  // la source « bg » garde ses relances.
-  if (base === api.SOFIA_BASE && w.kind === 'vod' && w.links && api.markWorkerDown(base)) {
+  // Relais de Sofia en panne pendant une lecture de secours (VOD, ou direct
+  // venu là pendant une panne du relais) : par le Worker, le filet habituel
+  // (main.js). Un direct de la source « bg » garde ses relances.
+  if (base === api.SOFIA_BASE && (w.kind === 'vod' || w.source !== 'bg') && w.links && api.markWorkerDown(base)) {
     console.info('[TwitchUnblock] Relais de Sofia injoignable, retour au Worker :', base)
-    logError('lecteur', 'TV : relais de Sofia injoignable pendant une VOD, retour au Worker')
+    logError('lecteur', `TV : relais de Sofia injoignable pendant ${w.kind === 'vod' ? 'une VOD' : 'un direct'}, retour au Worker`)
     w.links = api.withoutSofia(w.links)
     player.swapLinks(w.links, w.variants)
     return true
@@ -155,34 +159,29 @@ function switchWorker(base) {
 }
 
 /**
- * Relais principal trop lent pendant une VOD (player.js, slowrelay.js) : la
- * suite par le relais de Sofia, au même endroit, sans nouvelle instance du
- * lecteur ; le relais écarté des VODs 30 min (main.js, slowRelay).
+ * Relais principal trop lent pendant une VOD (player.js, slowrelay.js) :
+ * noté une fois au journal, la VOD reste sur le relais. Le relais de Sofia
+ * ne sert plus qu'aux pannes : son forfait ne peut pas porter les VODs
+ * (main.js, slowRelay ; api.js, « Relais de Sofia »).
  */
 function slowRelay(m) {
   const w = session
-  if (w?.kind !== 'vod' || !w.links) return
-  if (!api.markRelaySlow()) {
-    if (!w.slowKept) logError('lecteur', `TV ${slowRelayLine(m, 'relais de Sofia indisponible, la VOD reste sur le relais')}`)
-    w.slowKept = true
-    return
-  }
-  console.info('[TwitchUnblock] Relais vidéo trop lent pour cette VOD : la suite passe par le relais de Sofia.')
-  logError('lecteur', `TV ${slowRelayLine(m, 'la suite passe par le relais de Sofia (relais écarté des VODs 30 min)')}`)
-  w.links = api.toSofia(w.links)
-  player.moveRelay(w.links, api.RELAY_BASE, api.SOFIA_BASE)
-  toast(t('relay_slow'), 'info', 5000)
+  if (w?.kind !== 'vod' || w.slowNoted) return
+  w.slowNoted = true
+  logError('lecteur', `TV ${slowRelayLine(m, 'la VOD reste sur le relais (Sofia seulement en cas de panne)')}`)
 }
 
-// Relais revenu (api.js) : la vidéo y repasse, deux fois au plus (main.js) —
-// sauf une VOD sortie d'un relais trop lent, avant la fin du délai.
+// Relais revenu (api.js) : la vidéo y repasse, deux fois au plus — une VOD
+// partie par Sofia à chaque fois ; un direct de la source « bg » reste sur
+// Sofia, sa source (main.js).
 window.addEventListener('tu-relay-back', () => {
   const w = session
   if ((w?.kind !== 'live' && w?.kind !== 'vod') || !w.links) return
-  const moved = api.backToRelay(w.links, { vod: w.kind === 'vod' })
+  const moved = api.backToRelay(w.links, { keepSofia: w.kind === 'live' && w.source === 'bg' })
   if (JSON.stringify(moved) === JSON.stringify(w.links)) return
+  const vodOnSofia = w.kind === 'vod' && Boolean(api.SOFIA_BASE) && Object.values(w.links).some((u) => api.vpsRelayOf(u) === api.SOFIA_BASE)
   w.relayReturns = (w.relayReturns || 0) + 1
-  if (w.relayReturns > 2) return
+  if (w.relayReturns > 2 && !vodOnSofia) return
   w.links = moved
   player.swapLinks(w.links, w.variants)
 })

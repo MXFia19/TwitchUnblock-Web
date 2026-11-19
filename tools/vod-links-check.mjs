@@ -2,8 +2,9 @@
 // réseau ni navigateur :
 //  - getVodLinks (api.js) : quand aucun Worker ne répond (quota du jour,
 //    « error code: 1027 », vu le 18/11), les liens sont demandés au relais
-//    principal, à celui de Sofia s'il est écarté pour lenteur, en panne ou
-//    à éviter ; une vraie réponse d'un Worker (404) ne passe pas aux relais ;
+//    principal, à celui de Sofia s'il est en panne ou à éviter — jamais
+//    pour une simple lenteur (depuis le 19/11) ; une vraie réponse d'un
+//    Worker (404) ne passe pas aux relais ;
 //  - la route du relais (docker/relay.mjs, handleVodLinks) : branchée, ne lit
 //    que l'identifiant, liens toujours par le proxy, origine vérifiée ;
 //  - le site et l'app TV LG ne demandent les liens des VODs que par
@@ -64,8 +65,8 @@ const api = await import('../public/assets/js/api.js')
 
 beforeEach(() => { behave = {}; calls = [] })
 
-// Les tests tournent dans l'ordre : le relais n'est marqué lent qu'au
-// dernier (l'état reste en mémoire dans api.js).
+// Les tests tournent dans l'ordre (l'état des relais reste en mémoire dans
+// api.js).
 
 test('Workers joignables : liens par le relais principal, route du relais jamais demandée', async () => {
   const data = await api.getVodLinks('123')
@@ -145,12 +146,15 @@ test('tout en panne : l’erreur « Worker injoignable », sans statut (problèm
   await assert.rejects(api.getVodLinks('123'), (e) => !e.status && /Worker injoignable/.test(e.message))
 })
 
-test('relais principal écarté pour lenteur : Sofia d’abord', async () => {
-  assert.equal(api.markRelaySlow(), true)
+test('relais lent : plus de bascule, le relais principal reste le premier (19/11)', async () => {
+  // Délai « relais lent » laissé sur l'appareil par la version d'avant :
+  // plus lu.
+  localStorage.setItem('tu_relay_slow', String(Date.now() + 30 * 60_000))
+  assert.equal(api.markRelaySlow, undefined)
   workersDown()
   const data = await api.getVodLinks('123')
-  assert.deepEqual(originsOf(data.links), [SOFIA])
-  assert.ok(!asked(RELAY), 'le relais lent n’est pas redemandé quand Sofia répond')
+  assert.deepEqual(originsOf(data.links), [RELAY])
+  assert.ok(!asked(SOFIA), 'Sofia n’est pas demandé quand le relais principal répond')
 })
 
 // ── Le relais : la route ──────────────────────────────────────────────────
@@ -178,11 +182,12 @@ test('site et app TV : les liens des VODs ne se demandent que par getVodLinks', 
   }
 })
 
-test('SITE_VERSION 2026.11.18c et nouveautés en tête', async () => {
+test('SITE_VERSION 2026.11.18c ou après, nouveautés en tête', async () => {
   const version = /export const SITE_VERSION = '([^']+)'/.exec(read('public/assets/js/usage.js'))?.[1]
-  assert.equal(version, '2026.11.18c')
+  assert.ok(version >= '2026.11.18c', `SITE_VERSION ${version}`)
   const { CHANGELOG } = await import('../public/assets/js/changelog.js')
   assert.equal(CHANGELOG[0].version, version)
-  assert.equal(CHANGELOG.filter((e) => e.version === version).length, 1)
-  for (const l of ['fr', 'en', 'es', 'ru']) assert.ok(CHANGELOG[0].items[l]?.[0]?.length > 50, l)
+  const entry = CHANGELOG.filter((e) => e.version === '2026.11.18c')
+  assert.equal(entry.length, 1)
+  for (const l of ['fr', 'en', 'es', 'ru']) assert.ok(entry[0].items[l]?.[0]?.length > 50, l)
 })

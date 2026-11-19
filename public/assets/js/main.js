@@ -4273,20 +4273,22 @@ function setMultiChat(on) {
  * le lecteur retente alors lui-même, quelques fois, avant l'erreur.
  * `false` = rien fait.
  */
-// Relais revenu (api.js, watchRelayBack) : la vidéo qui passait par un
-// Worker depuis sa coupure y repasse, au même endroit — elle y restait
-// jusqu'à la vidéo suivante et usait le quota du Worker de secours. Deux
-// retours au plus par vidéo : un relais qui retombe aussitôt la laisse sur
-// le Worker plutôt que de la faire sauter de l'un à l'autre.
-// Une VOD sortie d'un relais trop lent n'y revient pas avant la fin du délai
-// (api.js, relaySlow) : backToRelay la laisse au relais de Sofia.
+// Relais revenu (api.js, watchRelayBack) : la vidéo qui passait par le
+// relais de Sofia ou par un Worker depuis sa coupure y repasse, au même
+// endroit — elle y restait jusqu'à la vidéo suivante et usait le quota du
+// Worker de secours. Deux retours au plus par vidéo : un relais qui retombe
+// aussitôt la laisse sur son secours plutôt que de la faire sauter de l'un
+// à l'autre. Sauf une VOD partie par Sofia : elle revient à chaque fois, son
+// forfait (3 To par mois, api.js) ne peut pas porter les VODs. Un direct de
+// la source « bg » reste sur Sofia, qui est alors sa source.
 window.addEventListener('tu-relay-back', () => {
   const w = state.watch
   if ((w?.kind !== 'live' && w?.kind !== 'vod') || !w.links) return
-  const moved = api.backToRelay(w.links, { vod: w.kind === 'vod' })
+  const moved = api.backToRelay(w.links, { keepSofia: w.kind === 'live' && w.source === 'bg' })
   if (JSON.stringify(moved) === JSON.stringify(w.links)) return
+  const vodOnSofia = w.kind === 'vod' && Boolean(api.SOFIA_BASE) && Object.values(w.links).some((u) => api.vpsRelayOf(u) === api.SOFIA_BASE)
   w.relayReturns = (w.relayReturns || 0) + 1
-  if (w.relayReturns > 2) return
+  if (w.relayReturns > 2 && !vodOnSofia) return
   console.info('[TwitchUnblock] La lecture repasse par le relais vidéo')
   w.links = moved
   if (w.hq) w.hq.updateAdFree({ links: w.links, variants: w.variants, source: w.source })
@@ -4295,27 +4297,17 @@ window.addEventListener('tu-relay-back', () => {
 
 /**
  * Relais principal trop lent pendant une VOD (player.js : deux segments de
- * suite plus lents que leur durée, mesure `m` de slowrelay.js) : la suite
- * passe par le relais de Sofia, au même endroit, sans nouvelle instance du
- * lecteur (moveRelay), comme le relais passe au Worker quand il tombe
- * (switchWorker), avec la même fonction moveLinks (api.toSofia). Le relais
- * principal est écarté des VODs 30 min (api.markRelaySlow). Sofia écarté
- * lui-même (en panne) : la VOD reste où elle est, notée une fois au journal ;
- * le guet redira « lent » deux segments plus loin.
+ * suite plus lents que leur durée, mesure `m` de slowrelay.js) : noté une
+ * fois au journal, la VOD reste sur le relais. Du 18 au 19/11, elle passait
+ * par le relais de Sofia, mais il ne peut pas porter les VODs (forfait de
+ * 3 To par mois, api.js, « Relais de Sofia ») : il ne sert plus qu'aux
+ * pannes (switchWorker).
  */
 function slowRelay(m) {
   const w = state.watch
-  if (w?.kind !== 'vod' || !w.links) return
-  if (!api.markRelaySlow()) {
-    if (!w.slowKept) logError('lecteur', slowRelayLine(m, 'relais de Sofia indisponible, la VOD reste sur le relais'))
-    w.slowKept = true
-    return
-  }
-  console.info('[TwitchUnblock] Relais vidéo trop lent pour cette VOD : la suite passe par le relais de Sofia.')
-  logError('lecteur', slowRelayLine(m, 'la suite passe par le relais de Sofia (relais écarté des VODs 30 min)'))
-  w.links = api.toSofia(w.links)
-  player.moveRelay(w.links, api.RELAY_BASE, api.SOFIA_BASE)
-  toast(t('relay_slow'), 'info', 5000)
+  if (w?.kind !== 'vod' || w.slowNoted) return
+  w.slowNoted = true
+  logError('lecteur', slowRelayLine(m, 'la VOD reste sur le relais (Sofia seulement en cas de panne)'))
 }
 
 let lastWorkerSwitch = 0
@@ -4325,23 +4317,27 @@ function switchWorker(base) {
   // Appareil hors ligne : ni le relais ni le Worker n'y sont pour rien (ils
   // étaient écartés 30 min à tort) ; le lecteur attend le retour du réseau.
   if (navigator.onLine === false) return false
-  // Relais vidéo du VPS en panne : les mêmes liens, par le Worker — sans
-  // redemander quoi que ce soit.
+  // Relais vidéo du VPS en panne : les mêmes liens par le relais de Sofia,
+  // ou par le Worker s'il est en panne lui aussi — sans rien redemander.
   if (base === api.RELAY_BASE && w.links && api.markWorkerDown(base)) {
-    console.info('[TwitchUnblock] Relais vidéo injoignable, retour au Worker :', base)
+    const via = api.relayFallback() === api.SOFIA_BASE ? 'le relais de Sofia' : 'le Worker'
+    console.info(`[TwitchUnblock] Relais vidéo injoignable, passage par ${via} :`, base)
+    logError('lecteur', `relais injoignable : ${w.kind === 'vod' ? 'la VOD' : 'le direct'} passe par ${via}`)
     w.links = api.withoutRelay(w.links)
     if (w.hq) w.hq.updateAdFree({ links: w.links, variants: w.variants, source: w.source })
     else player.swapLinks(w.links, w.variants)
     return true
   }
-  // Relais de Sofia en panne pendant une VOD (sortie d'un relais trop lent,
-  // slowRelay) : de même, par le Worker — le filet habituel. Pas pour un
-  // direct de la source « bg » : il garde ses relances, comme avant.
-  if (base === api.SOFIA_BASE && w.kind === 'vod' && w.links && api.markWorkerDown(base)) {
+  // Relais de Sofia en panne pendant une lecture de secours (VOD, ou direct
+  // venu là pendant une panne du relais principal) : par le Worker, le filet
+  // habituel. Pas pour un direct de la source « bg » : il garde ses
+  // relances, comme avant.
+  if (base === api.SOFIA_BASE && (w.kind === 'vod' || w.source !== 'bg') && w.links && api.markWorkerDown(base)) {
     console.info('[TwitchUnblock] Relais de Sofia injoignable, retour au Worker :', base)
-    logError('lecteur', 'relais de Sofia injoignable pendant une VOD : retour au Worker')
+    logError('lecteur', `relais de Sofia injoignable pendant ${w.kind === 'vod' ? 'une VOD' : 'un direct'} : retour au Worker`)
     w.links = api.withoutSofia(w.links)
-    player.swapLinks(w.links, w.variants)
+    if (w.hq) w.hq.updateAdFree({ links: w.links, variants: w.variants, source: w.source })
+    else player.swapLinks(w.links, w.variants)
     return true
   }
   if (Date.now() - lastWorkerSwitch < 60_000 || !w.links || !api.hasOtherWorker(base)) return false
