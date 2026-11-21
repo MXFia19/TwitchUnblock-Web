@@ -17,7 +17,7 @@
 //  serveur.
 // ═══════════════════════════════════════════════════════════════════════════
 
-import { API_URL } from './api.js'
+import { API_URL, noteQuotaHint, quotaPaused } from './api.js'
 import { uid } from './util.js'
 import { connect, usageFields } from './connect.js'
 
@@ -182,6 +182,8 @@ async function pingOnce(enabled) {
   let last = 0
   try { last = Number(localStorage.getItem(LAST_KEY)) || 0 } catch {}
   if (Date.now() - last < PING_EVERY) return
+  // Réserve du quota du Worker (api.js) : les compteurs attendent, gardés ici.
+  if (quotaPaused()) return
   try {
     const ev = pendingEvents()
     const adh = pendingAdHours()
@@ -194,6 +196,7 @@ async function pingOnce(enabled) {
       ...(Object.keys(ev).length ? { ev } : {}),
       ...(Object.keys(adh).length ? { adh } : {}),
     })
+    noteQuotaHint(res)
     if (res.ok) {
       try { localStorage.setItem(LAST_KEY, String(Date.now())) } catch {}
       clearSent(ev)

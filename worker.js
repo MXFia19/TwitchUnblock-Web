@@ -5,8 +5,15 @@ const RESPONSE_HEADERS = {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type, Cache-Control, Range, Authorization',
-    'Access-Control-Expose-Headers': 'Content-Length, Content-Range'
+    // X-TU-Quota et Retry-After : la réserve du quota du jour (plus bas),
+    // lue par le site.
+    'Access-Control-Expose-Headers': 'Content-Length, Content-Range, X-TU-Quota, Retry-After'
 };
+// Réponse aux requêtes de contrôle CORS (OPTIONS), gardée par le navigateur
+// (Chrome 2 h, Firefox 24 h, Safari 10 min) : chaque envoi du site avec un
+// jeton ou du JSON (comptage, sauvegarde, sondages) en déclenchait une à
+// chaque fois, et chacune compte dans le quota du jour comme une requête.
+const PREFLIGHT_HEADERS = { ...RESPONSE_HEADERS, 'Access-Control-Max-Age': '86400' };
 
 // Headers pour ATTAQUER Twitch et Luminous incognito
 const REQUEST_HEADERS = {
@@ -24,6 +31,112 @@ const CURSOR_RE = /^[A-Za-z0-9+/=_-]{1,500}$/;
 
 const QUALITY_ORDER = ['chunked', 'source', '1080p60', '1080p30', '720p60', '720p30', '480p30', '360p30', '160p30', 'audio_only'];
 
+// ── Réserve du quota du jour ───────────────────────────────────────────────
+// Forfait gratuit : 100 000 requêtes par jour et par compte Cloudflare,
+// comptées même quand le Worker refuse (un 503 compte comme une réponse).
+// Garder une part du quota pour l'essentiel passe donc par les appareils :
+// passé un seuil, le Worker le leur dit et ils arrêtent ce qui peut attendre ;
+// les versions déjà installées reculent là où elles savaient déjà le faire.
+// Le chiffre du jour vient du bot du relais, qui lit les quotas du compte
+// (API GraphQL de Cloudflare, docker/discord-bot.mjs, watchQuotas) et les
+// envoie ici (action « quota » de /api/feedback/discord), gardés dans D1.
+// Sans chiffre récent (bot arrêté, Worker sans base comme le secours), rien
+// ne change.
+//  - Réserve (QUOTA_RESERVE, 20 % par défaut : à partir de 80 %) :
+//    /api/spade répond 429 (l'iPhone, Android et la TV LG d'avant laissent
+//    ce Worker 10 min ; les nouvelles versions jusqu'à minuit UTC). Le
+//    comptage, les annonces, les sondages, /stats et Moobot répondent comme
+//    avant, avec l'en-tête X-TU-Quota : les nouvelles versions arrêtent leurs
+//    envois automatiques jusqu'à minuit UTC. Les refuser aurait fait
+//    recommencer les anciennes plus souvent (un échec est retenté à chaque
+//    ouverture, ou tous les quarts d'heure sur le site).
+//  - Lecture (QUOTA_PLAYBACK_RESERVE, 5 % : à partir de 95 %), seulement sur
+//    le Worker qui a la base : les routes de lecture répondent comme
+//    Cloudflare au quota atteint (429, « error code: 1027 », sans en-tête
+//    CORS), et toutes les versions passent au secours ou aux relais jusqu'à
+//    minuit UTC. Le reste va aux sauvegardes, retours, appairages,
+//    notifications et au bot, que le secours ne sait pas faire.
+const QUOTA_DAILY_DEFAULT = 100000;
+const QUOTA_KEY = 'ops_quota';
+// Chiffre plus vieux (bot arrêté) : ignoré. Le bot le relit toutes les
+// 15 min, toutes les 5 min passé 70 %.
+const QUOTA_FRESH_MS = 30 * 60 * 1000;
+// Relu dans D1 au plus une fois par minute et par instance.
+const QUOTA_MEM_MS = 60 * 1000;
+const QUOTA_HINT_ROUTES = new Set(['/api/ping', '/api/stats', '/api/announcement', '/api/poll', '/api/bot-commands/moobot']);
+const QUOTA_PLAYBACK_ROUTES = new Set(['/api/get-live', '/api/get-channel-videos', '/api/get-m3u8', '/api/proxy', '/api/recover-list', '/api/recover-resolve']);
+let quotaMem = null;   // { until, value: { day, requests, at } | null }
+
+const quotaPct = (v, def) => {
+    const n = v === undefined || v === null || v === '' ? NaN : Number(v);
+    return Number.isFinite(n) && n >= 0 && n <= 100 ? n : def;
+};
+/** Seuils du jour, en requêtes : réserve, puis lecture. */
+function quotaLimits(env) {
+    const daily = Number(env.QUOTA_DAILY_LIMIT) > 0 ? Number(env.QUOTA_DAILY_LIMIT) : QUOTA_DAILY_DEFAULT;
+    return {
+        daily,
+        reserveAt: Math.round(daily * (1 - quotaPct(env.QUOTA_RESERVE, 20) / 100)),
+        playbackAt: Math.round(daily * (1 - quotaPct(env.QUOTA_PLAYBACK_RESERVE, 5) / 100)),
+    };
+}
+/** Secondes jusqu'à minuit UTC, quand le quota repart (une minute au moins). */
+const quotaRetryAfter = (now = Date.now()) => Math.max(60, Math.ceil(((Math.floor(now / 86400000) + 1) * 86400000 - now) / 1000));
+/** 0 : rien ; 1 : réserve ; 2 : lecture coupée ici. Ne lève jamais. */
+async function quotaLevel(env, now = Date.now()) {
+    if (!env.DB) return 0;
+    if (!quotaMem || quotaMem.until <= now) {
+        let value = null;
+        try { value = (await store(env).getWithMetadata(QUOTA_KEY)).metadata; } catch (e) { logCaught('quota/read', e); }
+        quotaMem = { until: now + QUOTA_MEM_MS, value };
+    }
+    const q = quotaMem.value;
+    if (!q || q.day !== new Date(now).toISOString().slice(0, 10) || !(now - q.at < QUOTA_FRESH_MS)) return 0;
+    const { reserveAt, playbackAt } = quotaLimits(env);
+    const n = Number(q.requests) || 0;
+    return n >= playbackAt ? 2 : n >= reserveAt ? 1 : 0;
+}
+/** Chiffre envoyé par le bot : { day, requests, at } (date UTC de la
+ *  lecture, requêtes du compte ce jour-là, heure de la lecture). */
+async function quotaSave(env, body, now = Date.now()) {
+    const day = String(body.day || '');
+    const requests = Number(body.requests);
+    const at = Number(body.at);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || !Number.isInteger(requests) || requests < 0 || requests > 1e9
+        || !Number.isFinite(at) || Math.abs(now - at) > 86400000) return jsonError('Bad quota reading', 400);
+    const value = { day, requests, at };
+    await store(env).put(QUOTA_KEY, '', { metadata: value });
+    quotaMem = { until: now + QUOTA_MEM_MS, value };
+    return jsonResponse({ ok: true, level: await quotaLevel(env, now), ...quotaLimits(env) });
+}
+/** Réponse d'une route de la réserve, avec l'avis pour les appareils. */
+function quotaHint(res, level) {
+    if (!level) return res;
+    const out = new Response(res.body, res);
+    out.headers.set('X-TU-Quota', 'reserve');
+    out.headers.set('Retry-After', String(quotaRetryAfter()));
+    return out;
+}
+/** /api/spade pendant la réserve. */
+function quotaSpadeRefusal() {
+    const retry = quotaRetryAfter();
+    return new Response(JSON.stringify({ error: 'Réserve du quota du jour : réessaie après minuit UTC', code: 'quota_reserve', retryAfter: retry }), {
+        status: 429,
+        headers: { ...RESPONSE_HEADERS, 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'Retry-After': String(retry), 'X-TU-Quota': 'reserve' },
+    });
+}
+/** Route de lecture, passé le seuil de lecture : la page de Cloudflare au
+ *  quota atteint, sans en-tête CORS, exprès. Le navigateur n'y voit qu'un
+ *  échec réseau, comme au vrai quota, et le site passe au Worker suivant
+ *  (api.js workerJson ; player.js failedProxy en pleine lecture) ; les apps
+ *  lisent « 1027 » et laissent ce Worker jusqu'à minuit UTC. */
+function quotaPlaybackRefusal() {
+    return new Response('error code: 1027 (TwitchUnblock: daily quota reserve, playback goes through the fallback Worker until midnight UTC)', {
+        status: 429,
+        headers: { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store', 'Retry-After': String(quotaRetryAfter()), 'X-TU-Quota': 'playback' },
+    });
+}
+
 export default {
     // Chaque minute (wrangler.toml) : notifications de live du site.
     async scheduled(event, env, ctx) {
@@ -39,13 +152,18 @@ export default {
     },
 
     async fetch(request, env, ctx) {
-        if (request.method === "OPTIONS") return new Response(null, { headers: RESPONSE_HEADERS });
+        if (request.method === "OPTIONS") return new Response(null, { headers: PREFLIGHT_HEADERS });
         applyEnvConfig(env);
 
         const url = new URL(request.url);
-        const workerOrigin = url.origin; 
-        
+        const workerOrigin = url.origin;
+
         try {
+            // Réserve du quota du jour (plus haut) : lue pour ses routes seulement.
+            const guarded = QUOTA_PLAYBACK_ROUTES.has(url.pathname) || QUOTA_HINT_ROUTES.has(url.pathname) || url.pathname === '/api/spade';
+            const level = guarded ? await quotaLevel(env) : 0;
+            if (level >= 2 && QUOTA_PLAYBACK_ROUTES.has(url.pathname)) return quotaPlaybackRefusal();
+            if (level >= 1 && url.pathname === '/api/spade') return quotaSpadeRefusal();
             switch (url.pathname) {
                 case '/': return new Response("Twitch Proxy - Anti 403 Ready", { headers: RESPONSE_HEADERS });
                 case '/api/get-live': return await handleGetLive(url, workerOrigin);
@@ -65,8 +183,8 @@ export default {
                 case '/api/sync/prefs': return await handleSyncPrefs(url, request, env);
 
                 // Comptage d'utilisation (app iOS et site)
-                case '/api/ping': return await handlePing(request, env);
-                case '/api/stats': return await cachedStats(request, env, ctx);
+                case '/api/ping': return quotaHint(await handlePing(request, env), level);
+                case '/api/stats': return quotaHint(await cachedStats(request, env, ctx), level);
                 // Points de chaîne des apps : leurs « minute-watched », relayés
                 // quand un bloqueur coupe l'adresse de statistiques de Twitch.
                 case '/api/spade': return await handleSpade(request);
@@ -85,10 +203,10 @@ export default {
                 case '/api/admin/forget': return await handleAdminForget(request, env, ctx);
 
                 // Annonces affichées dans l'app (lecture publique, écriture admin)
-                case '/api/announcement': return await handleAnnouncementGet(request, env);
+                case '/api/announcement': return quotaHint(await handleAnnouncementGet(request, env), level);
                 case '/api/announcement/react': return await handleAnnouncementReact(request, env);
                 // Sondages (lecture et vote publics, création admin ou bot)
-                case '/api/poll': return await handlePollState(request, env);
+                case '/api/poll': return quotaHint(await handlePollState(request, env), level);
                 case '/api/poll/vote': return await handlePollVote(request, env);
                 case '/api/admin/poll': return await audited(request, env, ctx, (r) => handleAdminPoll(r, env));
                 // Retours (bug, idée) du site et de l'app
@@ -113,7 +231,7 @@ export default {
                 case '/api/cron': return await handleCron(request, env);
 
                 // Commandes Moobot pour le site (son API refuse les navigateurs)
-                case '/api/bot-commands/moobot': return await handleMoobotCommands(url);
+                case '/api/bot-commands/moobot': return quotaHint(await handleMoobotCommands(url), level);
                 case '/api/admin/announcement': return await audited(request, env, ctx, (r) => handleAdminAnnouncement(r, env));
 
                 default:
@@ -6218,6 +6336,9 @@ async function opsBotTool(env, ctx, body) {
     switch (body.action) {
         case 'ops':
             return jsonResponse(await opsSnapshot(env));
+        // Requêtes du compte ce jour (lues par le bot) : réserve du quota.
+        case 'quota':
+            return quotaSave(env, body);
         // /forget-user : aperçu, puis effacement (`dry: false`) une fois confirmé.
         case 'forget':
             return jsonResponse(await forgetPerson(env, ctx, body.who, { dry: body.dry !== false, actor: botActor(body.by) }));

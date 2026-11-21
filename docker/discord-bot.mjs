@@ -5259,9 +5259,18 @@ export function startDiscordBridge({
       query: String(g?.dimensions?.query || ''), rowsRead: Number(g?.sum?.rowsRead) || 0, count: Number(g?.count) || 0,
     }))
   }
-  /** Toutes les 15 min : une alerte par quota et par jour, passé 70 %. */
+  /** Dernière lecture des quotas et réponse du Worker à son envoi : niveau
+   *  de la réserve (0 rien, 1 réserve, 2 lecture partie au secours) et
+   *  seuils (worker.js, « Réserve du quota du jour »). */
+  let quotaSeen = { at: 0, day: '', requests: 0, level: 0, reserveAt: 0, playbackAt: 0, daily: 0 }
+  /** Toutes les 5 min : quotas relus toutes les 15 min, toutes les 5 passé
+   *  70 % des requêtes ; chiffre des requêtes envoyé au Worker, qui garde
+   *  une réserve pour l'essentiel ; une alerte par quota et par jour passé
+   *  70 %, puis à l'entrée dans chaque niveau de la réserve. */
   async function watchQuotas() {
     if (!cfOn) return
+    const hot = quotaSeen.day === new Date().toISOString().slice(0, 10) && quotaSeen.requests >= 0.7 * CF_QUOTAS[0][2]
+    if (Date.now() - quotaSeen.at < (hot ? 4 : 14) * 60_000) return
     let q
     try {
       q = await cfQuotas()
@@ -5269,10 +5278,26 @@ export function startDiscordBridge({
       log.warn(`Discord bridge: Cloudflare quotas unreadable (${e.message})`)
       return
     }
+    // Worker d'avant (action inconnue : 400) : pas de réserve, rien à dire.
+    const r = await call({ action: 'quota', day: q.day, requests: q.requests, at: q.at })
+      .catch((e) => { if (e.status !== 400) log.warn(`Discord bridge: quota not sent to the Worker (${e.message})`); return null })
+    quotaSeen = { at: Date.now(), day: q.day, requests: q.requests, level: Number(r?.level) || 0,
+                  reserveAt: Number(r?.reserveAt) || 0, playbackAt: Number(r?.playbackAt) || 0, daily: Number(r?.daily) || 0 }
     for (const [id, label, max, note] of CF_QUOTAS) {
       const n = q[id]
       if (n >= 0.7 * max) await alertOncePerDay(`cf:${id}`, `☁️ **Cloudflare quota at ${pct(n, max)}%**: ${label} — ${num(n)} of ${num(max)} today (UTC, free plan); ${note}.`)
     }
+    if (quotaSeen.level >= 1) {
+      await alertOncePerDay('cf:reserve', `🛟 **Quota reserve on** (${num(q.requests)} requests, from ${num(quotaSeen.reserveAt)}): until midnight UTC, the new versions stop their automatic calls (counts, announcements, polls), and the apps send channel points through the fallback Worker.`)
+    }
+    if (quotaSeen.level >= 2) {
+      await alertOncePerDay('cf:playback', `🛟 **Playback moved off the main Worker** (${num(q.requests)} requests, from ${num(quotaSeen.playbackAt)}): lives and VODs go through the fallback Worker and the relays until midnight UTC; the rest is kept for backups, reports, pairing, notifications and this bot.`)
+    }
+  }
+  /** Ligne de /status : la réserve du jour, si elle a commencé. */
+  const quotaReserveText = () => {
+    if (quotaSeen.day !== new Date().toISOString().slice(0, 10) || !quotaSeen.level) return ''
+    return quotaSeen.level >= 2 ? ' · 🛟 playback moved to the fallback Worker' : ' · 🛟 quota reserve on'
   }
 
   // Versions : l'image du relais (GIT_SHA) et le Worker (version_metadata)
@@ -5390,7 +5415,7 @@ export function startDiscordBridge({
       + `${gw.lastAck ? ` · last heartbeat ack ${dur(now - gw.lastAck)} ago` : ''} · relay up for ${dur(process.uptime() * 1000)}`)
     if (!cfOn) L.push('**Cloudflare quotas**: off — set CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID in the relay’s .env')
     else if (q?.error) L.push(`**Cloudflare quotas**: unreadable (${q.error})`)
-    else L.push(`**Cloudflare quotas** (today, UTC, free plan): ${CF_QUOTAS.map(([id, label, max]) => `${label} ${num(q[id])} / ${num(max)} (${pct(q[id], max)}%)`).join(' · ')}`)
+    else L.push(`**Cloudflare quotas** (today, UTC, free plan): ${CF_QUOTAS.map(([id, label, max]) => `${label} ${num(q[id])} / ${num(max)} (${pct(q[id], max)}%)`).join(' · ')}${quotaReserveText()}`)
     // En dernier, raccourcies pour que tout tienne dans le message (1 900).
     if (cfOn) L.push(topReadsText(top, 1900 - L.join('\n').length - 1))
     return L.join('\n')
@@ -5961,7 +5986,8 @@ export function startDiscordBridge({
     every(60 * 60_000, tidy)
     every(60_000, summaryClock)
     every(5 * 60_000, watchOps)
-    every(15 * 60_000, watchQuotas)
+    // Lit lui-même toutes les 15 min, toutes les 5 passé 70 % (réserve du quota).
+    every(5 * 60_000, watchQuotas)
     every(30 * 60_000, watchVersions)
     // Copie de la liste à faire : cartes supprimées ou modifiées à la main.
     every(15 * 60_000, syncTodoMirror)

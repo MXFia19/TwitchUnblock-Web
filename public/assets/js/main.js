@@ -7091,9 +7091,12 @@ let annFetchedAt = 0
 let annCurrent = null
 async function loadAnnouncement(force = false) {
   if (!force && Date.now() - annFetchedAt < 5 * 60_000) return renderAnnouncement()
+  // Réserve du quota du Worker (api.js) : l'annonce déjà là reste, sans relecture.
+  if (api.quotaPaused()) return renderAnnouncement()
   try {
     // `p=web` : une annonce réservée au site ou à l'app (Worker, announcementFor).
     const res = await fetch(`${api.API_URL}/api/announcement?p=web`, { cache: 'no-store' })
+    api.noteQuotaHint(res)
     if (!res.ok) return
     annCurrent = (await res.json()).announcement ?? null
     annFetchedAt = Date.now()
@@ -7142,11 +7145,14 @@ let pollSending = false
 let pollEndTimer = 0
 async function loadPoll(force = false) {
   if (!force && Date.now() - pollFetchedAt < 5 * 60_000) return renderPoll()
+  // Réserve du quota du Worker (api.js) : le sondage déjà là reste, sans relecture.
+  if (api.quotaPaused()) return renderPoll()
   try {
     const res = await fetch(`${api.API_URL}/api/poll`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, cache: 'no-store',
       body: JSON.stringify({ device: usage.installId() }),
     })
+    api.noteQuotaHint(res)
     if (!res.ok) return
     pollData = await res.json()
     pollFetchedAt = Date.now()

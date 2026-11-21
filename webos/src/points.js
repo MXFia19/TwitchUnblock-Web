@@ -302,9 +302,14 @@ export class SpadeSender {
       this.note(`worker ${base} ${res.status}`, `Relais des minutes refusé (HTTP ${res.status} · ${hostOf(base)}${typeof json?.error === 'string' ? ` · ${json.error.slice(0, 60)}` : ''})`)
       // Adresse ou données refusées : un autre Worker dirait pareil.
       if (res.status === 400) return null
-      // Route absente (Worker d'avant) ; trop d'envois : le suivant.
+      // Route absente (Worker d'avant) ; trop d'envois : le suivant. Réserve
+      // du quota du jour (worker.js, `quota_reserve`) : ce Worker attend
+      // minuit UTC (`retryAfter`, en secondes), un jour au plus.
       if (res.status === 404) this.skip.set(base, Infinity)
-      else if (res.status === 429) this.skip.set(base, this.now() + 10 * 60_000)
+      else if (res.status === 429) {
+        const wait = json?.code === 'quota_reserve' && json.retryAfter > 0 ? Math.min(json.retryAfter, 86400) * 1000 : 10 * 60_000
+        this.skip.set(base, this.now() + wait)
+      }
     }
     return null
   }

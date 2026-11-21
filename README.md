@@ -295,6 +295,7 @@ tools/pair-check.mjs     Checks of the iPhone → TV web session: the Worker's /
 tools/points-check.mjs   Checks of the TV's channel points: minute-watched (and the Worker's /api/spade), balance, streak, bonus chest
 tools/slow-relay-check.mjs  Checks of the relay fallbacks: slow-relay detection (logged, no switch), Sofia when the main relay fails, back to the main relay when it returns, the Worker as the safety net
 tools/retours-2111-check.mjs  Checks of the 21 November changes: relays blocked on the device, Bulgaria segments through the relay, delay added by the channel, the LG TV's accounts and web session check, hidden tags and the texts in every language
+tools/quota-reserve-check.mjs  Checks of the daily quota reserve: the Worker's thresholds and answers (in-memory D1), the bot sending the day's count, the website's pause and the LG TV's channel points
 .github/workflows/   Docker image (docker.yml), extension packages and release (extension.yml), LG TV app (webos.yml), daily database backup (d1-backup.yml)
 vercel.json          Website configuration on Vercel
 ```
@@ -423,6 +424,7 @@ Optional settings, in the Cloudflare dashboard under *Workers & Pages → your W
 | `FEEDBACK_BOT_SECRET` | Secret | Optional. Shared secret (32+ random characters) of the [Discord bot](#discord-bot-feedback-alerts-releases): the same value goes in the relay's `.env`. Without it, the bot's route is off. |
 | `REPORTS_KEY` | Secret | Optional. Key (32+ characters: `openssl rand -hex 32`) for [reading reports from your computer](#reading-reports-from-your-computer) with `tools/reports.mjs` — and marking them done: a report's status, the bot's to-do cards; nothing else. Without it, `/api/admin/reports` doesn't exist (404). |
 | `ALERT_WEBHOOK` | Secret | Optional. Webhook of a private Discord channel: every 5 minutes the Worker checks the [video relay](#video-relay-on-your-own-server-vps) (`NTFY_RELAY`) and the Discord bot, and posts there when one goes down or comes back. |
+| `QUOTA_RESERVE`, `QUOTA_PLAYBACK_RESERVE`, `QUOTA_DAILY_LIMIT` | Text | Optional. The [daily quota reserve](#daily-quota-reserve): share kept from 80% (`20` by default) and from 95% (`5`), and the daily limit (`100000`). `0` turns a step off. |
 | `ADMIN_TWITCH_IDS` | Text | Twitch user ID(s) of the site owner, comma-separated, for the developer tools on `/stats`. Optional: without it, the Worker uses `OFFICIAL_ADMIN_TWITCH_IDS` from `wrangler.toml` (the official Worker's owner; a different name, so a dashboard variable or secret never clashes with it on deploy). For your own Worker, set this or change `OFFICIAL_ADMIN_TWITCH_IDS`. With neither, nobody gets the tools. |
 | `SITE_ORIGINS` | Text | Website address(es) whose usage pings are counted, comma-separated. |
 | `TWITCH_CLIENT_ID` | Text | Optional. Client ID of your own website's Twitch app (its `twitchClientId`). The developer tools only accept Twitch tokens issued to the official website and apps; set this so tokens from your own site's login work too. |
@@ -452,6 +454,44 @@ already playing switches over by itself and resumes where it was.
 
 A copy of the site with its own Worker lists its fallbacks in
 `public/config.js`: `window.TU_CONFIG = { apiUrl: '…', fallbackApiUrls: ['…'] }`.
+
+### Daily quota reserve
+
+Cloudflare counts **every** request the Worker receives, even one it refuses
+straight away: the Worker alone can't save its quota, the website and the apps
+have to stop sending. So past a threshold the main Worker tells them, and they
+stop what can wait; versions already installed back off where they already
+knew how to.
+
+- **Where the count comes from**: the [Discord bot](#discord-bot-feedback-alerts-releases)
+  reads the account's requests of the day (Cloudflare's GraphQL API,
+  `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` in the relay's `.env`)
+  every 15 minutes, every 5 past 70%, and sends it to the Worker (kept in D1).
+  Without a recent count (bot stopped for 30 minutes, a Worker without a
+  database such as the fallback), nothing changes.
+- **Reserve, from 80%** (`QUOTA_RESERVE`, 20 by default): the counts, the
+  announcement, the poll, `/stats` and Moobot still answer, with an
+  `X-TU-Quota: reserve` header; the website and the new app versions then
+  stop sending counts and reloading the announcement and the poll until
+  midnight UTC (`Retry-After`). Pending counters wait on the device. Refusing
+  them would have made older versions try again more often (on every launch,
+  or every quarter of an hour on the website). `/api/spade` (channel points
+  minutes) answers 429 `quota_reserve`: the iPhone, Android and LG TV apps
+  leave this Worker 10 minutes (older versions) or until midnight UTC (new
+  ones) and send them through the fallback.
+- **Playback, from 95%** (`QUOTA_PLAYBACK_RESERVE`, 5 by default), on the
+  Worker with the database only: lives, VODs and playlists get the same answer
+  as Cloudflare's daily limit (429, `error code: 1027`, no CORS header), so
+  every version — website and apps, new and old — switches to the fallback
+  Worker and the relays until midnight UTC. The last 5% go to backups,
+  reports, TV pairing, live notifications and the bot, which the fallback
+  can't do.
+- `QUOTA_DAILY_LIMIT` (100000 by default) for a paid plan. These three are
+  optional *Text* variables in the dashboard; a percentage of 0 turns that
+  step off.
+- CORS preflight answers (`OPTIONS`) carry `Access-Control-Max-Age`: browsers
+  keep them (Chrome 2 hours, Firefox a day, Safari 10 minutes) instead of
+  asking again before each count, backup or poll, which each cost a request.
 
 ### Database backup (daily)
 
@@ -774,7 +814,11 @@ per version):
 - **Cloudflare free quotas at 70%** — Worker requests (100,000 a day), D1 rows
   read (5 million) and written (100,000), for the main Worker's account — when
   `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` are in the relay's `.env`
-  (below). Without them, this check is off.
+  (below). Without them, this check is off. The bot reads them every 15
+  minutes (every 5 past 70% of the requests) and sends the request count to
+  the Worker, which keeps a [reserve](#daily-quota-reserve) for what matters;
+  it also says when the reserve starts and when playback leaves the main
+  Worker (once a day each).
 - **"VPS not up to date"** when the relay's image is behind GitHub for its own
   files (`worker.js`, `docker/`, `Dockerfile`), **"Worker not up to date"**
   when `worker.js` changed on `main` after the deployed version — checked
@@ -783,7 +827,8 @@ per version):
 - `/status` (developer only): main and fallback Workers, database size, ntfy
   messages sent today against ntfy.sh's 250 and any pause, notification queue,
   the scheduled task's last run, relay and Worker versions, how long the bot
-  has been connected, and the Cloudflare quotas when set — in one message,
+  has been connected, and the Cloudflare quotas when set (with the reserve,
+  once it has started) — in one message,
   ending with the 5 D1 queries that read the most rows today (UTC): the start of
   each query, rows read and calls (D1 query insights, same token; if Cloudflare
   refuses, one short line says so).

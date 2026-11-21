@@ -120,6 +120,29 @@ function downStored() {
 }
 const isDown = (base) => Math.max(downStored()[base] || 0, downMem[base] || 0) > Date.now()
 
+// ── Réserve du quota du jour (worker.js) ───────────────────────────────────
+// Passé 80 % de son quota, le Worker principal le signale (en-tête
+// X-TU-Quota: reserve) sur le comptage, les annonces et les sondages : leurs
+// envois automatiques attendent alors minuit UTC (Retry-After), pour laisser
+// le reste du quota à la lecture et aux sauvegardes. Le refus ne servirait à
+// rien : le Worker compte toute requête reçue, refusée ou non.
+const QUOTA_PAUSE_KEY = 'tu_quota_pause'
+let quotaPauseMem = 0
+/** Lit l'avis de la réserve sur une réponse du Worker. */
+export function noteQuotaHint(res) {
+  if (res?.headers?.get?.('X-TU-Quota') !== 'reserve') return
+  const s = Number(res.headers.get('Retry-After'))
+  const until = Date.now() + Math.min(s > 0 ? s : 3600, 86400) * 1000
+  quotaPauseMem = Math.max(quotaPauseMem, until)
+  try { localStorage.setItem(QUOTA_PAUSE_KEY, String(quotaPauseMem)) } catch {}
+}
+/** Envois automatiques en pause (réserve du quota) ? */
+export function quotaPaused() {
+  let stored = 0
+  try { stored = Number(localStorage.getItem(QUOTA_PAUSE_KEY)) || 0 } catch {}
+  return Math.max(stored, quotaPauseMem) > Date.now()
+}
+
 /** Un autre Worker peut-il prendre le relais de celui-ci ? */
 export const hasOtherWorker = (base) => WORKER_BASES.length > 1 && WORKER_BASES.includes(base)
 
