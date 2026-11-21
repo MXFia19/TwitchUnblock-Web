@@ -815,13 +815,13 @@ window.addEventListener('pagehide', () => { flushSync({ force: true }); flushPre
 // depuis le dernier échange : fusion pour les masqués et les épinglés (avec
 // la liste du dernier échange, un retrait fait d'un côté tient), la date la
 // plus récente pour les réglages.
-const PREFS_COMMON = ['topLang', 'showRecent', 'timestamps', 'timeFormat', 'keepDeleted', 'loadHistory', 'hideBots', 'hideCommands', 'mutedWords', 'blockedUsers', 'highlightWords', 'vodSpeed', 'hiddenEmotes', 'favoriteEmotes', 'hideGiftSubs']
+const PREFS_COMMON = ['topLang', 'showRecent', 'timestamps', 'timeFormat', 'keepDeleted', 'loadHistory', 'hideBots', 'hideCommands', 'mutedWords', 'blockedUsers', 'highlightWords', 'vodSpeed', 'hiddenEmotes', 'favoriteEmotes', 'hideGiftSubs', 'hiddenTags']
 // Clés ajoutées à `common` après coup (toujours en fin de liste) : une
 // empreinte gardée d'avant leur arrivée, calculée sans elles, n'est pas un
 // changement fait ici (notePrefsChanges). Sinon, au premier passage de la
 // nouvelle version, la section d'ici, datée du moment, écrasait celle du
 // serveur — jusqu'aux emotes masquées venues de l'app iPhone.
-const PREFS_COMMON_ADDED = ['hiddenEmotes', 'favoriteEmotes', 'hideGiftSubs']
+const PREFS_COMMON_ADDED = ['hiddenEmotes', 'favoriteEmotes', 'hideGiftSubs', 'hiddenTags']
 const PREFS_SECTIONS = ['common', 'pinned', 'hidden']
 const PREFS_STATE_KEY = 'tu_prefs_sync'
 const PREFS_DELAY = 4000
@@ -1034,7 +1034,7 @@ function prefsFirstMerge(name, mine, theirs) {
   if (name === 'pinned') return mergePins(mine, theirs, null)
   if (name === 'hidden') return mergeHiddenSync(mine, theirs, null)
   const out = theirs && typeof theirs === 'object' && !Array.isArray(theirs) ? { ...theirs } : {}
-  for (const [k, max] of [['mutedWords', 50], ['highlightWords', 30], ['blockedUsers', 500], ['hiddenEmotes', HIDDEN_EMOTES_MAX], ['favoriteEmotes', FAVORITE_EMOTES_MAX]]) {
+  for (const [k, max] of [['mutedWords', 50], ['highlightWords', 30], ['blockedUsers', 500], ['hiddenEmotes', HIDDEN_EMOTES_MAX], ['favoriteEmotes', FAVORITE_EMOTES_MAX], ['hiddenTags', HIDDEN_MAX_TAGS]]) {
     const all = [...new Set([...(Array.isArray(out[k]) ? out[k] : []), ...(mine[k] ?? [])])]
     // Emotes masquées et favorites : les plus récentes sont en fin de liste.
     out[k] = k.endsWith('Emotes') ? all.slice(-max) : all.slice(0, max)
@@ -1565,8 +1565,11 @@ function hideButton(s, hideCat) {
   if (followedOrPinned(s.login)) return ''
   const label = esc(t('hide_menu'))
   const game = hideCat && s.gameId && !isCatFollowed(s.gameId)
+  // Ses tags (5 au plus) : chacun peut être masqué depuis la même feuille.
+  const tags = (s.tags ?? []).map(cleanTag).filter(Boolean).slice(0, 5)
   return `<button class="mhide" type="button" data-hide-channel="${esc(s.login)}" data-hide-name="${esc(s.name)}"${game
-    ? ` data-hide-game="${esc(s.gameId)}" data-hide-game-name="${esc(s.game)}"` : ''} title="${label}" aria-label="${label}">${icon('eyeOff', 15)}</button>`
+    ? ` data-hide-game="${esc(s.gameId)}" data-hide-game-name="${esc(s.game)}"` : ''}${tags.length
+    ? ` data-hide-tags="${esc(tags.join(','))}"` : ''} title="${label}" aria-label="${label}">${icon('eyeOff', 15)}</button>`
 }
 
 /** `pinnable` : chaîne suivie, qu'on peut épingler en tête des suivies.
@@ -2348,12 +2351,30 @@ const isChannelHidden = (login) => hiddenChannels().some((x) => x.login === Stri
 const isCatHidden = (id) => Boolean(id) && hiddenCats().some((x) => x.id === String(id))
 /** Suivie (compte ou appareil) ou épinglée : jamais masquée. */
 const followedOrPinned = (login) => isLocallyFollowed(login) || isPinned(login) || (state.accountFollows ?? []).includes(String(login).toLowerCase())
-/** Lives d'une catégorie ouverte : seule la chaîne compte (la catégorie
- *  elle-même, masquée ou non, reste consultable). */
-const showsChannel = (login) => followedOrPinned(login) || !isChannelHidden(login)
-/** Top : ni la chaîne ni la catégorie masquées — une catégorie suivie
- *  l'emporte sur son masquage, comme dans la grille. */
-const showsStream = (s) => followedOrPinned(s.login) || (!isChannelHidden(s.login) && (isCatFollowed(s.gameId) || !isCatHidden(s.gameId)))
+// Tags masqués (Réglages → Masqués, ou l'œil barré d'une carte ; demande
+// fb_mwpac0z4, « vtuber ») : un live qui en porte un sort des mêmes listes.
+// Twitch compare ses tags sans la casse : gardés en minuscules.
+const HIDDEN_MAX_TAGS = 100
+/** Tag nettoyé : minuscules, sans « # » ; lettres et chiffres seulement
+ *  (25 au plus, comme chez Twitch), sinon null. */
+const cleanTag = (x) => {
+  if (typeof x !== 'string') return null
+  const v = x.trim().replace(/^#+/, '').toLowerCase()
+  return /^[\p{L}\p{N}]{1,25}$/u.test(v) ? v : null
+}
+const cleanTags = (list) => [...new Set(list.map(cleanTag).filter(Boolean))].slice(0, HIDDEN_MAX_TAGS)
+const hiddenTags = () => (Array.isArray(store.prefs.hiddenTags) ? store.prefs.hiddenTags : [])
+/** Le live porte-t-il un tag masqué ? */
+const hasHiddenTag = (s) => {
+  const hid = hiddenTags()
+  return hid.length > 0 && (s?.tags ?? []).some((x) => hid.includes(String(x).toLowerCase()))
+}
+/** Lives d'une catégorie ouverte : la chaîne et ses tags comptent (la
+ *  catégorie elle-même, masquée ou non, reste consultable). */
+const showsCatStream = (s) => followedOrPinned(s.login) || (!isChannelHidden(s.login) && !hasHiddenTag(s))
+/** Top : ni la chaîne, ni un tag, ni la catégorie masqués — une catégorie
+ *  suivie l'emporte sur son masquage, comme dans la grille. */
+const showsStream = (s) => followedOrPinned(s.login) || (!isChannelHidden(s.login) && !hasHiddenTag(s) && (isCatFollowed(s.gameId) || !isCatHidden(s.gameId)))
 const showsCat = (c) => isCatFollowed(c.id) || !isCatHidden(c.id)
 
 const cleanHiddenChannel = (x) => {
@@ -2393,22 +2414,45 @@ function askHide(d) {
   const name = d.hideName || login
   const gameId = d.hideGame
   const gameName = d.hideGameName || gameId
-  if (!gameId) return hideChannel(login, name)
+  const tags = String(d.hideTags || '').split(',').map(cleanTag).filter((x) => x && !hiddenTags().includes(x))
+  if (!gameId && !tags.length) return hideChannel(login, name)
   openSheet(`
     <div class="sheet-head"><h2>${esc(t('hide_menu'))}</h2><button class="icon-btn" type="button" data-sheet-close>${icon('x', 20)}</button></div>
     <div class="sheet-group">
       <button class="sheet-row" type="button" data-hide-pick="channel">${icon('user', 18)}<span>${esc(t('hide_channel'))}</span><small class="muted">${esc(name)}</small></button>
-      <button class="sheet-row" type="button" data-hide-pick="category">${icon('gamepad', 18)}<span>${esc(t('hide_category', { c: gameName }))}</span></button>
+      ${gameId ? `<button class="sheet-row" type="button" data-hide-pick="category">${icon('gamepad', 18)}<span>${esc(t('hide_category', { c: gameName }))}</span></button>` : ''}
+      ${tags.map((x) => `<button class="sheet-row" type="button" data-hide-pick="tag" data-tag="${esc(x)}">${icon('eyeOff', 18)}<span>${esc(t('hide_tag', { t: x }))}</span></button>`).join('')}
       <button class="sheet-row" type="button" data-sheet-close>${icon('x', 18)}<span>${esc(t('cancel'))}</span></button>
     </div>`)
   $('#sheet').onclick = (e) => {
     if (e.target.closest('[data-sheet-close]')) return closeSheet()
-    const pick = e.target.closest('[data-hide-pick]')?.dataset.hidePick
+    const row = e.target.closest('[data-hide-pick]')
+    const pick = row?.dataset.hidePick
     if (!pick) return
     closeSheet()
     if (pick === 'channel') hideChannel(login, name)
+    else if (pick === 'tag') hideTag(row.dataset.tag)
     else hideCategory(gameId, gameName)
   }
+}
+
+/** Masque les lives qui portent ce tag (avec « Annuler »). */
+function hideTag(tag) {
+  const x = cleanTag(tag)
+  if (!x || hiddenTags().includes(x)) return
+  store.prefs.hiddenTags = cleanTags([x, ...hiddenTags()])
+  store.savePrefs()
+  refreshHidden()
+  showNotice({
+    title: t('hidden_tag_done', { t: x }),
+    action: t('undo'),
+    icon: 'eyeOff',
+    onAction: () => {
+      store.prefs.hiddenTags = hiddenTags().filter((y) => y !== x)
+      store.savePrefs()
+      refreshHidden()
+    },
+  })
 }
 
 function hideChannel(login, name) {
@@ -2496,9 +2540,15 @@ function hiddenSectionInner() {
   const channels = hiddenChannels()
   const cats = hiddenCats()
   const chip = (attr, key, name) => `<span class="chip"><span>${esc(name)}</span><button type="button" ${attr}="${esc(key)}" title="${esc(t('unhide'))}" aria-label="${esc(t('unhide'))} · ${esc(name)}">${icon('x', 14)}</button></span>`
+  // Tags : écrits à la main, séparés par des virgules (comme les mots
+  // masqués du chat), ou ajoutés par l'œil barré d'une carte.
   return `
     <h3>${esc(t('hidden_title'))}</h3>
     <p class="muted small">${esc(t('hidden_sub'))}</p>
+    <label class="setting setting-col">
+      <span class="setting-text"><span>${esc(t('hidden_tags'))}</span><small>${esc(t('hidden_tags_sub'))}</small></span>
+      <input class="text-input" type="text" id="set-hidden-tags" autocomplete="off" spellcheck="false" maxlength="600" placeholder="vtuber, asmr" value="${esc(hiddenTags().join(', '))}">
+    </label>
     ${!channels.length && !cats.length ? `<p class="muted small hidden-empty">${esc(t('hidden_empty'))}</p>` : `
       ${channels.length ? `<p class="hidden-list-title">${esc(t('hidden_channels_n', { n: channels.length }))}</p>
         <div class="chips hidden-chips">${channels.map((x) => chip('data-unhide-channel', x.login, x.name || x.login)).join('')}</div>` : ''}
@@ -2722,7 +2772,7 @@ async function openCategory(c, { more = false } = {}) {
 function paintCatStreams() {
   const grid = $('#cat-streams')
   if (!grid || !cat.streams) return
-  const list = cat.streams.filter((s) => showsChannel(s.login))
+  const list = cat.streams.filter(showsCatStream)
   grid.innerHTML = list.length ? list.map((s) => streamCard(s, { hideable: true, hideCat: false, showGame: false })).join('') : emptyState(t('no_live'))
 }
 
@@ -4088,6 +4138,9 @@ function setupPlayer() {
     onTheatre: () => toggleTheatre(),
     onHelp: () => toast(t('shortcuts_help'), 'info'),
     onSource: (id) => switchLiveSource(id),
+    // Délai mis par la chaîne elle-même (Player.channelDelay) : dit une fois
+    // par chaîne et par visite, pour qu'on ne le croie pas de notre fait.
+    onChannelDelay: (s) => noteChannelDelay(s),
     // Raccourcis actifs : lecteur affiché en grand, aucune feuille ouverte.
     keysActive: () => !$('#watch').hidden && !$('#watch').classList.contains('minimized') && !$('#sheet')?.classList.contains('open'),
     isChatOpen: () => store.prefs.chatOpen,
@@ -4635,6 +4688,35 @@ async function showHqMissing(token) {
   player.setQualityNote({ label: `${m.q} (Source)`, text: t(`hq_why_${m.reason}`, { q: m.q, codec: m.codec, e: m.e }) + hint, action: m.action })
 }
 
+/** Liens d'un direct sans autre qualité vidéo que la Source (le son à part). */
+function sourceOnly(links) {
+  const video = Object.keys(links ?? {}).filter((k) => !/^(auto|audio_only|audio)$/i.test(k))
+  return video.length === 1
+}
+
+/** Délai ajouté par la chaîne (Player.channelDelay) : avis une fois par
+ *  chaîne et par visite. Le menu de qualité et l'infobulle du retard le
+ *  disent ensuite. */
+const delayToldFor = new Set()
+function noteChannelDelay(s) {
+  const login = state.watch?.login
+  if (!login || delayToldFor.has(login)) return
+  delayToldFor.add(login)
+  toast(t('channel_delay_toast', { s }), 'info', 10000)
+}
+
+/** Relais bloqués ici (api.js, relaysBlocked) : dit une fois par visite, à
+ *  la première lecture (ou tout de suite si l'on regarde déjà), avec les
+ *  adresses à laisser passer. */
+let relaysBlockedTold = false
+function tellRelaysBlocked() {
+  if (relaysBlockedTold || !api.relaysBlocked() || !state.watch) return
+  relaysBlockedTold = true
+  logError('lecteur', `relais bloqués sur cet appareil (${api.relayHosts().join(', ')}) : lecture par les Workers`)
+  toast(t('relays_blocked', { hosts: api.relayHosts().join(', ') }), 'info', 15000)
+}
+window.addEventListener('tu-relays-blocked', tellRelaysBlocked)
+
 /** Avis montré une seule fois dans ce navigateur, comme dans l'app : on sait
  *  ensuite ce qu'il dit. `ms` : durée d'affichage (toast). */
 function noticeOnce(key, text, ms) {
@@ -4767,6 +4849,13 @@ async function openLive(rawLogin) {
   const play = hq ? hq.current() : { links: links.links, variants: token.variants }
   player.load({ links: play.links, variants: play.variants, kind: 'live' })
   player.setLiveSource(hq ? hq.sourceId() : links.source)
+  // Une seule qualité vidéo chez Twitch (chaîne sans transcodage, souvent un
+  // affilié) : le menu ne propose rien d'autre que la Source et le son, ce
+  // qui passait pour un bug de la source Bulgarie (jpuper, 19/11). Dit dans
+  // le menu ; showHqMissing, plus bas, ne vise que les chaînes au-dessus de
+  // 1080p, qui ont toujours d'autres qualités.
+  if (!hq && sourceOnly(play.links)) player.setQualityNote({ text: t('q_source_only'), action: null })
+  tellRelaysBlocked()
   // La chaîne diffuse au-dessus de 1080p mais pas ici : pourquoi, dans le
   // menu de qualité (comme twitch.tv).
   if (!hq || !store.prefs.higherQualities) showHqMissing(token).catch(() => {})
@@ -5467,6 +5556,7 @@ async function openVod(id, preset, { keepPlaylist = false, at = null, fromLive =
 
   $('#watch-loading').hidden = true
   player.load({ links: links.links, variants: token.variants, kind: 'vod', startAt })
+  tellRelaysBlocked()
   player.setBackToLive(token.fromLive ? () => openLive(token.fromLive) : null)
   api.getVodMarkers(vodId).then((m) => {
     if (state.watch !== token) return
@@ -6622,6 +6712,13 @@ function openSettings(page = 'menu') {
     if (id === 'set-muted') {
       p.mutedWords = e.target.value.split(',').map((w) => w.trim().toLowerCase()).filter(Boolean).slice(0, 50)
     }
+    // Tags masqués : nettoyés (cleanTag), et les listes repeintes sans eux.
+    if (id === 'set-hidden-tags') {
+      p.hiddenTags = cleanTags(e.target.value.split(/[,\s]+/))
+      store.savePrefs()
+      refreshHidden()
+      return
+    }
     if (id === 'set-words') {
       p.highlightWords = e.target.value.split(',').map((w) => w.trim().toLowerCase()).filter(Boolean).slice(0, 30)
     }
@@ -6774,6 +6871,7 @@ const BACKUP_SETTINGS = {
   highlightWords: okWords(30),
   blockedUsers: okLogins(500),
   hiddenEmotes: okEmoteCodes(HIDDEN_EMOTES_MAX),
+  hiddenTags: (v) => (Array.isArray(v) ? cleanTags(v) : undefined),
   favoriteEmotes: okEmoteCodes(FAVORITE_EMOTES_MAX),
   hideAccount: okBool,
   audioCompressor: okBool,

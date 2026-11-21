@@ -19,12 +19,19 @@
 //  - Points de chaîne et série de visionnage pendant un direct
 //    (livepoints.js, points.js) : leurs requêtes au nom du compte passent
 //    par accountGql, l'identifiant du compte par webSessionUserId.
+//  - Toujours celle du compte connecté sur la TV (auth.js), s'il y en a un :
+//    une session d'un autre compte est refusée à l'arrivée, ou oubliée dès
+//    qu'on le sait (relue chez Twitch, autre compte connecté), comme dans
+//    l'app iPhone (AppStore.adoptWebToken) — sinon les points, les suivis et
+//    le direct sans pub d'un compte se mêlaient au chat et aux suivis d'un
+//    autre. Le dernier refus reste affiché dans les réglages (mismatch).
 // ═══════════════════════════════════════════════════════════════════════════
 
 import * as api from '../../public/assets/js/api.js'
 import { logError } from '../../public/assets/js/errlog.js'
 import { PAIR_POLL_MS, forgetPairing, newPairing, openBlob } from './pairing.js'
 import { masterLinks, proxyLink, readPlaybackToken, usherLiveUrl } from './playback.js'
+import { user } from './auth.js'
 
 const KEY = 'tu_tv_websession'
 const DEVICE_KEY = 'tu_tv_device_id'
@@ -55,6 +62,23 @@ function store(s) {
  *  vers Twitch. */
 export let webSession = load()
 
+/** Dernière session refusée parce qu'elle était d'un autre compte que celui
+ *  de la TV : { web, account } (noms à afficher), null sinon. */
+export let mismatch = null
+
+/** La session `s` est-elle d'un autre compte que celui connecté sur la TV ?
+ *  Par l'identifiant s'il est connu, sinon par le pseudo. */
+function otherAccount(s) {
+  if (!s || !user?.id) return false
+  if (s.userId) return String(s.userId) !== String(user.id)
+  return Boolean(s.login) && s.login !== String(user.login || '').toLowerCase()
+}
+
+function noteMismatch(s) {
+  mismatch = { web: s.displayName || s.login, account: user?.name || user?.login || '' }
+  logError('session', `Session web d'un autre compte refusée : @${s.login} au lieu de @${user?.login || '?'} (compte de la TV)`)
+}
+
 const listeners = new Set()
 /** Appelé à chaque session reçue, oubliée, refusée ou relue. */
 export function onWebSessionChange(fn) { listeners.add(fn); return () => listeners.delete(fn) }
@@ -66,6 +90,14 @@ const changed = () => { for (const fn of listeners) { try { fn(webSession) } cat
  *  panne n'y change rien : la session reste, revérifiée au démarrage
  *  suivant. userId sert aux minutes regardées (webSessionUserId). */
 export function saveWebSession(s) {
+  // D'un autre compte que celui de la TV : refusée, rien de gardé.
+  const login = String(s.login || '').toLowerCase()
+  if (otherAccount({ userId: s.userId || '', login })) {
+    noteMismatch({ login, displayName: s.displayName || login })
+    changed()
+    return false
+  }
+  mismatch = null
   webSession = {
     token: s.token, login: s.login, userId: s.userId || '', displayName: s.displayName || s.login,
     sentAt: s.sentAt ?? null, at: Date.now(), checkedAt: 0, expired: false,
@@ -73,6 +105,18 @@ export function saveWebSession(s) {
   store(webSession)
   changed()
   checkWebSession({ force: true }).catch(() => {})
+  return true
+}
+
+/** Session gardée d'un autre compte que celui de la TV (connexion par code
+ *  faite après, ou identifiant relu chez Twitch) : oubliée. true si c'est
+ *  fait. Appelé à chaque connexion (main.js) et après une relecture. */
+export function refuseIfOtherAccount() {
+  const s = webSession
+  if (!otherAccount(s)) return false
+  noteMismatch(s)
+  forgetWebSession()
+  return true
 }
 
 /** « Oublier la session » : effacée de la mémoire et du stockage de la TV,
@@ -216,6 +260,8 @@ export async function checkWebSession({ force = false } = {}) {
   if (typeof u.displayName === 'string' && u.displayName.trim()) s.displayName = u.displayName.trim().slice(0, 60)
   s.checkedAt = Date.now()
   store(s)
+  // Identifiant relu : d'un autre compte que celui de la TV, elle part.
+  if (refuseIfOtherAccount()) return
   // Seul un compte ou un nom changé se voit (réglages, suivis).
   if (`${s.userId}|${s.login}|${s.displayName}` !== before) changed()
 }

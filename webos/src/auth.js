@@ -9,6 +9,13 @@
 //
 //  Jeton : la clé du site (store.token, « twitch_token ») ; renouvellement
 //  et compte à côté. Rien ne part ailleurs que chez Twitch.
+//
+//  Plusieurs comptes (demande de SuperPikaBoy, 20/11) : le compte actif
+//  reste dans ces clés ; les autres sont rangés à part (tu_tv_accounts),
+//  chacun avec son jeton de renouvellement et sa session web de l'iPhone
+//  (websession.js). Se connecter avec un autre compte range l'actif ; passer
+//  à un compte rangé remet ses clés en place, puis l'app redémarre (suivis,
+//  chat et points relus pour lui).
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { HELIX_CLIENT_ID, getMe, validateToken } from '../../public/assets/js/api.js'
@@ -19,6 +26,12 @@ import { store } from '../../public/assets/js/store.js'
 export const SCOPES = 'user:read:follows chat:read chat:edit'
 const REFRESH_KEY = 'tu_tv_refresh'
 const USER_KEY = 'tu_tv_user'
+const ACCOUNTS_KEY = 'tu_tv_accounts'
+/** Session web de l'iPhone du compte actif (clé de websession.js, lue ici
+ *  telle quelle pour la ranger avec son compte). */
+const WS_KEY = 'tu_tv_websession'
+const MAX_ACCOUNTS = 5
+const ID_RE = /^\d{1,20}$/
 const ID = 'https://id.twitch.tv/oauth2'
 
 function read(key) {
@@ -61,8 +74,9 @@ export async function requestCode() {
   }
 }
 
-/** Attend la validation du code : 'ok', 'expired' ou 'failed'. `cancelled()`
- *  arrête l'attente (écran fermé). */
+/** Attend la validation du code : 'ok', 'switched' (connecté avec un autre
+ *  compte que l'actif, rangé), 'expired' ou 'failed'. `cancelled()` arrête
+ *  l'attente (écran fermé). */
 export async function waitForApproval(code, cancelled) {
   let interval = code.interval
   while (Date.now() < code.expiresAt) {
@@ -79,8 +93,10 @@ export async function waitForApproval(code, cancelled) {
     } catch { continue }   // réseau : on réessaie au tour suivant
     if (cancelled()) return 'cancelled'
     if (r.data.access_token) {
-      await adopt(r.data.access_token, r.data.refresh_token)
-      return user ? 'ok' : 'failed'
+      // Un autre compte que celui qui était connecté : 'switched' (l'écran
+      // de connexion fait redémarrer l'app pour lui).
+      const other = await adopt(r.data.access_token, r.data.refresh_token)
+      return user ? (other ? 'switched' : 'ok') : 'failed'
     }
     const msg = String(r.data.message || '').toLowerCase()
     if (msg.includes('slow_down')) interval += 5
@@ -90,12 +106,75 @@ export async function waitForApproval(code, cancelled) {
   return 'expired'
 }
 
-/** Nouveau jeton : gardé, et le compte lu chez Twitch. */
+/** Comptes rangés sur cette TV (pas l'actif) : [{ user, token, refresh, ws }]. */
+export function savedAccounts() {
+  const list = read(ACCOUNTS_KEY)
+  return Array.isArray(list)
+    ? list.filter((a) => a && ID_RE.test(String(a.user?.id || '')) && typeof a.token === 'string' && a.token)
+    : []
+}
+
+/** Le compte actif, prêt à être rangé (null sans compte). */
+function activeEntry() {
+  if (!user?.id || !store.token) return null
+  let ws = null
+  try { ws = JSON.parse(localStorage.getItem(WS_KEY) || 'null') } catch {}
+  return { user, token: store.token, refresh: read(REFRESH_KEY), ws: ws && typeof ws === 'object' ? ws : null }
+}
+
+/** Nouveau jeton : gardé, et le compte lu chez Twitch. Un autre compte que
+ *  l'actif : celui-ci est rangé avec sa session web, et un compte déjà
+ *  rangé reprend la sienne. true si le compte a changé (l'app redémarre). */
 async function adopt(token, refresh) {
+  const prev = activeEntry()
   store.token = token
   write(REFRESH_KEY, refresh || null)
   await loadUser()
+  const other = Boolean(prev && user && prev.user.id !== user.id)
+  if (other) {
+    const saved = savedAccounts().find((a) => a.user.id === user.id)
+    write(ACCOUNTS_KEY, [prev, ...savedAccounts().filter((a) => a.user.id !== prev.user.id && a.user.id !== user.id)].slice(0, MAX_ACCOUNTS))
+    try {
+      if (saved?.ws) localStorage.setItem(WS_KEY, JSON.stringify(saved.ws))
+      else localStorage.removeItem(WS_KEY)
+    } catch {}
+  } else if (user) {
+    // Reconnexion d'un compte rangé : il n'est plus à part.
+    write(ACCOUNTS_KEY, savedAccounts().filter((a) => a.user.id !== user.id))
+  }
   changed()
+  return other
+}
+
+/** Passe à un compte rangé : l'actif est rangé à son tour, l'autre remis en
+ *  place, et l'app redémarre. Son jeton est vérifié (et renouvelé) au
+ *  démarrage, comme d'habitude (restore). */
+export function switchAccount(id) {
+  const list = savedAccounts()
+  const target = list.find((a) => a.user.id === id)
+  if (!target) return false
+  const prev = activeEntry()
+  const rest = list.filter((a) => a.user.id !== id)
+  write(ACCOUNTS_KEY, (prev ? [prev, ...rest] : rest).slice(0, MAX_ACCOUNTS))
+  store.token = target.token
+  write(REFRESH_KEY, target.refresh || null)
+  write(USER_KEY, target.user)
+  try {
+    if (target.ws) localStorage.setItem(WS_KEY, JSON.stringify(target.ws))
+    else localStorage.removeItem(WS_KEY)
+  } catch {}
+  location.reload()
+  return true
+}
+
+/** Retire un compte rangé de la TV : oublié ici et son jeton révoqué chez
+ *  Twitch (sans attendre), comme une déconnexion. Sa session web n'est pas
+ *  révoquée : c'est celle de l'iPhone. */
+export function removeAccount(id) {
+  const target = savedAccounts().find((a) => a.user.id === id)
+  if (!target) return
+  write(ACCOUNTS_KEY, savedAccounts().filter((a) => a.user.id !== id))
+  post('revoke', { client_id: HELIX_CLIENT_ID, token: target.token }).catch(() => {})
 }
 
 async function loadUser() {

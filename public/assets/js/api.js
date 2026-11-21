@@ -166,6 +166,9 @@ function watchRelayBack() {
     }
     relayWatch = null
     clearWorkerDown(RELAY_BASE)
+    // Relais « bloqués » qui répondent : ils ne l'étaient plus (site mis en
+    // exception dans le bloqueur), ou c'était une vraie panne.
+    if (blocked) { blocked = false; clearWorkerDown(SOFIA_BASE) }
     console.info('[TwitchUnblock] Relais vidéo revenu')
     window.dispatchEvent(new Event('tu-relay-back'))
   }
@@ -274,25 +277,57 @@ export function vpsRelayOf(url) {
   return o && (o === RELAY_BASE || o === SOFIA_BASE) ? o : null
 }
 
-/** L'adresse répond-elle (2xx) en moins de 8 s ? */
-async function answers(url) {
+/** Comment une adresse répond, en 8 s au plus : 'ok' (2xx), 'http' (une
+ *  autre réponse), 'timeout', ou 'neterr' — aucune réponse : serveur
+ *  injoignable, ou requête bloquée sur l'appareil (bloqueur, filtre DNS). */
+async function reach(url) {
   const ctrl = new AbortController()
   const timer = setTimeout(() => ctrl.abort(), 8000)
   try {
-    return (await fetch(url, { cache: 'no-store', signal: ctrl.signal })).ok
-  } catch { return false } finally { clearTimeout(timer) }
+    return (await fetch(url, { cache: 'no-store', signal: ctrl.signal })).ok ? 'ok' : 'http'
+  } catch (e) {
+    return e?.name === 'AbortError' ? 'timeout' : 'neterr'
+  } finally { clearTimeout(timer) }
 }
+/** L'adresse répond-elle (2xx) en moins de 8 s ? */
+const answers = async (url) => (await reach(url)) === 'ok'
+
+// ── Relais bloqués chez le spectateur ──────────────────────────────────────
+// Des listes de filtres (uBlock Origin, NextDNS, Pi-hole…) bloquent les noms
+// de « DNS dynamique », dont duckdns.org (relais principal) et sslip.io
+// (Sofia) — chez hippxrr le 19/11 : la source Bulgarie retombait sur Twitch
+// sans un mot, et toute sa lecture passait par un Worker (une playlist
+// toutes les 2 s, sur son quota). Signe retenu : les deux relais, chez deux
+// hébergeurs et sous deux noms différents, échouent sans aucune réponse
+// alors qu'un Worker répond. Une vraie panne des deux à la fois est rare.
+// L'avis (« tu-relays-blocked » : main.js, app TV) et une ligne du menu de
+// qualité (player.js) le disent, avec les adresses à autoriser.
+let blocked = false
+export const relaysBlocked = () => blocked
+/** Noms des relais officiels (avis « relais bloqués »). */
+export const relayHosts = () => [RELAY_BASE, SOFIA_BASE].filter(Boolean).map((b) => new URL(b).hostname)
 
 // Relais injoignable (VPS arrêté, mal configuré) : on le sait dès le
 // chargement de la page, plutôt qu'après les essais du lecteur. Écarté
 // seulement si l'appareil est en ligne et qu'un Worker répond, lui : un
 // réseau mobile lent (plus de 4 s, l'ancien délai) mettait le relais à
 // l'écart 30 min à tort. Sinon, un nouvel essai deux minutes plus tard.
+// Sans aucune réponse, celui de Sofia est essayé aussi : muets tous les
+// deux, ils sont bloqués ici (voir plus haut), et écartés tous les deux.
 async function checkRelay(again = true) {
-  if (!RELAY_BASE || isDown(RELAY_BASE) || await answers(`${RELAY_BASE}/health`)) return
+  if (!RELAY_BASE || isDown(RELAY_BASE)) return
+  const main = await reach(`${RELAY_BASE}/health`)
+  if (main === 'ok') return
   const worker = LOOKUP_BASES.find((b) => !isDown(b)) ?? LOOKUP_BASES[0]
-  if (navigator.onLine !== false && await answers(`${worker}/`)) markWorkerDown(RELAY_BASE)
-  else if (again) setTimeout(() => checkRelay(false), 120_000)
+  if (navigator.onLine !== false && await answers(`${worker}/`)) {
+    markWorkerDown(RELAY_BASE)
+    if (main === 'neterr' && SOFIA_BASE && (await reach(`${SOFIA_BASE}/health`)) === 'neterr') {
+      markWorkerDown(SOFIA_BASE)
+      blocked = true
+      console.info('[TwitchUnblock] Relais bloqués sur cet appareil (bloqueur ou filtre DNS) : lecture par les Workers.')
+      window.dispatchEvent(new Event('tu-relays-blocked'))
+    }
+  } else if (again) setTimeout(() => checkRelay(false), 120_000)
 }
 checkRelay()
 

@@ -360,5 +360,7 @@ test('avis « relais lent » retiré des cinq langues, nouveautés 2026.11.19a, 
     assert.equal(entry[0].items[l]?.length, 2, l)
     for (const item of entry[0].items[l]) assert.ok(item.length > 50, l)
   }
-  assert.equal(JSON.parse(read('webos/appinfo.json')).version, '0.4.2')
+  // 0.4.2 au moins : les versions suivantes de l'app TV gardent ce routage.
+  const [maj, min, pat] = JSON.parse(read('webos/appinfo.json')).version.split('.').map(Number)
+  assert.ok(maj > 0 || min > 4 || (min === 4 && pat >= 2), 'app TV 0.4.2 ou plus')
 })

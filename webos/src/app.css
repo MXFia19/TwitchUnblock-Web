@@ -239,6 +239,8 @@ img { border: 0; }
 
 .pv-panel { position: absolute; top: 0; right: 0; bottom: 0; z-index: 6; display: flex; flex-direction: column; width: 540px; box-sizing: border-box; padding: 60px 40px; background: rgba(24, 24, 27, 0.97); }
 .pv-panel h3 { margin: 0 0 24px; font-size: 36px; }
+/* Explication sous le titre : délai de la chaîne, qualité unique, relais bloqués. */
+.pv-panel .pv-note { margin: -8px 0 24px; font-size: 24px; line-height: 1.4; color: #c8c8d0; }
 .pv-list { flex: 1; overflow: hidden; scroll-behavior: smooth; }
 .pv-item { display: flex; align-items: center; justify-content: space-between; width: 100%; margin-bottom: 6px; padding: 16px 22px; border: 0; border-radius: 12px; background: transparent; color: #fff; font-size: 28px; text-align: left; }
 .pv-item.on { color: var(--purple2); font-weight: 700; }

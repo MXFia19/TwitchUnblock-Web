@@ -85,6 +85,9 @@ function getPlayer() {
     },
     onWorkerDown: (base) => switchWorker(base),
     onSlowRelay: (m) => slowRelay(m),
+    // Délai mis par la chaîne elle-même (Player.channelDelay) : dit une fois
+    // par chaîne, comme sur le site.
+    onChannelDelay: (s) => noteChannelDelay(s),
     onUnplayable: (bad, next) => toast(t('quality_unplayable', { q: bad, n: next }), 'info'),
   })
   // App mise en arrière-plan (touche Accueil, autre app) : la lecture
@@ -100,6 +103,29 @@ function getPlayer() {
 
 /** Écran du lecteur ouvert (un seul à la fois). */
 let current = null
+
+/** Chaînes dont le délai a déjà été dit pendant cette session de l'app. */
+const delayTold = new Set()
+function noteChannelDelay(s) {
+  const login = session?.login
+  if (!login || delayTold.has(login)) return
+  delayTold.add(login)
+  toast(t('channel_delay_toast', { s }), 'info', 9000)
+}
+
+/** Relais bloqués sur cette TV (filtre DNS du réseau, api.js) : dit une fois
+ *  par lancement, à la première lecture. */
+let relaysTold = false
+function tellRelaysBlocked() {
+  if (relaysTold || !api.relaysBlocked() || !session) return
+  relaysTold = true
+  logError('lecteur', `TV : relais bloqués sur ce réseau (${api.relayHosts().join(', ')}) : lecture par les Workers`)
+  toast(t('relays_blocked', { hosts: api.relayHosts().join(', ') }), 'info', 12000)
+}
+window.addEventListener('tu-relays-blocked', () => tellRelaysBlocked())
+
+/** Une seule qualité vidéo chez Twitch (chaîne sans transcodage). */
+const sourceOnly = (links) => Object.keys(links ?? {}).filter((k) => !/^(auto|audio_only|audio)$/i.test(k)).length === 1
 
 /** Débogage sur la TV (ares-inspect, console) : ce que lit le lecteur. */
 window.tuDebug = () => (player ? { ...session, links: undefined, info: undefined, player: player.debugInfo() } : null)
@@ -386,9 +412,11 @@ export function watchScreen(what) {
   }
 
   // ── Panneau de choix (qualité, source, vitesse) ──────────────────────────
-  function openPanel(title, items, onPick) {
+  /** `note` : une explication sous le titre (délai de la chaîne, qualité
+   *  unique, relais bloqués). */
+  function openPanel(title, items, onPick, note = '') {
     closePanel(false)
-    ui.panel.innerHTML = `<h3>${esc(title)}</h3><div class="pv-list" data-scroll="y">${items.map((it) => `<button class="pv-item${it.on ? ' on' : ''}" type="button" data-v="${esc(it.value)}"><span>${esc(it.label)}</span>${it.on ? icon('check', 28) : ''}</button>`).join('')}</div>`
+    ui.panel.innerHTML = `<h3>${esc(title)}</h3>${note ? `<p class="pv-note">${esc(note)}</p>` : ''}<div class="pv-list" data-scroll="y">${items.map((it) => `<button class="pv-item${it.on ? ' on' : ''}" type="button" data-v="${esc(it.value)}"><span>${esc(it.label)}</span>${it.on ? icon('check', 28) : ''}</button>`).join('')}</div>`
     ui.panel.hidden = false
     ui.panel.onclick = (e) => {
       const b = e.target.closest?.('.pv-item')
@@ -460,14 +488,17 @@ export function watchScreen(what) {
       case 'golive': p.goLive(); break
       case 'quality': {
         const keys = sortQualities(Object.keys(p.links), p.variants)
-        openPanel(t('quality'), keys.map((k) => ({ value: k, label: qualityText(k), on: k === p.quality })), (k) => { p.setQuality(k); paint() })
+        const delay = w?.kind === 'live' ? p.channelDelay() : 0
+        const note = [delay ? t('channel_delay_note', { s: delay }) : '', w?.kind === 'live' && sourceOnly(p.links) ? t('q_source_only') : ''].filter(Boolean).join(' ')
+        openPanel(t('quality'), keys.map((k) => ({ value: k, label: qualityText(k), on: k === p.quality })), (k) => { p.setQuality(k); paint() }, note)
         return
       }
       case 'source': {
         const cur = p.liveSource ?? api.liveSourceOrder()[0]
         // Le compte de la session web en tête, s'il est sans pub ici.
         const ids = [...(w?.accountAdFree && webSession && !webSession.expired ? ['account'] : []), ...api.liveSourceOrder()]
-        openPanel(t('live_source'), ids.map((id) => ({ value: id, label: sourceLabel(id), on: id === cur })), (id) => switchSource(id))
+        openPanel(t('live_source'), ids.map((id) => ({ value: id, label: sourceLabel(id), on: id === cur })), (id) => switchSource(id),
+          api.relaysBlocked() ? t('relays_blocked_menu', { hosts: api.relayHosts().join(', ') }) : '')
         return
       }
       case 'speed':
@@ -571,6 +602,7 @@ export function watchScreen(what) {
     token.info = info
     ui.loading.hidden = true
     p.load({ links: links.links, variants: token.variants, kind: 'live' })
+    tellRelaysBlocked()
     p.setLiveSource(links.source)
     chat.openLive({ channel: login, channelId: info?.id ?? null })
     // Points, série et prédiction : seulement avec la session web (et
@@ -630,6 +662,7 @@ export function watchScreen(what) {
     ui.loading.hidden = true
     lastSave = startAt
     p.load({ links: links.links, variants: token.variants, kind: 'vod', startAt })
+    tellRelaysBlocked()
     api.getVodMarkers(id).then((m) => {
       if (session !== token) return
       p.setChapters(m.chapters)

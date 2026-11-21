@@ -6,6 +6,35 @@
 
 export const CHANGELOG = [
   {
+    version: '2026.11.21a',
+    items: {
+      fr: [
+        'Tags masqués : dans Réglages → Masqués, écris les tags dont tu ne veux plus voir les lives (par exemple « vtuber »), séparés par des virgules. L’œil barré d’une carte propose aussi ses tags. Ces lives sortent du top et des catégories, comme une chaîne masquée.',
+        'Délai de la chaîne : quand un streamer retarde lui-même sa diffusion (contre le « stream sniping »), le site le dit une fois, puis dans le menu de qualité, pour qu’on ne le prenne pas pour un retard de TwitchUnblock.',
+        'Menu de qualité : certaines chaînes n’ont que la qualité Source, parce que Twitch ne les transcode pas. Le menu l’explique maintenant. Et si ton bloqueur ou ton filtre DNS bloque les relais du site (listes « DNS dynamique »), le site le dit, avec les adresses à autoriser.',
+        'App TV LG : plusieurs comptes Twitch, avec « Passer à… » dans les Réglages pour changer en un clic. Une session web d’un autre compte que celui de la TV est refusée, comme dans l’app iPhone.',
+      ],
+      en: [
+        'Hidden tags: in Settings → Hidden, type the tags whose streams you don’t want to see (“vtuber”, for example), separated by commas. A card’s crossed-out eye offers its tags too. Those streams leave Top and categories, like a hidden channel.',
+        'Channel delay: when a streamer delays their own stream (against stream sniping), the site says so once, then in the quality menu, so it isn’t mistaken for lag from TwitchUnblock.',
+        'Quality menu: some channels only have the Source quality, because Twitch doesn’t transcode them. The menu now explains it. And if your blocker or DNS filter blocks the site’s relays (“dynamic DNS” lists), the site says so, with the addresses to allow.',
+        'LG TV app: several Twitch accounts, with “Switch to…” in Settings to change in one click. A web session from another account than the TV’s is refused, like in the iPhone app.',
+      ],
+      es: [
+        'Etiquetas ocultas: en Ajustes → Ocultos, escribe las etiquetas cuyos directos no quieres ver (por ejemplo «vtuber»), separadas por comas. El ojo tachado de una tarjeta también ofrece sus etiquetas. Esos directos salen del top y de las categorías, como un canal oculto.',
+        'Retraso del canal: cuando un streamer retrasa su propia emisión (contra el stream sniping), el sitio lo dice una vez y luego en el menú de calidad, para que no se confunda con un retraso de TwitchUnblock.',
+        'Menú de calidad: algunos canales solo tienen la calidad Source, porque Twitch no los transcodifica. Ahora el menú lo explica. Y si tu bloqueador o tu filtro DNS bloquea los relés del sitio (listas de «DNS dinámico»), el sitio lo dice, con las direcciones que hay que permitir.',
+        'App de TV LG: varias cuentas de Twitch, con «Cambiar a…» en los Ajustes para cambiar con un clic. Se rechaza una sesión web de otra cuenta distinta de la del televisor, como en la app de iPhone.',
+      ],
+      ru: [
+        'Скрытые теги: в Настройки → Скрытое впишите теги, трансляции с которыми вы не хотите видеть (например «vtuber»), через запятую. Перечёркнутый глаз на карточке тоже предлагает её теги. Такие трансляции пропадают из топа и категорий, как скрытый канал.',
+        'Задержка канала: когда стример сам задерживает свою трансляцию (против стрим-снайпинга), сайт говорит об этом один раз, а потом в меню качества, чтобы её не принимали за задержку TwitchUnblock.',
+        'Меню качества: у некоторых каналов есть только качество «Источник», потому что Twitch их не транскодирует. Теперь меню это объясняет. А если ваш блокировщик или DNS-фильтр блокирует ретрансляторы сайта (списки «динамический DNS»), сайт об этом скажет и покажет адреса, которые нужно разрешить.',
+        'Приложение для ТВ LG: несколько аккаунтов Twitch и «Переключиться на…» в настройках, чтобы сменить аккаунт одним нажатием. Веб-сессия другого аккаунта, не того, что на ТВ, отклоняется, как в приложении для iPhone.',
+      ],
+    },
+  },
+  {
     version: '2026.11.19a',
     items: {
       fr: [

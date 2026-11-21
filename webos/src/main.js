@@ -14,7 +14,7 @@ import { initLang } from '../../public/assets/js/i18n.js'
 import { store } from '../../public/assets/js/store.js'
 import { esc } from '../../public/assets/js/util.js'
 import { onAuthChange, restore, user } from './auth.js'
-import { checkWebSession, onWebSessionChange } from './websession.js'
+import { checkWebSession, onWebSessionChange, refuseIfOtherAccount } from './websession.js'
 import { initNav } from './nav.js'
 import { back, current, initRouter, open, tabScreen } from './router.js'
 import { actions } from './ui.js'
@@ -66,11 +66,14 @@ actions.topChanged = () => tabScreen('home')?.markStale?.()
 initNav()
 initRouter({ home: homeScreen, search: searchScreen, settings: settingsScreen })
 paintAccount()
-onAuthChange(() => { paintAccount(); tabScreen('home')?.refreshFollowed?.() })
+// Connexion, ou compte relu au démarrage : une session web d'un autre compte
+// que celui-ci est oubliée (websession.js), comme dans l'app iPhone.
+onAuthChange(() => { refuseIfOtherAccount(); paintAccount(); tabScreen('home')?.refreshFollowed?.() })
 restore().catch(() => {})
 // Session web de l'iPhone reçue, oubliée ou refusée : les chaînes suivies
 // changent. Revérifiée chez Twitch au démarrage (au plus toutes les 12 h).
 onWebSessionChange(() => tabScreen('home')?.refreshFollowed?.())
+refuseIfOtherAccount()
 checkWebSession().catch(() => {})
 
 document.getElementById('boot')?.remove()

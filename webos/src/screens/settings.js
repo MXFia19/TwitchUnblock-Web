@@ -13,8 +13,8 @@ import { store } from '../../../public/assets/js/store.js'
 import { LANGS, t } from '../../../public/assets/js/i18n.js'
 import { QUALITY_PREFS, validQualityPref } from '../../../public/assets/js/player.js'
 import { esc, icon, toast } from '../../../public/assets/js/util.js'
-import { logout, onAuthChange, user } from '../auth.js'
-import { forgetWebSession, onWebSessionChange, webSession } from '../websession.js'
+import { logout, onAuthChange, removeAccount, savedAccounts, switchAccount, user } from '../auth.js'
+import { forgetWebSession, mismatch, onWebSessionChange, webSession } from '../websession.js'
 import { focusEl } from '../nav.js'
 import { actions, screenEl } from '../ui.js'
 import { tt } from '../strings.js'
@@ -48,12 +48,26 @@ export function settingsScreen() {
     const name = ws ? ws.displayName || ws.login : ''
     const connect = `<button class="choice" type="button" data-act="pair">${icon('link', 26)}<span>${esc(tt('tv_ws_connect'))}</span></button>`
     const forget = `<button class="choice" type="button" data-act="ws-forget">${icon('trash', 26)}<span>${esc(tt('tv_ws_forget'))}</span></button>`
+    // Dernière session refusée : elle était d'un autre compte que celui de
+    // la TV (websession.js, comme l'app iPhone).
+    const refused = !ws && mismatch ? `<p class="setting-sub setting-status">${esc(tt('tv_ws_mismatch', { w: mismatch.web, a: mismatch.account }))}</p>` : ''
     return `<section class="block setting" data-block>
         <h2 class="block-title">${esc(tt('tv_ws_title'))}</h2>
-        ${ws ? `<p class="setting-sub setting-status">${esc(ws.expired ? tt('tv_ws_expired', { u: name }) : tt('tv_ws_connected', { u: name }))}</p>` : ''}
+        ${ws ? `<p class="setting-sub setting-status">${esc(ws.expired ? tt('tv_ws_expired', { u: name }) : tt('tv_ws_connected', { u: name }))}</p>` : ''}${refused}
         <p class="setting-sub">${esc(tt('tv_ws_sub'))}</p>
         <div class="choices" data-row>${ws ? `${ws.expired ? connect : ''}${forget}` : connect}</div>
       </section>`
+  }
+
+  /** Comptes rangés sur la TV (auth.js) : passer à l'un d'eux (l'app
+   *  redémarre), ou le retirer. Une rangée par compte. */
+  function savedAccountsHtml() {
+    const list = savedAccounts()
+    if (!list.length) return ''
+    return `<p class="setting-sub">${esc(tt('tv_other_accounts'))}</p>${list.map((a) => `<div class="choices" data-row>
+        <button class="choice" type="button" data-switch="${esc(a.user.id)}">${icon('user', 26)}<span>${esc(tt('tv_switch_to', { u: a.user.name || a.user.login }))}</span></button>
+        <button class="choice" type="button" data-remove="${esc(a.user.id)}">${icon('trash', 26)}<span>${esc(tt('tv_remove_account'))}</span></button>
+      </div>`).join('')}`
   }
 
   function paint() {
@@ -66,8 +80,10 @@ export function settingsScreen() {
         <h2 class="block-title">${esc(tt('tv_account'))}</h2>
         <p class="setting-sub">${esc(user ? tt('tv_logged_as', { u: user.name }) : tt('tv_login_sub'))}</p>
         <div class="choices" data-row>${user
-          ? `<button class="choice" type="button" data-act="logout">${icon('logout', 26)}<span>${esc(t('logout'))}</span></button>`
+          ? `<button class="choice" type="button" data-act="add-account">${icon('plus', 26)}<span>${esc(tt('tv_add_account'))}</span></button>
+            <button class="choice" type="button" data-act="logout">${icon('logout', 26)}<span>${esc(t('logout'))}</span></button>`
           : `<button class="choice" type="button" data-act="login">${icon('twitch', 26)}<span>${esc(tt('tv_login'))}</span></button>`}</div>
+        ${savedAccountsHtml()}
       </section>
       ${webSessionBlock()}
       ${webSession ? choice('tvPoints', tt('tv_points'), yesNo, bool(p.tvPoints !== false), tt('tv_points_sub')) : ''}
@@ -154,7 +170,16 @@ export function settingsScreen() {
       repaint(`[data-set="${CSS.escape(b.dataset.set)}"][data-v="${CSS.escape(b.dataset.v)}"]`)
     } else if (b.dataset.srcUp) moveSource(b.dataset.srcUp, -1)
     else if (b.dataset.srcDown) moveSource(b.dataset.srcDown, 1)
-    else if (b.dataset.act === 'login') actions.openLogin?.()
+    else if (b.dataset.act === 'login' || b.dataset.act === 'add-account') actions.openLogin?.()
+    else if (b.dataset.switch) {
+      toast(tt('tv_switching'), 'info')
+      switchAccount(b.dataset.switch)
+    } else if (b.dataset.remove) {
+      const a = savedAccounts().find((x) => x.user.id === b.dataset.remove)
+      removeAccount(b.dataset.remove)
+      if (a) toast(tt('tv_account_removed', { u: a.user.name || a.user.login }), 'info')
+      repaint(user ? '[data-act="add-account"]' : '[data-act="login"]')
+    }
     else if (b.dataset.act === 'logout') {
       logout()
       toast(tt('tv_logged_out'), 'info')

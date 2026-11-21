@@ -10,7 +10,7 @@
 import { t } from '../../../public/assets/js/i18n.js'
 import { esc, toast } from '../../../public/assets/js/util.js'
 import { qrEncode, qrSvg } from '../lib/qr.js'
-import { endPairing, saveWebSession, startPairing, waitForSession } from '../websession.js'
+import { endPairing, mismatch, saveWebSession, startPairing, waitForSession } from '../websession.js'
 import { focusEl } from '../nav.js'
 import { actions, el } from '../ui.js'
 import { tt } from '../strings.js'
@@ -79,7 +79,12 @@ export function pairScreen() {
     if (closed || mine !== attempt || r.result === 'cancelled') return
     stop()
     if (r.result === 'ok') {
-      saveWebSession(r.session)
+      // D'un autre compte que celui de la TV : refusée (websession.js), et
+      // dit ici, avec de quoi recommencer depuis le bon compte de l'iPhone.
+      if (!saveWebSession(r.session)) {
+        paintError(tt('tv_ws_mismatch', { w: mismatch?.web || r.session.login, a: mismatch?.account || '' }))
+        return
+      }
       toast(tt('tv_ws_connected', { u: r.session.displayName || r.session.login }), 'success', 3500)
       actions.back?.()
       return

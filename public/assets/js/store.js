@@ -88,6 +88,10 @@ export const DEFAULT_PREFS = {
   // millisecondes, comme l'app iOS (sauvegarde : clé racine `hidden`).
   hiddenChannels: [],    // { login (minuscules), name, at }, 500 au plus
   hiddenCategories: [],  // { id, name, box, at }, 200 au plus
+  // Tags masqués (demande fb_mwpac0z4) : noms en minuscules, sans « # »,
+  // 100 au plus. Les lives qui en portent un sortent du top et des lives
+  // d'une catégorie. Section « common » de la synchro, comme dans l'app.
+  hiddenTags: [],
   // Synchroniser mes réglages (compte connecté) : voir main.js. Propre à
   // cet appareil, jamais synchronisé lui-même.
   syncSettings: true,

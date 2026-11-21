@@ -52,6 +52,13 @@ export function loginScreen() {
       actions.back?.()
       return
     }
+    // Autre compte que celui qui était connecté (rangé, auth.js) : l'app
+    // redémarre pour lui (suivis, chat, points, session web).
+    if (result === 'switched') {
+      toast(tt('tv_logged_in', { u: user?.name || '' }), 'success', 3500)
+      setTimeout(() => location.reload(), 1200)
+      return
+    }
     paintError(tt(result === 'expired' ? 'tv_login_expired' : 'tv_login_failed'))
   }
 

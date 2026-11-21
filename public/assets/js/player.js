@@ -9,7 +9,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { lang, t } from './i18n.js'
-import { API_URL, RELAY_BASE, WORKER_BASES, directUrl, fixProxiedUrl, linkMoved, liveSourceOrder, proxyBaseOf, vpsRelayOf } from './api.js'
+import { API_URL, RELAY_BASE, WORKER_BASES, directUrl, fixProxiedUrl, linkMoved, liveSourceOrder, playbackBase, proxyBaseOf, relayHosts, relaysBlocked, vpsRelayOf } from './api.js'
 import { probeVodSilence, silenceTargets } from './silence.js'
 import { SlowRelayWatch, fragTiming } from './slowrelay.js'
 import { $, esc, formatClock, icon, isIOS, toast } from './util.js'
@@ -141,7 +141,13 @@ export function liveRequestUrl(reqUrl, playlistUrl) {
   // un secours si le quota du principal est atteint.
   if (segmentProxyOn() && isDirectSegment(fixed)) {
     recheckDirect(fixed)
-    fixed = `${proxyBaseOf(playlistUrl) ?? API_URL}/api/proxy?url=${encodeURIComponent(fixed)}&isVod=false`
+    // Playlist du relais de Sofia (source « bg ») : proxyBaseOf ne le connaît
+    // pas, et ses segments partaient par le Worker principal — une requête
+    // de son quota par segment, et un débit plus faible. Ils passent par le
+    // relais principal (ou son secours s'il est en panne), comme ceux des
+    // autres sources.
+    const base = proxyBaseOf(playlistUrl) ?? (vpsRelayOf(playlistUrl) ? playbackBase() : API_URL)
+    fixed = `${base}/api/proxy?url=${encodeURIComponent(fixed)}&isVod=false`
   }
   return fixed
 }
@@ -1267,6 +1273,7 @@ export class Player {
     this.keepSpeed = kind === 'vod' && !clip
     this.liveSource = null
     this.qualityNote = null
+    this.delayNoted = false
     this.root.dataset.kind = kind
     this.el.progress.hidden = kind !== 'vod'
     this.liveTimeline = null
@@ -2019,8 +2026,9 @@ export class Player {
     const engine = this.hls ? `hls.js ${window.Hls?.version ?? '?'} ${this.engineName()}` : this.engineName()
     const q = this.quality ? `${this.quality}${this.autoLevel ? `/${this.autoLevel}` : ''}` : null
     const lat = this.kind === 'live' ? this.liveDelay() : 0
+    const chDelay = this.kind === 'live' ? this.channelDelay() : 0
     return [engine, q, this.kind === 'live' && this.liveSource ? `src ${this.liveSource}` : null,
-      `rate ${v.playbackRate}`, lat > 0 ? `delay ${lat.toFixed(1)}s` : null,
+      `rate ${v.playbackRate}`, lat > 0 ? `delay ${lat.toFixed(1)}s` : null, chDelay ? `channel delay ${chDelay}s` : null,
       this.adBreak ? 'ad break' : null, this.healthBrief()].filter(Boolean).join(' · ')
   }
 
@@ -2199,6 +2207,36 @@ export class Player {
     let delay = playing ? (Date.now() - playing) / 1000 : this.hls?.latency
     if (!Number.isFinite(delay) || delay < 0) return 0
     return Math.min(delay, 90)
+  }
+
+  /**
+   * Délai que la chaîne ajoute elle-même à sa diffusion (réglage « délai du
+   * stream » du streamer, contre le stream sniping), en secondes arrondies à
+   * 5 s ; 0 s'il n'y en a pas ou qu'on ne sait pas. Twitch inscrit l'heure
+   * de réception de chaque segment (EXT-X-PROGRAM-DATE-TIME) mais ne le
+   * publie qu'après le délai : sans délai, le dernier segment de la playlist
+   * finit moins d'une seconde avant son chargement (mesuré le 21/11) ; avec,
+   * il a l'âge du délai. Le champ GQL Stream.delayLengthSeconds existe mais
+   * reste vide pour les spectateurs. 10 s au moins, pour qu'une horloge un
+   * peu décalée ne fasse rien croire.
+   */
+  channelDelay() {
+    if (this.kind !== 'live' || !this.hls) return 0
+    const lv = this.hls.levels?.[this.hls.currentLevel] ?? this.hls.levels?.[this.hls.loadLevel]
+    const det = lv?.details
+    const frags = det?.fragments
+    if (!det?.live || !frags?.length) return 0
+    const at = det.advancedDateTime || Date.now()
+    // Les segments annoncés d'avance (prefetch) n'existent pas encore :
+    // seuls comptent ceux qui finissent avant le chargement de la playlist.
+    let edge = 0
+    for (const f of frags) {
+      const end = (f.programDateTime || 0) + (f.duration || 0) * 1000
+      if (f.programDateTime && end <= at + 1500 && end > edge) edge = end
+    }
+    if (!edge) return 0
+    const age = (at - edge) / 1000
+    return age >= 10 && age <= 900 ? Math.round(age / 5) * 5 : 0
   }
 
   /**
@@ -2411,6 +2449,15 @@ export class Player {
       this.el.live.title = atEdge ? '' : t('go_live')
       const lat = this.liveDelay()
       this.el.latency.textContent = lat > 0 ? `${lat.toFixed(1)} s` : ''
+      // Délai mis par la chaîne : dans l'infobulle du retard, et dit une
+      // fois par chaîne (main.js, onChannelDelay).
+      const chDelay = this.channelDelay()
+      const latTitle = chDelay ? `${t('go_live')} · ${t('channel_delay_note', { s: chDelay })}` : t('go_live')
+      if (this.el.latency.title !== latTitle) this.el.latency.title = latTitle
+      if (chDelay && !this.delayNoted) {
+        this.delayNoted = true
+        this.o.onChannelDelay?.(chDelay)
+      }
       if (this.liveTimeline && !this.dragging) {
         const total = this.liveElapsed()
         this.drawPosition((total - lat) / total)
@@ -2949,6 +2996,11 @@ export class Player {
     let html = `<div class="p-menu-title">${esc(t('quality'))}</div>`
     // La chaîne diffuse plus haut que ce qui se lit ici (main.js,
     // showHqMissing) : pourquoi, puis la qualité grisée, comme twitch.tv.
+    // Ou une chaîne sans autre qualité que la Source (sans ligne grisée).
+    // Avant : le délai que la chaîne ajoute elle-même (channelDelay), pour
+    // qu'on ne le prenne pas pour un retard de TwitchUnblock (hippxrr, 19/11).
+    const chDelay = this.kind === 'live' ? this.channelDelay() : 0
+    if (chDelay) html += `<div class="p-q-why">${icon('info', 15)}<div><p>${esc(t('channel_delay_note', { s: chDelay }))}</p></div></div>`
     const note = this.kind === 'live' ? this.qualityNote : null
     if (note) {
       // Relais : retenter les serveurs de Twitch ; sinon la page des réglages.
@@ -2958,7 +3010,7 @@ export class Player {
           ? `<button type="button" data-settings="${esc(note.action)}">${esc(t(note.action === 'player' ? 'hq_why_open_setting' : 'hq_why_open_connect'))}</button>`
           : ''
       html += `<div class="p-q-why">${icon('info', 15)}<div><p>${esc(note.text)}</p>${act}</div></div>`
-      html += `<button type="button" class="p-q-off" disabled><span>${esc(note.label)}</span></button>`
+      if (note.label) html += `<button type="button" class="p-q-off" disabled><span>${esc(note.label)}</span></button>`
     }
     html += keys.map((k) => `<button type="button" data-q="${esc(k)}" class="${k === this.quality ? 'on' : ''}">
       <span>${esc(this.menuLabel(k))}</span>${k === this.quality ? icon('check', 16) : ''}</button>`).join('')
@@ -2970,6 +3022,9 @@ export class Player {
       const order = liveSourceOrder(this.o.prefs)
       const current = this.liveSource ?? order[0]
       html += `<div class="p-menu-title">${esc(t('live_source'))}${this.liveSource ? ` · ${esc(t(`src_${this.liveSource}`))}` : ''}</div>`
+      // Relais bloqués chez ce spectateur (api.js, relaysBlocked) : la source
+      // Bulgarie ne peut pas se lancer, et la vidéo passe par un Worker.
+      if (relaysBlocked()) html += `<div class="p-q-why">${icon('info', 15)}<div><p>${esc(t('relays_blocked_menu', { hosts: relayHosts().join(', ') }))}</p></div></div>`
       html += order.map((id) => `<button type="button" data-src="${id}" class="${id === current ? 'on' : ''}">
         <span>${esc(t(`src_${id}`))}</span>${id === current ? icon('check', 16) : ''}</button>`).join('')
     }
